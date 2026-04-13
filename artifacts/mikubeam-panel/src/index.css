@@ -1,309 +1,497 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@plugin "@tailwindcss/typography";
 
-@custom-variant dark (&:is(.dark *));
+/* ─── Google Fonts ─── */
+/* Cinzel: imperial/decorative headings */
+/* Crimson Text: elegant subtitle */
+/* Share Tech Mono: terminal/monospace */
 
-@theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-card-border: hsl(var(--card-border));
-
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-popover-border: hsl(var(--popover-border));
-
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-primary-border: var(--primary-border);
-
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-secondary-border: var(--secondary-border);
-
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-muted-border: var(--muted-border);
-
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-accent-border: var(--accent-border);
-
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-destructive-border: var(--destructive-border);
-
-  --color-chart-1: hsl(var(--chart-1));
-  --color-chart-2: hsl(var(--chart-2));
-  --color-chart-3: hsl(var(--chart-3));
-  --color-chart-4: hsl(var(--chart-4));
-  --color-chart-5: hsl(var(--chart-5));
-
-  --color-sidebar: hsl(var(--sidebar));
-  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
-  --color-sidebar-border: hsl(var(--sidebar-border));
-  --color-sidebar-primary: hsl(var(--sidebar-primary));
-  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
-  --color-sidebar-primary-border: var(--sidebar-primary-border);
-  --color-sidebar-accent: hsl(var(--sidebar-accent));
-  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
-  --color-sidebar-accent-border: var(--sidebar-accent-border);
-  --color-sidebar-ring: hsl(var(--sidebar-ring));
-
-  --font-sans: var(--app-font-sans);
-  --font-serif: var(--app-font-serif);
-  --font-mono: var(--app-font-mono);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
-
-/* LIGHT MODE */
+/* ─── Lelouch Britannia Design Tokens ─── */
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
-  --opaque-button-border-intensity: -8;
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+  --lb-bg-start: #0A0010;
+  --lb-bg-mid: #150020;
+  --lb-bg-end: #0A0010;
 
-  --background: 220 50% 98%;
-  --foreground: 220 50% 10%;
-  --border: 220 20% 90%;
-  --card: 0 0% 100%;
-  --card-foreground: 220 50% 10%;
-  --card-border: 220 20% 90%;
-  --sidebar: 220 50% 98%;
-  --sidebar-foreground: 220 50% 10%;
-  --sidebar-border: 220 20% 90%;
-  --sidebar-primary: 190 100% 40%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 20% 90%;
-  --sidebar-accent-foreground: 220 50% 10%;
-  --sidebar-ring: 190 100% 40%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 50% 10%;
-  --popover-border: 220 20% 90%;
-  --primary: 190 100% 40%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 20% 90%;
-  --secondary-foreground: 220 50% 10%;
-  --muted: 220 20% 90%;
-  --muted-foreground: 220 20% 40%;
-  --accent: 220 20% 90%;
-  --accent-foreground: 220 50% 10%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --input: 220 20% 90%;
-  --ring: 190 100% 40%;
-  --chart-1: 190 100% 40%;
-  --chart-2: 160 100% 40%;
-  --chart-3: 220 100% 60%;
-  --chart-4: 280 100% 60%;
-  --chart-5: 340 100% 60%;
+  --lb-gold: #D4AF37;
+  --lb-gold-dim: #A88C25;
+  --lb-gold-faint: rgba(212, 175, 55, 0.15);
+  --lb-gold-border: rgba(212, 175, 55, 0.28);
 
-  --app-font-sans: 'Space Mono', monospace;
-  --app-font-serif: Georgia, serif;
-  --app-font-mono: 'Space Mono', monospace;
-  --radius: 0rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(190 100% 40% / 0.1);
-  --shadow-xs: 0px 2px 0px 0px hsl(190 100% 40% / 0.1);
-  --shadow-sm: 0px 2px 0px 0px hsl(190 100% 40% / 0.1), 0px 1px 2px -1px hsl(190 100% 40% / 0.1);
-  --shadow: 0px 2px 0px 0px hsl(190 100% 40% / 0.1), 0px 1px 2px -1px hsl(190 100% 40% / 0.1);
-  --shadow-md: 0px 2px 0px 0px hsl(190 100% 40% / 0.1), 0px 2px 4px -1px hsl(190 100% 40% / 0.1);
-  --shadow-lg: 0px 2px 0px 0px hsl(190 100% 40% / 0.1), 0px 4px 6px -1px hsl(190 100% 40% / 0.1);
-  --shadow-xl: 0px 2px 0px 0px hsl(190 100% 40% / 0.1), 0px 8px 10px -1px hsl(190 100% 40% / 0.1);
-  --shadow-2xl: 0px 2px 0px 0px hsl(190 100% 40% / 0.1);
-  --tracking-normal: 0em;
-  --spacing: 0.25rem;
+  --lb-crimson: #C0392B;
+  --lb-crimson-dark: #8B0000;
+  --lb-crimson-faint: rgba(139, 0, 0, 0.18);
+  --lb-crimson-border: rgba(192, 57, 43, 0.3);
 
-  --sidebar-primary-border: hsl(var(--sidebar-primary));
-  --sidebar-accent-border: hsl(var(--sidebar-accent));
-  --primary-border: hsl(var(--primary));
-  --secondary-border: hsl(var(--secondary));
-  --muted-border: hsl(var(--muted));
-  --accent-border: hsl(var(--accent));
-  --destructive-border: hsl(var(--destructive));
+  --lb-card: rgba(10, 3, 18, 0.97);
+  --lb-card-border: rgba(212, 175, 55, 0.22);
+  --lb-card-shadow: 0 8px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(212, 175, 55, 0.1), 0 0 60px rgba(139, 0, 0, 0.08);
+
+  --lb-input-bg: rgba(6, 1, 12, 0.85);
+  --lb-input-border: rgba(212, 175, 55, 0.25);
+  --lb-input-focus: rgba(212, 175, 55, 0.5);
+
+  --lb-text: #F0E8D5;
+  --lb-text-muted: #8A7B65;
+  --lb-text-dim: #5A4E40;
+
+  --lb-terminal-bg: #030008;
+  --lb-terminal-border: rgba(212, 175, 55, 0.08);
+
+  --lb-progress-track: rgba(255, 255, 255, 0.07);
+
+  --lb-font-display: 'Cinzel', 'Georgia', serif;
+  --lb-font-body: 'Crimson Text', 'Georgia', serif;
+  --lb-font-mono: 'Share Tech Mono', 'Courier New', monospace;
+
+  --lb-radius-card: 16px;
+  --lb-radius-input: 8px;
+  --lb-radius-btn: 8px;
 }
 
-.dark {
-  --button-outline: rgba(255,255,255, .10);
-  --badge-outline: rgba(255,255,255, .05);
-  --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255,255,255, .04);
-  --elevate-2: rgba(255,255,255, .09);
-
-  --background: 220 50% 4%;
-  --foreground: 190 100% 80%;
-  --border: 190 100% 20%;
-  --card: 220 50% 6%;
-  --card-foreground: 190 100% 80%;
-  --card-border: 190 100% 20%;
-  --sidebar: 220 50% 6%;
-  --sidebar-foreground: 190 100% 80%;
-  --sidebar-border: 190 100% 20%;
-  --sidebar-primary: 190 100% 50%;
-  --sidebar-primary-foreground: 220 50% 4%;
-  --sidebar-accent: 190 100% 15%;
-  --sidebar-accent-foreground: 190 100% 50%;
-  --sidebar-ring: 190 100% 50%;
-  --popover: 220 50% 6%;
-  --popover-foreground: 190 100% 80%;
-  --popover-border: 190 100% 20%;
-  --primary: 190 100% 50%;
-  --primary-foreground: 220 50% 4%;
-  --secondary: 190 100% 15%;
-  --secondary-foreground: 190 100% 80%;
-  --muted: 220 50% 10%;
-  --muted-foreground: 190 50% 50%;
-  --accent: 190 100% 15%;
-  --accent-foreground: 190 100% 80%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --input: 190 100% 20%;
-  --ring: 190 100% 50%;
-  --chart-1: 190 100% 50%;
-  --chart-2: 160 100% 50%;
-  --chart-3: 220 100% 60%;
-  --chart-4: 280 100% 60%;
-  --chart-5: 340 100% 60%;
-
-  --shadow-2xs: 0px 2px 0px 0px hsl(190 100% 50% / 0.1);
-  --shadow-xs: 0px 2px 0px 0px hsl(190 100% 50% / 0.1);
-  --shadow-sm: 0px 2px 0px 0px hsl(190 100% 50% / 0.1), 0px 1px 2px -1px hsl(190 100% 50% / 0.1);
-  --shadow: 0px 2px 0px 0px hsl(190 100% 50% / 0.1), 0px 1px 2px -1px hsl(190 100% 50% / 0.1);
-  --shadow-md: 0px 2px 0px 0px hsl(190 100% 50% / 0.1), 0px 2px 4px -1px hsl(190 100% 50% / 0.1);
-  --shadow-lg: 0px 2px 0px 0px hsl(190 100% 50% / 0.1), 0px 4px 6px -1px hsl(190 100% 50% / 0.1);
-  --shadow-xl: 0px 2px 0px 0px hsl(190 100% 50% / 0.1), 0px 8px 10px -1px hsl(190 100% 50% / 0.1);
-  --shadow-2xl: 0px 2px 0px 0px hsl(190 100% 50% / 0.1);
+/* ─── Reset & Base ─── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
+html, body, #root {
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
-  body {
-    @apply font-mono antialiased bg-background text-foreground selection:bg-primary selection:text-primary-foreground;
+body {
+  font-family: var(--lb-font-body);
+  background: #0A0010;
+  color: var(--lb-text);
+  overflow-x: hidden;
+}
+
+/* ─── Page ─── */
+.lelouch-page {
+  min-height: 100dvh;
+  background: linear-gradient(135deg, var(--lb-bg-start) 0%, var(--lb-bg-mid) 50%, var(--lb-bg-end) 100%);
+  display: flex;
+  justify-content: center;
+  padding: 32px 16px;
+  padding-bottom: max(32px, env(safe-area-inset-bottom));
+}
+
+.lelouch-content {
+  width: 100%;
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* ─── Title ─── */
+.lelouch-title {
+  font-family: var(--lb-font-display);
+  font-size: clamp(1.8rem, 7vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  background: linear-gradient(135deg, var(--lb-gold) 0%, #F5E08A 40%, var(--lb-crimson) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1.15;
+  margin-bottom: 8px;
+}
+
+.lelouch-subtitle {
+  font-family: var(--lb-font-body);
+  font-size: clamp(0.82rem, 3vw, 0.95rem);
+  color: var(--lb-text-muted);
+  text-align: center;
+  font-style: italic;
+  margin-bottom: 20px;
+  line-height: 1.5;
+  padding: 0 8px;
+}
+
+/* ─── Card ─── */
+.lelouch-card {
+  width: 100%;
+  background: var(--lb-card);
+  border: 1px solid var(--lb-card-border);
+  border-radius: var(--lb-radius-card);
+  box-shadow: var(--lb-card-shadow);
+  overflow: hidden;
+}
+
+/* ─── GIF ─── */
+.lelouch-gif-wrapper {
+  position: relative;
+  width: 100%;
+  height: clamp(180px, 42vw, 260px);
+  overflow: hidden;
+}
+
+.lelouch-gif {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  display: block;
+}
+
+.lelouch-gif-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 60%,
+    rgba(10, 3, 18, 0.85) 100%
+  );
+  pointer-events: none;
+}
+
+/* ─── Card Body ─── */
+.lelouch-card-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ─── Input Row ─── */
+.lelouch-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.lelouch-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  background: var(--lb-input-bg);
+  border: 1px solid var(--lb-input-border);
+  border-radius: var(--lb-radius-input);
+  color: var(--lb-text);
+  font-family: var(--lb-font-body);
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+}
+
+.lelouch-input::placeholder {
+  color: var(--lb-text-dim);
+}
+
+.lelouch-input:focus {
+  border-color: var(--lb-input-focus);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.1);
+}
+
+/* ─── Primary Button ─── */
+.lelouch-btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  height: 44px;
+  padding: 0 16px;
+  background: linear-gradient(135deg, var(--lb-crimson-dark) 0%, var(--lb-crimson) 100%);
+  color: #F0E8D5;
+  font-family: var(--lb-font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(192, 57, 43, 0.5);
+  border-radius: var(--lb-radius-btn);
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+  box-shadow: 0 2px 8px rgba(139, 0, 0, 0.4);
+}
+
+.lelouch-btn-primary:hover {
+  background: linear-gradient(135deg, #A00000 0%, #D44030 100%);
+  box-shadow: 0 4px 16px rgba(139, 0, 0, 0.5);
+}
+
+.lelouch-btn-primary:active {
+  transform: scale(0.97);
+}
+
+.lelouch-btn-stop {
+  background: linear-gradient(135deg, #3A0000 0%, #6B0000 100%);
+  box-shadow: 0 2px 8px rgba(100, 0, 0, 0.4);
+}
+
+.lelouch-btn-primary .lelouch-btn-icon {
+  font-size: 1rem;
+}
+
+/* ─── Icon Buttons ─── */
+.lelouch-btn-icon-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  border-radius: var(--lb-radius-btn);
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.lelouch-btn-gold {
+  background: rgba(212, 175, 55, 0.12);
+  border-color: var(--lb-gold-border);
+  color: var(--lb-gold);
+}
+
+.lelouch-btn-gold:hover {
+  background: rgba(212, 175, 55, 0.22);
+}
+
+.lelouch-btn-dark {
+  background: rgba(10, 0, 20, 0.8);
+  border-color: rgba(212, 175, 55, 0.12);
+  color: var(--lb-text-muted);
+}
+
+.lelouch-btn-dark:hover {
+  border-color: var(--lb-gold-border);
+  color: var(--lb-gold);
+}
+
+/* ─── Params Row ─── */
+.lelouch-params-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+@media (min-width: 440px) {
+  .lelouch-params-row {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 
+.lelouch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
-/**
- * Using the elevate system.
- * Automatic contrast adjustment.
- *
- * <element className="hover-elevate" />
- * <element className="active-elevate-2" />
- *
- * // Using the tailwind utility when a data attribute is "on"
- * <element className="toggle-elevate data-[state=on]:toggle-elevated" />
- * // Or manually controlling the toggle state
- * <element className="toggle-elevate toggle-elevated" />
- *
- * Elevation systems have to handle many states.
- * - not-hovered, vs. hovered vs. active  (three mutually exclusive states)
- * - toggled or not
- * - focused or not (this is not handled with these utilities)
- *
- * Even without handling focused or not, this is six possible combinations that
- * need to be distinguished from eachother visually.
- */
-@layer utilities {
+.lelouch-label {
+  font-family: var(--lb-font-body);
+  font-size: 0.75rem;
+  color: var(--lb-text-muted);
+  letter-spacing: 0.01em;
+}
 
-  /* Hide ugly search cancel button in Chrome until we can style it properly */
-  input[type="search"]::-webkit-search-cancel-button {
-    @apply hidden;
+.lelouch-select,
+.lelouch-number {
+  height: 40px;
+  padding: 0 10px;
+  background: var(--lb-input-bg);
+  border: 1px solid var(--lb-input-border);
+  border-radius: var(--lb-radius-input);
+  color: var(--lb-text);
+  font-family: var(--lb-font-body);
+  font-size: 0.9rem;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.lelouch-select {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238A7B65' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.lelouch-select:focus,
+.lelouch-number:focus {
+  border-color: var(--lb-input-focus);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.08);
+}
+
+.lelouch-select option {
+  background: #150020;
+  color: var(--lb-text);
+}
+
+/* ─── Stats Row ─── */
+.lelouch-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.lelouch-stat {
+  background: var(--lb-crimson-faint);
+  border: 1px solid rgba(212, 175, 55, 0.12);
+  border-radius: var(--lb-radius-input);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lelouch-stat-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lelouch-stat-icon {
+  font-size: 0.85rem;
+  color: var(--lb-gold);
+}
+
+.lelouch-stat-label {
+  font-family: var(--lb-font-body);
+  font-size: 0.72rem;
+  color: var(--lb-text-muted);
+  white-space: nowrap;
+}
+
+.lelouch-stat-value {
+  font-family: var(--lb-font-mono);
+  font-size: clamp(1.2rem, 4vw, 1.6rem);
+  font-weight: 400;
+  color: var(--lb-text);
+  line-height: 1.1;
+}
+
+/* ─── Progress Bar ─── */
+.lelouch-progress-track {
+  width: 100%;
+  height: 7px;
+  background: var(--lb-progress-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.lelouch-progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, var(--lb-crimson-dark), var(--lb-crimson), var(--lb-gold));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* ─── Terminal ─── */
+.lelouch-terminal {
+  background: var(--lb-terminal-bg);
+  border: 1px solid var(--lb-terminal-border);
+  border-radius: var(--lb-radius-input);
+  padding: 12px 14px;
+  height: 120px;
+  overflow-y: auto;
+  font-family: var(--lb-font-mono);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212, 175, 55, 0.15) transparent;
+}
+
+.lelouch-terminal::-webkit-scrollbar {
+  width: 3px;
+}
+
+.lelouch-terminal::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.2);
+  border-radius: 999px;
+}
+
+.lelouch-terminal-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  word-break: break-all;
+}
+
+.lelouch-terminal-prompt {
+  color: var(--lb-text-dim);
+  flex-shrink: 0;
+}
+
+.lelouch-terminal-icon {
+  color: var(--lb-gold);
+  flex-shrink: 0;
+}
+
+/* ─── Footer ─── */
+.lelouch-footer {
+  font-family: var(--lb-font-body);
+  font-size: 0.82rem;
+  color: var(--lb-text-muted);
+  text-align: center;
+  margin-top: 16px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+.lelouch-footer-slider {
+  width: 100%;
+  max-width: 580px;
+  height: 4px;
+  background: var(--lb-progress-track);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.lelouch-footer-fill {
+  height: 100%;
+  background: linear-gradient(to right, var(--lb-crimson-dark), var(--lb-gold));
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* ─── Mobile safe area ─── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .lelouch-page {
+    padding-bottom: max(32px, env(safe-area-inset-bottom));
   }
+}
 
-  /* Placeholder styling for contentEditable div */
-  [contenteditable][data-placeholder]:empty::before {
-    content: attr(data-placeholder);
-    color: hsl(var(--muted-foreground));
-    pointer-events: none;
+/* ─── Mobile: stack input row ─── */
+@media (max-width: 420px) {
+  .lelouch-input {
+    width: 100%;
+    flex: none !important;
+    order: -1;
   }
-
-  /* .no-default-hover-elevate/no-default-active-elevate is an escape hatch so consumers of
-   * buttons/badges can remove the automatic brightness adjustment on interactions
-   * and program their own. */
-  .no-default-hover-elevate {}
-
-  .no-default-active-elevate {}
-
-
-  /**
-   * Toggleable backgrounds go behind the content. Hoverable/active goes on top.
-   * This way they can stack/compound. Both will overlap the parent's borders!
-   * So borders will be automatically adjusted both on toggle, and hover/active,
-   * and they will be compounded.
-   */
-  .toggle-elevate::before,
-  .toggle-elevate-2::before {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
-    border-radius: inherit;
-    z-index: -1;
-    /* sits behind content but above backdrop */
+  .lelouch-btn-primary {
+    flex: 1;
   }
+}
 
-  .toggle-elevate.toggle-elevated::before {
-    background-color: var(--elevate-2);
+/* ─── Small phones ─── */
+@media (max-width: 360px) {
+  .lelouch-card-body {
+    padding: 12px;
+    gap: 10px;
   }
-
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
-  .border.toggle-elevate::before {
-    inset: -1px;
+  .lelouch-btn-primary {
+    padding: 0 10px;
+    font-size: 0.75rem;
   }
-
-  /* Does not work on elements with overflow:hidden! */
-  .hover-elevate:not(.no-default-hover-elevate),
-  .active-elevate:not(.no-default-active-elevate),
-  .hover-elevate-2:not(.no-default-hover-elevate),
-  .active-elevate-2:not(.no-default-active-elevate) {
-    position: relative;
-    z-index: 0;
-  }
-
-  .hover-elevate:not(.no-default-hover-elevate)::after,
-  .active-elevate:not(.no-default-active-elevate)::after,
-  .hover-elevate-2:not(.no-default-hover-elevate)::after,
-  .active-elevate-2:not(.no-default-active-elevate)::after {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
-    border-radius: inherit;
-    z-index: 999;
-    /* sits in front of content */
-  }
-
-  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
-  .active-elevate:active:not(.no-default-active-elevate)::after {
-    background-color: var(--elevate-1);
-  }
-
-  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
-  .active-elevate-2:active:not(.no-default-active-elevate)::after {
-    background-color: var(--elevate-2);
-  }
-
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
-  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
-  .border.active-elevate:not(.no-active-interaction-elevate)::after,
-  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
-  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
-  .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
-    inset: -1px;
+  .lelouch-stat-value {
+    font-size: 1.1rem;
   }
 }
