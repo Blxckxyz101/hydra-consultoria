@@ -1,9 +1,8 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: MikuMikuBeam Panel API
+  description: MikuMikuBeam / Lelouch Britannia Panel API
 servers:
   - url: /api
     description: Base API path
@@ -14,13 +13,14 @@ tags:
     description: Attack operations
   - name: methods
     description: Attack method definitions
+  - name: check
+    description: Site status checking
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -148,6 +148,25 @@ paths:
                 items:
                   $ref: "#/components/schemas/Method"
 
+  /check:
+    post:
+      operationId: checkSite
+      tags: [check]
+      summary: Check if a site/target is up and get its status code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckSiteBody"
+      responses:
+        "200":
+          description: Check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckSiteResult"
+
 components:
   schemas:
     HealthStatus:
@@ -180,6 +199,8 @@ components:
           type: ["integer", "null"]
         bytesSent:
           type: ["integer", "null"]
+        webhookUrl:
+          type: ["string", "null"]
         startedAt:
           type: string
           format: date-time
@@ -199,6 +220,7 @@ components:
         - status
         - packetsSent
         - bytesSent
+        - webhookUrl
         - startedAt
         - stoppedAt
         - createdAt
@@ -216,6 +238,8 @@ components:
           type: integer
         threads:
           type: integer
+        webhookUrl:
+          type: ["string", "null"]
       required:
         - target
         - port
@@ -282,3 +306,31 @@ components:
         - layer
         - protocol
         - description
+
+    CheckSiteBody:
+      type: object
+      properties:
+        url:
+          type: string
+      required:
+        - url
+
+    CheckSiteResult:
+      type: object
+      properties:
+        up:
+          type: boolean
+        status:
+          type: integer
+        statusText:
+          type: string
+        responseTime:
+          type: integer
+        error:
+          type: ["string", "null"]
+      required:
+        - up
+        - status
+        - statusText
+        - responseTime
+        - error

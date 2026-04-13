@@ -6,12 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface CreateAttackBody {
-  target: string;
-  port: number;
-  method: string;
-  duration: number;
-  threads: number;
+export interface CheckSiteResult {
+  up: boolean;
+  status: number;
+  statusText: string;
+  responseTime: number;
   /** @nullable */
-  webhookUrl?: string | null;
+  error: string | null;
 }

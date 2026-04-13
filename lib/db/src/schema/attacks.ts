@@ -12,6 +12,7 @@ export const attacksTable = pgTable("attacks", {
   status: text("status").notNull().default("running"),
   packetsSent: integer("packets_sent"),
   bytesSent: integer("bytes_sent"),
+  webhookUrl: text("webhook_url"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   stoppedAt: timestamp("stopped_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

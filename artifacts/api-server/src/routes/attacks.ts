@@ -10,6 +10,30 @@ import {
 
 const router: IRouter = Router();
 
+async function fireWebhook(webhookUrl: string, attack: typeof attacksTable.$inferSelect) {
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "attack_finished",
+        attack: {
+          id: attack.id,
+          target: attack.target,
+          method: attack.method,
+          status: attack.status,
+          packetsSent: attack.packetsSent,
+          bytesSent: attack.bytesSent,
+          stoppedAt: attack.stoppedAt,
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // webhook failures are silent
+  }
+}
+
 router.get("/attacks", async (_req, res): Promise<void> => {
   const attacks = await db
     .select()
@@ -25,7 +49,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
     return;
   }
 
-  const { target, port, method, duration, threads } = parsed.data;
+  const { target, port, method, duration, threads, webhookUrl } = parsed.data;
 
   const [attack] = await db
     .insert(attacksTable)
@@ -38,6 +62,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
       status: "running",
       packetsSent: 0,
       bytesSent: 0,
+      webhookUrl: webhookUrl ?? null,
     })
     .returning();
 
@@ -80,10 +105,15 @@ router.post("/attacks", async (req, res): Promise<void> => {
         .where(eq(attacksTable.id, attackId));
 
       if (current && current.status === "running") {
-        await db
+        const [finished] = await db
           .update(attacksTable)
           .set({ status: "finished", stoppedAt: new Date() })
-          .where(eq(attacksTable.id, attackId));
+          .where(eq(attacksTable.id, attackId))
+          .returning();
+
+        if (finished && finished.webhookUrl) {
+          await fireWebhook(finished.webhookUrl, finished);
+        }
       }
     } catch {
       // ignore
@@ -178,6 +208,10 @@ router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
   if (!attack) {
     res.status(404).json({ error: "Attack not found" });
     return;
+  }
+
+  if (attack.webhookUrl) {
+    await fireWebhook(attack.webhookUrl, attack);
   }
 
   res.json(attack);
