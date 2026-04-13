@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface CreateAttackBody {
+  target: string;
+  port: number;
+  method: string;
+  duration: number;
+  threads: number;
 }

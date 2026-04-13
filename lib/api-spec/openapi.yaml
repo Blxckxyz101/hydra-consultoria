@@ -3,13 +3,17 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: MikuMikuBeam Panel API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: attacks
+    description: Attack operations
+  - name: methods
+    description: Attack method definitions
 paths:
   /healthz:
     get:
@@ -24,6 +28,126 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /attacks:
+    get:
+      operationId: listAttacks
+      tags: [attacks]
+      summary: List all attacks
+      responses:
+        "200":
+          description: List of attacks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Attack"
+    post:
+      operationId: createAttack
+      tags: [attacks]
+      summary: Create and launch an attack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttackBody"
+      responses:
+        "201":
+          description: Attack created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attack"
+        "400":
+          description: Invalid input
+
+  /attacks/stats:
+    get:
+      operationId: getAttackStats
+      tags: [attacks]
+      summary: Get aggregate stats across all attacks
+      responses:
+        "200":
+          description: Aggregated stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttackStats"
+
+  /attacks/{id}:
+    get:
+      operationId: getAttack
+      tags: [attacks]
+      summary: Get attack by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Attack details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attack"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteAttack
+      tags: [attacks]
+      summary: Delete an attack record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /attacks/{id}/stop:
+    post:
+      operationId: stopAttack
+      tags: [attacks]
+      summary: Stop a running attack
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Attack stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attack"
+        "404":
+          description: Not found
+
+  /methods:
+    get:
+      operationId: listMethods
+      tags: [methods]
+      summary: List all available attack methods
+      responses:
+        "200":
+          description: List of methods
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Method"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +158,127 @@ components:
       required:
         - status
 
+    Attack:
+      type: object
+      properties:
+        id:
+          type: integer
+        target:
+          type: string
+        port:
+          type: integer
+        method:
+          type: string
+        duration:
+          type: integer
+        threads:
+          type: integer
+        status:
+          type: string
+          enum: [running, stopped, finished, error]
+        packetsSent:
+          type: ["integer", "null"]
+        bytesSent:
+          type: ["integer", "null"]
+        startedAt:
+          type: string
+          format: date-time
+        stoppedAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - target
+        - port
+        - method
+        - duration
+        - threads
+        - status
+        - packetsSent
+        - bytesSent
+        - startedAt
+        - stoppedAt
+        - createdAt
+
+    CreateAttackBody:
+      type: object
+      properties:
+        target:
+          type: string
+        port:
+          type: integer
+        method:
+          type: string
+        duration:
+          type: integer
+        threads:
+          type: integer
+      required:
+        - target
+        - port
+        - method
+        - duration
+        - threads
+
+    AttackStats:
+      type: object
+      properties:
+        totalAttacks:
+          type: integer
+        runningAttacks:
+          type: integer
+        totalPacketsSent:
+          type: integer
+        totalBytesSent:
+          type: integer
+        attacksByMethod:
+          type: array
+          items:
+            $ref: "#/components/schemas/MethodCount"
+        recentAttacks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attack"
+      required:
+        - totalAttacks
+        - runningAttacks
+        - totalPacketsSent
+        - totalBytesSent
+        - attacksByMethod
+        - recentAttacks
+
+    MethodCount:
+      type: object
+      properties:
+        method:
+          type: string
+        count:
+          type: integer
+      required:
+        - method
+        - count
+
+    Method:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        layer:
+          type: string
+          enum: [L3, L4, L7]
+        protocol:
+          type: string
+          enum: [UDP, TCP, HTTP, ICMP]
+        description:
+          type: string
+      required:
+        - id
+        - name
+        - layer
+        - protocol
+        - description
