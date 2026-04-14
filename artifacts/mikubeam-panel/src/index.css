@@ -318,7 +318,16 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   border-color:rgba(192,57,43,.5);
 }
 .lb-btn-stop:hover { transform:translateY(-1px); }
-.lb-btn-glyph { font-size:1.2rem; }
+.lb-btn-glyph-img {
+  width:22px; height:22px;
+  object-fit:contain;
+  filter:drop-shadow(0 0 6px rgba(212,175,55,.8));
+  flex-shrink:0;
+  transition:filter .3s;
+}
+.lb-btn-stop .lb-btn-glyph-img {
+  filter:drop-shadow(0 0 8px rgba(192,57,43,1)) brightness(0.85) sepia(1) hue-rotate(-20deg);
+}
 
 .lb-btn-icon {
   width:46px; height:46px; flex-shrink:0;
@@ -671,7 +680,17 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   -webkit-tap-highlight-color:transparent; z-index:200;
 }
 .lb-fab--stop { background:linear-gradient(135deg, #280000, #550000); }
-.lb-fab-glyph { font-size:1.1rem; }
+.lb-fab-glyph-img {
+  width:26px; height:26px;
+  object-fit:contain;
+  filter:drop-shadow(0 0 8px rgba(212,175,55,.9));
+  flex-shrink:0;
+  transition:filter .3s, transform .3s;
+}
+.lb-fab--stop .lb-fab-glyph-img {
+  filter:drop-shadow(0 0 10px rgba(192,57,43,1)) brightness(0.8) sepia(1) hue-rotate(-20deg);
+  animation:geassSymbolPulse 1.2s ease-in-out infinite;
+}
 
 /* ═══════════════════════════════════
    ANALYZE BUTTON

