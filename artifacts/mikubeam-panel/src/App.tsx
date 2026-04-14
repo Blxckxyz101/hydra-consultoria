@@ -246,6 +246,10 @@ function Panel() {
   /* Target monitoring */
   const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const targetStatusRef = useRef<"unknown" | "online" | "offline">("unknown");
+  // Consecutive failure counter — prevents false-positive "TARGET DOWN"
+  // (the check IP is the same as the attack IP, so the target may rate-limit our probe)
+  const consecutiveFailsRef = useRef(0);
+  const CONSECUTIVE_FAILS_TO_CONFIRM = 3; // require 3 consecutive failures to declare down
 
   /* UI state */
   const [logs, setLogs]             = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
@@ -397,19 +401,42 @@ function Panel() {
         if (cancelled) return;
 
         const prev = targetStatusRef.current;
-        const now  = data.up ? "online" : "offline";
-        targetStatusRef.current = now;
-        setTargetStatus(now);
 
-        if (prev === "online" && now === "offline") {
-          addLog(`💥 TARGET DOWN! ${urlToCheck} is not responding — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
-          addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
-          if (soundRef.current) playTone("kill");
-          if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
-        } else if (prev === "offline" && now === "online") {
-          addLog(`⚠ Target recovered: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "warn");
-        } else if (prev === "unknown") {
-          addLog(`👁 Target baseline: ${now === "online" ? "ONLINE" : "OFFLINE"} — HTTP ${data.status || "N/A"} (${data.responseTime}ms)`, "info");
+        if (data.up) {
+          // Clear consecutive failure count on success
+          consecutiveFailsRef.current = 0;
+          const now = "online";
+          targetStatusRef.current = now;
+          setTargetStatus(now);
+
+          if (prev === "offline") {
+            addLog(`⚠ Target RECOVERED: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms) — Geass broken`, "warn");
+          } else if (prev === "unknown") {
+            addLog(`👁 Target baseline: ONLINE — HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "info");
+          }
+        } else {
+          // Increment consecutive failure count
+          consecutiveFailsRef.current += 1;
+          const fails = consecutiveFailsRef.current;
+
+          if (fails < CONSECUTIVE_FAILS_TO_CONFIRM) {
+            // Warn but don't declare down yet — could be rate-limiting our probe
+            addLog(`⚠ Probe ${fails}/${CONSECUTIVE_FAILS_TO_CONFIRM}: ${urlToCheck} not responding (${data.responseTime}ms) — confirming...`, "warn");
+          } else {
+            // Confirmed down
+            const now = "offline";
+            if (targetStatusRef.current !== "offline") {
+              targetStatusRef.current = now;
+              setTargetStatus(now);
+              addLog(`💥 TARGET DOWN! ${urlToCheck} — ${fails} consecutive probe failures — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
+              addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
+              if (soundRef.current) playTone("kill");
+              if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
+            }
+          }
+          if (prev === "unknown" && fails === 1) {
+            addLog(`👁 Target baseline: OFFLINE — ${urlToCheck} not responding`, "warn");
+          }
         }
       } catch { /* network error — skip check */ }
     };
@@ -423,6 +450,7 @@ function Panel() {
       clearInterval(iv);
       setTargetStatus("unknown");
       targetStatusRef.current = "unknown";
+      consecutiveFailsRef.current = 0;
     };
   }, [isRunning, addLog]);
 
