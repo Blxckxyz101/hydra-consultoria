@@ -1263,3 +1263,83 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   background: rgba(212,175,55,0.06);
   border-color: rgba(212,175,55,0.2);
 }
+
+/* ═══════════════════════════════════
+   CLUSTER BADGE VARIANTS
+═══════════════════════════════════ */
+.lb-cluster-badge--active {
+  background: rgba(46,204,113,0.18);
+  border-color: rgba(46,204,113,0.45);
+  color: #2ecc71;
+}
+.lb-cluster-badge--fetching {
+  background: rgba(26,188,156,0.12);
+  border-color: rgba(26,188,156,0.35);
+  color: #1abc9c;
+  animation: lb-fetch-pulse 1.2s ease-in-out infinite;
+}
+@keyframes lb-fetch-pulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* ═══════════════════════════════════
+   PROXY ROTATION PANEL
+═══════════════════════════════════ */
+.lb-proxy-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lb-proxy-fetch-btn {
+  align-self: flex-start;
+  padding: 5px 16px;
+  font-size: .75em;
+  background: rgba(52,152,219,0.15);
+  border-color: rgba(52,152,219,0.45);
+  color: #3498db;
+}
+.lb-proxy-fetch-btn:hover:not(:disabled) {
+  background: rgba(52,152,219,0.28);
+}
+.lb-proxy-fetch-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.lb-proxy-fetching {
+  background: rgba(26,188,156,0.12);
+  border-color: rgba(26,188,156,0.35);
+  color: #1abc9c;
+}
+.lb-proxy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+.lb-proxy-header {
+  display: flex;
+  gap: 14px;
+  padding: 3px 6px;
+  font-size: .68em;
+  font-family: 'Share Tech Mono', monospace;
+  color: #8A7B65;
+  letter-spacing: .04em;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  margin-bottom: 2px;
+}
+.lb-proxy-stat { flex: 1; }
+.lb-proxy-ms {
+  margin-left: auto;
+  font-size: .85em;
+  color: #8A7B65;
+  font-family: 'Share Tech Mono', monospace;
+}
+.lb-proxy-more {
+  font-size: .68em;
+  color: #5A4E40;
+  font-family: 'Share Tech Mono', monospace;
+  padding: 2px 6px;
+  text-align: center;
+  letter-spacing: .04em;
+}

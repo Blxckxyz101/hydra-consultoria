@@ -189,7 +189,21 @@ function scoreMethodsFor(opts: {
     });
   }
 
-  return recs.sort((a, b) => b.score - a.score).slice(0, 7);
+  /* Connection Flood (TLS) */
+  if (isWebServer) {
+    const score = isVerySlowResponder ? 88 : isSlowResponder ? 78 : (isCDN ? 50 : 72);
+    recs.push({
+      method: "conn-flood", name: "TLS Connection Flood",
+      score,
+      reason: isCDN
+        ? `CDN detected — conn-flood bypasses HTTP rate limiting by opening raw TLS connections, avoiding CDN filtering rules`
+        : `Opens 16K simultaneous TLS connections — exhausts server fd pool and TLS handshake queue directly`,
+      suggestedThreads: 50, suggestedDuration: 300,
+      protocol: "TCP/TLS", amplification: 1, tier: tierFromScore(score),
+    });
+  }
+
+  return recs.sort((a, b) => b.score - a.score).slice(0, 8);
 }
 
 router.post("/analyze", async (req, res): Promise<void> => {
