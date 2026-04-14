@@ -1106,3 +1106,160 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   letter-spacing:.08em;
   flex-shrink:0;
 }
+
+/* ═══════════════════════════════════
+   PULSING GEASS EYE (intensity-driven)
+═══════════════════════════════════ */
+.geass-eye-bg svg {
+  animation: rotateEye var(--eye-speed, 20s) linear infinite;
+  filter: drop-shadow(0 0 calc(var(--eye-glow, 0.06) * 30px) rgba(192,57,43,calc(var(--eye-glow, 0.06))));
+}
+
+/* ═══════════════════════════════════
+   LATENCY SPARKLINE
+═══════════════════════════════════ */
+.lb-sparkline-block--latency {
+  border-top: 1px solid rgba(155,89,182,0.15);
+  padding-top: 6px;
+  margin-top: 6px;
+}
+.lb-lat-val {
+  font-family: var(--f-mono);
+  font-size: .75em;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+/* ═══════════════════════════════════
+   MULTI-TARGET STATUS
+═══════════════════════════════════ */
+.lb-multi-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: rgba(212,175,55,0.06);
+  border: 1px solid rgba(212,175,55,0.2);
+  font-family: var(--f-mono);
+  font-size: .72em;
+  color: #D4AF37;
+  animation: fadeIn .4s ease;
+}
+.lb-multi-label {
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #D4AF37;
+}
+.lb-multi-target {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #A08860;
+}
+
+/* ═══════════════════════════════════
+   SMART CLUSTER LB TOGGLE
+═══════════════════════════════════ */
+.lb-smart-lb-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: .75em;
+  color: #9b59b6;
+}
+.lb-smart-lb-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  accent-color: #9b59b6;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.lb-smart-lb-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.lb-smart-lb-preview {
+  color: #6c3483;
+  font-size: .85em;
+  letter-spacing: .03em;
+  word-break: break-all;
+}
+
+/* ═══════════════════════════════════
+   NAMED TARGETS
+═══════════════════════════════════ */
+.lb-named-node {
+  cursor: pointer;
+}
+.lb-named-label {
+  flex: none;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #D4AF37;
+  font-weight: 600;
+}
+.lb-named-label:hover {
+  color: #fff;
+}
+.lb-named-url {
+  flex: 1;
+  color: #7A6B55;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .9em;
+}
+.lb-named-save-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* ═══════════════════════════════════
+   BENCHMARK BUTTON
+═══════════════════════════════════ */
+.lb-btn-bench {
+  background: rgba(26,188,156,0.12);
+  border-color: rgba(26,188,156,0.35);
+  color: #1abc9c;
+  font-size: 1.05em;
+}
+.lb-btn-bench:hover {
+  background: rgba(26,188,156,0.22);
+}
+
+/* ═══════════════════════════════════
+   H2 FLOOD & SLOWLORIS BADGES
+═══════════════════════════════════ */
+.lb-method-badge--real-http[data-method="http2-flood"] {
+  background: rgba(26,188,156,0.15);
+  color: #1abc9c;
+  border-color: rgba(26,188,156,0.4);
+}
+
+/* ═══════════════════════════════════
+   HISTORY ITEM RATE COLUMN
+═══════════════════════════════════ */
+.lh-rps {
+  font-family: var(--f-mono);
+  font-size: .72em;
+  flex-shrink: 0;
+  letter-spacing: .03em;
+}
+
+/* ═══════════════════════════════════
+   HISTORY ITEM CLICKABLE
+═══════════════════════════════════ */
+.lb-history-item:hover {
+  background: rgba(212,175,55,0.06);
+  border-color: rgba(212,175,55,0.2);
+}

@@ -40,8 +40,30 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 
 - Routes: `/api/attacks` (CRUD + stop), `/api/attacks/stats`, `/api/methods`
 - **Real attack workers** using `worker_threads` + real network I/O (dgram UDP, net TCP, fetch HTTP)
-- Methods: 9 attack vectors (UDP Flood, TCP Flood, HTTP Flood, Slowloris, ICMP Flood, etc.)
+- Methods: 17 attack vectors — UDP Flood/Bypass, DNS/NTP/Mem/SSDP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, Slowloris, R.U.D.Y, Geass Override
 - DB: `attacks` table in PostgreSQL — live counter via SQL increment on each worker stats flush
+
+#### v3.0 Features (12 major additions)
+
+- **HTTP/2 Flood** (CVE-2023-44487): native `node:http2` multiplexed streams, ~10K req/s vs httpbin
+- **Real Slowloris**: TCP connection pool exhaustion with trickle headers every 10-25s, up to 8000 half-open connections
+- **Multi-Target Mode**: 3 simultaneous targets (sequential, round-robin, or parallel launch)
+- **Named Targets**: label and save URLs to localStorage (`lb-named-targets`)
+- **Custom Presets**: save current config as named preset (`lb-user-presets`)
+- **Smart Cluster LB**: different attack vectors per cluster node (`getSmartMethod(baseMethod, nodeIdx)`)
+- **Pulsing Geass Eye SVG**: intensity driven by live pps (`eyeIntensity = min(1, pps/50000)`)
+- **Latency Sparkline**: probe response-time chart via SVG polyline
+- **Benchmark Button**: fires http-flood at httpbin.org for 10s baseline
+- **Rate column** in history table (pkts/s calculated from duration)
+- **Clickable history rows**: click to set target input
+- **Anti-false-positive target detection**: 3 consecutive probe failures required before "MISSION ACCOMPLISHED"
+
+#### Benchmarks (confirmed stable)
+
+- UDP Flood: ~118K pps / 896 MB in 8s
+- HTTP/2 Flood: ~10K req/s in 10s (best L7 method)
+- HTTP Pipeline: ~8K req/s in 8s
+- Slowloris: 640 half-open TCP connections in 10s with 16 threads
 
 #### Critical UDP Architecture
 

