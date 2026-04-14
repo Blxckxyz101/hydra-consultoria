@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import geassSymbol from "@assets/IMG_9069_1776196692523.jpeg";
 import {
   useListMethods,
   useCreateAttack,
@@ -24,6 +25,7 @@ interface AnalyzeResult { target: string; ip: string | null; isIP: boolean; http
 const L7_HTTP_FE = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
 const L4_TCP_FE  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
 const methodInfo = (m: string) => {
+  if (m === "geass-override") return { badge: "GEASS ∞", cls: "geass", color: "#C0392B" };
   if (L7_HTTP_FE.has(m)) return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
   if (L4_TCP_FE.has(m))  return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
   return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
@@ -31,12 +33,13 @@ const methodInfo = (m: string) => {
 
 /* ── Presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike",   method: "http-flood",  packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
-  { label: "Heavy Assault",  method: "udp-flood",   packetSize: 1024, duration: 120, delay: 10,  threads: 64,  icon: "💥" },
-  { label: "Stealth Mode",   method: "slowloris",   packetSize: 32,   duration: 300, delay: 500, threads: 4,   icon: "🥷" },
-  { label: "SYN Hammer",     method: "syn-flood",   packetSize: 40,   duration: 90,  delay: 5,   threads: 128, icon: "🔨" },
-  { label: "NTP Nuclear",    method: "ntp-amp",     packetSize: 46,   duration: 60,  delay: 5,   threads: 256, icon: "☢️" },
-  { label: "MEMCACHED NUKE", method: "mem-amp",     packetSize: 15,   duration: 30,  delay: 1,   threads: 512, icon: "💀" },
+  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
+  { label: "Heavy Assault",  method: "udp-flood",      packetSize: 1024, duration: 120, delay: 10,  threads: 64,  icon: "💥" },
+  { label: "Stealth Mode",   method: "slowloris",      packetSize: 32,   duration: 300, delay: 500, threads: 4,   icon: "🥷" },
+  { label: "SYN Hammer",     method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 5,   threads: 128, icon: "🔨" },
+  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 5,   threads: 256, icon: "☢️" },
+  { label: "MEMCACHED NUKE", method: "mem-amp",        packetSize: 15,   duration: 30,  delay: 1,   threads: 512, icon: "💀" },
+  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 120, delay: 0,   threads: 512, icon: "👁" },
 ];
 
 /* ── Log counter ── */
@@ -105,7 +108,8 @@ const statusColor = (code: number) => {
   if (code < 500) return "#C0392B";
   return "#8e44ad";
 };
-const powerLevel = (threads: number) => {
+const powerLevel = (threads: number, m?: string) => {
+  if (m === "geass-override") return { label: "ABSOLUTE GEASS", color: "#ff0033", pct: 100 };
   if (threads >= 512) return { label: "GODMODE",   color: "#ff00ff", pct: 100 };
   if (threads >= 256) return { label: "OBLITERATE",color: "#ff0033", pct: 98  };
   if (threads >= 128) return { label: "MAXIMUM",   color: "#ff4400", pct: 92  };
@@ -134,6 +138,15 @@ const LOG_MSGS_SIM = [
   () => `♟ Amplification multiplier saturating target bandwidth`,
   (_t: string, n: string) => `♟ ${n} pkt/s — UDP flood vector active`,
   () => `♟ Raw socket layer — amplification active`,
+];
+const LOG_MSGS_GEASS = [
+  (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP]`,
+  (t: string) => `👁 Dual-layer assault — ${t} has no counter to this Geass`,
+  (_t: string, n: string) => `👁 ${n} simultaneous HTTP+TCP strikes — target cannot respond`,
+  (t: string) => `👁 ${t} connection table and HTTP stack under absolute siege`,
+  (_t: string, n: string) => `👁 ${n} requests this second — 550 concurrent vectors active`,
+  (t: string) => `👁 The king's Geass has been cast upon ${t} — obey`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — HTTP flood + TCP flood vectors simultaneous`,
 ];
 
 /* ── Sparkline chart ── */
@@ -310,7 +323,8 @@ function Panel() {
         const n = fmtNum(deltaPkts);
         const t = targetRef.current;
         let msgs: ((t: string, n: string) => string)[];
-        if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
+        if (method === "geass-override") msgs = LOG_MSGS_GEASS;
+        else if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
         else if (L4_TCP_FE.has(method)) msgs = LOG_MSGS_TCP;
         else msgs = LOG_MSGS_SIM;
         addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
@@ -420,9 +434,14 @@ function Panel() {
       return;
     }
 
-    const port = method.includes("http") ? 80 : method.includes("dns") ? 53 : 443;
-    addLog(`♟ Geass granted — target: ${target}`, "info");
-    addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
+    const port = method.includes("http") || method === "geass-override" ? 80 : method.includes("dns") ? 53 : 443;
+    if (method === "geass-override") {
+      addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
+      addLog(`  Dual-vector: HTTP flood (250w) + TCP flood (300w) | Threads: ${threads} | Duration: ${duration}s`, "info");
+    } else {
+      addLog(`♟ Geass granted — target: ${target}`, "info");
+      addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
+    }
     if (soundRef.current) playTone("start");
     if ("vibrate" in navigator) navigator.vibrate([200]);
 
@@ -520,7 +539,7 @@ function Panel() {
     setIsChecking(false);
   }
 
-  const pw = powerLevel(threads);
+  const pw = powerLevel(threads, method);
   const mi = methodInfo(method);
   const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : lastAtkPkts;
   const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : lastAtkBytes;
@@ -536,18 +555,30 @@ function Panel() {
           {isRunning && (
             <div className={`lb-badge ${targetStatus === "offline" ? "lb-badge--kill" : ""}`}>
               <span className="lb-badge-dot" />
-              {targetStatus === "offline" ? "TARGET ELIMINATED" : "GEASS ACTIVE"}
+              {targetStatus === "offline" ? "TARGET ELIMINATED" : method === "geass-override" ? "GEASS OVERRIDE ACTIVE" : "GEASS ACTIVE"}
             </div>
           )}
-          <h1 className="lb-title">Lelouch Britannia</h1>
+          <div className="lb-title-row">
+            <img src={geassSymbol} className="lb-header-symbol" alt="Geass" />
+            <h1 className="lb-title">Lelouch Britannia</h1>
+            <img src={geassSymbol} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
+          </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
         </header>
 
         {/* ── Presets ── */}
         <div className="lb-presets">
           {PRESETS.map(p => (
-            <button key={p.label} className="lb-preset" onClick={() => applyPreset(p)}>
-              <span>{p.icon}</span> {p.label}
+            <button
+              key={p.label}
+              className={`lb-preset${p.method === "geass-override" ? " lb-preset--geass" : ""}`}
+              onClick={() => applyPreset(p)}
+            >
+              {p.method === "geass-override"
+                ? <img src={geassSymbol} className="lb-preset-symbol" alt=""/>
+                : <span>{p.icon}</span>
+              }
+              {p.label}
             </button>
           ))}
         </div>
@@ -559,9 +590,17 @@ function Panel() {
             <img src="/lelouch.gif" alt="Lelouch vi Britannia" className="lb-gif"/>
             <div className="lb-scanlines" aria-hidden="true"/>
             <div className="lb-gif-fade" aria-hidden="true"/>
+            <img
+              src={geassSymbol}
+              className={`lb-gif-symbol${isRunning && method === "geass-override" ? " lb-gif-symbol--active" : ""}`}
+              aria-hidden="true"
+              alt=""
+            />
             {isRunning && (
-              <div className="lb-attack-overlay" aria-hidden="true">
-                <span className="lb-attack-overlay-text">ATTACK IN PROGRESS</span>
+              <div className={`lb-attack-overlay${method === "geass-override" ? " lb-attack-overlay--geass" : ""}`} aria-hidden="true">
+                <span className="lb-attack-overlay-text">
+                  {method === "geass-override" ? "ABSOLUTE GEASS OVERRIDE" : "ATTACK IN PROGRESS"}
+                </span>
               </div>
             )}
           </div>
@@ -790,7 +829,7 @@ function Panel() {
                     <span>LIVE TRAFFIC — {method.toUpperCase()}</span>
                     <span className={`lb-method-badge lb-method-badge--${mi.cls}`}>{mi.badge}</span>
                   </div>
-                  <Sparkline data={ppsHistory} color={L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : "#D4AF37"} />
+                  <Sparkline data={ppsHistory} color={method === "geass-override" ? "#C0392B" : L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : "#D4AF37"} />
                 </div>
               )}
             </div>
@@ -886,7 +925,11 @@ function Panel() {
           </div>
         </div>
 
-        <footer className="lb-footer">♟ v2.0 — Lelouch Britannia Command Panel ♟</footer>
+        <footer className="lb-footer">
+          <img src={geassSymbol} className="lb-footer-symbol" alt=""/>
+          v2.0 — Lelouch Britannia Command Panel
+          <img src={geassSymbol} className="lb-footer-symbol" alt="" aria-hidden="true"/>
+        </footer>
         <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>
       </div>
 

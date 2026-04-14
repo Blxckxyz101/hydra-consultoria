@@ -857,3 +857,124 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   .lb-checker-row { flex-direction:column; }
   .lb-checker-btn { width:100%; justify-content:center; }
 }
+
+/* ═══════════════════════════════════
+   GEASS SYMBOL — HEADER
+═══════════════════════════════════ */
+.lb-title-row {
+  display:flex; align-items:center; justify-content:center;
+  gap:14px; flex-wrap:nowrap;
+}
+.lb-header-symbol {
+  width:42px; height:42px;
+  object-fit:contain;
+  mix-blend-mode:screen;
+  opacity:.85;
+  flex-shrink:0;
+}
+.lb-header-symbol--flip {
+  transform:scaleX(-1);
+}
+
+/* ═══════════════════════════════════
+   GEASS SYMBOL — GIF SECTION
+═══════════════════════════════════ */
+.lb-gif-symbol {
+  position:absolute;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  width:55%;
+  max-width:240px;
+  object-fit:contain;
+  pointer-events:none;
+  mix-blend-mode:screen;
+  opacity:.12;
+  transition:opacity .6s ease;
+  z-index:1;
+}
+.lb-gif-symbol--active {
+  opacity:.5;
+  animation:geassSymbolPulse 1.8s ease-in-out infinite;
+}
+@keyframes geassSymbolPulse {
+  0%,100% { opacity:.35; }
+  50%      { opacity:.65; filter:brightness(1.4) drop-shadow(0 0 18px #C0392B); }
+}
+
+/* ═══════════════════════════════════
+   GEASS OVERRIDE — ATTACK OVERLAY
+═══════════════════════════════════ */
+.lb-attack-overlay--geass {
+  background:linear-gradient(
+    to bottom,
+    rgba(100,0,0,.0) 0%,
+    rgba(100,0,0,.18) 50%,
+    rgba(192,57,43,.35) 100%
+  );
+}
+.lb-attack-overlay--geass .lb-attack-overlay-text {
+  color:#FF6050;
+  text-shadow:0 0 20px rgba(255,80,60,.7), 0 0 6px rgba(255,80,60,.4);
+  font-size:.92rem;
+  animation:geassTextPulse 1s ease-in-out infinite;
+}
+@keyframes geassTextPulse {
+  0%,100% { opacity:1; letter-spacing:.22em; }
+  50%      { opacity:.7; letter-spacing:.3em; }
+}
+
+/* ═══════════════════════════════════
+   GEASS OVERRIDE — PRESET BUTTON
+═══════════════════════════════════ */
+.lb-preset--geass {
+  background:linear-gradient(135deg, rgba(80,0,0,.55) 0%, rgba(140,10,10,.45) 100%);
+  border:1px solid rgba(192,57,43,.55);
+  color:#FF9080;
+  font-weight:600;
+  position:relative;
+  overflow:hidden;
+  animation:geassPresetGlow 2.5s ease-in-out infinite;
+}
+.lb-preset--geass:hover {
+  background:linear-gradient(135deg, rgba(120,0,0,.7) 0%, rgba(200,20,20,.5) 100%);
+  border-color:rgba(220,70,50,.8);
+  color:#FFB8A8;
+  box-shadow:0 0 18px rgba(192,57,43,.5);
+}
+@keyframes geassPresetGlow {
+  0%,100% { box-shadow:0 0 6px rgba(192,57,43,.2); }
+  50%      { box-shadow:0 0 14px rgba(192,57,43,.5); }
+}
+.lb-preset-symbol {
+  width:18px; height:18px;
+  object-fit:contain;
+  mix-blend-mode:screen;
+  opacity:.9;
+  flex-shrink:0;
+  vertical-align:middle;
+}
+
+/* ═══════════════════════════════════
+   GEASS OVERRIDE — METHOD BADGE
+═══════════════════════════════════ */
+.lb-method-badge--geass {
+  background:rgba(192,57,43,.25);
+  border-color:rgba(192,57,43,.6);
+  color:#FF7060;
+  animation:geassPresetGlow 1.5s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════
+   GEASS SYMBOL — FOOTER
+═══════════════════════════════════ */
+.lb-footer {
+  display:flex; align-items:center; justify-content:center;
+  gap:10px;
+}
+.lb-footer-symbol {
+  width:22px; height:22px;
+  object-fit:contain;
+  mix-blend-mode:screen;
+  opacity:.55;
+  flex-shrink:0;
+}

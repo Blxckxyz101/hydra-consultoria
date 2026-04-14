@@ -84,6 +84,15 @@ export const ATTACK_METHODS = [
     description: "Sends a flood of ICMP echo request packets to saturate the target's network link.",
   },
 
+  // ── GEASS OVERRIDE — Maximum Multi-Vector ────────────────
+  {
+    id: "geass-override",
+    name: "Geass Override ∞",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Absolute Geass command. Combines real HTTP flood (all methods) + TCP connection table overflow simultaneously. Two vectors at once — nothing can stop it.",
+  },
+
   // ── Layer 7 HTTP ─────────────────────────────────────────
   {
     id: "http-flood",
