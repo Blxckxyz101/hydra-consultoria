@@ -8,13 +8,10 @@ servers:
     description: Base API path
 tags:
   - name: health
-    description: Health operations
   - name: attacks
-    description: Attack operations
   - name: methods
-    description: Attack method definitions
   - name: check
-    description: Site status checking
+  - name: analyze
 paths:
   /healthz:
     get:
@@ -67,10 +64,10 @@ paths:
     get:
       operationId: getAttackStats
       tags: [attacks]
-      summary: Get aggregate stats across all attacks
+      summary: Aggregate stats
       responses:
         "200":
-          description: Aggregated stats
+          description: Stats
           content:
             application/json:
               schema:
@@ -80,7 +77,6 @@ paths:
     get:
       operationId: getAttack
       tags: [attacks]
-      summary: Get attack by ID
       parameters:
         - name: id
           in: path
@@ -89,7 +85,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: Attack details
+          description: Attack
           content:
             application/json:
               schema:
@@ -99,7 +95,6 @@ paths:
     delete:
       operationId: deleteAttack
       tags: [attacks]
-      summary: Delete an attack record
       parameters:
         - name: id
           in: path
@@ -116,7 +111,6 @@ paths:
     post:
       operationId: stopAttack
       tags: [attacks]
-      summary: Stop a running attack
       parameters:
         - name: id
           in: path
@@ -125,7 +119,7 @@ paths:
             type: integer
       responses:
         "200":
-          description: Attack stopped
+          description: Stopped
           content:
             application/json:
               schema:
@@ -137,10 +131,10 @@ paths:
     get:
       operationId: listMethods
       tags: [methods]
-      summary: List all available attack methods
+      summary: List attack methods
       responses:
         "200":
-          description: List of methods
+          description: Methods
           content:
             application/json:
               schema:
@@ -152,7 +146,7 @@ paths:
     post:
       operationId: checkSite
       tags: [check]
-      summary: Check if a site/target is up and get its status code
+      summary: Check site status
       requestBody:
         required: true
         content:
@@ -167,6 +161,27 @@ paths:
               schema:
                 $ref: "#/components/schemas/CheckSiteResult"
 
+  /analyze:
+    post:
+      operationId: analyzeTarget
+      tags: [analyze]
+      summary: Analyze a target and recommend the best attack methods
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeBody"
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResult"
+        "400":
+          description: Invalid input
+
 components:
   schemas:
     HealthStatus:
@@ -174,8 +189,7 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
     Attack:
       type: object
@@ -196,34 +210,29 @@ components:
           type: string
           enum: [running, stopped, finished, error]
         packetsSent:
-          type: ["integer", "null"]
+          anyOf:
+            - type: integer
+            - type: "null"
         bytesSent:
-          type: ["integer", "null"]
+          anyOf:
+            - type: integer
+            - type: "null"
         webhookUrl:
-          type: ["string", "null"]
+          anyOf:
+            - type: string
+            - type: "null"
         startedAt:
           type: string
           format: date-time
         stoppedAt:
-          type: ["string", "null"]
-          format: date-time
+          anyOf:
+            - type: string
+              format: date-time
+            - type: "null"
         createdAt:
           type: string
           format: date-time
-      required:
-        - id
-        - target
-        - port
-        - method
-        - duration
-        - threads
-        - status
-        - packetsSent
-        - bytesSent
-        - webhookUrl
-        - startedAt
-        - stoppedAt
-        - createdAt
+      required: [id,target,port,method,duration,threads,status,packetsSent,bytesSent,webhookUrl,startedAt,stoppedAt,createdAt]
 
     CreateAttackBody:
       type: object
@@ -239,13 +248,10 @@ components:
         threads:
           type: integer
         webhookUrl:
-          type: ["string", "null"]
-      required:
-        - target
-        - port
-        - method
-        - duration
-        - threads
+          anyOf:
+            - type: string
+            - type: "null"
+      required: [target,port,method,duration,threads]
 
     AttackStats:
       type: object
@@ -266,13 +272,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Attack"
-      required:
-        - totalAttacks
-        - runningAttacks
-        - totalPacketsSent
-        - totalBytesSent
-        - attacksByMethod
-        - recentAttacks
+      required: [totalAttacks,runningAttacks,totalPacketsSent,totalBytesSent,attacksByMethod,recentAttacks]
 
     MethodCount:
       type: object
@@ -281,9 +281,7 @@ components:
           type: string
         count:
           type: integer
-      required:
-        - method
-        - count
+      required: [method, count]
 
     Method:
       type: object
@@ -300,20 +298,14 @@ components:
           enum: [UDP, TCP, HTTP, ICMP]
         description:
           type: string
-      required:
-        - id
-        - name
-        - layer
-        - protocol
-        - description
+      required: [id, name, layer, protocol, description]
 
     CheckSiteBody:
       type: object
       properties:
         url:
           type: string
-      required:
-        - url
+      required: [url]
 
     CheckSiteResult:
       type: object
@@ -327,10 +319,71 @@ components:
         responseTime:
           type: integer
         error:
-          type: ["string", "null"]
-      required:
-        - up
-        - status
-        - statusText
-        - responseTime
-        - error
+          anyOf:
+            - type: string
+            - type: "null"
+      required: [up, status, statusText, responseTime, error]
+
+    AnalyzeBody:
+      type: object
+      properties:
+        url:
+          type: string
+      required: [url]
+
+    AnalyzeResult:
+      type: object
+      properties:
+        target:
+          type: string
+        ip:
+          anyOf:
+            - type: string
+            - type: "null"
+        isIP:
+          type: boolean
+        httpAvailable:
+          type: boolean
+        httpsAvailable:
+          type: boolean
+        responseTimeMs:
+          type: integer
+        serverHeader:
+          type: string
+        isCDN:
+          type: boolean
+        cdnProvider:
+          type: string
+        openPorts:
+          type: array
+          items:
+            type: integer
+        recommendations:
+          type: array
+          items:
+            $ref: "#/components/schemas/MethodRecommendation"
+      required: [target,ip,isIP,httpAvailable,httpsAvailable,responseTimeMs,serverHeader,isCDN,cdnProvider,openPorts,recommendations]
+
+    MethodRecommendation:
+      type: object
+      properties:
+        method:
+          type: string
+        name:
+          type: string
+        score:
+          type: integer
+        reason:
+          type: string
+        suggestedThreads:
+          type: integer
+        suggestedDuration:
+          type: integer
+        protocol:
+          type: string
+        amplification:
+          type: number
+        tier:
+          type: string
+          enum: [S, A, B, C, D]
+      required: [method, name, score, reason, suggestedThreads, suggestedDuration, protocol, amplification, tier]

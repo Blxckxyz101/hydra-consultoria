@@ -17,6 +17,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AnalyzeBody,
+  AnalyzeResult,
   Attack,
   AttackStats,
   CheckSiteBody,
@@ -270,7 +272,7 @@ export const useCreateAttack = <
 };
 
 /**
- * @summary Get aggregate stats across all attacks
+ * @summary Aggregate stats
  */
 export const getGetAttackStatsUrl = () => {
   return `/api/attacks/stats`;
@@ -321,7 +323,7 @@ export type GetAttackStatsQueryResult = NonNullable<
 export type GetAttackStatsQueryError = ErrorType<unknown>;
 
 /**
- * @summary Get aggregate stats across all attacks
+ * @summary Aggregate stats
  */
 
 export function useGetAttackStats<
@@ -344,9 +346,6 @@ export function useGetAttackStats<
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-/**
- * @summary Get attack by ID
- */
 export const getGetAttackUrl = (id: number) => {
   return `/api/attacks/${id}`;
 };
@@ -402,10 +401,6 @@ export type GetAttackQueryResult = NonNullable<
 >;
 export type GetAttackQueryError = ErrorType<void>;
 
-/**
- * @summary Get attack by ID
- */
-
 export function useGetAttack<
   TData = Awaited<ReturnType<typeof getAttack>>,
   TError = ErrorType<void>,
@@ -429,9 +424,6 @@ export function useGetAttack<
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-/**
- * @summary Delete an attack record
- */
 export const getDeleteAttackUrl = (id: number) => {
   return `/api/attacks/${id}`;
 };
@@ -490,9 +482,6 @@ export type DeleteAttackMutationResult = NonNullable<
 
 export type DeleteAttackMutationError = ErrorType<void>;
 
-/**
- * @summary Delete an attack record
- */
 export const useDeleteAttack = <
   TError = ErrorType<void>,
   TContext = unknown,
@@ -513,9 +502,6 @@ export const useDeleteAttack = <
   return useMutation(getDeleteAttackMutationOptions(options));
 };
 
-/**
- * @summary Stop a running attack
- */
 export const getStopAttackUrl = (id: number) => {
   return `/api/attacks/${id}/stop`;
 };
@@ -574,9 +560,6 @@ export type StopAttackMutationResult = NonNullable<
 
 export type StopAttackMutationError = ErrorType<void>;
 
-/**
- * @summary Stop a running attack
- */
 export const useStopAttack = <
   TError = ErrorType<void>,
   TContext = unknown,
@@ -598,7 +581,7 @@ export const useStopAttack = <
 };
 
 /**
- * @summary List all available attack methods
+ * @summary List attack methods
  */
 export const getListMethodsUrl = () => {
   return `/api/methods`;
@@ -647,7 +630,7 @@ export type ListMethodsQueryResult = NonNullable<
 export type ListMethodsQueryError = ErrorType<unknown>;
 
 /**
- * @summary List all available attack methods
+ * @summary List attack methods
  */
 
 export function useListMethods<
@@ -671,7 +654,7 @@ export function useListMethods<
 }
 
 /**
- * @summary Check if a site/target is up and get its status code
+ * @summary Check site status
  */
 export const getCheckSiteUrl = () => {
   return `/api/check`;
@@ -734,7 +717,7 @@ export type CheckSiteMutationBody = BodyType<CheckSiteBody>;
 export type CheckSiteMutationError = ErrorType<unknown>;
 
 /**
- * @summary Check if a site/target is up and get its status code
+ * @summary Check site status
  */
 export const useCheckSite = <
   TError = ErrorType<unknown>,
@@ -754,4 +737,90 @@ export const useCheckSite = <
   TContext
 > => {
   return useMutation(getCheckSiteMutationOptions(options));
+};
+
+/**
+ * @summary Analyze a target and recommend the best attack methods
+ */
+export const getAnalyzeTargetUrl = () => {
+  return `/api/analyze`;
+};
+
+export const analyzeTarget = async (
+  analyzeBody: AnalyzeBody,
+  options?: RequestInit,
+): Promise<AnalyzeResult> => {
+  return customFetch<AnalyzeResult>(getAnalyzeTargetUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(analyzeBody),
+  });
+};
+
+export const getAnalyzeTargetMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzeTarget>>,
+    TError,
+    { data: BodyType<AnalyzeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof analyzeTarget>>,
+  TError,
+  { data: BodyType<AnalyzeBody> },
+  TContext
+> => {
+  const mutationKey = ["analyzeTarget"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof analyzeTarget>>,
+    { data: BodyType<AnalyzeBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return analyzeTarget(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AnalyzeTargetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof analyzeTarget>>
+>;
+export type AnalyzeTargetMutationBody = BodyType<AnalyzeBody>;
+export type AnalyzeTargetMutationError = ErrorType<void>;
+
+/**
+ * @summary Analyze a target and recommend the best attack methods
+ */
+export const useAnalyzeTarget = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzeTarget>>,
+    TError,
+    { data: BodyType<AnalyzeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof analyzeTarget>>,
+  TError,
+  { data: BodyType<AnalyzeBody> },
+  TContext
+> => {
+  return useMutation(getAnalyzeTargetMutationOptions(options));
 };

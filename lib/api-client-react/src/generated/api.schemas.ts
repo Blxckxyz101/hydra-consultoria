@@ -26,14 +26,10 @@ export interface Attack {
   duration: number;
   threads: number;
   status: AttackStatus;
-  /** @nullable */
   packetsSent: number | null;
-  /** @nullable */
   bytesSent: number | null;
-  /** @nullable */
   webhookUrl: string | null;
   startedAt: string;
-  /** @nullable */
   stoppedAt: string | null;
   createdAt: string;
 }
@@ -44,7 +40,6 @@ export interface CreateAttackBody {
   method: string;
   duration: number;
   threads: number;
-  /** @nullable */
   webhookUrl?: string | null;
 }
 
@@ -97,6 +92,46 @@ export interface CheckSiteResult {
   status: number;
   statusText: string;
   responseTime: number;
-  /** @nullable */
   error: string | null;
+}
+
+export interface AnalyzeBody {
+  url: string;
+}
+
+export type MethodRecommendationTier =
+  (typeof MethodRecommendationTier)[keyof typeof MethodRecommendationTier];
+
+export const MethodRecommendationTier = {
+  S: "S",
+  A: "A",
+  B: "B",
+  C: "C",
+  D: "D",
+} as const;
+
+export interface MethodRecommendation {
+  method: string;
+  name: string;
+  score: number;
+  reason: string;
+  suggestedThreads: number;
+  suggestedDuration: number;
+  protocol: string;
+  amplification: number;
+  tier: MethodRecommendationTier;
+}
+
+export interface AnalyzeResult {
+  target: string;
+  ip: string | null;
+  isIP: boolean;
+  httpAvailable: boolean;
+  httpsAvailable: boolean;
+  responseTimeMs: number;
+  serverHeader: string;
+  isCDN: boolean;
+  cdnProvider: string;
+  openPorts: number[];
+  recommendations: MethodRecommendation[];
 }

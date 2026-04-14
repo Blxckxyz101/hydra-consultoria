@@ -36,19 +36,21 @@ async function fireWebhook(webhookUrl: string, attack: typeof attacksTable.$infe
 function calcPacketsPerInterval(method: string, threads: number): number {
   const base = threads;
   const multipliers: Record<string, number> = {
-    "udp-flood":    8000,
-    "icmp-flood":   6000,
-    "tcp-flood":    5000,
-    "syn-flood":    7000,
-    "dns-amp":      9000,
-    "http-flood":   3000,
-    "http2-flood":  2500,
-    "slowloris":     200,
-    "rudy":          150,
+    "udp-flood":    28000,
+    "icmp-flood":   22000,
+    "tcp-flood":    18000,
+    "syn-flood":    24000,
+    "dns-amp":      55000,
+    "http-flood":    9000,
+    "http2-flood":   7500,
+    "slowloris":      500,
+    "rudy":           350,
   };
-  const mult = multipliers[method] ?? 4000;
-  const variance = 0.75 + Math.random() * 0.5;
-  return Math.floor(base * mult * variance);
+  const mult = multipliers[method] ?? 8000;
+  // Burst mode: ~1 in 5 intervals gets a 2-3x spike for dramatic effect
+  const burst = Math.random() < 0.2 ? (2 + Math.random()) : 1;
+  const variance = 0.8 + Math.random() * 0.4;
+  return Math.floor(base * mult * variance * burst);
 }
 
 function calcBytesPerPacket(method: string): number {

@@ -25,11 +25,11 @@ export const ListAttacksResponseItem = zod.object({
   duration: zod.number(),
   threads: zod.number(),
   status: zod.enum(["running", "stopped", "finished", "error"]),
-  packetsSent: zod.number().nullable(),
-  bytesSent: zod.number().nullable(),
-  webhookUrl: zod.string().nullable(),
+  packetsSent: zod.union([zod.number(), zod.null()]),
+  bytesSent: zod.union([zod.number(), zod.null()]),
+  webhookUrl: zod.union([zod.string(), zod.null()]),
   startedAt: zod.coerce.date(),
-  stoppedAt: zod.coerce.date().nullable(),
+  stoppedAt: zod.union([zod.coerce.date(), zod.null()]),
   createdAt: zod.coerce.date(),
 });
 export const ListAttacksResponse = zod.array(ListAttacksResponseItem);
@@ -43,11 +43,11 @@ export const CreateAttackBody = zod.object({
   method: zod.string(),
   duration: zod.number(),
   threads: zod.number(),
-  webhookUrl: zod.string().nullish(),
+  webhookUrl: zod.union([zod.string(), zod.null()]).optional(),
 });
 
 /**
- * @summary Get aggregate stats across all attacks
+ * @summary Aggregate stats
  */
 export const GetAttackStatsResponse = zod.object({
   totalAttacks: zod.number(),
@@ -69,19 +69,16 @@ export const GetAttackStatsResponse = zod.object({
       duration: zod.number(),
       threads: zod.number(),
       status: zod.enum(["running", "stopped", "finished", "error"]),
-      packetsSent: zod.number().nullable(),
-      bytesSent: zod.number().nullable(),
-      webhookUrl: zod.string().nullable(),
+      packetsSent: zod.union([zod.number(), zod.null()]),
+      bytesSent: zod.union([zod.number(), zod.null()]),
+      webhookUrl: zod.union([zod.string(), zod.null()]),
       startedAt: zod.coerce.date(),
-      stoppedAt: zod.coerce.date().nullable(),
+      stoppedAt: zod.union([zod.coerce.date(), zod.null()]),
       createdAt: zod.coerce.date(),
     }),
   ),
 });
 
-/**
- * @summary Get attack by ID
- */
 export const GetAttackParams = zod.object({
   id: zod.coerce.number(),
 });
@@ -94,24 +91,18 @@ export const GetAttackResponse = zod.object({
   duration: zod.number(),
   threads: zod.number(),
   status: zod.enum(["running", "stopped", "finished", "error"]),
-  packetsSent: zod.number().nullable(),
-  bytesSent: zod.number().nullable(),
-  webhookUrl: zod.string().nullable(),
+  packetsSent: zod.union([zod.number(), zod.null()]),
+  bytesSent: zod.union([zod.number(), zod.null()]),
+  webhookUrl: zod.union([zod.string(), zod.null()]),
   startedAt: zod.coerce.date(),
-  stoppedAt: zod.coerce.date().nullable(),
+  stoppedAt: zod.union([zod.coerce.date(), zod.null()]),
   createdAt: zod.coerce.date(),
 });
 
-/**
- * @summary Delete an attack record
- */
 export const DeleteAttackParams = zod.object({
   id: zod.coerce.number(),
 });
 
-/**
- * @summary Stop a running attack
- */
 export const StopAttackParams = zod.object({
   id: zod.coerce.number(),
 });
@@ -124,16 +115,16 @@ export const StopAttackResponse = zod.object({
   duration: zod.number(),
   threads: zod.number(),
   status: zod.enum(["running", "stopped", "finished", "error"]),
-  packetsSent: zod.number().nullable(),
-  bytesSent: zod.number().nullable(),
-  webhookUrl: zod.string().nullable(),
+  packetsSent: zod.union([zod.number(), zod.null()]),
+  bytesSent: zod.union([zod.number(), zod.null()]),
+  webhookUrl: zod.union([zod.string(), zod.null()]),
   startedAt: zod.coerce.date(),
-  stoppedAt: zod.coerce.date().nullable(),
+  stoppedAt: zod.union([zod.coerce.date(), zod.null()]),
   createdAt: zod.coerce.date(),
 });
 
 /**
- * @summary List all available attack methods
+ * @summary List attack methods
  */
 export const ListMethodsResponseItem = zod.object({
   id: zod.string(),
@@ -145,7 +136,7 @@ export const ListMethodsResponseItem = zod.object({
 export const ListMethodsResponse = zod.array(ListMethodsResponseItem);
 
 /**
- * @summary Check if a site/target is up and get its status code
+ * @summary Check site status
  */
 export const CheckSiteBody = zod.object({
   url: zod.string(),
@@ -156,5 +147,38 @@ export const CheckSiteResponse = zod.object({
   status: zod.number(),
   statusText: zod.string(),
   responseTime: zod.number(),
-  error: zod.string().nullable(),
+  error: zod.union([zod.string(), zod.null()]),
+});
+
+/**
+ * @summary Analyze a target and recommend the best attack methods
+ */
+export const AnalyzeTargetBody = zod.object({
+  url: zod.string(),
+});
+
+export const AnalyzeTargetResponse = zod.object({
+  target: zod.string(),
+  ip: zod.union([zod.string(), zod.null()]),
+  isIP: zod.boolean(),
+  httpAvailable: zod.boolean(),
+  httpsAvailable: zod.boolean(),
+  responseTimeMs: zod.number(),
+  serverHeader: zod.string(),
+  isCDN: zod.boolean(),
+  cdnProvider: zod.string(),
+  openPorts: zod.array(zod.number()),
+  recommendations: zod.array(
+    zod.object({
+      method: zod.string(),
+      name: zod.string(),
+      score: zod.number(),
+      reason: zod.string(),
+      suggestedThreads: zod.number(),
+      suggestedDuration: zod.number(),
+      protocol: zod.string(),
+      amplification: zod.number(),
+      tier: zod.enum(["S", "A", "B", "C", "D"]),
+    }),
+  ),
 });

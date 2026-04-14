@@ -15,14 +15,10 @@ export interface Attack {
   duration: number;
   threads: number;
   status: AttackStatus;
-  /** @nullable */
   packetsSent: number | null;
-  /** @nullable */
   bytesSent: number | null;
-  /** @nullable */
   webhookUrl: string | null;
   startedAt: Date;
-  /** @nullable */
   stoppedAt: Date | null;
   createdAt: Date;
 }

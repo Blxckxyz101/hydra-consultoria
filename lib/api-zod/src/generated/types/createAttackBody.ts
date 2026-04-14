@@ -12,6 +12,5 @@ export interface CreateAttackBody {
   method: string;
   duration: number;
   threads: number;
-  /** @nullable */
   webhookUrl?: string | null;
 }

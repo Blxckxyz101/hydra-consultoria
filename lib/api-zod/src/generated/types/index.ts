@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./analyzeBody";
+export * from "./analyzeResult";
 export * from "./attack";
 export * from "./attackStats";
 export * from "./attackStatus";
@@ -17,3 +19,5 @@ export * from "./method";
 export * from "./methodCount";
 export * from "./methodLayer";
 export * from "./methodProtocol";
+export * from "./methodRecommendation";
+export * from "./methodRecommendationTier";

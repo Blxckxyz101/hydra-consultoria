@@ -17,6 +17,8 @@ type LogType = "info" | "success" | "error" | "warn";
 interface LogEntry { id: number; text: string; type: LogType; ts: number; }
 interface CheckResult { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
 interface Preset { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
+interface MethodRec { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
+interface AnalyzeResult { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
 
 /* ── Presets ── */
 const PRESETS: Preset[] = [
@@ -180,6 +182,11 @@ function Panel() {
   const [checkerUrl, setCheckerUrl]     = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
   const [isChecking, setIsChecking]     = useState(false);
+
+  /* Analyzer */
+  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing]   = useState(false);
+  const [showAnalyze, setShowAnalyze]   = useState(false);
 
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
@@ -395,6 +402,28 @@ function Panel() {
     URL.revokeObjectURL(url);
     addLog("♟ Logs exported.", "success");
   }
+  async function handleAnalyze() {
+    const urlToAnalyze = target.trim();
+    if (!urlToAnalyze) { addLog("✕ Enter a target URL or IP to analyze.", "error"); return; }
+    setIsAnalyzing(true); setAnalyzeResult(null); setShowAnalyze(true);
+    addLog(`♟ Intelligence gathering on ${urlToAnalyze}...`, "info");
+    if (soundRef.current) playTone("tick");
+    try {
+      const res = await fetch(`${BASE}/api/analyze`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urlToAnalyze }),
+      });
+      const data: AnalyzeResult = await res.json();
+      setAnalyzeResult(data);
+      const best = data.recommendations[0];
+      addLog(`♟ Analysis complete: ${data.recommendations.length} vectors ranked`, "success");
+      if (best) addLog(`♟ Best method: ${best.name} [Tier ${best.tier}] — score ${best.score}/100`, "success");
+      if (data.isCDN) addLog(`⚠ CDN detected (${data.cdnProvider}) — layer 7 attacks partially mitigated`, "warn");
+      if (soundRef.current) playTone("check");
+    } catch { addLog("✕ Analysis failed — check backend connection.", "error"); }
+    setIsAnalyzing(false);
+  }
+
   async function handleCheckSite() {
     const urlToCheck = checkerUrl.trim() || target.trim();
     if (!urlToCheck) { addLog("✕ Enter a URL to check.", "error"); return; }
@@ -510,7 +539,101 @@ function Panel() {
                 title={soundEnabled ? "Mute" : "Unmute"} onClick={() => setSoundEnabled(v => !v)}>
                 {soundEnabled ? "🔊" : "🔇"}
               </button>
+              <button
+                className={`lb-btn-icon lb-btn-analyze ${isAnalyzing ? "lb-btn-analyzing" : ""}`}
+                title="Analyze target — find the best attack method"
+                onClick={handleAnalyze}
+                disabled={isAnalyzing || !target.trim()}
+              >
+                {isAnalyzing ? "⏳" : "🔍"}
+              </button>
             </div>
+
+            {/* ── Analyzer Panel ── */}
+            {showAnalyze && (
+              <div className="lb-analyzer">
+                <div className="lb-analyzer-header">
+                  <span className="lb-analyzer-title">♟ INTELLIGENCE ANALYSIS</span>
+                  <button className="lb-analyzer-close" onClick={() => setShowAnalyze(false)}>✕</button>
+                </div>
+
+                {isAnalyzing && (
+                  <div className="lb-analyzer-loading">
+                    <div className="lb-analyzer-spinner"/>
+                    <span>Scanning target vectors...</span>
+                  </div>
+                )}
+
+                {!isAnalyzing && analyzeResult && (
+                  <>
+                    {/* Target info strip */}
+                    <div className="lb-analyze-info">
+                      <span className="lai-item"><span className="lai-key">TARGET</span>{analyzeResult.target}</span>
+                      {analyzeResult.ip && <span className="lai-item"><span className="lai-key">IP</span>{analyzeResult.ip}</span>}
+                      <span className="lai-item">
+                        <span className="lai-key">HTTP</span>
+                        <span style={{ color: analyzeResult.httpAvailable || analyzeResult.httpsAvailable ? "#2ecc71" : "#C0392B" }}>
+                          {analyzeResult.httpAvailable ? "80 ✓" : ""}{analyzeResult.httpAvailable && analyzeResult.httpsAvailable ? "  " : ""}{analyzeResult.httpsAvailable ? "443 ✓" : ""}
+                          {!analyzeResult.httpAvailable && !analyzeResult.httpsAvailable ? "CLOSED" : ""}
+                        </span>
+                      </span>
+                      {analyzeResult.responseTimeMs > 0 && (
+                        <span className="lai-item"><span className="lai-key">LATENCY</span>
+                          <span style={{ color: analyzeResult.responseTimeMs > 500 ? "#e67e22" : "#2ecc71" }}>{analyzeResult.responseTimeMs}ms</span>
+                        </span>
+                      )}
+                      {analyzeResult.serverHeader && (
+                        <span className="lai-item"><span className="lai-key">SERVER</span>{analyzeResult.serverHeader}</span>
+                      )}
+                      {analyzeResult.isCDN && (
+                        <span className="lai-item lai-cdn">
+                          <span className="lai-key">CDN</span>{analyzeResult.cdnProvider} ⚠
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Recommendations */}
+                    <div className="lb-recs">
+                      {analyzeResult.recommendations.map((rec, i) => (
+                        <div key={rec.method} className={`lb-rec ${i === 0 ? "lb-rec--best" : ""}`}>
+                          <div className="lrec-left">
+                            <span className={`lrec-tier lrec-tier--${rec.tier.toLowerCase()}`}>{rec.tier}</span>
+                            <div className="lrec-info">
+                              <div className="lrec-name">
+                                {i === 0 && <span className="lrec-crown">★ BEST — </span>}
+                                {rec.name}
+                                {rec.amplification > 1 && (
+                                  <span className="lrec-amp">{rec.amplification}x AMP</span>
+                                )}
+                                <span className="lrec-proto">{rec.protocol}</span>
+                              </div>
+                              <div className="lrec-reason">{rec.reason}</div>
+                              <div className="lrec-bar-wrap">
+                                <div className="lrec-bar" style={{ width: `${rec.score}%`, background: rec.score >= 90 ? "#ff0033" : rec.score >= 75 ? "#D4AF37" : rec.score >= 60 ? "#e67e22" : "#666" }}/>
+                                <span className="lrec-score">{rec.score}/100</span>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            className={`lrec-use ${i === 0 ? "lrec-use--best" : ""}`}
+                            onClick={() => {
+                              setMethod(rec.method);
+                              setThreads(rec.suggestedThreads);
+                              setDuration(rec.suggestedDuration);
+                              addLog(`♟ Applied: ${rec.name} — ${rec.suggestedThreads} threads, ${rec.suggestedDuration}s [Tier ${rec.tier}]`, "success");
+                              if (soundRef.current) playTone("tick");
+                              setShowAnalyze(false);
+                            }}
+                          >
+                            USE
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Power level */}
             <div className="lb-power-row">

@@ -6,10 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface CheckSiteResult {
-  up: boolean;
-  status: number;
-  statusText: string;
-  responseTime: number;
-  error: string | null;
+export interface AnalyzeBody {
+  url: string;
 }
