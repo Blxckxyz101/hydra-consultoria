@@ -29,9 +29,42 @@ async function fireWebhook(webhookUrl: string, attack: typeof attacksTable.$infe
       }),
       signal: AbortSignal.timeout(5000),
     });
-  } catch {
-    // webhook failures are silent
-  }
+  } catch { /* webhook failures are silent */ }
+}
+
+// Calculates packets per interval based on method and threads
+function calcPacketsPerInterval(method: string, threads: number): number {
+  const base = threads;
+  const multipliers: Record<string, number> = {
+    "udp-flood":    8000,
+    "icmp-flood":   6000,
+    "tcp-flood":    5000,
+    "syn-flood":    7000,
+    "dns-amp":      9000,
+    "http-flood":   3000,
+    "http2-flood":  2500,
+    "slowloris":     200,
+    "rudy":          150,
+  };
+  const mult = multipliers[method] ?? 4000;
+  const variance = 0.75 + Math.random() * 0.5;
+  return Math.floor(base * mult * variance);
+}
+
+function calcBytesPerPacket(method: string): number {
+  const sizes: Record<string, [number, number]> = {
+    "udp-flood":   [512, 1400],
+    "icmp-flood":  [64, 512],
+    "tcp-flood":   [40, 128],
+    "syn-flood":   [40, 60],
+    "dns-amp":     [512, 4096],
+    "http-flood":  [256, 1024],
+    "http2-flood": [128, 512],
+    "slowloris":   [32, 64],
+    "rudy":        [32, 64],
+  };
+  const [min, max] = sizes[method] ?? [64, 512];
+  return min + Math.floor(Math.random() * (max - min));
 }
 
 router.get("/attacks", async (_req, res): Promise<void> => {
@@ -69,6 +102,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
   const durationMs = duration * 1000;
   const attackId = attack.id;
 
+  // Update every 500ms for more responsive metrics
   const updateInterval = setInterval(async () => {
     try {
       const [current] = await db
@@ -81,8 +115,9 @@ router.post("/attacks", async (req, res): Promise<void> => {
         return;
       }
 
-      const addedPackets = Math.floor(Math.random() * threads * 5000) + threads * 1000;
-      const addedBytes = addedPackets * (Math.floor(Math.random() * 512) + 64);
+      const addedPackets = calcPacketsPerInterval(method, threads);
+      const bpp = calcBytesPerPacket(method);
+      const addedBytes = addedPackets * bpp;
 
       await db
         .update(attacksTable)
@@ -94,7 +129,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
     } catch {
       clearInterval(updateInterval);
     }
-  }, 1000);
+  }, 500);
 
   setTimeout(async () => {
     clearInterval(updateInterval);
@@ -111,13 +146,11 @@ router.post("/attacks", async (req, res): Promise<void> => {
           .where(eq(attacksTable.id, attackId))
           .returning();
 
-        if (finished && finished.webhookUrl) {
+        if (finished?.webhookUrl) {
           await fireWebhook(finished.webhookUrl, finished);
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, durationMs);
 
   res.status(201).json(attack);
@@ -135,69 +168,33 @@ router.get("/attacks/stats", async (_req, res): Promise<void> => {
   for (const attack of attacks) {
     methodMap[attack.method] = (methodMap[attack.method] ?? 0) + 1;
   }
-  const attacksByMethod = Object.entries(methodMap).map(([method, count]) => ({
-    method,
-    count,
-  }));
+  const attacksByMethod = Object.entries(methodMap).map(([method, count]) => ({ method, count }));
+  const recentAttacks = attacks.slice(0, 10);
 
-  const recentAttacks = attacks.slice(0, 5);
-
-  res.json({
-    totalAttacks,
-    runningAttacks,
-    totalPacketsSent,
-    totalBytesSent,
-    attacksByMethod,
-    recentAttacks,
-  });
+  res.json({ totalAttacks, runningAttacks, totalPacketsSent, totalBytesSent, attacksByMethod, recentAttacks });
 });
 
 router.get("/attacks/:id", async (req, res): Promise<void> => {
   const params = GetAttackParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  const [attack] = await db
-    .select()
-    .from(attacksTable)
-    .where(eq(attacksTable.id, params.data.id));
-
-  if (!attack) {
-    res.status(404).json({ error: "Attack not found" });
-    return;
-  }
-
+  const [attack] = await db.select().from(attacksTable).where(eq(attacksTable.id, params.data.id));
+  if (!attack) { res.status(404).json({ error: "Attack not found" }); return; }
   res.json(attack);
 });
 
 router.delete("/attacks/:id", async (req, res): Promise<void> => {
   const params = DeleteAttackParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
-  const [attack] = await db
-    .delete(attacksTable)
-    .where(eq(attacksTable.id, params.data.id))
-    .returning();
-
-  if (!attack) {
-    res.status(404).json({ error: "Attack not found" });
-    return;
-  }
-
+  const [attack] = await db.delete(attacksTable).where(eq(attacksTable.id, params.data.id)).returning();
+  if (!attack) { res.status(404).json({ error: "Attack not found" }); return; }
   res.sendStatus(204);
 });
 
 router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
   const params = StopAttackParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
+  if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
 
   const [attack] = await db
     .update(attacksTable)
@@ -205,15 +202,8 @@ router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
     .where(eq(attacksTable.id, params.data.id))
     .returning();
 
-  if (!attack) {
-    res.status(404).json({ error: "Attack not found" });
-    return;
-  }
-
-  if (attack.webhookUrl) {
-    await fireWebhook(attack.webhookUrl, attack);
-  }
-
+  if (!attack) { res.status(404).json({ error: "Attack not found" }); return; }
+  if (attack.webhookUrl) await fireWebhook(attack.webhookUrl, attack);
   res.json(attack);
 });
 

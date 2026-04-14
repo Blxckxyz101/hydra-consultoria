@@ -12,96 +12,133 @@ import {
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface LogEntry { id: number; text: string; type: "info" | "success" | "error" | "warn"; ts: number; }
+/* ── Types ── */
+type LogType = "info" | "success" | "error" | "warn";
+interface LogEntry { id: number; text: string; type: LogType; ts: number; }
 interface CheckResult { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
-interface Preset { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; }
+interface Preset { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
 
+/* ── Presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike", method: "http-flood", packetSize: 64, duration: 30, delay: 50, threads: 8 },
-  { label: "Heavy Assault", method: "udp-flood", packetSize: 1024, duration: 120, delay: 10, threads: 64 },
-  { label: "Stealth Mode", method: "slowloris", packetSize: 32, duration: 300, delay: 500, threads: 4 },
-  { label: "TCP Barrage", method: "tcp-flood", packetSize: 512, duration: 60, delay: 20, threads: 32 },
+  { label: "Quick Strike",   method: "http-flood",  packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
+  { label: "Heavy Assault",  method: "udp-flood",   packetSize: 1024, duration: 120, delay: 10,  threads: 64,  icon: "💥" },
+  { label: "Stealth Mode",   method: "slowloris",   packetSize: 32,   duration: 300, delay: 500, threads: 4,   icon: "🥷" },
+  { label: "TCP Barrage",    method: "tcp-flood",   packetSize: 512,  duration: 60,  delay: 20,  threads: 32,  icon: "🔥" },
+  { label: "DNS Amplify",    method: "dns-amp",     packetSize: 512,  duration: 60,  delay: 5,   threads: 32,  icon: "📡" },
+  { label: "SYN Hammer",     method: "syn-flood",   packetSize: 40,   duration: 90,  delay: 5,   threads: 128, icon: "🔨" },
 ];
 
+/* ── Log counter ── */
 let _lid = 0;
-function mkLog(text: string, type: LogEntry["type"] = "info"): LogEntry {
-  return { id: ++_lid, text, type, ts: Date.now() };
-}
+const mkLog = (text: string, type: LogType = "info"): LogEntry => ({ id: ++_lid, text, type, ts: Date.now() });
 
-function playTone(type: "start" | "stop" | "tick" | "check") {
+/* ── Audio ── */
+function playTone(type: "start" | "stop" | "tick" | "check" | "kill") {
   try {
     const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.type = "sawtooth";
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    const t = ctx.currentTime;
     if (type === "start") {
-      osc.frequency.setValueAtTime(220, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.25);
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
-      osc.start(); osc.stop(ctx.currentTime + 0.5);
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.3);
+      g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      o.start(); o.stop(t + 0.55);
     } else if (type === "stop") {
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(660, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(110, ctx.currentTime + 0.35);
-      gain.gain.setValueAtTime(0.09, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-      osc.start(); osc.stop(ctx.currentTime + 0.55);
+      o.type = "sine";
+      o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(110, t + 0.4);
+      g.gain.setValueAtTime(0.09, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      o.start(); o.stop(t + 0.55);
+    } else if (type === "kill") {
+      o.type = "square";
+      o.frequency.setValueAtTime(60, t); o.frequency.exponentialRampToValueAtTime(20, t + 0.8);
+      g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+      o.start(); o.stop(t + 1.0);
     } else if (type === "tick") {
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      gain.gain.setValueAtTime(0.035, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
-      osc.start(); osc.stop(ctx.currentTime + 0.07);
+      o.type = "sine";
+      o.frequency.setValueAtTime(600, t);
+      g.gain.setValueAtTime(0.03, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+      o.start(); o.stop(t + 0.05);
     } else {
-      osc.frequency.setValueAtTime(528, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1056, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.07, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
-      osc.start(); osc.stop(ctx.currentTime + 0.3);
+      o.type = "triangle";
+      o.frequency.setValueAtTime(528, t); o.frequency.exponentialRampToValueAtTime(1056, t + 0.18);
+      g.gain.setValueAtTime(0.07, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      o.start(); o.stop(t + 0.3);
     }
-  } catch { /* audio blocked */ }
+  } catch { /* blocked */ }
 }
 
-function statusColor(code: number) {
-  if (code === 0) return "#888";
+/* ── Formatters ── */
+const fmtNum  = (n: number) => n.toLocaleString();
+const fmtBps  = (n: number) => {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB/s";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB/s";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB/s";
+  return n + " B/s";
+};
+const fmtBytes = (n: number) => {
+  if (n >= 1e12) return (n / 1e12).toFixed(2) + " TB";
+  if (n >= 1e9)  return (n / 1e9).toFixed(2) + " GB";
+  if (n >= 1e6)  return (n / 1e6).toFixed(1) + " MB";
+  if (n >= 1e3)  return (n / 1e3).toFixed(1) + " KB";
+  return n + " B";
+};
+const statusColor = (code: number) => {
+  if (code === 0) return "#777";
   if (code < 300) return "#2ecc71";
   if (code < 400) return "#f39c12";
   if (code < 500) return "#C0392B";
   return "#8e44ad";
-}
+};
+const powerLevel = (threads: number) => {
+  if (threads >= 128) return { label: "MAXIMUM",   color: "#ff0033", pct: 100 };
+  if (threads >= 64)  return { label: "CRITICAL",  color: "#C0392B", pct: 85 };
+  if (threads >= 32)  return { label: "HIGH",      color: "#e67e22", pct: 65 };
+  if (threads >= 16)  return { label: "MODERATE",  color: "#D4AF37", pct: 45 };
+  if (threads >= 8)   return { label: "LOW",       color: "#8A7B65", pct: 25 };
+  return               { label: "MINIMAL",  color: "#5A4E40", pct: 10 };
+};
 
-function fmtNum(n: number) { return n.toLocaleString(); }
-function fmtBytes(n: number) {
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB";
-  if (n >= 1e6) return (n / 1e6).toFixed(2) + " MB";
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";
-  return n + " B";
-}
+const LOG_MSGS = [
+  (t: string, m: string) => `♟ Geass spreading to ${t} via ${m.toUpperCase()}...`,
+  (_t: string, m: string) => `♟ ${m.toUpperCase()} volley dispatched — Zero's will absolute`,
+  (t: string) => `♟ Britannian fleet converging on ${t}`,
+  () => `♟ Network node pressure increasing...`,
+  () => `♟ Connection pool saturated — maintaining siege`,
+  (t: string) => `♟ ${t} response degrading — hold the line`,
+  () => `♟ All units advance — Geass command active`,
+];
 
+/* ── Geass Eye SVG ── */
 function GeassEye() {
   return (
     <div className="geass-eye-bg" aria-hidden="true">
-      <svg viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="150" cy="150" rx="130" ry="65" stroke="rgba(212,175,55,0.13)" strokeWidth="1.5" fill="none"/>
-        <ellipse cx="150" cy="150" rx="100" ry="50" stroke="rgba(212,175,55,0.08)" strokeWidth="1" fill="none"/>
-        <circle cx="150" cy="150" r="42" stroke="rgba(192,57,43,0.25)" strokeWidth="1.5" fill="none"/>
-        <circle cx="150" cy="150" r="22" stroke="rgba(192,57,43,0.18)" strokeWidth="1" fill="none"/>
-        <circle cx="150" cy="150" r="8" fill="rgba(192,57,43,0.18)"/>
-        {[0,30,60,90,120,150,180,210,240,270,300,330].map(deg => {
+      <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="200" cy="200" rx="180" ry="90" stroke="rgba(212,175,55,0.1)" strokeWidth="1.5" fill="none"/>
+        <ellipse cx="200" cy="200" rx="140" ry="70" stroke="rgba(212,175,55,0.07)" strokeWidth="1" fill="none"/>
+        <circle cx="200" cy="200" r="55" stroke="rgba(192,57,43,0.22)" strokeWidth="1.5" fill="none"/>
+        <circle cx="200" cy="200" r="30" stroke="rgba(192,57,43,0.16)" strokeWidth="1" fill="none"/>
+        <circle cx="200" cy="200" r="10" fill="rgba(192,57,43,0.15)"/>
+        {Array.from({ length: 12 }, (_, i) => {
+          const deg = i * 30;
           const r = (deg * Math.PI) / 180;
-          return <line key={deg}
-            x1={150 + Math.cos(r)*50} y1={150 + Math.sin(r)*50}
-            x2={150 + Math.cos(r)*140} y2={150 + Math.sin(r)*140}
-            stroke="rgba(212,175,55,0.07)" strokeWidth="1"/>;
+          return <line key={i}
+            x1={200 + Math.cos(r) * 65} y1={200 + Math.sin(r) * 65}
+            x2={200 + Math.cos(r) * 185} y2={200 + Math.sin(r) * 185}
+            stroke="rgba(212,175,55,0.06)" strokeWidth="1"/>;
         })}
+        {/* Geass symbol lines */}
+        <path d="M200,145 L212,170 L240,170 L218,188 L226,215 L200,198 L174,215 L182,188 L160,170 L188,170 Z"
+          stroke="rgba(192,57,43,0.12)" strokeWidth="1" fill="none"/>
       </svg>
     </div>
   );
 }
 
+/* ── Panel ── */
 function Panel() {
+  /* Config state */
   const [target, setTarget] = useState("");
   const [method, setMethod] = useState("http-flood");
   const [packetSize, setPacketSize] = useState(64);
@@ -111,49 +148,106 @@ function Panel() {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [showWebhook, setShowWebhook] = useState(false);
 
+  /* Attack state */
   const [currentAttackId, setCurrentAttackId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
   const [progress, setProgress] = useState(0);
-  const [packetsPerSec, setPacketsPerSec] = useState(0);
 
+  /* Live metrics — use refs for per-second calculation */
+  const [pps, setPps] = useState(0);
+  const [bps, setBps] = useState(0);
+  const lastPacketsRef = useRef(0);
+  const lastBytesRef   = useRef(0);
+  const currentPacketsRef = useRef(0);
+  const currentBytesRef   = useRef(0);
+
+  /* Target monitoring */
+  const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
+  const targetStatusRef = useRef<"unknown" | "online" | "offline">("unknown");
+
+  /* UI state */
+  const [logs, setLogs]             = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [favorites, setFavorites] = useState<string[]>(() => {
+  const soundRef = useRef(true);
+  const [favorites, setFavorites]   = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("lb-favorites") || "[]"); } catch { return []; }
   });
-  const [showFavs, setShowFavs] = useState(false);
+  const [showFavs, setShowFavs]     = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [entered, setEntered] = useState(false);
+  const [entered, setEntered]       = useState(false);
 
-  const [checkerUrl, setCheckerUrl] = useState("");
+  /* Site checker */
+  const [checkerUrl, setCheckerUrl]     = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
-  const [isChecking, setIsChecking] = useState(false);
+  const [isChecking, setIsChecking]     = useState(false);
 
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const startTimeRef = useRef<number | null>(null);
-  const durationRef = useRef(60);
-  const prevPacketsRef = useRef(0);
+  /* Refs */
+  const terminalRef    = useRef<HTMLDivElement>(null);
+  const startTimeRef   = useRef<number | null>(null);
+  const durationRef    = useRef(60);
+  const isRunningRef   = useRef(false);
+  const targetRef      = useRef("");
 
+  /* Queries */
   const { data: methods = [] } = useListMethods();
   const createAttack = useCreateAttack();
-  const stopAttack = useStopAttack();
-  const { data: stats, refetch: refetchStats } = useGetAttackStats({ query: { refetchInterval: isRunning ? 2000 : 10000 } });
+  const stopAttack   = useStopAttack();
+  const { data: stats, refetch: refetchStats } = useGetAttackStats({ query: { refetchInterval: 10000 } });
   const { data: currentAttack, refetch: refetchAttack } = useGetAttack(
     currentAttackId ?? 0,
-    { query: { enabled: currentAttackId !== null, refetchInterval: isRunning ? 900 : false } }
+    { query: { enabled: currentAttackId !== null, refetchInterval: isRunning ? 600 : false } }
   );
-  const { data: allAttacks = [], refetch: refetchHistory } = useListAttacks({ query: { refetchInterval: showHistory ? 5000 : false } });
+  const { data: allAttacks = [], refetch: refetchHistory } = useListAttacks(
+    { query: { refetchInterval: showHistory ? 5000 : false } }
+  );
 
-  const addLog = useCallback((text: string, type: LogEntry["type"] = "info") => {
-    setLogs(prev => [...prev.slice(-79), mkLog(text, type)]);
+  const addLog = useCallback((text: string, type: LogType = "info") => {
+    setLogs(prev => [...prev.slice(-99), mkLog(text, type)]);
   }, []);
 
+  /* Sync sound ref */
+  useEffect(() => { soundRef.current = soundEnabled; }, [soundEnabled]);
+
+  /* Page entrance */
   useEffect(() => { setEntered(true); }, []);
 
+  /* Scroll terminal */
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [logs]);
 
+  /* Sync current packets/bytes to refs for metric calculation */
+  useEffect(() => {
+    if (!currentAttack) return;
+    currentPacketsRef.current = currentAttack.packetsSent ?? 0;
+    currentBytesRef.current   = currentAttack.bytesSent   ?? 0;
+  }, [currentAttack]);
+
+  /* Per-second metric calculation (clean, independent interval) */
+  useEffect(() => {
+    if (!isRunning) { setPps(0); setBps(0); return; }
+    lastPacketsRef.current = currentPacketsRef.current;
+    lastBytesRef.current   = currentBytesRef.current;
+
+    const iv = setInterval(() => {
+      const nowPkts  = currentPacketsRef.current;
+      const nowBytes = currentBytesRef.current;
+      const deltaPkts  = Math.max(0, nowPkts  - lastPacketsRef.current);
+      const deltaBytes = Math.max(0, nowBytes - lastBytesRef.current);
+      lastPacketsRef.current = nowPkts;
+      lastBytesRef.current   = nowBytes;
+      setPps(deltaPkts);
+      setBps(deltaBytes);
+      if (deltaPkts > 0) {
+        const msg = LOG_MSGS[Math.floor(Math.random() * LOG_MSGS.length)];
+        addLog(msg(targetRef.current, method), "info");
+        if (soundRef.current) playTone("tick");
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [isRunning, method, addLog]);
+
+  /* Progress bar timer */
   useEffect(() => {
     if (!isRunning || startTimeRef.current === null) return;
     const iv = setInterval(() => {
@@ -162,64 +256,114 @@ function Panel() {
       const pct = Math.min((elapsed / durationRef.current) * 100, 100);
       setProgress(pct);
       if (pct >= 100) {
-        setIsRunning(false); setProgress(100);
-        addLog("♟ Geass lifted — operation complete.", "success");
-        if (soundEnabled) playTone("stop");
+        setIsRunning(false); isRunningRef.current = false;
+        setProgress(100); setPps(0); setBps(0);
+        addLog("♟ Operation complete — Geass command fulfilled.", "success");
+        if (soundRef.current) playTone("stop");
         if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
         refetchStats(); refetchHistory();
         clearInterval(iv);
       }
     }, 500);
     return () => clearInterval(iv);
-  }, [isRunning, addLog, soundEnabled, refetchStats, refetchHistory]);
+  }, [isRunning, addLog, refetchStats, refetchHistory]);
 
+  /* Target down detection during attack */
   useEffect(() => {
-    if (!currentAttack || !isRunning) return;
-    const packets = currentAttack.packetsSent ?? 0;
-    const pps = Math.max(0, packets - prevPacketsRef.current);
-    setPacketsPerSec(pps);
-    prevPacketsRef.current = packets;
-    if (pps > 0) {
-      addLog(`♟ ${fmtNum(pps)} pkts/s | total ${fmtNum(packets)} | ${fmtBytes(currentAttack.bytesSent ?? 0)}`, "info");
-      if (soundEnabled) playTone("tick");
-    }
-  }, [currentAttack, isRunning, addLog, soundEnabled]);
+    if (!isRunning || !targetRef.current) return;
+    let cancelled = false;
 
+    const checkTarget = async () => {
+      if (!isRunningRef.current || cancelled) return;
+      try {
+        const urlToCheck = targetRef.current;
+        const res = await fetch(`${BASE}/api/check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: urlToCheck }),
+        });
+        const data: CheckResult = await res.json();
+        if (cancelled) return;
+
+        const prev = targetStatusRef.current;
+        const now  = data.up ? "online" : "offline";
+        targetStatusRef.current = now;
+        setTargetStatus(now);
+
+        if (prev === "online" && now === "offline") {
+          addLog(`💥 TARGET DOWN! ${urlToCheck} is not responding — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
+          addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
+          if (soundRef.current) playTone("kill");
+          if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
+        } else if (prev === "offline" && now === "online") {
+          addLog(`⚠ Target recovered: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "warn");
+        } else if (prev === "unknown") {
+          addLog(`♟ Target baseline: ${now === "online" ? "ONLINE" : "OFFLINE"} — HTTP ${data.status || "N/A"} (${data.responseTime}ms)`, "info");
+        }
+      } catch { /* network error — skip check */ }
+    };
+
+    const initialTimeout = setTimeout(checkTarget, 3000);
+    const iv = setInterval(checkTarget, 6000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(initialTimeout);
+      clearInterval(iv);
+      setTargetStatus("unknown");
+      targetStatusRef.current = "unknown";
+    };
+  }, [isRunning, addLog]);
+
+  /* Refetch current attack while running */
+  useEffect(() => {
+    if (!isRunning || currentAttackId === null) return;
+    const iv = setInterval(() => { refetchAttack(); }, 600);
+    return () => clearInterval(iv);
+  }, [isRunning, currentAttackId, refetchAttack]);
+
+  /* ── Actions ── */
   async function handleLaunch() {
-    if (!target.trim()) { addLog("✕ No target specified.", "error"); return; }
+    if (!target.trim()) { addLog("✕ No target — enter a URL or IP address.", "error"); return; }
+
     if (isRunning) {
+      addLog("♟ Revoking Geass — halting strike...", "warn");
       if (currentAttackId !== null) {
-        addLog("♟ Revoking Geass — stopping strike...", "warn");
         try {
           await stopAttack.mutateAsync({ id: currentAttackId });
-          addLog("♟ Strike stopped.", "success");
-          if (soundEnabled) playTone("stop");
+          addLog("♟ Strike halted by royal decree.", "success");
+          if (soundRef.current) playTone("stop");
           if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
-        } catch { addLog("✕ Failed to stop.", "error"); }
-        setIsRunning(false); setProgress(0);
-        setCurrentAttackId(null); prevPacketsRef.current = 0;
-        setPacketsPerSec(0); refetchHistory();
+        } catch { addLog("✕ Failed to stop attack.", "error"); }
       }
+      setIsRunning(false); isRunningRef.current = false;
+      setProgress(0); setCurrentAttackId(null);
+      setPps(0); setBps(0); setTargetStatus("unknown");
+      refetchHistory(); refetchStats();
       return;
     }
+
     const port = method.includes("http") ? 80 : method.includes("dns") ? 53 : 443;
-    addLog(`♟ Geass granted — targeting ${target}`, "info");
-    addLog(`  Method: ${method} | Duration: ${duration}s | Threads: ${threads}`, "info");
-    if (soundEnabled) playTone("start");
+    addLog(`♟ Geass granted — target: ${target}`, "info");
+    addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
+    if (soundRef.current) playTone("start");
     if ("vibrate" in navigator) navigator.vibrate([200]);
+
     try {
       const result = await createAttack.mutateAsync({
         data: { target: target.trim(), port, method, duration, threads, webhookUrl: webhookUrl.trim() || null },
       });
       setCurrentAttackId(result.id);
-      setIsRunning(true);
+      setIsRunning(true); isRunningRef.current = true;
+      targetRef.current = target.trim();
       startTimeRef.current = Date.now();
       durationRef.current = duration;
-      prevPacketsRef.current = 0;
-      setProgress(0); setPacketsPerSec(0);
-      addLog(`♟ Strike launched [ID #${result.id}] — ${duration}s duration`, "success");
+      currentPacketsRef.current = 0; currentBytesRef.current = 0;
+      lastPacketsRef.current = 0;   lastBytesRef.current = 0;
+      setProgress(0); setPps(0); setBps(0);
+      addLog(`♟ Strike launched [ID #${result.id}] — Geass is absolute`, "success");
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
-    } catch { addLog("✕ Launch failed — check connection.", "error"); }
+    } catch { addLog("✕ Launch failed — check backend connection.", "error"); }
   }
 
   function saveFavorite(url: string) {
@@ -238,80 +382,95 @@ function Panel() {
   function applyPreset(p: Preset) {
     setMethod(p.method); setPacketSize(p.packetSize);
     setDuration(p.duration); setDelay(p.delay); setThreads(p.threads);
-    addLog(`♟ Preset applied: ${p.label}`, "info");
-    if (soundEnabled) playTone("tick");
+    addLog(`♟ Preset: ${p.label} — ${p.method.toUpperCase()}, ${p.threads} threads, ${p.duration}s`, "info");
+    if (soundRef.current) playTone("tick");
   }
   function handleClearLogs() { setLogs([mkLog("Terminal cleared.", "info")]); }
   function handleExportLogs() {
-    const txt = logs.map(l => `[${new Date(l.ts).toISOString()}] ${l.text}`).join("\n");
+    const txt = logs.map(l => `[${new Date(l.ts).toISOString()}] [${l.type.toUpperCase()}] ${l.text}`).join("\n");
     const blob = new Blob([txt], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
     a.download = `lelouch-log-${Date.now()}.txt`; a.click();
     URL.revokeObjectURL(url);
-    addLog("♟ Logs exported as .txt", "success");
+    addLog("♟ Logs exported.", "success");
   }
   async function handleCheckSite() {
     const urlToCheck = checkerUrl.trim() || target.trim();
     if (!urlToCheck) { addLog("✕ Enter a URL to check.", "error"); return; }
     setIsChecking(true); setCheckerResult(null);
-    if (soundEnabled) playTone("tick");
+    if (soundRef.current) playTone("tick");
     try {
       const res = await fetch(`${BASE}/api/check`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: urlToCheck }),
       });
       const data: CheckResult = await res.json();
       setCheckerResult(data);
-      if (soundEnabled) playTone("check");
-      const msg = data.up
-        ? `♟ ${urlToCheck} → HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`
-        : `✕ ${urlToCheck} → DOWN — ${data.statusText} (${data.responseTime}ms)`;
-      addLog(msg, data.up ? "success" : "error");
-    } catch { addLog("✕ Site check network error.", "error"); }
+      if (soundRef.current) playTone("check");
+      addLog(
+        data.up
+          ? `♟ ${urlToCheck} → HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`
+          : `✕ ${urlToCheck} → OFFLINE — ${data.statusText} (${data.responseTime}ms)`,
+        data.up ? "success" : "error"
+      );
+    } catch { addLog("✕ Check failed — network error.", "error"); }
     setIsChecking(false);
   }
 
+  const pw = powerLevel(threads);
   const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : (stats?.totalPacketsSent ?? 0);
-  const activeBots = isRunning ? threads : (stats?.runningAttacks ?? 0);
+  const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : (stats?.totalBytesSent   ?? 0);
 
+  /* ── JSX ── */
   return (
-    <div className={`lelouch-page ${entered ? "page-entered" : ""}`}>
+    <div className={`lb-page ${entered ? "lb-entered" : ""}`}>
       <GeassEye />
+      <div className="lb-wrap">
 
-      <div className="lelouch-content">
-        <header className="lelouch-header">
+        {/* ── Header ── */}
+        <header className="lb-header">
           {isRunning && (
-            <div className="geass-badge">
-              <span className="geass-badge-dot" />
-              GEASS ACTIVE
+            <div className={`lb-badge ${targetStatus === "offline" ? "lb-badge--kill" : ""}`}>
+              <span className="lb-badge-dot" />
+              {targetStatus === "offline" ? "TARGET ELIMINATED" : "GEASS ACTIVE"}
             </div>
           )}
-          <h1 className="lelouch-title">Lelouch Britannia</h1>
-          <p className="lelouch-subtitle">Because absolute power is even more beautiful when wielded by Zero.</p>
+          <h1 className="lb-title">Lelouch Britannia</h1>
+          <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
         </header>
 
-        <div className="presets-strip">
+        {/* ── Presets ── */}
+        <div className="lb-presets">
           {PRESETS.map(p => (
-            <button key={p.label} className="preset-btn" onClick={() => applyPreset(p)}>{p.label}</button>
+            <button key={p.label} className="lb-preset" onClick={() => applyPreset(p)}>
+              <span>{p.icon}</span> {p.label}
+            </button>
           ))}
         </div>
 
-        <div className="lelouch-card">
-          <div className="lelouch-gif-wrapper">
-            <img src="/lelouch.gif" alt="Lelouch vi Britannia" className="lelouch-gif"/>
-            <div className="scanlines" aria-hidden="true"/>
-            <div className="lelouch-gif-overlay" aria-hidden="true"/>
+        {/* ── Card ── */}
+        <div className={`lb-card ${isRunning ? "lb-card--active" : ""}`}>
+          {/* GIF */}
+          <div className="lb-gif-wrap">
+            <img src="/lelouch.gif" alt="Lelouch vi Britannia" className="lb-gif"/>
+            <div className="lb-scanlines" aria-hidden="true"/>
+            <div className="lb-gif-fade" aria-hidden="true"/>
+            {isRunning && (
+              <div className="lb-attack-overlay" aria-hidden="true">
+                <span className="lb-attack-overlay-text">ATTACK IN PROGRESS</span>
+              </div>
+            )}
           </div>
 
-          <div className="lelouch-card-body">
-            <div className="target-row">
-              <div className="target-input-wrap">
+          <div className="lb-body">
+            {/* Target */}
+            <div className="lb-target-row">
+              <div className="lb-input-wrap">
                 <input
-                  className="lelouch-input"
+                  className="lb-input"
                   type="text"
-                  placeholder="Enter target URL or IP"
+                  placeholder="Enter target URL or IP address"
                   value={target}
                   onChange={e => { setTarget(e.target.value); setShowFavs(false); }}
                   onFocus={() => { if (favorites.length > 0) setShowFavs(true); }}
@@ -319,147 +478,190 @@ function Panel() {
                   onKeyDown={e => e.key === "Enter" && handleLaunch()}
                   autoComplete="off"
                 />
-                {showFavs && favorites.length > 0 && (
-                  <div className="favs-dropdown">
+                {showFavs && (
+                  <div className="lb-favs">
                     {favorites.map(f => (
-                      <div key={f} className="fav-item">
-                        <span className="fav-url" onClick={() => { setTarget(f); setShowFavs(false); }}>{f}</span>
-                        <button className="fav-remove" onClick={e => { e.stopPropagation(); removeFavorite(f); }}>✕</button>
+                      <div key={f} className="lb-fav-item">
+                        <span className="lb-fav-url" onClick={() => { setTarget(f); setShowFavs(false); }}>{f}</span>
+                        <button className="lb-fav-rm" onClick={e => { e.stopPropagation(); removeFavorite(f); }}>✕</button>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
               {target.trim() && !favorites.includes(target.trim()) && (
-                <button className="fav-star-btn" title="Save to favorites" onClick={() => saveFavorite(target.trim())}>★</button>
+                <button className="lb-star-btn" title="Save target" onClick={() => saveFavorite(target.trim())}>★</button>
               )}
             </div>
 
-            <div className="lelouch-input-row">
+            {/* Action row */}
+            <div className="lb-action-row">
               <button
-                className={`lelouch-btn-primary${isRunning ? " lelouch-btn-stop" : ""}`}
+                className={`lb-btn-launch ${isRunning ? "lb-btn-stop" : ""}`}
                 onClick={handleLaunch}
                 disabled={createAttack.isPending}
               >
-                <span className="lelouch-btn-icon">♟</span>
-                {isRunning ? "Stop Geass" : "Command Geass"}
+                <span className="lb-btn-glyph">♟</span>
+                {isRunning ? "ABORT GEASS" : "COMMAND GEASS"}
               </button>
-              <button className="lelouch-btn-icon-btn lelouch-btn-gold" title="Clear logs" onClick={handleClearLogs}>⚡</button>
-              <button className="lelouch-btn-icon-btn lelouch-btn-dark" title="Export logs as .txt" onClick={handleExportLogs}>⎘</button>
-              <button
-                className={`lelouch-btn-icon-btn ${soundEnabled ? "lelouch-btn-gold" : "lelouch-btn-dark"}`}
-                title={soundEnabled ? "Mute" : "Unmute"}
-                onClick={() => setSoundEnabled(v => !v)}
-              >{soundEnabled ? "🔊" : "🔇"}</button>
+              <button className="lb-btn-icon lb-btn-gold" title="Clear terminal" onClick={handleClearLogs}>⚡</button>
+              <button className="lb-btn-icon lb-btn-dim"  title="Export logs"    onClick={handleExportLogs}>⎘</button>
+              <button className={`lb-btn-icon ${soundEnabled ? "lb-btn-gold" : "lb-btn-dim"}`}
+                title={soundEnabled ? "Mute" : "Unmute"} onClick={() => setSoundEnabled(v => !v)}>
+                {soundEnabled ? "🔊" : "🔇"}
+              </button>
             </div>
 
-            <div className="lelouch-params-row">
-              <div className="lelouch-field">
-                <label className="lelouch-label">Attack Method</label>
-                <select className="lelouch-select" value={method} onChange={e => setMethod(e.target.value)}>
+            {/* Power level */}
+            <div className="lb-power-row">
+              <span className="lb-power-label">POWER LEVEL</span>
+              <div className="lb-power-bar-track">
+                <div className="lb-power-bar-fill" style={{ width: `${pw.pct}%`, background: pw.color }}/>
+              </div>
+              <span className="lb-power-value" style={{ color: pw.color }}>{pw.label}</span>
+            </div>
+
+            {/* Params */}
+            <div className="lb-params">
+              <div className="lb-field">
+                <label>Attack Method</label>
+                <select className="lb-select" value={method} onChange={e => setMethod(e.target.value)}>
                   {methods.length === 0
                     ? <><option value="http-flood">HTTP Flood</option><option value="udp-flood">UDP Flood</option><option value="tcp-flood">TCP Flood</option></>
                     : methods.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
                   }
                 </select>
               </div>
-              <div className="lelouch-field">
-                <label className="lelouch-label">Packet Size (kb)</label>
-                <input className="lelouch-number" type="number" min={1} max={65535} value={packetSize} onChange={e => setPacketSize(+e.target.value)}/>
+              <div className="lb-field">
+                <label>Packet Size (kb)</label>
+                <input className="lb-num" type="number" min={1} max={65535} value={packetSize} onChange={e => setPacketSize(+e.target.value)}/>
               </div>
-              <div className="lelouch-field">
-                <label className="lelouch-label">Duration (seconds)</label>
-                <input className="lelouch-number" type="number" min={1} max={3600} value={duration} onChange={e => setDuration(+e.target.value)}/>
+              <div className="lb-field">
+                <label>Duration (s)</label>
+                <input className="lb-num" type="number" min={1} max={3600} value={duration} onChange={e => setDuration(+e.target.value)}/>
               </div>
-              <div className="lelouch-field">
-                <label className="lelouch-label">Threads</label>
-                <input className="lelouch-number" type="number" min={1} max={256} value={threads} onChange={e => setThreads(+e.target.value)}/>
+              <div className="lb-field">
+                <label>Threads</label>
+                <input className="lb-num" type="number" min={1} max={512} value={threads} onChange={e => setThreads(+e.target.value)}/>
               </div>
-              <div className="lelouch-field">
-                <label className="lelouch-label">Packet Delay (ms)</label>
-                <input className="lelouch-number" type="number" min={0} max={10000} value={delay} onChange={e => setDelay(+e.target.value)}/>
+              <div className="lb-field">
+                <label>Packet Delay (ms)</label>
+                <input className="lb-num" type="number" min={0} max={10000} value={delay} onChange={e => setDelay(+e.target.value)}/>
               </div>
-              <div className="lelouch-field webhook-field">
-                <label className="lelouch-label webhook-toggle" onClick={() => setShowWebhook(v => !v)}>
-                  {showWebhook ? "▲" : "▼"} Webhook URL <span className="opt-tag">optional</span>
+              <div className="lb-field lb-field--webhook">
+                <label className="lb-webhook-toggle" onClick={() => setShowWebhook(v => !v)}>
+                  {showWebhook ? "▲" : "▼"} Webhook <span className="lb-opt">optional</span>
                 </label>
                 {showWebhook && (
-                  <input className="lelouch-number" type="url" placeholder="https://your-webhook.com/notify" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)}/>
+                  <input className="lb-num" type="url" placeholder="https://..." value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)}/>
                 )}
               </div>
             </div>
 
-            <div className="lelouch-stats-row">
-              <div className="lelouch-stat">
-                <div className="lelouch-stat-header"><span className="lelouch-stat-icon">⚡</span><span className="lelouch-stat-label">Packets/sec</span></div>
-                <div className="lelouch-stat-value">{isRunning ? fmtNum(packetsPerSec) : "0"}</div>
+            {/* Stats — 4 boxes */}
+            <div className="lb-stats">
+              <div className="lb-stat lb-stat--red">
+                <div className="lb-stat-head"><span>⚡</span> Packets/sec</div>
+                <div className="lb-stat-val">{isRunning ? fmtNum(pps) : "—"}</div>
               </div>
-              <div className="lelouch-stat">
-                <div className="lelouch-stat-header"><span className="lelouch-stat-icon">👑</span><span className="lelouch-stat-label">Active Bots</span></div>
-                <div className="lelouch-stat-value">{activeBots}</div>
+              <div className="lb-stat lb-stat--gold">
+                <div className="lb-stat-head"><span>📶</span> Bandwidth</div>
+                <div className="lb-stat-val">{isRunning ? fmtBps(bps) : "—"}</div>
               </div>
-              <div className="lelouch-stat">
-                <div className="lelouch-stat-header"><span className="lelouch-stat-icon">📡</span><span className="lelouch-stat-label">Total Packets</span></div>
-                <div className="lelouch-stat-value">{fmtNum(totalPackets)}</div>
+              <div className="lb-stat lb-stat--dim">
+                <div className="lb-stat-head"><span>👑</span> Threads</div>
+                <div className="lb-stat-val">{isRunning ? threads : "—"}</div>
+              </div>
+              <div className="lb-stat lb-stat--wide">
+                <div className="lb-stat-head"><span>📡</span> Total Sent</div>
+                <div className="lb-stat-val lb-stat-val--mono">
+                  {fmtNum(totalPackets)} <span className="lb-stat-bytes">({fmtBytes(totalBytes)})</span>
+                </div>
               </div>
             </div>
 
-            <div className="lelouch-progress-track">
-              <div className="lelouch-progress-fill" style={{ width: `${progress}%` }}/>
+            {/* Target status banner — shows during attack */}
+            {isRunning && targetStatus !== "unknown" && (
+              <div className={`lb-target-status ${targetStatus === "offline" ? "ts-offline" : "ts-online"}`}>
+                <span className="ts-dot"/>
+                <span className="ts-label">
+                  {targetStatus === "online"
+                    ? `TARGET ONLINE — ${target} responding`
+                    : `💥 TARGET DOWN — ${target} not responding`
+                  }
+                </span>
+                <span className="ts-monitor">Monitoring every 6s</span>
+              </div>
+            )}
+
+            {/* Progress */}
+            <div className="lb-progress-wrap">
+              <div className="lb-progress-label">
+                <span>Attack Progress</span>
+                <span>{Math.round(progress)}%</span>
+              </div>
+              <div className="lb-progress-track">
+                <div className="lb-progress-fill" style={{ width: `${progress}%` }}/>
+              </div>
             </div>
 
-            <div className="lelouch-terminal" ref={terminalRef}>
+            {/* Terminal */}
+            <div className="lb-terminal" ref={terminalRef}>
               {logs.map(l => (
-                <div key={l.id} className={`lelouch-terminal-line tlog-${l.type}`}>
-                  <span className="lelouch-terminal-prompt">{">"}</span> {l.text}
+                <div key={l.id} className={`lb-line lb-line--${l.type}`}>
+                  <span className="lb-prompt">›</span> {l.text}
                 </div>
               ))}
             </div>
 
-            <section className="site-checker">
-              <h3 className="section-title">♟ Site Status Checker</h3>
-              <div className="checker-row">
+            {/* Site checker */}
+            <section className="lb-checker">
+              <h3 className="lb-section-title">♟ Site Status Checker</h3>
+              <div className="lb-checker-row">
                 <input
-                  className="lelouch-input checker-input"
+                  className="lb-input lb-checker-input"
                   type="text"
-                  placeholder="URL to check (or uses target field)"
+                  placeholder="URL to probe (blank = uses target above)"
                   value={checkerUrl}
                   onChange={e => setCheckerUrl(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && handleCheckSite()}
                 />
-                <button className="checker-btn" onClick={handleCheckSite} disabled={isChecking}>
-                  {isChecking ? "Scanning..." : "Check"}
+                <button className="lb-checker-btn" onClick={handleCheckSite} disabled={isChecking}>
+                  {isChecking ? "Probing..." : "Probe"}
                 </button>
               </div>
               {checkerResult && (
-                <div className={`checker-result ${checkerResult.up ? "result-up" : "result-down"}`}>
-                  <span className="checker-dot" style={{ background: statusColor(checkerResult.status) }}/>
-                  <span className="checker-code" style={{ color: statusColor(checkerResult.status) }}>
+                <div className={`lb-checker-result ${checkerResult.up ? "cr-up" : "cr-down"}`}>
+                  <span className="cr-dot" style={{ background: statusColor(checkerResult.status) }}/>
+                  <span className="cr-code" style={{ color: statusColor(checkerResult.status) }}>
                     {checkerResult.status === 0 ? "OFFLINE" : `HTTP ${checkerResult.status}`}
                   </span>
-                  <span className="checker-status-text">{checkerResult.statusText}</span>
-                  <span className="checker-time">{checkerResult.responseTime}ms</span>
-                  <span className={`checker-pill ${checkerResult.up ? "pill-up" : "pill-down"}`}>
+                  <span className="cr-text">{checkerResult.statusText}</span>
+                  <span className="cr-time">{checkerResult.responseTime}ms</span>
+                  <span className={`cr-pill ${checkerResult.up ? "cr-pill-up" : "cr-pill-down"}`}>
                     {checkerResult.up ? "ONLINE" : "DOWN"}
                   </span>
                 </div>
               )}
             </section>
 
-            <section className="history-section">
-              <button className="history-toggle" onClick={() => { setShowHistory(v => !v); refetchHistory(); }}>
+            {/* Attack history */}
+            <section className="lb-history">
+              <button className="lb-history-toggle"
+                onClick={() => { setShowHistory(v => !v); if (!showHistory) refetchHistory(); }}>
                 ♟ Attack History ({allAttacks.length}) {showHistory ? "▲" : "▼"}
               </button>
               {showHistory && (
-                <div className="history-list">
+                <div className="lb-history-list">
                   {allAttacks.length === 0
-                    ? <div className="history-empty">No attacks recorded yet.</div>
+                    ? <div className="lb-history-empty">No attacks on record.</div>
                     : allAttacks.map(a => (
-                      <div key={a.id} className={`history-item status-${a.status}`}>
-                        <span className="history-target" title={a.target}>{a.target}</span>
-                        <span className="history-method">{a.method}</span>
-                        <span className={`history-badge badge-${a.status}`}>{a.status}</span>
-                        <span className="history-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
+                      <div key={a.id} className="lb-history-item">
+                        <span className="lh-target" title={a.target}>{a.target}</span>
+                        <span className="lh-method">{a.method}</span>
+                        <span className={`lh-badge lhb-${a.status}`}>{a.status}</span>
+                        <span className="lh-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
+                        <span className="lh-bytes">{fmtBytes(a.bytesSent ?? 0)}</span>
                       </div>
                     ))
                   }
@@ -469,13 +671,18 @@ function Panel() {
           </div>
         </div>
 
-        <footer className="lelouch-footer">♟ v1.0 — Lelouch Britannia Edition ♟</footer>
-        <div className="lelouch-footer-slider"><div className="lelouch-footer-fill" style={{ width: `${progress}%` }}/></div>
+        <footer className="lb-footer">♟ v2.0 — Lelouch Britannia Command Panel ♟</footer>
+        <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>
       </div>
 
-      <button className={`mobile-fab ${isRunning ? "fab-stop" : ""}`} onClick={handleLaunch} aria-label={isRunning ? "Stop Geass" : "Command Geass"}>
-        <span className="fab-glyph">♟</span>
-        <span className="fab-label">{isRunning ? "Stop" : "Geass"}</span>
+      {/* Mobile FAB */}
+      <button
+        className={`lb-fab ${isRunning ? "lb-fab--stop" : ""}`}
+        onClick={handleLaunch}
+        aria-label={isRunning ? "Abort Geass" : "Command Geass"}
+      >
+        <span className="lb-fab-glyph">♟</span>
+        <span className="lb-fab-label">{isRunning ? "ABORT" : "GEASS"}</span>
       </button>
     </div>
   );
