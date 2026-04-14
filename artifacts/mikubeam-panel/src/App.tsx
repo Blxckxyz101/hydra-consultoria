@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import geassSymbol from "@assets/IMG_9069_1776196692523.jpeg";
 import {
   useListMethods,
   useCreateAttack,
@@ -9,6 +8,8 @@ import {
   useStopAttack,
   useListAttacks,
 } from "@workspace/api-client-react";
+
+const GEASS_SYMBOL = `${import.meta.env.BASE_URL}geass-symbol.png`;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -559,9 +560,9 @@ function Panel() {
             </div>
           )}
           <div className="lb-title-row">
-            <img src={geassSymbol} className="lb-header-symbol" alt="Geass" />
+            <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" />
             <h1 className="lb-title">Lelouch Britannia</h1>
-            <img src={geassSymbol} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
+            <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
         </header>
@@ -575,7 +576,7 @@ function Panel() {
               onClick={() => applyPreset(p)}
             >
               {p.method === "geass-override"
-                ? <img src={geassSymbol} className="lb-preset-symbol" alt=""/>
+                ? <img src={GEASS_SYMBOL} className="lb-preset-symbol" alt=""/>
                 : <span>{p.icon}</span>
               }
               {p.label}
@@ -591,7 +592,7 @@ function Panel() {
             <div className="lb-scanlines" aria-hidden="true"/>
             <div className="lb-gif-fade" aria-hidden="true"/>
             <img
-              src={geassSymbol}
+              src={GEASS_SYMBOL}
               className={`lb-gif-symbol${isRunning && method === "geass-override" ? " lb-gif-symbol--active" : ""}`}
               aria-hidden="true"
               alt=""
@@ -926,9 +927,9 @@ function Panel() {
         </div>
 
         <footer className="lb-footer">
-          <img src={geassSymbol} className="lb-footer-symbol" alt=""/>
+          <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>
           v2.0 — Lelouch Britannia Command Panel
-          <img src={geassSymbol} className="lb-footer-symbol" alt="" aria-hidden="true"/>
+          <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt="" aria-hidden="true"/>
         </footer>
         <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>
       </div>
