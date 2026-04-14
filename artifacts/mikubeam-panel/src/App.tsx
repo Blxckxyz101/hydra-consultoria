@@ -20,6 +20,15 @@ interface Preset { label: string; method: string; packetSize: number; duration: 
 interface MethodRec { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
 interface AnalyzeResult { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
 
+/* ── Method classification (frontend mirror of backend) ── */
+const L7_HTTP_FE = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
+const L4_TCP_FE  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
+const methodInfo = (m: string) => {
+  if (L7_HTTP_FE.has(m)) return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
+  if (L4_TCP_FE.has(m))  return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
+  return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
+};
+
 /* ── Presets ── */
 const PRESETS: Preset[] = [
   { label: "Quick Strike",   method: "http-flood",  packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
@@ -107,15 +116,49 @@ const powerLevel = (threads: number) => {
   return               { label: "MINIMAL",  color: "#5A4E40", pct: 8  };
 };
 
-const LOG_MSGS = [
-  (t: string, m: string) => `♟ Geass spreading to ${t} via ${m.toUpperCase()}...`,
-  (_t: string, m: string) => `♟ ${m.toUpperCase()} volley dispatched — Zero's will absolute`,
-  (t: string) => `♟ Britannian fleet converging on ${t}`,
-  () => `♟ Network node pressure increasing...`,
-  () => `♟ Connection pool saturated — maintaining siege`,
-  (t: string) => `♟ ${t} response degrading — hold the line`,
-  () => `♟ All units advance — Geass command active`,
+const LOG_MSGS_HTTP = [
+  (t: string, n: string) => `♟ ${n} real HTTP requests fired → ${t}`,
+  (t: string) => `♟ Flood workers maintaining ${t} under load [LIVE]`,
+  (_t: string, n: string) => `♟ ${n} req/s reaching target — HTTP workers active`,
+  (t: string) => `♟ Connection pressure on ${t} — hold the line`,
+  (_t: string, n: string) => `♟ ${n} HTTP/1.1 requests dispatched this second`,
 ];
+const LOG_MSGS_TCP = [
+  (t: string, n: string) => `♟ ${n} TCP SYN packets sent → ${t}:80 [REAL]`,
+  (t: string) => `♟ Socket pool flooding ${t} — connection queue growing`,
+  (_t: string, n: string) => `♟ ${n} TCP connections/sec — RST storm active`,
+  (t: string) => `♟ ${t} connection table under siege`,
+];
+const LOG_MSGS_SIM = [
+  (_t: string, n: string) => `♟ ${n} amplified packets computed [UDP VECTOR]`,
+  () => `♟ Amplification multiplier saturating target bandwidth`,
+  (_t: string, n: string) => `♟ ${n} pkt/s — UDP flood vector active`,
+  () => `♟ Raw socket layer — amplification active`,
+];
+
+/* ── Sparkline chart ── */
+function Sparkline({ data, color = "#D4AF37" }: { data: number[]; color?: string }) {
+  if (data.length < 2) return null;
+  const W = 200, H = 38;
+  const max = Math.max(...data, 1);
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - (v / max) * (H - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="lb-sparkline" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="spk-g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${H} ${pts} ${W},${H}`} fill="url(#spk-g)"/>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
 
 /* ── Geass Eye SVG ── */
 function GeassEye() {
@@ -165,6 +208,7 @@ function Panel() {
   const [bps, setBps] = useState(0);
   const [peakPps, setPeakPps] = useState(0);
   const [peakBps, setPeakBps] = useState(0);
+  const [ppsHistory, setPpsHistory] = useState<number[]>([]);
   const peakPpsRef = useRef(0);
   const peakBpsRef = useRef(0);
   const lastPacketsRef = useRef(0);
@@ -239,7 +283,7 @@ function Panel() {
     currentBytesRef.current   = currentAttack.bytesSent   ?? 0;
   }, [currentAttack]);
 
-  /* Per-second metric calculation (clean, independent interval) */
+  /* Per-second metric calculation */
   useEffect(() => {
     if (!isRunning) { setPps(0); setBps(0); return; }
     lastPacketsRef.current = currentPacketsRef.current;
@@ -254,18 +298,19 @@ function Panel() {
       lastBytesRef.current   = nowBytes;
       setPps(deltaPkts);
       setBps(deltaBytes);
+      // Track history for sparkline
+      setPpsHistory(prev => [...prev.slice(-29), deltaPkts]);
       // Track peaks
-      if (deltaPkts > peakPpsRef.current) {
-        peakPpsRef.current = deltaPkts;
-        setPeakPps(deltaPkts);
-      }
-      if (deltaBytes > peakBpsRef.current) {
-        peakBpsRef.current = deltaBytes;
-        setPeakBps(deltaBytes);
-      }
+      if (deltaPkts > peakPpsRef.current) { peakPpsRef.current = deltaPkts; setPeakPps(deltaPkts); }
+      if (deltaBytes > peakBpsRef.current) { peakBpsRef.current = deltaBytes; setPeakBps(deltaBytes); }
       if (deltaPkts > 0) {
-        const msg = LOG_MSGS[Math.floor(Math.random() * LOG_MSGS.length)];
-        addLog(msg(targetRef.current, method), "info");
+        const n = fmtNum(deltaPkts);
+        const t = targetRef.current;
+        let msgs: ((t: string, n: string) => string)[];
+        if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
+        else if (L4_TCP_FE.has(method)) msgs = LOG_MSGS_TCP;
+        else msgs = LOG_MSGS_SIM;
+        addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
         if (soundRef.current) playTone("tick");
       }
     }, 1000);
@@ -386,8 +431,9 @@ function Panel() {
       currentPacketsRef.current = 0; currentBytesRef.current = 0;
       lastPacketsRef.current = 0;   lastBytesRef.current = 0;
       peakPpsRef.current = 0; peakBpsRef.current = 0;
-      setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0);
-      addLog(`♟ Strike launched [ID #${result.id}] — Geass is absolute`, "success");
+      setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]);
+      const mi = methodInfo(method);
+      addLog(`♟ Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
     } catch { addLog("✕ Launch failed — check backend connection.", "error"); }
   }
@@ -467,6 +513,7 @@ function Panel() {
   }
 
   const pw = powerLevel(threads);
+  const mi = methodInfo(method);
   const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : (stats?.totalPacketsSent ?? 0);
   const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : (stats?.totalBytesSent   ?? 0);
 
@@ -700,10 +747,10 @@ function Panel() {
               </div>
             </div>
 
-            {/* Stats — 4 boxes */}
+            {/* Stats — 4 boxes + sparkline */}
             <div className="lb-stats">
               <div className="lb-stat lb-stat--red">
-                <div className="lb-stat-head"><span>⚡</span> Packets/sec</div>
+                <div className="lb-stat-head"><span>⚡</span> Req/sec</div>
                 <div className="lb-stat-val">{isRunning ? fmtNum(pps) : "—"}</div>
                 {isRunning && peakPps > 0 && (
                   <div className="lb-stat-peak">PEAK {fmtNum(peakPps)}</div>
@@ -729,6 +776,15 @@ function Panel() {
                   {fmtNum(totalPackets)} <span className="lb-stat-bytes">({fmtBytes(totalBytes)})</span>
                 </div>
               </div>
+              {isRunning && ppsHistory.length >= 3 && (
+                <div className="lb-sparkline-wrap">
+                  <div className="lb-sparkline-label">
+                    <span>LIVE TRAFFIC — {method.toUpperCase()}</span>
+                    <span className={`lb-method-badge lb-method-badge--${mi.cls}`}>{mi.badge}</span>
+                  </div>
+                  <Sparkline data={ppsHistory} color={L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : "#D4AF37"} />
+                </div>
+              )}
             </div>
 
             {/* Target status banner — shows during attack */}
