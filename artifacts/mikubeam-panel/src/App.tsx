@@ -209,6 +209,9 @@ function Panel() {
   const [peakPps, setPeakPps] = useState(0);
   const [peakBps, setPeakBps] = useState(0);
   const [ppsHistory, setPpsHistory] = useState<number[]>([]);
+  /* Last attack snapshot (resets on new attack start) */
+  const [lastAtkPkts,  setLastAtkPkts]  = useState(0);
+  const [lastAtkBytes, setLastAtkBytes] = useState(0);
   const peakPpsRef = useRef(0);
   const peakBpsRef = useRef(0);
   const lastPacketsRef = useRef(0);
@@ -328,7 +331,9 @@ function Panel() {
       if (pct >= 100) {
         setIsRunning(false); isRunningRef.current = false;
         setProgress(100); setPps(0); setBps(0);
-        addLog("♟ Operation complete — Geass command fulfilled.", "success");
+        setLastAtkPkts(currentPacketsRef.current);
+        setLastAtkBytes(currentBytesRef.current);
+        addLog(`♟ Operation complete — ${currentPacketsRef.current.toLocaleString()} requests sent in ${durationRef.current}s`, "success");
         if (soundRef.current) playTone("stop");
         if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
         refetchStats(); refetchHistory();
@@ -406,6 +411,8 @@ function Panel() {
           if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
         } catch { addLog("✕ Failed to stop attack.", "error"); }
       }
+      setLastAtkPkts(currentPacketsRef.current);
+      setLastAtkBytes(currentBytesRef.current);
       setIsRunning(false); isRunningRef.current = false;
       setProgress(0); setCurrentAttackId(null);
       setPps(0); setBps(0); setTargetStatus("unknown");
@@ -432,6 +439,7 @@ function Panel() {
       lastPacketsRef.current = 0;   lastBytesRef.current = 0;
       peakPpsRef.current = 0; peakBpsRef.current = 0;
       setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]);
+      setLastAtkPkts(0); setLastAtkBytes(0);
       const mi = methodInfo(method);
       addLog(`♟ Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
@@ -514,8 +522,8 @@ function Panel() {
 
   const pw = powerLevel(threads);
   const mi = methodInfo(method);
-  const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : (stats?.totalPacketsSent ?? 0);
-  const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : (stats?.totalBytesSent   ?? 0);
+  const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : lastAtkPkts;
+  const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : lastAtkBytes;
 
   /* ── JSX ── */
   return (
