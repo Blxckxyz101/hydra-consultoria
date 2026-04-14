@@ -70,6 +70,10 @@
   from { opacity:.4; transform:translateY(4px); }
   to   { opacity:1;  transform:translateY(0); }
 }
+@keyframes fadeIn {
+  from { opacity:0; transform:translateY(8px); }
+  to   { opacity:1; transform:translateY(0); }
+}
 
 /* ═══════════════════════════════════
    RESET & BASE
@@ -371,7 +375,8 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
 .lb-field label {
   font-family:var(--f-body); font-size:.72rem; color:var(--text-muted); letter-spacing:.01em;
 }
-.lb-field--webhook { grid-column:1/-1; }
+.lb-field--webhook  { grid-column:1/-1; }
+.lb-field--cluster  { grid-column:1/-1; }
 .lb-webhook-toggle { cursor:pointer; user-select:none; }
 .lb-webhook-toggle:hover { color:var(--gold-dim); }
 .lb-opt {
@@ -497,6 +502,10 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
 .lb-method-badge--simulated {
   background:rgba(138,123,101,.1); color:#8A7B65;
   border:1px solid rgba(138,123,101,.22);
+}
+.lb-method-badge--real-udp {
+  background:rgba(230,126,34,.12); color:#f0a045;
+  border:1px solid rgba(230,126,34,.32);
 }
 
 /* ── Target Status Banner ── */
@@ -691,21 +700,24 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   filter:drop-shadow(0 0 10px rgba(192,57,43,1)) brightness(0.8) sepia(1) hue-rotate(-20deg);
   animation:geassSymbolPulse 1.2s ease-in-out infinite;
 }
+.lb-fab-label {
+  font-family:var(--f-display); font-size:.82rem; letter-spacing:.08em;
+}
 
 /* ═══════════════════════════════════
    ANALYZE BUTTON
 ═══════════════════════════════════ */
 .lb-btn-analyze {
-  border-color: rgba(100,180,255,0.4) !important;
-  color: #88ccff !important;
+  border-color: rgba(100,180,255,0.4);
+  color: #88ccff;
   transition: all .2s;
 }
 .lb-btn-analyze:hover:not(:disabled) {
-  background: rgba(100,180,255,0.12) !important;
-  border-color: #88ccff !important;
+  background: rgba(100,180,255,0.12);
+  border-color: #88ccff;
 }
 .lb-btn-analyze:disabled { opacity:.35; cursor:not-allowed; }
-.lb-btn-analyzing { animation: analyzePulse 1s ease-in-out infinite !important; }
+.lb-btn-analyzing { animation: analyzePulse 1s ease-in-out infinite; }
 @keyframes analyzePulse {
   0%,100% { opacity:.5; }
   50%      { opacity:1; }

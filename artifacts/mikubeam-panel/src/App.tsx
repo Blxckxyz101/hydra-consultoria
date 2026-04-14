@@ -10,6 +10,7 @@ import {
 } from "@workspace/api-client-react";
 
 const GEASS_SYMBOL = `${import.meta.env.BASE_URL}geass-symbol.png`;
+const LELOUCH_GIF  = `${import.meta.env.BASE_URL}lelouch.gif`;
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -25,10 +26,12 @@ interface AnalyzeResult { target: string; ip: string | null; isIP: boolean; http
 /* ── Method classification (frontend mirror of backend) ── */
 const L7_HTTP_FE = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
 const L4_TCP_FE  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
+const L4_UDP_FE  = new Set(["udp-flood","udp-bypass"]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override") return { badge: "GEASS ∞", cls: "geass", color: "#C0392B" };
-  if (L7_HTTP_FE.has(m)) return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
-  if (L4_TCP_FE.has(m))  return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
+  if (m === "geass-override") return { badge: "GEASS ∞",  cls: "geass",    color: "#C0392B" };
+  if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP", cls: "real-http", color: "#2ecc71" };
+  if (L4_TCP_FE.has(m))      return { badge: "REAL TCP",  cls: "real-tcp",  color: "#3498db" };
+  if (L4_UDP_FE.has(m))      return { badge: "REAL UDP",  cls: "real-udp",  color: "#e67e22" };
   return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
 };
 
@@ -134,20 +137,27 @@ const LOG_MSGS_TCP = [
   (_t: string, n: string) => `👁 ${n} TCP connections/sec — RST storm active`,
   (t: string) => `👁 ${t} connection table under siege`,
 ];
+const LOG_MSGS_UDP = [
+  (t: string, n: string) => `👁 ${n} real UDP datagrams sent → ${t} [LIVE]`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — UDP flood socket pool saturating target`,
+  (t: string) => `👁 Raw UDP layer hammering ${t} — bandwidth pipe filling`,
+  (_t: string, n: string) => `👁 ${n} UDP packets dispatched — dgram sockets at max throughput`,
+  (t: string) => `👁 ${t} UDP stack under siege — datagram queue overflowing`,
+];
 const LOG_MSGS_SIM = [
-  (_t: string, n: string) => `👁 ${n} amplified packets computed [UDP VECTOR]`,
-  () => `👁 Amplification multiplier saturating target bandwidth`,
-  (_t: string, n: string) => `👁 ${n} pkt/s — UDP flood vector active`,
-  () => `👁 Raw socket layer — amplification active`,
+  (_t: string, n: string) => `👁 ${n} amplified packets computed [SIMULATED]`,
+  () => `👁 Amplification multiplier calculated — simulated vector active`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — amplification vector engaged`,
+  () => `👁 Simulated L3 — amplification payload computed`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP]`,
-  (t: string) => `👁 Dual-layer assault — ${t} has no counter to this Geass`,
-  (_t: string, n: string) => `👁 ${n} simultaneous HTTP+TCP strikes — target cannot respond`,
-  (t: string) => `👁 ${t} connection table and HTTP stack under absolute siege`,
-  (_t: string, n: string) => `👁 ${n} requests this second — 550 concurrent vectors active`,
+  (t: string, n: string) => `👁 Geass Override: ${n} vectors annihilating ${t} [HTTP+TCP+UDP]`,
+  (t: string) => `👁 Triple-layer assault — ${t} has no counter to this Geass`,
+  (_t: string, n: string) => `👁 ${n} simultaneous HTTP+TCP+UDP strikes — target cannot respond`,
+  (t: string) => `👁 ${t} connection table, HTTP stack and UDP pipe under absolute siege`,
+  (_t: string, n: string) => `👁 ${n} requests this second — triple concurrent vectors active`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — obey`,
-  (_t: string, n: string) => `👁 ${n} pkt/s — HTTP flood + TCP flood vectors simultaneous`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — HTTP flood + TCP flood + UDP flood simultaneous`,
 ];
 
 /* ── Sparkline chart ── */
@@ -336,7 +346,8 @@ function Panel() {
         let msgs: ((t: string, n: string) => string)[];
         if (method === "geass-override") msgs = LOG_MSGS_GEASS;
         else if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
-        else if (L4_TCP_FE.has(method)) msgs = LOG_MSGS_TCP;
+        else if (L4_TCP_FE.has(method))  msgs = LOG_MSGS_TCP;
+        else if (L4_UDP_FE.has(method))  msgs = LOG_MSGS_UDP;
         else msgs = LOG_MSGS_SIM;
         addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
         if (soundRef.current) playTone("tick");
@@ -477,10 +488,10 @@ function Panel() {
       return;
     }
 
-    const port = method.includes("http") || method === "geass-override" ? 80 : method.includes("dns") ? 53 : 443;
+    const port = method.includes("http") || method === "geass-override" || L4_UDP_FE.has(method) ? 80 : method.includes("dns") ? 53 : 443;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
-      addLog(`  Dual-vector: HTTP flood (250w) + TCP flood (300w) | Threads: ${threads} | Duration: ${duration}s`, "info");
+      addLog(`  Triple-vector: HTTP flood + TCP flood + UDP flood | Threads: ${threads} | Duration: ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
@@ -671,7 +682,7 @@ function Panel() {
         <div className={`lb-card ${isRunning ? "lb-card--active" : ""}`}>
           {/* GIF */}
           <div className="lb-gif-wrap">
-            <img src="/lelouch.gif" alt="Lelouch vi Britannia" className="lb-gif"/>
+            <img src={LELOUCH_GIF} alt="Lelouch vi Britannia" className="lb-gif"/>
             <div className="lb-scanlines" aria-hidden="true"/>
             <div className="lb-gif-fade" aria-hidden="true"/>
             <img
@@ -853,7 +864,7 @@ function Panel() {
                 </select>
               </div>
               <div className="lb-field">
-                <label>Packet Size (kb)</label>
+                <label>Packet Size (bytes)</label>
                 <input className="lb-num" type="number" min={1} max={65535} value={packetSize} onChange={e => setPacketSize(+e.target.value)}/>
               </div>
               <div className="lb-field">
@@ -862,7 +873,7 @@ function Panel() {
               </div>
               <div className="lb-field">
                 <label>Threads</label>
-                <input className="lb-num" type="number" min={1} max={512} value={threads} onChange={e => setThreads(+e.target.value)}/>
+                <input className="lb-num" type="number" min={1} max={1000} value={threads} onChange={e => setThreads(+e.target.value)}/>
               </div>
               <div className="lb-field">
                 <label>Packet Delay (ms)</label>
@@ -921,7 +932,10 @@ function Panel() {
             {/* Stats — 4 boxes + sparkline */}
             <div className="lb-stats">
               <div className="lb-stat lb-stat--red">
-                <div className="lb-stat-head"><span>⚡</span> Req/sec</div>
+                <div className="lb-stat-head">
+                  <span>{L4_UDP_FE.has(method) ? "💥" : "⚡"}</span>
+                  {L4_UDP_FE.has(method) ? "Pkt/sec" : L4_TCP_FE.has(method) ? "Conn/sec" : "Req/sec"}
+                </div>
                 <div className="lb-stat-val">{isRunning ? fmtNum(pps) : "—"}</div>
                 {isRunning && peakPps > 0 && (
                   <div className="lb-stat-peak">PEAK {fmtNum(peakPps)}</div>
@@ -960,7 +974,7 @@ function Panel() {
                     <span>LIVE TRAFFIC — {method.toUpperCase()}</span>
                     <span className={`lb-method-badge lb-method-badge--${mi.cls}`}>{mi.badge}</span>
                   </div>
-                  <Sparkline data={ppsHistory} color={method === "geass-override" ? "#C0392B" : L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : "#D4AF37"} />
+                  <Sparkline data={ppsHistory} color={method === "geass-override" ? "#C0392B" : L7_HTTP_FE.has(method) ? "#2ecc71" : L4_TCP_FE.has(method) ? "#3498db" : L4_UDP_FE.has(method) ? "#e67e22" : "#D4AF37"} />
                 </div>
               )}
             </div>
