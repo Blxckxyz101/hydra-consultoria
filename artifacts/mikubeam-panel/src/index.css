@@ -408,6 +408,11 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
 }
 .lb-stat-val--mono { font-size:clamp(1rem,3vw,1.35rem); }
 .lb-stat-bytes { font-size:.7em; color:var(--text-muted); margin-left:6px; }
+.lb-stat-peak {
+  font-family:var(--f-mono); font-size:.6rem; color:var(--text-dim);
+  letter-spacing:.06em; opacity:.7;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
 
 /* ── Target Status Banner ── */
 .lb-target-status {

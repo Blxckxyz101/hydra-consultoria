@@ -32,41 +32,66 @@ async function fireWebhook(webhookUrl: string, attack: typeof attacksTable.$infe
   } catch { /* webhook failures are silent */ }
 }
 
+// Amplification factors — what 1 spoofed packet generates on the target
+const AMP_FACTOR: Record<string, number> = {
+  "dns-amp":   54,
+  "ntp-amp":   556,
+  "mem-amp":   51000,
+  "ssdp-amp":  30,
+};
+
 // Calculates packets per interval based on method and threads
 function calcPacketsPerInterval(method: string, threads: number): number {
   const base = threads;
   const multipliers: Record<string, number> = {
-    "udp-flood":    28000,
-    "icmp-flood":   22000,
-    "tcp-flood":    18000,
-    "syn-flood":    24000,
-    "dns-amp":      55000,
-    "http-flood":    9000,
-    "http2-flood":   7500,
+    "udp-flood":    32000,
+    "udp-bypass":   35000,
+    "icmp-flood":   25000,
+    "tcp-flood":    20000,
+    "tcp-ack":      22000,
+    "tcp-rst":      22000,
+    "syn-flood":    28000,
+    "dns-amp":      18000,   // fewer spoofed pkts needed — amp does the rest
+    "ntp-amp":      12000,
+    "mem-amp":       4000,   // each pkt becomes 51000x — even 4k is insane
+    "ssdp-amp":     20000,
+    "http-flood":   10000,
+    "http-bypass":   9500,
+    "http2-flood":   8500,
     "slowloris":      500,
     "rudy":           350,
   };
-  const mult = multipliers[method] ?? 8000;
-  // Burst mode: ~1 in 5 intervals gets a 2-3x spike for dramatic effect
-  const burst = Math.random() < 0.2 ? (2 + Math.random()) : 1;
+  const mult = multipliers[method] ?? 10000;
+  // Burst mode: ~1 in 5 intervals gets a 2-4x spike
+  const burst = Math.random() < 0.2 ? (2 + Math.random() * 2) : 1;
   const variance = 0.8 + Math.random() * 0.4;
   return Math.floor(base * mult * variance * burst);
 }
 
 function calcBytesPerPacket(method: string): number {
   const sizes: Record<string, [number, number]> = {
-    "udp-flood":   [512, 1400],
-    "icmp-flood":  [64, 512],
-    "tcp-flood":   [40, 128],
-    "syn-flood":   [40, 60],
-    "dns-amp":     [512, 4096],
-    "http-flood":  [256, 1024],
-    "http2-flood": [128, 512],
-    "slowloris":   [32, 64],
-    "rudy":        [32, 64],
+    "udp-flood":   [512, 1472],
+    "udp-bypass":  [512, 1472],
+    "icmp-flood":  [64,   512],
+    "tcp-flood":   [40,   128],
+    "tcp-ack":     [40,    64],
+    "tcp-rst":     [40,    64],
+    "syn-flood":   [40,    60],
+    "dns-amp":     [40,    60],   // small spoofed query — amp multiplies response
+    "ntp-amp":     [8,     46],
+    "mem-amp":     [15,    15],
+    "ssdp-amp":    [110,  150],
+    "http-flood":  [512, 2048],
+    "http-bypass": [512, 2048],
+    "http2-flood": [128,  512],
+    "slowloris":   [32,    64],
+    "rudy":        [32,    64],
   };
   const [min, max] = sizes[method] ?? [64, 512];
-  return min + Math.floor(Math.random() * (max - min));
+  const base = min + Math.floor(Math.random() * (max - min));
+  // Apply amplification: bytes on target = sent bytes × amp factor
+  const amp = AMP_FACTOR[method] ?? 1;
+  return base * amp;
 }
 
 router.get("/attacks", async (_req, res): Promise<void> => {

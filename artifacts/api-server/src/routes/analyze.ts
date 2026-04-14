@@ -136,12 +136,45 @@ function scoreMethodsFor(opts: {
 
   /* DNS Amplification */
   if (!isIP && hasDNS) {
-    const score = isCDN ? 45 : 80;
+    const score = isCDN ? 48 : 82;
     recs.push({
-      method: "dns-amp", name: "DNS Amplification", score,
-      reason: `Domain has DNS records — amplification factor up to 54x floods origin bandwidth`,
+      method: "dns-amp", name: "DNS Amplification [54x]", score,
+      reason: `Domain has DNS records — 54x amplification. Each spoofed packet returns 54x the traffic to origin.`,
       suggestedThreads: 64, suggestedDuration: 90,
       protocol: "UDP", amplification: 54, tier: tierFromScore(score),
+    });
+  }
+
+  /* NTP Amplification */
+  {
+    const score = isCDN ? 55 : 90;
+    recs.push({
+      method: "ntp-amp", name: "NTP Amplification [556x]", score,
+      reason: `NTP monlist command — 556x amplification factor. A single 1Gbps uplink generates 556Gbps of traffic on target.`,
+      suggestedThreads: 256, suggestedDuration: 60,
+      protocol: "UDP", amplification: 556, tier: tierFromScore(score),
+    });
+  }
+
+  /* Memcached Amplification */
+  {
+    const score = isCDN ? 60 : 98;
+    recs.push({
+      method: "mem-amp", name: "Memcached Amp [51,000x]", score,
+      reason: `Memcached UDP amplification — 51,000x factor. Responsible for record-breaking 1.7Tbps attacks in the wild.`,
+      suggestedThreads: 512, suggestedDuration: 30,
+      protocol: "UDP", amplification: 51000, tier: tierFromScore(score),
+    });
+  }
+
+  /* SSDP Amplification */
+  {
+    const score = isIP ? 58 : 70;
+    recs.push({
+      method: "ssdp-amp", name: "SSDP Amplification [30x]", score,
+      reason: `UPnP SSDP abuse — 30x amplification against IoT devices and home routers exposed to internet.`,
+      suggestedThreads: 128, suggestedDuration: 60,
+      protocol: "UDP", amplification: 30, tier: tierFromScore(score),
     });
   }
 
@@ -150,13 +183,13 @@ function scoreMethodsFor(opts: {
     const score = isIP ? 72 : 55;
     recs.push({
       method: "icmp-flood", name: "ICMP Flood (Ping Flood)", score,
-      reason: `ICMP packets bypass application layer — effective for bandwidth saturation`,
+      reason: `ICMP packets bypass application layer — effective for raw bandwidth saturation against unfiltered hosts.`,
       suggestedThreads: 64, suggestedDuration: 60,
       protocol: "ICMP", amplification: 1, tier: tierFromScore(score),
     });
   }
 
-  return recs.sort((a, b) => b.score - a.score).slice(0, 6);
+  return recs.sort((a, b) => b.score - a.score).slice(0, 7);
 }
 
 router.post("/analyze", async (req, res): Promise<void> => {

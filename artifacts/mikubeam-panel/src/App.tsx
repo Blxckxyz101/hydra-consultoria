@@ -25,9 +25,9 @@ const PRESETS: Preset[] = [
   { label: "Quick Strike",   method: "http-flood",  packetSize: 64,   duration: 30,  delay: 50,  threads: 8,   icon: "⚡" },
   { label: "Heavy Assault",  method: "udp-flood",   packetSize: 1024, duration: 120, delay: 10,  threads: 64,  icon: "💥" },
   { label: "Stealth Mode",   method: "slowloris",   packetSize: 32,   duration: 300, delay: 500, threads: 4,   icon: "🥷" },
-  { label: "TCP Barrage",    method: "tcp-flood",   packetSize: 512,  duration: 60,  delay: 20,  threads: 32,  icon: "🔥" },
-  { label: "DNS Amplify",    method: "dns-amp",     packetSize: 512,  duration: 60,  delay: 5,   threads: 32,  icon: "📡" },
   { label: "SYN Hammer",     method: "syn-flood",   packetSize: 40,   duration: 90,  delay: 5,   threads: 128, icon: "🔨" },
+  { label: "NTP Nuclear",    method: "ntp-amp",     packetSize: 46,   duration: 60,  delay: 5,   threads: 256, icon: "☢️" },
+  { label: "MEMCACHED NUKE", method: "mem-amp",     packetSize: 15,   duration: 30,  delay: 1,   threads: 512, icon: "💀" },
 ];
 
 /* ── Log counter ── */
@@ -74,10 +74,13 @@ function playTone(type: "start" | "stop" | "tick" | "check" | "kill") {
 /* ── Formatters ── */
 const fmtNum  = (n: number) => n.toLocaleString();
 const fmtBps  = (n: number) => {
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + " GB/s";
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB/s";
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB/s";
-  return n + " B/s";
+  // Convert bytes/s → bits/s for Gbps display
+  const bps = n * 8;
+  if (bps >= 1e12) return (bps / 1e12).toFixed(2) + " Tbps";
+  if (bps >= 1e9)  return (bps / 1e9).toFixed(2)  + " Gbps";
+  if (bps >= 1e6)  return (bps / 1e6).toFixed(1)  + " Mbps";
+  if (bps >= 1e3)  return (bps / 1e3).toFixed(1)  + " Kbps";
+  return bps + " bps";
 };
 const fmtBytes = (n: number) => {
   if (n >= 1e12) return (n / 1e12).toFixed(2) + " TB";
@@ -94,12 +97,14 @@ const statusColor = (code: number) => {
   return "#8e44ad";
 };
 const powerLevel = (threads: number) => {
-  if (threads >= 128) return { label: "MAXIMUM",   color: "#ff0033", pct: 100 };
-  if (threads >= 64)  return { label: "CRITICAL",  color: "#C0392B", pct: 85 };
-  if (threads >= 32)  return { label: "HIGH",      color: "#e67e22", pct: 65 };
-  if (threads >= 16)  return { label: "MODERATE",  color: "#D4AF37", pct: 45 };
-  if (threads >= 8)   return { label: "LOW",       color: "#8A7B65", pct: 25 };
-  return               { label: "MINIMAL",  color: "#5A4E40", pct: 10 };
+  if (threads >= 512) return { label: "GODMODE",   color: "#ff00ff", pct: 100 };
+  if (threads >= 256) return { label: "OBLITERATE",color: "#ff0033", pct: 98  };
+  if (threads >= 128) return { label: "MAXIMUM",   color: "#ff4400", pct: 92  };
+  if (threads >= 64)  return { label: "CRITICAL",  color: "#C0392B", pct: 80  };
+  if (threads >= 32)  return { label: "HIGH",      color: "#e67e22", pct: 62  };
+  if (threads >= 16)  return { label: "MODERATE",  color: "#D4AF37", pct: 42  };
+  if (threads >= 8)   return { label: "LOW",       color: "#8A7B65", pct: 22  };
+  return               { label: "MINIMAL",  color: "#5A4E40", pct: 8  };
 };
 
 const LOG_MSGS = [
@@ -158,6 +163,10 @@ function Panel() {
   /* Live metrics — use refs for per-second calculation */
   const [pps, setPps] = useState(0);
   const [bps, setBps] = useState(0);
+  const [peakPps, setPeakPps] = useState(0);
+  const [peakBps, setPeakBps] = useState(0);
+  const peakPpsRef = useRef(0);
+  const peakBpsRef = useRef(0);
   const lastPacketsRef = useRef(0);
   const lastBytesRef   = useRef(0);
   const currentPacketsRef = useRef(0);
@@ -245,6 +254,15 @@ function Panel() {
       lastBytesRef.current   = nowBytes;
       setPps(deltaPkts);
       setBps(deltaBytes);
+      // Track peaks
+      if (deltaPkts > peakPpsRef.current) {
+        peakPpsRef.current = deltaPkts;
+        setPeakPps(deltaPkts);
+      }
+      if (deltaBytes > peakBpsRef.current) {
+        peakBpsRef.current = deltaBytes;
+        setPeakBps(deltaBytes);
+      }
       if (deltaPkts > 0) {
         const msg = LOG_MSGS[Math.floor(Math.random() * LOG_MSGS.length)];
         addLog(msg(targetRef.current, method), "info");
@@ -367,7 +385,8 @@ function Panel() {
       durationRef.current = duration;
       currentPacketsRef.current = 0; currentBytesRef.current = 0;
       lastPacketsRef.current = 0;   lastBytesRef.current = 0;
-      setProgress(0); setPps(0); setBps(0);
+      peakPpsRef.current = 0; peakBpsRef.current = 0;
+      setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0);
       addLog(`♟ Strike launched [ID #${result.id}] — Geass is absolute`, "success");
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
     } catch { addLog("✕ Launch failed — check backend connection.", "error"); }
@@ -686,17 +705,26 @@ function Panel() {
               <div className="lb-stat lb-stat--red">
                 <div className="lb-stat-head"><span>⚡</span> Packets/sec</div>
                 <div className="lb-stat-val">{isRunning ? fmtNum(pps) : "—"}</div>
+                {isRunning && peakPps > 0 && (
+                  <div className="lb-stat-peak">PEAK {fmtNum(peakPps)}</div>
+                )}
               </div>
               <div className="lb-stat lb-stat--gold">
                 <div className="lb-stat-head"><span>📶</span> Bandwidth</div>
                 <div className="lb-stat-val">{isRunning ? fmtBps(bps) : "—"}</div>
+                {isRunning && peakBps > 0 && (
+                  <div className="lb-stat-peak">PEAK {fmtBps(peakBps)}</div>
+                )}
               </div>
               <div className="lb-stat lb-stat--dim">
                 <div className="lb-stat-head"><span>👑</span> Threads</div>
                 <div className="lb-stat-val">{isRunning ? threads : "—"}</div>
+                {isRunning && (
+                  <div className="lb-stat-peak" style={{ color: pw.color }}>{pw.label}</div>
+                )}
               </div>
               <div className="lb-stat lb-stat--wide">
-                <div className="lb-stat-head"><span>📡</span> Total Sent</div>
+                <div className="lb-stat-head"><span>📡</span> Total Impact</div>
                 <div className="lb-stat-val lb-stat-val--mono">
                   {fmtNum(totalPackets)} <span className="lb-stat-bytes">({fmtBytes(totalBytes)})</span>
                 </div>
