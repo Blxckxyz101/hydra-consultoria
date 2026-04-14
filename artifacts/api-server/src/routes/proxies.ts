@@ -107,6 +107,29 @@ async function fetchAndTest(limit = 300): Promise<Proxy[]> {
   return live.sort((a, b) => a.responseMs - b.responseMs);
 }
 
+// ── Auto-refresh every 10 minutes (server-side) ──────────────────────────
+// First refresh fires 90 seconds after server starts (avoid startup delay)
+setTimeout(() => {
+  if (!isFetching) {
+    isFetching = true;
+    fetchAndTest(300)
+      .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
+      .catch(() => { /* keep empty cache */ })
+      .finally(() => { isFetching = false; });
+  }
+}, 90_000);
+
+// Repeat every 10 minutes
+setInterval(() => {
+  if (!isFetching) {
+    isFetching = true;
+    fetchAndTest(300)
+      .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
+      .catch(() => { /* keep old cache */ })
+      .finally(() => { isFetching = false; });
+  }
+}, 10 * 60 * 1000);
+
 // ── Routes ────────────────────────────────────────────────────────────────
 
 // GET /api/proxies — return cached live proxies
@@ -142,7 +165,7 @@ router.post("/proxies/refresh", async (_req, res): Promise<void> => {
 
 // GET /api/proxies/count — quick count for polling
 router.get("/proxies/count", (_req, res): void => {
-  res.json({ count: proxyCache.length, fetching: isFetching });
+  res.json({ count: proxyCache.length, fetching: isFetching, lastFetch });
 });
 
 export default router;

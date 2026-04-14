@@ -22,7 +22,7 @@ interface CheckResult    { up: boolean; status: number; statusText: string; resp
 interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
 interface UserPreset     { id: string; label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; }
 interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
-interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
+interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; serverType: string; serverLabel: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
 interface NamedTarget    { url: string; label: string; }
 
 /* ── Method classification ── */
@@ -342,10 +342,13 @@ function Panel() {
 
   /* Proxy rotation */
   interface ProxyEntry { host: string; port: number; responseMs: number; }
-  const [proxies, setProxies]           = useState<ProxyEntry[]>([]);
-  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [proxies, setProxies]             = useState<ProxyEntry[]>([]);
+  const [proxyEnabled, setProxyEnabled]   = useState(false);
   const [proxyFetching, setProxyFetching] = useState(false);
   const [showProxyPanel, setShowProxyPanel] = useState(false);
+  const [proxyLiveCount, setProxyLiveCount] = useState<number>(0);
+  const [proxyIsFetching, setProxyIsFetching] = useState(false);
+  const [proxyLastRefresh, setProxyLastRefresh] = useState<number>(0);
 
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
@@ -376,6 +379,47 @@ function Panel() {
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [logs]);
+
+  /* ── Proxy count polling + client-side auto-refresh every 10 min ── */
+  useEffect(() => {
+    let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    async function pollProxyCount() {
+      try {
+        const r = await fetch(`${BASE}/api/proxies/count`);
+        const d = await r.json() as { count: number; fetching: boolean; lastFetch: number };
+        setProxyLiveCount(d.count);
+        setProxyIsFetching(d.fetching);
+        if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
+        // Sync displayed list if count changed and we're showing the panel
+        if (d.count > 0 && proxies.length === 0 && !d.fetching) {
+          const r2 = await fetch(`${BASE}/api/proxies`);
+          const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+          setProxies(d2.proxies ?? []);
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Poll count every 30 seconds
+    pollProxyCount();
+    const countInterval = setInterval(pollProxyCount, 30_000);
+
+    // Client-side auto-refresh trigger every 10 minutes (backend also refreshes, this syncs state)
+    autoRefreshTimer = setTimeout(function triggerRefresh() {
+      fetch(`${BASE}/api/proxies`).then(async r => {
+        const d = await r.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+        if (d.count > 0) setProxies(d.proxies ?? []);
+        setProxyLiveCount(d.count);
+      }).catch(() => {});
+      autoRefreshTimer = setTimeout(triggerRefresh, 10 * 60 * 1000);
+    }, 10 * 60 * 1000);
+
+    return () => {
+      clearInterval(countInterval);
+      if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* Sync current packets/bytes to refs */
   useEffect(() => {
@@ -772,7 +816,10 @@ function Panel() {
       setAnalyzeResult(data);
       const best = data.recommendations[0];
       addLog(`👁 Analysis complete: ${data.recommendations.length} vectors ranked`, "success");
-      if (best) addLog(`👁 Best method: ${best.name} [Tier ${best.tier}] — score ${best.score}/100`, "success");
+      if (data.serverLabel && data.serverType !== "unknown") {
+        addLog(`👁 Server identified: ${data.serverLabel}${data.serverHeader ? ` (${data.serverHeader})` : ""}`, "info");
+      }
+      if (best) addLog(`👁 Best method: ${best.name} [Tier ${best.tier}] — score ${best.score}/100 — ${best.reason}`, "success");
       if (data.isCDN) addLog(`⚠ CDN detected (${data.cdnProvider}) — layer 7 attacks partially mitigated`, "warn");
       if (soundRef.current) playTone("check");
     } catch { addLog("✕ Analysis failed — check backend connection.", "error"); }
@@ -1030,7 +1077,18 @@ function Panel() {
                         </span>
                       )}
                       {analyzeResult.serverHeader && (
-                        <span className="lai-item"><span className="lai-key">SERVER</span>{analyzeResult.serverHeader}</span>
+                        <span className="lai-item">
+                          <span className="lai-key">SERVER</span>
+                          <span className="lai-server-raw">{analyzeResult.serverHeader}</span>
+                        </span>
+                      )}
+                      {(analyzeResult.serverType && analyzeResult.serverType !== "unknown") && (
+                        <span className="lai-item">
+                          <span className="lai-key">TYPE</span>
+                          <span className={`lai-server-badge lai-server-badge--${analyzeResult.serverType}`}>
+                            {analyzeResult.serverLabel || analyzeResult.serverType}
+                          </span>
+                        </span>
                       )}
                       {analyzeResult.isCDN && (
                         <span className="lai-item lai-cdn">
@@ -1381,6 +1439,25 @@ function Panel() {
                 </div>
                 <div className="lb-stat-val">{fmtNum(stats?.totalPacketsSent ?? 0)}</div>
                 <div className="lb-stat-sub">{fmtBytes(stats?.totalBytesSent ?? 0)}</div>
+              </div>
+              <div className={`lb-stat lb-stat--proxy${proxyLiveCount > 0 ? " lb-stat--proxy-live" : ""}`}
+                   style={{ cursor: "pointer" }} onClick={() => { setShowProxyPanel(v => !v); }}>
+                <div className="lb-stat-head">
+                  <span className="lb-stat-label">Proxies</span>
+                  <span className="lb-stat-live" style={{ color: proxyIsFetching ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#666" }}>
+                    {proxyIsFetching ? "SCAN" : proxyLiveCount > 0 ? "LIVE" : "NONE"}
+                  </span>
+                </div>
+                <div className="lb-stat-val" style={{ color: proxyLiveCount > 0 ? "#2ecc71" : "#555", fontSize: proxyLiveCount > 99 ? "1.4rem" : undefined }}>
+                  {proxyIsFetching ? "..." : proxyLiveCount}
+                </div>
+                <div className="lb-stat-sub">
+                  {proxyIsFetching
+                    ? "scanning sources…"
+                    : proxyLiveCount > 0
+                      ? `auto-refresh 10m`
+                      : "click FETCH PROXIES"}
+                </div>
               </div>
 
               {/* Sparklines */}

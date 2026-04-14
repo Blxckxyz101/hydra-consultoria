@@ -407,7 +407,10 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   gap:9px;
 }
 @media (min-width:480px) {
-  .lb-stats { grid-template-columns:1fr 1fr 1fr; }
+  .lb-stats { grid-template-columns:repeat(3,1fr); }
+}
+@media (min-width:680px) {
+  .lb-stats { grid-template-columns:repeat(5,1fr); }
 }
 .lb-stat--wide { grid-column:1/-1; }
 
@@ -427,6 +430,17 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
 .lb-stat--gold { background:linear-gradient(135deg, rgba(100,80,0,.15) 0%, rgba(60,40,0,.1) 100%); }
 .lb-stat--dim  { background:linear-gradient(135deg, rgba(15,5,30,.7) 0%, rgba(8,2,18,.8) 100%); }
 .lb-stat--wide { background:linear-gradient(135deg, rgba(8,2,20,.8) 0%, rgba(5,0,12,.9) 100%); }
+.lb-stat--proxy {
+  background:linear-gradient(135deg, rgba(0,30,20,.7) 0%, rgba(0,15,10,.8) 100%);
+  border-color:rgba(30,80,60,.3);
+  transition: border-color .3s;
+}
+.lb-stat--proxy:hover { border-color:rgba(46,204,113,.4); }
+.lb-stat--proxy-live {
+  background:linear-gradient(135deg, rgba(0,60,30,.25) 0%, rgba(0,30,15,.2) 100%);
+  border-color:rgba(46,204,113,.35);
+  box-shadow:0 0 10px rgba(46,204,113,.08);
+}
 
 .lb-stat-head {
   display:flex; align-items:center; gap:5px;
@@ -779,6 +793,24 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   text-transform:uppercase;
 }
 .lai-cdn { color:#e67e22; }
+.lai-server-raw { color:#aaa; font-size:.78rem; font-family:var(--f-mono); }
+.lai-server-badge {
+  display:inline-block; padding:2px 8px; border-radius:4px;
+  font-family:var(--f-mono); font-size:.72rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.08em;
+  border:1px solid currentColor;
+}
+.lai-server-badge--nginx      { color:#009900; border-color:rgba(0,153,0,.4); background:rgba(0,153,0,.1); }
+.lai-server-badge--openresty  { color:#00bb44; border-color:rgba(0,187,68,.4); background:rgba(0,187,68,.1); }
+.lai-server-badge--apache     { color:#e74c3c; border-color:rgba(231,76,60,.4); background:rgba(231,76,60,.1); }
+.lai-server-badge--iis        { color:#3498db; border-color:rgba(52,152,219,.4); background:rgba(52,152,219,.1); }
+.lai-server-badge--litespeed  { color:#f39c12; border-color:rgba(243,156,18,.4); background:rgba(243,156,18,.1); }
+.lai-server-badge--caddy      { color:#00d4ff; border-color:rgba(0,212,255,.4); background:rgba(0,212,255,.08); }
+.lai-server-badge--nodejs     { color:#68a063; border-color:rgba(104,160,99,.4); background:rgba(104,160,99,.1); }
+.lai-server-badge--cloudflare { color:#f6821f; border-color:rgba(246,130,31,.4); background:rgba(246,130,31,.1); }
+.lai-server-badge--gunicorn   { color:#9b59b6; border-color:rgba(155,89,182,.4); background:rgba(155,89,182,.1); }
+.lai-server-badge--tomcat     { color:#e67e22; border-color:rgba(230,126,34,.4); background:rgba(230,126,34,.1); }
+.lai-server-badge--jetty      { color:#1abc9c; border-color:rgba(26,188,156,.4); background:rgba(26,188,156,.1); }
 
 /* Recommendations list */
 .lb-recs { display:flex; flex-direction:column; gap:1px; }
