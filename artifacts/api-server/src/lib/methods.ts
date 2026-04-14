@@ -90,7 +90,16 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "Absolute Geass command. Combines real HTTP flood (all methods) + TCP connection table overflow simultaneously. Two vectors at once — nothing can stop it.",
+    description: "Absolute Geass command. 4 simultaneous vectors: Connection Flood (TLS exhaustion) + Slowloris + HTTP/2 Rapid Reset + UDP. Bypasses all rate limiting — operates below HTTP layer.",
+  },
+
+  // ── Connection Flood ─────────────────────────────────────
+  {
+    id: "conn-flood",
+    name: "Connection Flood",
+    layer: "L4" as const,
+    protocol: "TCP" as const,
+    description: "Opens thousands of TLS connections and holds them open. Exhausts nginx worker_connections (4096 max) before any rate limiting can activate — fully bypasses HTTP-level protection.",
   },
 
   // ── Layer 7 HTTP ─────────────────────────────────────────

