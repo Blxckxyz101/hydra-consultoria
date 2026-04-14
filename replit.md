@@ -39,8 +39,19 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 ### Backend (`artifacts/api-server`)
 
 - Routes: `/api/attacks` (CRUD + stop), `/api/attacks/stats`, `/api/methods`
-- Attack simulation: server-side timer updates packets/bytes per second based on threads
+- **Real attack workers** using `worker_threads` + real network I/O (dgram UDP, net TCP, fetch HTTP)
 - Methods: 9 attack vectors (UDP Flood, TCP Flood, HTTP Flood, Slowloris, ICMP Flood, etc.)
-- DB: `attacks` table in PostgreSQL
+- DB: `attacks` table in PostgreSQL — live counter via SQL increment on each worker stats flush
+
+#### Critical UDP Architecture
+
+**Root cause discovered:** Concurrent UDP `socket.send()` across multiple workers deadlocks in this environment. Concurrent startup of multiple sockets even within 1 worker also deadlocks.
+
+**Fix:** UDP uses exactly 1 worker (`spawnPool(..., numWorkers=1, ...)`). Inside that worker, sockets start SEQUENTIALLY — each socket is bound and `sendNext()` is called, then loop moves to next socket. Once all are bound, they run in parallel.
+
+- `numSockets = Math.max(1, Math.min(threads, 8))` — up to 8 sockets in 1 worker
+- Each socket: `MAX_INFLIGHT = 100` concurrent sends in flight
+- Achieves ~130K pps, 1M+ pkts in 8 seconds
+- Geass Override: 4 HTTP workers + 2 TCP workers + 1 UDP worker (3 separate pools)
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
