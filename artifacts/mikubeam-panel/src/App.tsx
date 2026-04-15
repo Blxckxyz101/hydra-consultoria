@@ -42,7 +42,7 @@ const L7_PROXY_OK = new Set([
   "conn-flood","ws-flood","h2-settings-storm",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "ARES ∞ [19v]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")      return { badge: "VIGINTUS [20v]", cls: "geass",     color: "#C0392B" };
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
@@ -57,10 +57,15 @@ const methodInfo = (m: string) => {
   if (m === "ssl-death")           return { badge: "SSL DEATH",     cls: "real-tcp",  color: "#7f8c8d" };
   if (m === "quic-flood")          return { badge: "QUIC/H3",       cls: "real-udp",  color: "#2980b9" };
   if (m === "conn-flood")          return { badge: "CONN FLOOD",    cls: "real-tcp",  color: "#e74c3c" };
+  if (m === "icmp-flood")          return { badge: "ICMP FLOOD",    cls: "real-udp",  color: "#ff6b35" };
+  if (m === "ntp-amp")             return { badge: "NTP FLOOD",     cls: "real-udp",  color: "#00d4aa" };
+  if (m === "mem-amp")             return { badge: "MEMCACHED",     cls: "real-udp",  color: "#a855f7" };
+  if (m === "ssdp-amp")            return { badge: "SSDP/UPnP",    cls: "real-udp",  color: "#06b6d4" };
+  if (m === "http-pipeline")       return { badge: "PIPELINE",      cls: "real-http", color: "#f97316" };
   if (L7_HTTP_FE.has(m))          return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
   if (L4_TCP_FE.has(m))           return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
   if (L4_UDP_FE.has(m))           return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
-  return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
+  return { badge: "REAL ATTACK", cls: "real-tcp", color: "#64748b" };
 };
 
 /* ── Smart cluster LB — method assignment per node index ── */
@@ -73,18 +78,19 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 200,  icon: "⚡" },
-  { label: "H2 Barrage",     method: "http2-flood",    packetSize: 512,  duration: 90,  delay: 0,   threads: 80,   icon: "⚛" },
-  { label: "Conn Flood",     method: "conn-flood",     packetSize: 64,   duration: 300, delay: 0,   threads: 200,  icon: "🔌" },
-  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 200,  icon: "🥷" },
-  { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 8,    icon: "💥" },
-  { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 500,  icon: "🔨" },
-  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 800,  icon: "☢️" },
-  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 2000, icon: "👁"  },
-  { label: "Geass WAF",     method: "waf-bypass",     packetSize: 512,  duration: 180, delay: 0,   threads: 200,  icon: "🌐"  },
-  { label: "HPACK Bomb",    method: "hpack-bomb",     packetSize: 512,  duration: 120, delay: 0,   threads: 200,  icon: "🧨"  },
-  { label: "H2 Cont OOM",   method: "http2-continuation", packetSize: 64, duration: 120, delay: 0, threads: 100, icon: "💀"  },
-  { label: "H2 Storm",      method: "h2-settings-storm",  packetSize: 64, duration: 120, delay: 0, threads: 200, icon: "🌊"  },
+  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 180, delay: 0, threads: 2000, icon: "👁"  },
+  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 120, delay: 0, threads: 300,  icon: "💀"  },
+  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 180, delay: 0, threads: 300,  icon: "🌐"  },
+  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 120, delay: 0, threads: 64,   icon: "📛"  },
+  { label: "H2 RST Burst",   method: "http2-flood",         packetSize: 512, duration: 90,  delay: 0, threads: 200,  icon: "⚡"  },
+  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 90,  delay: 0, threads: 400,  icon: "🚇"  },
+  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 120, delay: 0, threads: 300,  icon: "🌊"  },
+  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 120, delay: 0, threads: 200,  icon: "🧨"  },
+  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 200,  icon: "🔌"  },
+  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 200,  icon: "🥷"  },
+  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 120, delay: 0, threads: 64,   icon: "💥"  },
+  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 60,  delay: 0, threads: 64,   icon: "☢️"  },
+  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 60,  delay: 0, threads: 500,  icon: "🌊"  },
 ];
 
 /* ── Log counter ── */
@@ -97,7 +103,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];

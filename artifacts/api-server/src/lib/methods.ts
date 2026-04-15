@@ -90,7 +90,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 19 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SSDP M-SEARCH. NOVEMDECIM ARES COMMAND.",
+    description: "ABSOLUTE MAXIMUM — 20 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm + HTTP Pipeline (300K req/s) + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SSDP M-SEARCH. VIGINTUS ARES COMMAND.",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────
@@ -100,6 +100,15 @@ export const ATTACK_METHODS = [
     layer: "L7" as const,
     protocol: "HTTP" as const,
     description: "Three simultaneous attack layers per H2 connection: (1) Alternates SETTINGS_HEADER_TABLE_SIZE between 0 and 65536 forcing continuous HPACK dynamic table wipe/rebuild per RFC 7541 §4.2; (2) Holds 20-50 half-open streams open simultaneously locking server connection slots; (3) Floods WINDOW_UPDATE frames on every open stream forcing per-stream flow-control recalculation per RFC 7540 §6.9. CPU + memory combined drain.",
+  },
+
+  // ── HTTP Pipeline Flood ───────────────────────────────────
+  {
+    id: "http-pipeline",
+    name: "HTTP Pipeline Flood (HTTP/1.1 Pipelining)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "HTTP/1.1 pipelining — sends 128 requests per TCP write batch without waiting for responses (RFC 7230 §6.3.2). Each connection sends requests back-to-back, keeping the socket in keep-alive state. Server must process all requests serially — queue grows unbounded under sustained pipeline pressure. Pool of 256 pre-built request buffers with randomized paths/IPs/tokens refreshed continuously. Achieves 50K–300K req/s per worker depending on RTT. Highly effective against nginx direct (no CDN).",
   },
 
   // ── NEW: HPACK Bomb ───────────────────────────────────────
