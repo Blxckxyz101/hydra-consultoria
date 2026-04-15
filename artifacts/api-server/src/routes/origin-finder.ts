@@ -164,7 +164,7 @@ router.post("/find-origin", async (req, res) => {
 
   // ── 3. MX records ───────────────────────────────────────────────────
   try {
-    const mxRecords = await dns.resolveMx(bare).catch(() => [] as dns.MxRecord[]);
+    const mxRecords = await dns.resolveMx(bare).catch(() => [] as { exchange: string; priority: number }[]);
     await Promise.all(mxRecords.map(async mx => {
       const mxIPs = await resolveOrigin(mx.exchange).catch(() => [] as string[]);
       for (const ip of mxIPs) addIP(`MX record (${mx.exchange})`, mx.exchange, ip, "medium");

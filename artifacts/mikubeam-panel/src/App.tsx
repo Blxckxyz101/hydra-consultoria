@@ -7,6 +7,9 @@ import {
   useGetAttack,
   useStopAttack,
   useListAttacks,
+  getGetAttackStatsQueryKey,
+  getGetAttackQueryKey,
+  getListAttacksQueryKey,
 } from "@workspace/api-client-react";
 
 const GEASS_SYMBOL = `${import.meta.env.BASE_URL}geass-symbol.png`;
@@ -477,13 +480,15 @@ function Panel() {
   const { data: methods = [] } = useListMethods();
   const createAttack = useCreateAttack();
   const stopAttack   = useStopAttack();
-  const { data: stats, refetch: refetchStats } = useGetAttackStats({ query: { refetchInterval: 10000 } });
+  const { data: stats, refetch: refetchStats } = useGetAttackStats({
+    query: { queryKey: getGetAttackStatsQueryKey(), refetchInterval: 10000 },
+  });
   const { data: currentAttack, refetch: refetchAttack } = useGetAttack(
     currentAttackId ?? 0,
-    { query: { enabled: currentAttackId !== null, refetchInterval: isRunning ? 600 : false } }
+    { query: { queryKey: getGetAttackQueryKey(currentAttackId ?? 0), enabled: currentAttackId !== null, refetchInterval: isRunning ? 600 : false } }
   );
   const { data: allAttacks = [], refetch: refetchHistory } = useListAttacks(
-    { query: { refetchInterval: showHistory ? 5000 : false } }
+    { query: { queryKey: getListAttacksQueryKey(), refetchInterval: showHistory ? 5000 : false } }
   );
 
   const addLog = useCallback((text: string, type: LogType = "info") => {
@@ -1570,7 +1575,7 @@ function Panel() {
                             <button className="lb-origin-use-btn" onClick={() => {
                               setTarget(ip);
                               addLog(`🎯 Target set to origin IP: ${ip} — Cloudflare bypassed!`, "success");
-                              if (soundRef.current) playTone("geass");
+                              if (soundRef.current) playTone("check");
                               setShowOriginFinder(false);
                             }}>USE AS TARGET</button>
                           </div>
