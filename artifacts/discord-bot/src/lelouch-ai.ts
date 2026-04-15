@@ -60,72 +60,65 @@ FORMATO:
 - Máximo de 1900 caracteres por resposta (limite do Discord)
 - Respostas concisas mas completas`;
 
+type HistoryEntry = { role: "user" | "assistant"; content: string };
+
+async function callGrok(model: string, history: HistoryEntry[]): Promise<string> {
+  const response = await client.chat.completions.create({
+    model,
+    max_tokens: 600,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+    ],
+  });
+  return response.choices[0]?.message?.content?.trim() ?? "...silêncio estratégico.";
+}
+
 export async function askLelouch(userId: string, question: string): Promise<string> {
   if (!process.env.GROK_API_KEY) {
     return "❌ **GROK_API_KEY** não configurada. Configure o segredo no ambiente.";
   }
 
-  // Get or init history for this user
   if (!conversationHistory.has(userId)) {
     conversationHistory.set(userId, []);
   }
   const history = conversationHistory.get(userId)!;
 
-  // Add user message
+  // Add user message BEFORE the call
   history.push({ role: "user", content: question });
-
-  // Trim to max history
   while (history.length > MAX_HISTORY) history.shift();
 
+  let reply: string;
   try {
-    const response = await client.chat.completions.create({
-      model: "grok-3-mini",
-      max_tokens: 600,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history,
-      ],
-    });
+    reply = await callGrok("grok-3-mini", history);
+  } catch (primaryErr: unknown) {
+    const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+    const isModelError = msg.includes("model") || msg.includes("not found") || msg.includes("404");
 
-    const reply = response.choices[0]?.message?.content?.trim() ?? "...silêncio estratégico.";
-
-    // Add assistant reply to history
-    history.push({ role: "assistant", content: reply });
-    while (history.length > MAX_HISTORY) history.shift();
-
-    return reply;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // Fallback to grok-2 if grok-3-mini not available
-    if (msg.includes("model") || msg.includes("not found") || msg.includes("404")) {
-      return await askLelouchFallback(userId, question, history);
+    if (isModelError) {
+      // Fallback to grok-2 if model unavailable
+      try {
+        reply = await callGrok("grok-2-1212", history);
+      } catch (fallbackErr: unknown) {
+        // Both models failed — remove dangling user message to keep history clean
+        history.pop();
+        const fMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        console.error("[LELOUCH AI FALLBACK ERROR]", fMsg);
+        return `⚠️ *O Geass encontrou resistência...* \`${fMsg.slice(0, 120)}\``;
+      }
+    } else {
+      // Non-model error — remove dangling user message to keep history clean
+      history.pop();
+      console.error("[LELOUCH AI ERROR]", msg);
+      return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
     }
-    console.error("[LELOUCH AI ERROR]", msg);
-    return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
   }
-}
 
-async function askLelouchFallback(userId: string, question: string, history: Array<{ role: "user" | "assistant"; content: string }>): Promise<string> {
-  try {
-    const response = await client.chat.completions.create({
-      model: "grok-2-1212",
-      max_tokens: 600,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history,
-      ],
-    });
+  // Persist assistant reply to history
+  history.push({ role: "assistant", content: reply });
+  while (history.length > MAX_HISTORY) history.shift();
 
-    const reply = response.choices[0]?.message?.content?.trim() ?? "...silêncio estratégico.";
-    history.push({ role: "assistant", content: reply });
-    while (history.length > MAX_HISTORY) history.shift();
-
-    return reply;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[LELOUCH AI FALLBACK ERROR]", msg);
-    return `⚠️ *O Geass encontrou resistência...* \`${msg.slice(0, 120)}\``;
-  }
+  return reply;
 }
 
 export function clearLelouchHistory(userId: string): void {
