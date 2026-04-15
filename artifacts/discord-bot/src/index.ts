@@ -18,6 +18,7 @@ import {
 } from "discord.js";
 import { BOT_TOKEN, APPLICATION_ID, GUILD_ID, COLORS, AUTHOR } from "./config.js";
 import { api } from "./api.js";
+import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
   buildStartEmbed,
@@ -184,6 +185,21 @@ const COMMANDS = [
     )
     .addIntegerOption(opt =>
       opt.setName("threads").setDescription("Base thread count (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("lelouch")
+    .setDescription("👁️ Fale com Lelouch vi Britannia — IA com personalidade completa do anime")
+    .addSubcommand(sub =>
+      sub.setName("ask")
+        .setDescription("💬 Faça uma pergunta ou pedido ao Lelouch")
+        .addStringOption(opt =>
+          opt.setName("message").setDescription("Sua mensagem para Lelouch").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("reset")
+        .setDescription("🔄 Limpar histórico de conversa — começar do zero")
     ),
 ].map(c => c.toJSON());
 
@@ -899,6 +915,48 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
   }
 }
 
+// ── /lelouch handler ──────────────────────────────────────────────────────────
+async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "reset") {
+    clearLelouchHistory(interaction.user.id);
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.PURPLE)
+          .setTitle("👁️ MEMÓRIA APAGADA")
+          .setDescription("*\"Até os reis precisam começar do zero às vezes.\"*\n\nHistórico de conversa limpo. Nossa próxima sessão começa sem memória anterior.")
+          .setFooter({ text: AUTHOR })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // sub === "ask"
+  const message = interaction.options.getString("message", true);
+  await interaction.deferReply();
+
+  const reply = await askLelouch(interaction.user.id, message);
+
+  // Truncate if over Discord 4096 embed limit (use 1900 for description safety)
+  const display = reply.length > 1900 ? reply.slice(0, 1897) + "..." : reply;
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setAuthor({ name: "Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
+        .setDescription(display)
+        .setFooter({ text: `${AUTHOR} • /lelouch reset para limpar histórico` })
+        .setTimestamp(),
+    ],
+    files: buildGeassFiles(),
+  });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   await deployCommands();
@@ -953,6 +1011,8 @@ async function main(): Promise<void> {
         await handleCluster(interaction);
       } else if (commandName === "geass") {
         await handleGeass(interaction);
+      } else if (commandName === "lelouch") {
+        await handleLelouch(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
