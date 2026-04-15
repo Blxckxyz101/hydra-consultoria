@@ -54,6 +54,7 @@ const methodLabel = (id: string) => {
     "ntp-amp":             "NTP Amplification",
     "mem-amp":             "Memcached Amp",
     "hpack-bomb":          "HPACK Bomb — RFC 7541 Table Exhaustion",
+    "h2-settings-storm":   "H2 Settings Storm — HPACK + Flow Control Exhaustion",
     "geass-override":      "Geass Override ∞ [ARES — 13 VECTORS]",
   };
   return map[id] ?? id;

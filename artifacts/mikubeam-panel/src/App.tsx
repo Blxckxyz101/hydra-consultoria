@@ -41,6 +41,7 @@ const methodInfo = (m: string) => {
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
+  if (m === "h2-settings-storm")   return { badge: "H2 STORM",      cls: "real-http", color: "#00bcd4" };
   if (m === "hpack-bomb")          return { badge: "HPACK BOMB",    cls: "real-http", color: "#e91e8c" };
   if (m === "slowloris")           return { badge: "SLOWLORIS",     cls: "real-http", color: "#9b59b6" };
   if (m === "rudy-v2")             return { badge: "RUDY v2",       cls: "real-http", color: "#c0392b" };
@@ -78,6 +79,7 @@ const PRESETS: Preset[] = [
   { label: "Geass WAF",     method: "waf-bypass",     packetSize: 512,  duration: 180, delay: 0,   threads: 200,  icon: "🌐"  },
   { label: "HPACK Bomb",    method: "hpack-bomb",     packetSize: 512,  duration: 120, delay: 0,   threads: 200,  icon: "🧨"  },
   { label: "H2 Cont OOM",   method: "http2-continuation", packetSize: 64, duration: 120, delay: 0, threads: 100, icon: "💀"  },
+  { label: "H2 Storm",      method: "h2-settings-storm",  packetSize: 64, duration: 120, delay: 0, threads: 200, icon: "🌊"  },
 ];
 
 /* ── Log counter ── */
@@ -90,7 +92,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];

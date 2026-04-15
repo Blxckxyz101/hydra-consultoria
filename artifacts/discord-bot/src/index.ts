@@ -45,6 +45,7 @@ const METHOD_OPTIONS = [
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",                emoji: "⚡" },
   { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",           emoji: "💀" },
   { value: "hpack-bomb",          label: "🧨 HPACK Bomb (RFC 7541)",      description: "Incremental-indexed headers → HPACK table eviction storm — no CVE, no fix", emoji: "🧨" },
+  { value: "h2-settings-storm",   label: "🌊 H2 Settings Storm",          description: "SETTINGS HPACK oscillation + WINDOW_UPDATE flood — 3-layer H2 CPU+memory drain", emoji: "🌊" },
   { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS conns open — goroutine/thread per conn",        emoji: "🕸️" },
   { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",        emoji: "🔮" },
   { value: "cache-poison",        label: "☠️ CDN Cache Poisoning DoS",    description: "Fills CDN cache with unique keys — 100% origin miss rate eviction",   emoji: "☠️" },

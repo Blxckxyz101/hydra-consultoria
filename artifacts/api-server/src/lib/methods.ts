@@ -93,6 +93,15 @@ export const ATTACK_METHODS = [
     description: "ABSOLUTE MAXIMUM — 13 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death. OMNIVECT ARES COMMAND.",
   },
 
+  // ── NEW: H2 Settings Storm ────────────────────────────────
+  {
+    id: "h2-settings-storm",
+    name: "H2 Settings Storm (HPACK + Flow Control Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Three simultaneous attack layers per H2 connection: (1) Alternates SETTINGS_HEADER_TABLE_SIZE between 0 and 65536 forcing continuous HPACK dynamic table wipe/rebuild per RFC 7541 §4.2; (2) Holds 20-50 half-open streams open simultaneously locking server connection slots; (3) Floods WINDOW_UPDATE frames on every open stream forcing per-stream flow-control recalculation per RFC 7540 §6.9. CPU + memory combined drain.",
+  },
+
   // ── NEW: HPACK Bomb ───────────────────────────────────────
   {
     id: "hpack-bomb",

