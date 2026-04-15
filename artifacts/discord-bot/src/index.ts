@@ -31,6 +31,7 @@ import {
   buildGeassFiles,
   buildAttackFiles,
   buildClusterEmbed,
+  buildInfoEmbed,
   type ProbeResult,
 } from "./embeds.js";
 
@@ -142,6 +143,10 @@ const COMMANDS = [
           { name: "L3 — Network layer (ICMP, amplification)",         value: "L3" },
         )
     ),
+
+  new SlashCommandBuilder()
+    .setName("info")
+    .setDescription("👁️ MikuBeam ARES — full platform info, live stats, arsenal breakdown & infrastructure"),
 
   new SlashCommandBuilder()
     .setName("help")
@@ -549,6 +554,35 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
   }
 }
 
+async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+  try {
+    const [stats, clusterStatus] = await Promise.allSettled([
+      api.getStats(),
+      api.getClusterStatus(),
+    ]);
+
+    const s = stats.status === "fulfilled" ? stats.value : null;
+    const c = clusterStatus.status === "fulfilled" ? clusterStatus.value : null;
+
+    const embed = buildInfoEmbed({
+      guildCount:    botClient?.guilds.cache.size ?? 0,
+      totalAttacks:  s?.totalAttacks  ?? 0,
+      activeAttacks: s?.runningAttacks ?? 0,
+      uptimeMs:      botClient?.uptime ?? 0,
+      cpuCount:      s?.cpuCount,
+      totalPackets:  s?.totalPacketsSent ?? 0,
+      totalBytes:    s?.totalBytesSent   ?? 0,
+      clusterNodes:  c?.configuredNodes ?? 0,
+    });
+
+    await interaction.editReply({ embeds: [embed], files: buildAttackFiles() });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await interaction.editReply({ embeds: [buildErrorEmbed("INFO FAILED", message)] });
+  }
+}
+
 async function handleHelp(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.reply({ embeds: [buildHelpEmbed()], files: buildGeassFiles() });
 }
@@ -879,6 +913,8 @@ async function main(): Promise<void> {
         await handleAnalyze(interaction);
       } else if (commandName === "methods") {
         await handleMethods(interaction);
+      } else if (commandName === "info") {
+        await handleInfo(interaction);
       } else if (commandName === "help") {
         await handleHelp(interaction);
       } else if (commandName === "cluster") {

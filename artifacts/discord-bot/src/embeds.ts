@@ -491,6 +491,112 @@ export function buildHelpEmbed(): EmbedBuilder {
     .setTimestamp();
 }
 
+// ── Info Embed ────────────────────────────────────────────────────────────────
+export function buildInfoEmbed(opts: {
+  guildCount:   number;
+  totalAttacks: number;
+  activeAttacks: number;
+  uptimeMs:     number;
+  cpuCount?:    number;
+  totalPackets: number;
+  totalBytes:   number;
+  clusterNodes?: number;
+}): EmbedBuilder {
+  const { guildCount, totalAttacks, activeAttacks, uptimeMs, cpuCount, totalPackets, totalBytes, clusterNodes = 0 } = opts;
+
+  const fmtUptime = (ms: number) => {
+    const s   = Math.floor(ms / 1000);
+    const d   = Math.floor(s / 86400);
+    const h   = Math.floor((s % 86400) / 3600);
+    const m   = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (d > 0) return `**${d}d** ${h}h ${m}m`;
+    if (h > 0) return `**${h}h** ${m}m ${sec}s`;
+    return `**${m}m** ${sec}s`;
+  };
+
+  const fmtBig = (n: number) => {
+    if (n >= 1e9)  return `${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6)  return `${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3)  return `${(n / 1e3).toFixed(1)}K`;
+    return String(n);
+  };
+
+  const totalNodes = 10 + clusterNodes;
+
+  return new EmbedBuilder()
+    .setColor(COLORS.CRIMSON)
+    .setTitle("👁️  L E L O U C H  B R I T A N N I A  —  A R E S  C O M M A N D")
+    .setDescription(
+      `> *"The only ones who should kill, are those who are prepared to be killed."*\n` +
+      `> — **Lelouch vi Britannia**, Code R-02\n\n` +
+      `**MikuBeam ARES** is a next-generation network stress-testing platform.\n` +
+      `21 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`
+    )
+    .setImage("attachment://lelouch.gif")
+    .setThumbnail("attachment://geass-symbol.png")
+    .addFields(
+      // ── Divider ──
+      { name: "\u200b", value: "━━━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━━━", inline: false },
+      {
+        name: "🔴 Geass Override ∞",
+        value:
+          "```\n" +
+          "  ALL 21 VECTORS — SIMULTANEOUS\n" +
+          "  ┌─────────────────────────────────────┐\n" +
+          "  │  L7 Application  ·  14 vectors      │\n" +
+          "  │  L4 Transport    ·   4 vectors      │\n" +
+          "  │  L3 Network      ·   3 vectors      │\n" +
+          "  │  CVE-2024-27316  ·  H2 CONTINUATION │\n" +
+          "  │  CVE-2023-44487  ·  Rapid Reset      │\n" +
+          "  │  RFC 9000        ·  QUIC / HTTP3     │\n" +
+          "  └─────────────────────────────────────┘\n" +
+          "```",
+        inline: false,
+      },
+      // ── Infrastructure ──
+      { name: "\u200b", value: "━━━━━━ 🖥️  **INFRASTRUCTURE** ━━━━━━", inline: false },
+      { name: "⚙️ Nodes",       value: `**${totalNodes}** machines`,            inline: true },
+      { name: "🧠 vCPU / Node", value: `**8 vCPU** → **${totalNodes * 8}** total`, inline: true },
+      { name: "💾 RAM / Node",  value: `**32GB** → **${totalNodes * 32}GB** total`, inline: true },
+      { name: "🔁 Cluster Fan-out", value: `**${totalNodes}× power** on Geass Override ∞`, inline: true },
+      { name: "💻 CPU Cores",   value: cpuCount ? `**${cpuCount}** detected` : "**—**", inline: true },
+      { name: "🌐 API Version", value: `**v2.0  ·  Node.js 20**`,               inline: true },
+      // ── Live Stats ──
+      { name: "\u200b", value: "━━━━━━ 📊  **LIVE SESSION STATS** ━━━━━━", inline: false },
+      { name: "🏰 Guilds",       value: `**${fmtBig(guildCount)}**`,             inline: true },
+      { name: "⚔️ Total Attacks",value: `**${fmtBig(totalAttacks)}**`,           inline: true },
+      { name: "🔴 Active Now",   value: `**${activeAttacks}** firing`,           inline: true },
+      { name: "📦 Pkts Fired",   value: `**${fmtBig(totalPackets)}**`,           inline: true },
+      { name: "💾 Data Sent",    value: `**${fmtBytes(totalBytes)}**`,           inline: true },
+      { name: "⏱ Uptime",        value: fmtUptime(uptimeMs),                    inline: true },
+      // ── Commands ──
+      { name: "\u200b", value: "━━━━━━ 📖  **COMMAND REFERENCE** ━━━━━━", inline: false },
+      {
+        name: "⚡ Core Commands",
+        value:
+          "`/geass`  — Geass Override ∞ · 21 vectors max power\n" +
+          "`/attack start`  — Launch any single vector\n" +
+          "`/attack stop`   — Terminate by ID\n" +
+          "`/attack list`   — View all attacks\n" +
+          "`/attack stats`  — Session statistics",
+        inline: true,
+      },
+      {
+        name: "🔍 Recon & Cluster",
+        value:
+          "`/analyze`  — Target recon & vector ranking\n" +
+          "`/methods`  — Full attack method list\n" +
+          "`/cluster status`  — Node health grid\n" +
+          "`/cluster broadcast`  — Fan-out Geass to all nodes\n" +
+          "`/help`  — Quick reference",
+        inline: true,
+      },
+    )
+    .setFooter({ text: `${AUTHOR}  •  MikuBeam ARES v2.0  •  ${totalNodes} Nodes Configured` })
+    .setTimestamp();
+}
+
 // ── Cluster Status Embed ──────────────────────────────────────────────────────
 export function buildClusterEmbed(status: {
   self:            { url: string; online: boolean; latencyMs: number; cpus: number; freeMem: number };
