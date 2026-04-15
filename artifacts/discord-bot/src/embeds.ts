@@ -473,9 +473,15 @@ export function buildHelpEmbed(): EmbedBuilder {
       { name: "📋 `/attack list`",         value: "View all active and recent attacks.",         inline: false },
       { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },
       { name: "🔍 `/analyze <target>`",    value: "Scan a target and get ranked recommendations for best attack vectors.", inline: false },
-      { name: "⚡ `/methods [layer]`",     value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.", inline: false },
-      { name: "❓ `/help`",               value: "Show this help message.",                     inline: false },
-      { name: "\u200b",                    value: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline: false },
+      { name: "⚡ `/methods [layer]`",          value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.",          inline: false },
+      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT 21 vectors.",   inline: false },
+      { name: "🌐 `/cluster status`",            value: "Check health & latency of all cluster nodes.",                       inline: false },
+      { name: "🌐 `/cluster broadcast <target>`",value: "Fire Geass Override to ALL nodes simultaneously (10× power).",       inline: false },
+      { name: "🤖 `/lelouch ask <message>`",     value: "Talk to **Lelouch AI** — helps with the bot, code, web systems & anything else.",  inline: false },
+      { name: "🔄 `/lelouch reset`",             value: "Clear your Lelouch AI conversation history.",                        inline: false },
+      { name: "ℹ️ `/info`",                      value: "Full platform info — cluster infrastructure & live stats (EN/PT).",  inline: false },
+      { name: "❓ `/help`",                      value: "Show this help message.",                                            inline: false },
+      { name: "\u200b",                          value: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",                         inline: false },
       {
         name: "💡 Tips",
         value: [
@@ -483,6 +489,7 @@ export function buildHelpEmbed(): EmbedBuilder {
           "• Use `waf-bypass` for Cloudflare/Akamai protected targets",
           "• The ⏹️ **Stop** button appears on every attack embed",
           "• Active attacks auto-update every 5 seconds",
+          "• Ask `/lelouch ask` anything — it knows the entire platform",
         ].join("\n"),
         inline: false,
       },
@@ -621,8 +628,8 @@ export function buildInfoEmbed(opts: {
       : "`/geass`  — Geass Override ∞ · 21 vectors max power\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
-      ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
-      : "`/analyze`  — Target recon & vector ranking\n`/methods`  — Full attack method list\n`/cluster status`  — Node health grid\n`/cluster broadcast`  — Fan-out Geass to all nodes\n`/info`  — This screen  ·  `/help`  — Quick reference",
+      ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/lelouch ask`  — IA Lelouch · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
+      : "`/analyze`  — Target recon & vector ranking\n`/methods`  — Full attack method list\n`/cluster status`  — Node health grid\n`/cluster broadcast`  — Fan-out Geass to all nodes\n`/lelouch ask`  — Lelouch AI · help & chat\n`/info`  — This screen  ·  `/help`  — Quick reference",
     footer:      pt
       ? `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nós  •  🇧🇷 Português`
       : `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nodes  •  🇺🇸 English`,
