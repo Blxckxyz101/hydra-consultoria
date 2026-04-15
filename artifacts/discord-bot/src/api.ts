@@ -71,17 +71,24 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface LiveConns {
+  conns:   number;
+  running: boolean;
+}
+
 export const api = {
-  getMethods: ()           => req<Method[]>("/api/methods"),
-  getAttacks: ()           => req<Attack[]>("/api/attacks"),
-  getStats:   ()           => req<AttackStats>("/api/attacks/stats"),
-  getAttack:  (id: number) => req<Attack>(`/api/attacks/${id}`).catch(() => null as null),
+  getMethods:   ()           => req<Method[]>("/api/methods"),
+  getAttacks:   ()           => req<Attack[]>("/api/attacks"),
+  getStats:     ()           => req<AttackStats>("/api/attacks/stats"),
+  getAttack:    (id: number) => req<Attack>(`/api/attacks/${id}`).catch(() => null as null),
+  getLiveConns: (id: number) => req<LiveConns>(`/api/attacks/${id}/live`).catch(() => ({ conns: 0, running: false })),
 
   startAttack: (body: {
     target:    string;
     method:    string;
     threads:   number;
     duration:  number;
+    port?:     number;
     packetSize?: number;
   }) => req<Attack>("/api/attacks", { method: "POST", body: JSON.stringify(body) }),
 

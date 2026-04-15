@@ -60,47 +60,69 @@ const progressBar = (startedAt: string, durationSec: number) => {
   return `\`[${"█".repeat(filled)}${"░".repeat(18 - filled)}]\` ${Math.round(pct * 100)}%`;
 };
 
+// Connection-based methods that show open conn counter
+const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy"]);
+
 // ── Attack Running/Live Embed ─────────────────────────────────────────────────
 // pps = calculated externally (delta packetsSent / 5s interval)
-export function buildAttackEmbed(attack: Attack, livePps = 0): EmbedBuilder {
+// liveConns = from /api/attacks/:id/live endpoint (active open connections)
+export function buildAttackEmbed(attack: Attack, livePps = 0, liveConns = 0): EmbedBuilder {
   const isRunning = attack.status === "running";
   const color     = isRunning ? COLORS.CRIMSON
     : attack.status === "finished" ? COLORS.GREEN
     : COLORS.GRAY;
   const emoji     = METHOD_EMOJIS[attack.method] ?? "⚡";
+  const showConns = CONN_METHODS.has(attack.method);
+
+  const connBar = (conns: number) => {
+    // Visual bar showing connection density (max display = 10K)
+    const pct    = Math.min(1, conns / 10000);
+    const filled = Math.round(pct * 12);
+    const bar    = `${"▓".repeat(filled)}${"░".repeat(12 - filled)}`;
+    return `\`[${bar}]\` ${conns >= 1000 ? `**${(conns/1000).toFixed(1)}K**` : `**${conns}**`} holding`;
+  };
 
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${isRunning ? "GEASS COMMAND ACTIVE" : `ATTACK ${attack.status.toUpperCase()}`}`)
     .setDescription(
       isRunning
-        ? `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
+        ? attack.method === "geass-override"
+          ? `⚡ **PENTA-VECTOR ASSAULT** — 5 simultaneous vectors, live monitoring active`
+          : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
     .addFields(
-      { name: "🎯 Target",   value: `\`${attack.target}\``,                   inline: true },
+      { name: "🎯 Target",   value: `\`${attack.target}\``,                       inline: true },
       { name: "⚔️ Method",   value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
-      { name: "🆔 ID",       value: `\`#${attack.id}\``,                       inline: true },
-      { name: "🧵 Threads",  value: `**${fmtNum(attack.threads)}**`,            inline: true },
-      { name: "⏱ Duration",  value: `**${attack.duration}s**`,                 inline: true },
-      { name: "📊 Status",   value: statusIcon(attack.status),                  inline: true },
+      { name: "🆔 ID",       value: `\`#${attack.id}\``,                          inline: true },
+      { name: "🧵 Threads",  value: `**${fmtNum(attack.threads)}**`,               inline: true },
+      { name: "⏱ Duration",  value: `**${attack.duration}s**`,                    inline: true },
+      { name: "📊 Status",   value: statusIcon(attack.status),                     inline: true },
     );
 
   embed.addFields({ name: "\u200b", value: "━━━━━━━━━━ 📡 **METRICS** ━━━━━━━━━━", inline: false });
 
   if (isRunning) {
     embed.addFields(
-      { name: "📈 Live Rate",    value: `**${fmtPps(livePps)}**`,                     inline: true },
-      { name: "📦 Packets Sent", value: `**${fmtNum(attack.packetsSent)}**`,           inline: true },
-      { name: "💾 Data Sent",    value: `**${fmtBytes(attack.bytesSent)}**`,           inline: true },
-      { name: "⏳ Elapsed",      value: `**${elapsed(attack.startedAt)}**`,            inline: true },
-      { name: "\u200b",          value: progressBar(attack.startedAt, attack.duration), inline: false },
+      { name: "📈 Live Rate",    value: `**${fmtPps(livePps)}**`,                       inline: true },
+      { name: "📦 Packets Sent", value: `**${fmtNum(attack.packetsSent)}**`,             inline: true },
+      { name: "💾 Data Sent",    value: `**${fmtBytes(attack.bytesSent)}**`,             inline: true },
+      { name: "⏳ Elapsed",      value: `**${elapsed(attack.startedAt)}**`,              inline: true },
     );
+    if (showConns) {
+      embed.addFields({
+        name:    "🔗 Open Connections",
+        value:   liveConns > 0 ? connBar(liveConns) : "_ramping up..._",
+        inline:  true,
+      });
+    }
+    embed.addFields({ name: "\u200b", value: progressBar(attack.startedAt, attack.duration), inline: false });
   } else {
     embed.addFields(
       { name: "📦 Total Packets",  value: `**${fmtNum(attack.packetsSent)}**`,   inline: true },
       { name: "💾 Total Data",     value: `**${fmtBytes(attack.bytesSent)}**`,   inline: true },
-      { name: "⏳ Duration",       value: `**${elapsed(attack.startedAt)}**`,    inline: true },
+      { name: "⏳ Elapsed",        value: `**${elapsed(attack.startedAt)}**`,    inline: true },
     );
   }
 

