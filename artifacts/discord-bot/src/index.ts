@@ -254,10 +254,11 @@ function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilde
 
 function startMonitor(attackId: number, msg: Message, target: string, userId?: string): void {
   if (monitors.has(attackId)) return;
-  const INTERVAL_MS = 7_000;
+  const INTERVAL_MS = 5_000;
   targetHistories.set(attackId, []);
   downAlertSent.set(attackId, false);
   let busy = false;
+  let nullAttackCount = 0; // consecutive null responses before giving up
 
   const tick = setInterval(async () => {
     if (busy) return;
@@ -265,28 +266,40 @@ function startMonitor(attackId: number, msg: Message, target: string, userId?: s
     try {
       const [attack, live, probe] = await Promise.all([
         api.getAttack(attackId),
-        api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
+        api.getLiveConns(attackId),
         probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
       ]);
 
+      // Only stop monitoring after 3 consecutive null responses (guards against transient failures)
       if (!attack) {
-        clearInterval(tick);
-        monitors.delete(attackId);
-        prevPackets.delete(attackId);
-        targetHistories.delete(attackId);
-        downAlertSent.delete(attackId);
+        nullAttackCount++;
+        if (nullAttackCount >= 3) {
+          clearInterval(tick);
+          monitors.delete(attackId);
+          prevPackets.delete(attackId);
+          targetHistories.delete(attackId);
+          downAlertSent.delete(attackId);
+        }
         return;
       }
+      nullAttackCount = 0; // reset on successful fetch
 
       const history = targetHistories.get(attackId) ?? [];
       history.push(probe);
       if (history.length > 30) history.shift();
       targetHistories.set(attackId, history);
 
-      const prev    = prevPackets.get(attackId) ?? attack.packetsSent;
-      const delta   = Math.max(0, attack.packetsSent - prev);
-      const livePps = delta / (INTERVAL_MS / 1000);
-      prevPackets.set(attackId, attack.packetsSent);
+      // Use in-memory live pps from the /live endpoint (no DB lag)
+      // Fallback to delta calculation if live.pps is unavailable
+      const livePps = live.pps > 0
+        ? live.pps
+        : (() => {
+            const prev  = prevPackets.get(attackId) ?? attack.packetsSent;
+            const delta = Math.max(0, attack.packetsSent - prev);
+            prevPackets.set(attackId, attack.packetsSent);
+            return Math.round(delta / (INTERVAL_MS / 1000));
+          })();
+      if (live.pps > 0) prevPackets.set(attackId, attack.packetsSent);
 
       const isRunning = attack.status === "running";
       const row       = buildAttackButtons(attackId, isRunning);

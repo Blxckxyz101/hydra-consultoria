@@ -72,16 +72,22 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export interface LiveConns {
-  conns:   number;
-  running: boolean;
+  conns:        number;
+  running:      boolean;
+  pps:          number;
+  bps:          number;
+  totalPackets: number;
+  totalBytes:   number;
 }
+
+const LIVE_FALLBACK: LiveConns = { conns: 0, running: false, pps: 0, bps: 0, totalPackets: 0, totalBytes: 0 };
 
 export const api = {
   getMethods:   ()           => req<Method[]>("/api/methods"),
   getAttacks:   ()           => req<Attack[]>("/api/attacks"),
   getStats:     ()           => req<AttackStats>("/api/attacks/stats"),
   getAttack:    (id: number) => req<Attack>(`/api/attacks/${id}`).catch(() => null as null),
-  getLiveConns: (id: number) => req<LiveConns>(`/api/attacks/${id}/live`).catch(() => ({ conns: 0, running: false })),
+  getLiveConns: (id: number) => req<LiveConns>(`/api/attacks/${id}/live`).catch(() => LIVE_FALLBACK),
 
   startAttack: (body: {
     target:    string;

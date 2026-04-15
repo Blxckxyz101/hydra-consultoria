@@ -39,6 +39,49 @@ const attackWorkers = new Map<number, Worker[]>();
 // ── Live in-memory connection counter (slowloris + conn-flood) ─────────────
 export const attackLiveConns = new Map<number, number>();
 
+// ── In-memory live stats (no DB latency) ───────────────────────────────────
+// Accumulated since attack start — never reset until attack ends
+const livePackets   = new Map<number, number>(); // total packets in memory
+const liveBytes     = new Map<number, number>(); // total bytes in memory
+// Snapshot from last rate window (updated every 1s by the rate timer)
+const livePps       = new Map<number, number>(); // current pps
+const liveBps       = new Map<number, number>(); // current bps
+// Previous snapshot for delta calculation
+const prevPktsSnap  = new Map<number, number>();
+const prevBytesSnap = new Map<number, number>();
+
+// ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
+// Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
+const dbBatchPkts  = new Map<number, number>();
+const dbBatchBytes = new Map<number, number>();
+
+setInterval(async () => {
+  if (dbBatchPkts.size === 0) return;
+  const entries = [...dbBatchPkts.entries()];
+  dbBatchPkts.clear();
+  dbBatchBytes.clear();
+  for (const [id, pkts] of entries) {
+    const bytes = dbBatchBytes.get(id) ?? 0;
+    void addStats(id, pkts, bytes);
+  }
+}, 500);
+
+// Rate calculator — updates pps/bps from in-memory totals every second
+setInterval(() => {
+  for (const [id, total] of livePackets.entries()) {
+    const prev  = prevPktsSnap.get(id) ?? 0;
+    const delta = Math.max(0, total - prev);
+    prevPktsSnap.set(id, total);
+    livePps.set(id, delta);
+  }
+  for (const [id, total] of liveBytes.entries()) {
+    const prev  = prevBytesSnap.get(id) ?? 0;
+    const delta = Math.max(0, total - prev);
+    prevBytesSnap.set(id, total);
+    liveBps.set(id, delta);
+  }
+}, 1000);
+
 // ── CPU count (how many parallel workers to spawn) ────────────────────────
 const CPU_COUNT = Math.max(1, os.cpus().length);
 
@@ -61,6 +104,18 @@ async function addStats(id: number, pkts: number, bytes: number) {
       bytesSent:   sql`${attacksTable.bytesSent}   + ${bytes}`,
     }).where(eq(attacksTable.id, id));
   } catch { /* ignore */ }
+}
+
+// ── Worker stats handler: update in-memory live stats + batch for DB ───────
+function onWorkerStats(id: number, pkts: number, bytes: number, conns?: number) {
+  // In-memory totals — instant, no DB lag
+  livePackets.set(id, (livePackets.get(id) ?? 0) + pkts);
+  liveBytes.set(id,   (liveBytes.get(id)   ?? 0) + bytes);
+  // Queue for batched DB write (flushed every 500ms)
+  dbBatchPkts.set(id,  (dbBatchPkts.get(id)  ?? 0) + pkts);
+  dbBatchBytes.set(id, (dbBatchBytes.get(id) ?? 0) + bytes);
+  // Live connection counter
+  if (conns !== undefined) attackLiveConns.set(id, conns);
 }
 
 
@@ -294,13 +349,31 @@ router.post("/attacks", async (req, res): Promise<void> => {
   attackAborts.set(id, ctrl);
   attackTimers.set(id, stopTimer);
 
+  // Init in-memory counters
+  livePackets.set(id, 0);
+  liveBytes.set(id, 0);
+  livePps.set(id, 0);
+  liveBps.set(id, 0);
+  prevPktsSnap.set(id, 0);
+  prevBytesSnap.set(id, 0);
+
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
-    (pkts, bytes, conns) => {
-      void addStats(id, pkts, bytes);
-      if (conns !== undefined) attackLiveConns.set(id, conns);
-    }
+    (pkts, bytes, conns) => onWorkerStats(id, pkts, bytes, conns)
   ).finally(async () => {
+    // Final flush of any pending batch stats
+    const pending = dbBatchPkts.get(id) ?? 0;
+    const pendingBytes = dbBatchBytes.get(id) ?? 0;
+    dbBatchPkts.delete(id);
+    dbBatchBytes.delete(id);
+    if (pending > 0 || pendingBytes > 0) void addStats(id, pending, pendingBytes);
+
     attackLiveConns.delete(id);
+    livePackets.delete(id);
+    liveBytes.delete(id);
+    livePps.delete(id);
+    liveBps.delete(id);
+    prevPktsSnap.delete(id);
+    prevBytesSnap.delete(id);
     const t = attackTimers.get(id);
     if (t) clearTimeout(t);
     attackTimers.delete(id);
@@ -338,11 +411,20 @@ router.get("/attacks/stats", async (_req, res): Promise<void> => {
   });
 });
 
-// Live in-memory stats (active connections) — not stored in DB
+// Live in-memory stats — real-time, no DB latency
+// Returns conns, pps, bps, totalPackets, totalBytes, running
 router.get("/attacks/:id/live", (req, res): void => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  res.json({ conns: attackLiveConns.get(id) ?? 0, running: attackAborts.has(id) });
+  const running = attackAborts.has(id);
+  res.json({
+    conns:        attackLiveConns.get(id) ?? 0,
+    running,
+    pps:          livePps.get(id)     ?? 0,
+    bps:          liveBps.get(id)     ?? 0,
+    totalPackets: livePackets.get(id) ?? 0,
+    totalBytes:   liveBytes.get(id)   ?? 0,
+  });
 });
 
 router.get("/attacks/:id", async (req, res): Promise<void> => {

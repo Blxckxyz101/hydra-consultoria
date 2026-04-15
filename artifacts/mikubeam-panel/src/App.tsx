@@ -616,26 +616,63 @@ function Panel() {
     currentBytesRef.current   = currentAttack.bytesSent   ?? 0;
   }, [currentAttack]);
 
-  /* Per-second metric calculation */
+  /* Per-second metric calculation — polls /live endpoint for real-time stats (no DB lag)
+   * Falls back to DB delta if live endpoint returns 0 (attack just started or finished) */
   useEffect(() => {
     if (!isRunning) { setPps(0); setBps(0); return; }
     lastPacketsRef.current = currentPacketsRef.current;
     lastBytesRef.current   = currentBytesRef.current;
+    // Track last log time to avoid spamming logs during fast geass-override
+    let lastLogMs = 0;
 
-    const iv = setInterval(() => {
-      const nowPkts  = currentPacketsRef.current;
-      const nowBytes = currentBytesRef.current;
-      const deltaPkts  = Math.max(0, nowPkts  - lastPacketsRef.current);
-      const deltaBytes = Math.max(0, nowBytes - lastBytesRef.current);
-      lastPacketsRef.current = nowPkts;
-      lastBytesRef.current   = nowBytes;
-      setPps(deltaPkts);
-      setBps(deltaBytes);
-      setPpsHistory(prev => [...prev.slice(-29), deltaPkts]);
-      if (deltaPkts > peakPpsRef.current)  { peakPpsRef.current = deltaPkts;  setPeakPps(deltaPkts); }
-      if (deltaBytes > peakBpsRef.current) { peakBpsRef.current = deltaBytes; setPeakBps(deltaBytes); }
-      if (deltaPkts > 0) {
-        const n = fmtNum(deltaPkts);
+    const iv = setInterval(async () => {
+      let displayPps = 0;
+      let displayBps = 0;
+
+      // Try live endpoint first (no DB lag — instant in-memory stats)
+      if (currentAttackId !== null) {
+        try {
+          const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
+          if (r.ok) {
+            const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean };
+            if (live.pps > 0 || live.bps > 0) {
+              displayPps = live.pps;
+              displayBps = live.bps;
+              // Also sync totals to refs so progress bar + final count is accurate
+              if (live.totalPackets > currentPacketsRef.current) {
+                currentPacketsRef.current = live.totalPackets;
+              }
+              if (live.totalBytes > currentBytesRef.current) {
+                currentBytesRef.current = live.totalBytes;
+              }
+              // Update live conn counter
+              if (live.conns > 0) setActiveConns(live.conns);
+            }
+          }
+        } catch { /* ignore, fall through to DB delta */ }
+      }
+
+      // Fallback: delta from DB-backed currentPacketsRef (slower but always available)
+      if (displayPps === 0) {
+        const nowPkts  = currentPacketsRef.current;
+        const nowBytes = currentBytesRef.current;
+        displayPps = Math.max(0, nowPkts  - lastPacketsRef.current);
+        displayBps = Math.max(0, nowBytes - lastBytesRef.current);
+        lastPacketsRef.current = nowPkts;
+        lastBytesRef.current   = nowBytes;
+      }
+
+      setPps(displayPps);
+      setBps(displayBps);
+      setPpsHistory(prev => [...prev.slice(-29), displayPps]);
+      if (displayPps > peakPpsRef.current)  { peakPpsRef.current = displayPps;  setPeakPps(displayPps); }
+      if (displayBps > peakBpsRef.current) { peakBpsRef.current = displayBps; setPeakBps(displayBps); }
+
+      // Log at most once per 2s to prevent terminal spam during geass-override
+      const now = Date.now();
+      if (displayPps > 0 && now - lastLogMs >= 2000) {
+        lastLogMs = now;
+        const n = fmtNum(displayPps);
         const t = targetRef.current;
         let msgs: ((t: string, n: string) => string)[];
         if (method === "geass-override")  msgs = LOG_MSGS_GEASS;
@@ -652,7 +689,8 @@ function Panel() {
       }
     }, 1000);
     return () => clearInterval(iv);
-  }, [isRunning, method, addLog]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning, method, addLog, currentAttackId]);
 
   /* Progress bar */
   useEffect(() => {
@@ -762,24 +800,14 @@ function Panel() {
     return () => clearInterval(iv);
   }, [isRunning, currentAttackId, refetchAttack]);
 
-  /* Live active-connection polling — for slowloris / conn-flood / geass-override */
-  const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy"]);
+  /* Live active-connection reset — conns are now fetched by the per-second metric effect above */
+  const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy","ws-flood","rudy-v2","tls-renego","ssl-death","http2-continuation"]);
   useEffect(() => {
-    if (!isRunning || currentAttackId === null || !CONN_TRACKING_METHODS.has(method)) {
-      setActiveConns(0); return;
+    if (!isRunning || !CONN_TRACKING_METHODS.has(method)) {
+      setActiveConns(0);
     }
-    const poll = async () => {
-      try {
-        const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
-        const d = await r.json() as { conns: number; running: boolean };
-        setActiveConns(d.conns ?? 0);
-      } catch { /* ignore */ }
-    };
-    poll();
-    const iv = setInterval(poll, 800);
-    return () => { clearInterval(iv); setActiveConns(0); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, currentAttackId, method]);
+  }, [isRunning, method]);
 
   /* Cluster: poll slave nodes and aggregate stats */
   useEffect(() => {
