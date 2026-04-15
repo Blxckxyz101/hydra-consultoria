@@ -420,6 +420,10 @@ function startMonitor(attackId: number, msg: Message, target: string, userId?: s
         prevPackets.delete(attackId);
         setTimeout(() => { targetHistories.delete(attackId); downAlertSent.delete(attackId); }, 30_000);
       }
+    } catch (monitorErr) {
+      // Swallow monitor errors — API timeouts / DB flaps must NOT bubble up as
+      // unhandled rejections that could saturate the event loop or crash the bot.
+      console.warn(`[MONITOR #${attackId}] tick error (non-fatal):`, monitorErr instanceof Error ? monitorErr.message : monitorErr);
     } finally { busy = false; }
   }, INTERVAL_MS);
   monitors.set(attackId, tick);

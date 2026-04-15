@@ -60,9 +60,13 @@ export interface Recommendation {
 }
 
 async function req<T>(path: string, opts?: RequestInit): Promise<T> {
+  // 2.5s hard timeout — prevents slow DB queries from blocking the Discord event loop
+  // and causing "The application did not respond" errors (Discord's 3s window).
+  const signal = opts?.signal ?? AbortSignal.timeout(2500);
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...opts,
+    signal,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
