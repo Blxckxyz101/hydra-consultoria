@@ -100,7 +100,11 @@ export const api = {
     duration:  number;
     port?:     number;
     packetSize?: number;
-  }) => req<Attack>("/api/attacks", { method: "POST", body: JSON.stringify(body) }),
+  }) => req<Attack>("/api/attacks", {
+    method: "POST",
+    body:   JSON.stringify(body),
+    signal: AbortSignal.timeout(8_000), // 8s — DB insert can be slow under load
+  }),
 
   stopAttack:  (id: number) =>
     req<{ ok: boolean }>(`/api/attacks/${id}/stop`, { method: "POST" }),
@@ -118,6 +122,7 @@ export const api = {
     req<AnalyzeResult>("/api/analyze", {
       method: "POST",
       body:   JSON.stringify({ url: target }),  // API schema uses 'url', not 'target'
+      signal: AbortSignal.timeout(15_000),      // 15s — DNS probes + HTTP fingerprinting
     }),
 
   getClusterStatus: () =>

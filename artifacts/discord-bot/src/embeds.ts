@@ -85,7 +85,9 @@ const footer = (extra?: string) => ({
 const progressBar = (startedAt: string, durationSec: number) => {
   const dur    = durationSec * 1000;
   const spent  = Date.now() - new Date(startedAt).getTime();
-  const pct    = Math.min(1, spent / dur);
+  const raw    = dur > 0 ? spent / dur : 0;
+  // Guard against NaN/Infinity — would cause "█".repeat(NaN) → RangeError
+  const pct    = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
   const filled = Math.round(pct * 18);
   return `\`[${"█".repeat(filled)}${"░".repeat(18 - filled)}]\` ${Math.round(pct * 100)}%`;
 };
@@ -267,7 +269,7 @@ export function buildStartEmbed(attack: Attack): EmbedBuilder {
       { name: "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,              inline: true },
       { name: "⏱ Duration",   value: `**${attack.duration}s**`,                    inline: true },
       { name: "📊 Status",    value: "🔴 **INITIALIZING...**",                     inline: true },
-      { name: "\u200b", value: "*Metrics will update every 5 seconds automatically.*", inline: false },
+      { name: "\u200b", value: "*Metrics will update every 8 seconds automatically.*", inline: false },
     )
     .setFooter(footer("Started by slash command"))
     .setTimestamp();

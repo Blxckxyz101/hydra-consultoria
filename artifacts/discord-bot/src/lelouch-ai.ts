@@ -7,8 +7,9 @@
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey:  process.env.GROQ_API_KEY ?? "",
-  baseURL: "https://api.groq.com/openai/v1",
+  apiKey:   process.env.GROQ_API_KEY ?? "",
+  baseURL:  "https://api.groq.com/openai/v1",
+  timeout:  30_000, // 30s — prevents "Lelouch is thinking..." hanging forever
 });
 
 // ── Per-user conversation memory (last 20 messages) ──────────────────────────

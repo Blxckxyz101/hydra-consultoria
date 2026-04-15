@@ -6,7 +6,6 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
-  Message,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -15,7 +14,15 @@ import {
   StringSelectMenuOptionBuilder,
   ComponentType,
   Events,
+  type MessageActionRowComponentBuilder,
 } from "discord.js";
+
+/** Function that edits the live attack message — uses interaction.editReply() for
+ *  proper webhook token handling (interaction replies must go through the webhook API). */
+type MonitorEditFn = (opts: {
+  embeds:     EmbedBuilder[];
+  components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
+}) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
 import { api } from "./api.js";
 import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
@@ -323,7 +330,7 @@ function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilde
   );
 }
 
-function startMonitor(attackId: number, msg: Message, target: string, userId?: string): void {
+function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, userId?: string): void {
   if (monitors.has(attackId)) return;
 
   // MAX 5 concurrent monitors — prevents Discord request queue saturation that causes
@@ -401,11 +408,13 @@ function startMonitor(attackId: number, msg: Message, target: string, userId?: s
       const row       = buildAttackButtons(attackId, isRunning);
 
       try {
-        await msg.edit({
+        await editFn({
           embeds:     [buildAttackEmbed(attack, livePps, live?.conns ?? 0, history)],
           components: [row],
         });
-      } catch { /**/ }
+      } catch (editErr) {
+        console.warn(`[MONITOR #${attackId}] embed edit failed:`, (editErr instanceof Error) ? editErr.message : editErr);
+      }
 
       // ── DM alert when target goes definitively DOWN ─────────────────────
       if (
@@ -725,7 +734,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
 
       console.log(`[CLUSTER BROADCAST] ${interaction.user.tag} → ${target} | ${nodesOnline} nodes | ${threads}t | ${duration}s`);
 
-      const msg = await interaction.editReply({
+      const _clusterMsg = await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.CRIMSON)
@@ -752,7 +761,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
       });
 
       const userId = interaction.user.id;
-      startMonitor(attack.id, msg as Message, target, userId);
+      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("BROADCAST FAILED", message)] });
@@ -797,9 +806,9 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
     const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
     console.log(`[GEASS #${attack.id}] 21 Vectors online — ARES OMNIVECT → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
-    const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
+    await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
     const userId  = interaction.user.id;
-    startMonitor(attack.id, msg as Message, target, userId);
+    startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("GEASS FAILED", message)] });
@@ -879,10 +888,10 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     try {
       const attack  = await api.startAttack({ target, method, threads, duration, port });
       const row     = buildAttackButtons(attack.id, true);
-      const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
+      await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
       const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
-      startMonitor(attack.id, msg as Message, target, userId);
+      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("ATTACK FAILED", message)], components: [] });
@@ -990,22 +999,30 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
   const message = interaction.options.getString("message", true);
   await interaction.deferReply();
 
-  const reply = await askLelouch(interaction.user.id, message);
+  try {
+    const reply = await askLelouch(interaction.user.id, message);
 
-  // Truncate if over Discord 4096 embed limit (use 1900 for description safety)
-  const display = reply.length > 1900 ? reply.slice(0, 1897) + "..." : reply;
+    // Truncate if over Discord 4096 embed limit (use 1900 for description safety)
+    const display = reply.length > 1900 ? reply.slice(0, 1897) + "..." : reply;
 
-  await interaction.editReply({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x9B59B6)
-        .setAuthor({ name: "Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
-        .setDescription(display)
-        .setFooter({ text: `${AUTHOR} • /lelouch reset para limpar histórico` })
-        .setTimestamp(),
-    ],
-    files: buildGeassFiles(),
-  });
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x9B59B6)
+          .setAuthor({ name: "Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
+          .setDescription(display)
+          .setFooter({ text: `${AUTHOR} • /lelouch reset para limpar histórico` })
+          .setTimestamp(),
+      ],
+      files: buildGeassFiles(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[LELOUCH REPLY ERROR]", msg);
+    await interaction.editReply({
+      embeds: [buildErrorEmbed("GEASS FALHOU", `O Geass encontrou resistência inesperada. Tente novamente.\n\`${msg.slice(0, 200)}\``)],
+    });
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
