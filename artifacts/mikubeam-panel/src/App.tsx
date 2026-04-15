@@ -34,8 +34,9 @@ const L4_TCP_FE   = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst","conn-f
 const L4_UDP_FE   = new Set(["udp-flood","udp-bypass"]);
 const L7_PROXY_OK = new Set(["http-flood","http-bypass"]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override") return { badge: "GEASS ∞",   cls: "geass",    color: "#C0392B" };
-  if (m === "http2-flood")    return { badge: "REAL H2",   cls: "real-http", color: "#1abc9c" };
+  if (m === "geass-override") return { badge: "GEASS ∞",    cls: "geass",    color: "#C0392B" };
+  if (m === "waf-bypass")     return { badge: "WAF BYPASS", cls: "geass",    color: "#8E44AD" };
+  if (m === "http2-flood")    return { badge: "REAL H2",    cls: "real-http", color: "#1abc9c" };
   if (m === "slowloris")      return { badge: "SLOWLORIS",  cls: "real-http", color: "#9b59b6" };
   if (m === "conn-flood")     return { badge: "CONN FLOOD", cls: "real-tcp",  color: "#e74c3c" };
   if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP",  cls: "real-http", color: "#2ecc71" };
@@ -62,6 +63,7 @@ const PRESETS: Preset[] = [
   { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 500,  icon: "🔨" },
   { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 800,  icon: "☢️" },
   { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1500, icon: "👁"  },
+  { label: "Geass WAF",     method: "waf-bypass",     packetSize: 512,  duration: 180, delay: 0,   threads: 200,  icon: "🌐"  },
 ];
 
 /* ── Log counter ── */
@@ -74,7 +76,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","geass-override","dns-amp","ntp-amp","mem-amp","rudy"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","geass-override","dns-amp","ntp-amp","mem-amp","rudy","waf-bypass"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
@@ -596,6 +598,7 @@ function Panel() {
         const t = targetRef.current;
         let msgs: ((t: string, n: string) => string)[];
         if (method === "geass-override")  msgs = LOG_MSGS_GEASS;
+        else if (method === "waf-bypass") msgs = LOG_MSGS_H2;
         else if (method === "http2-flood") msgs = LOG_MSGS_H2;
         else if (method === "slowloris")  msgs = LOG_MSGS_SLOW;
         else if (method === "conn-flood") msgs = LOG_MSGS_CONN;
@@ -1097,6 +1100,7 @@ function Panel() {
   // Intensity for GeassEye animation (0–1 based on pps relative to a high reference)
   const eyeIntensity = isRunning ? Math.min(1, pps / 50000) : 0;
   const sparklineColor = method === "geass-override" ? "#C0392B"
+    : method === "waf-bypass"  ? "#8E44AD"
     : method === "http2-flood" ? "#1abc9c"
     : method === "slowloris"   ? "#9b59b6"
     : method === "conn-flood"  ? "#e74c3c"

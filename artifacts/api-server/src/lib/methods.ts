@@ -138,4 +138,13 @@ export const ATTACK_METHODS = [
     protocol: "HTTP" as const,
     description: "R-U-Dead-Yet: claims Content-Length: 1GB then sends 1-2 bytes every 5-15 seconds via raw socket. Apache/IIS hold the thread forever — 25K connections = full thread pool exhaustion.",
   },
+
+  // ── WAF Bypass ───────────────────────────────────────────────────────
+  {
+    id: "waf-bypass",
+    name: "Geass WAF Bypass ∞",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "4-layer Cloudflare/Akamai/AWS evasion: JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering + __cf_bm/__cfruid cookie simulation. Each connection appears as a distinct real Chrome browser.",
+  },
 ];
