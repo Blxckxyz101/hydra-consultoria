@@ -16,7 +16,7 @@ import {
   ComponentType,
   Events,
 } from "discord.js";
-import { BOT_TOKEN, APPLICATION_ID, GUILD_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
 import { api } from "./api.js";
 import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
 import {
@@ -94,7 +94,28 @@ const THREAD_OPTIONS = [
 
 // ── Pending launcher sessions (userId → { target, duration, threads }) ───────
 interface LaunchSession { target: string; duration: number; threads: number; }
-const pendingSessions = new Map<string, LaunchSession>();
+const pendingSessions  = new Map<string, LaunchSession>();
+const sessionTimers    = new Map<string, NodeJS.Timeout>();
+
+const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function clearSession(userId: string): void {
+  pendingSessions.delete(userId);
+  pendingMethodMap.delete(userId);
+  const t = sessionTimers.get(userId);
+  if (t) { clearTimeout(t); sessionTimers.delete(userId); }
+}
+
+function scheduleSessionExpiry(userId: string): void {
+  const existing = sessionTimers.get(userId);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    pendingSessions.delete(userId);
+    pendingMethodMap.delete(userId);
+    sessionTimers.delete(userId);
+  }, SESSION_TTL_MS);
+  sessionTimers.set(userId, t);
+}
 
 // ── Slash Command Definitions ─────────────────────────────────────────────────
 const COMMANDS = [
@@ -478,9 +499,10 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   const target  = interaction.options.getString("target", true);
   const userId  = interaction.user.id;
 
-  // Init session with defaults
+  // Init session with defaults — auto-expires in 5 minutes if abandoned
   const session: LaunchSession = { target, duration: 60, threads: 200 };
   pendingSessions.set(userId, session);
+  scheduleSessionExpiry(userId);
 
   const components = buildLauncherComponents(target);
   // Row 4 — Launch + Cancel buttons
@@ -815,8 +837,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       await interaction.reply({ content: "❌ Session expired. Run `/attack start` again.", ephemeral: true });
       return;
     }
-    pendingSessions.delete(userId);
-    pendingMethodMap.delete(userId);
+    clearSession(userId);
 
     await interaction.deferUpdate();
 
@@ -846,8 +867,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
   // ── Cancel button ─────────────────────────────────────────────────────────
   if (customId === "cancel_launch") {
     const userId = interaction.user.id;
-    pendingSessions.delete(userId);
-    pendingMethodMap.delete(userId);
+    clearSession(userId);
     await interaction.update({
       embeds: [
         new EmbedBuilder()
