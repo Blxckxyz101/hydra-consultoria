@@ -47,9 +47,6 @@ const WORKER_FILE = path.join(
   "attack-worker.mjs",
 );
 
-// ── Active attack worker sets ──────────────────────────────────────────────
-const attackWorkers = new Map<number, Worker[]>();
-
 // ── Live in-memory connection counter (slowloris + conn-flood) ─────────────
 export const attackLiveConns = new Map<number, number>();
 
@@ -71,11 +68,12 @@ const dbBatchBytes = new Map<number, number>();
 
 setInterval(async () => {
   if (dbBatchPkts.size === 0) return;
-  const entries = [...dbBatchPkts.entries()];
+  const entries       = [...dbBatchPkts.entries()];
+  const bytesSnapshot = new Map(dbBatchBytes);   // snapshot BEFORE clear
   dbBatchPkts.clear();
   dbBatchBytes.clear();
   for (const [id, pkts] of entries) {
-    const bytes = dbBatchBytes.get(id) ?? 0;
+    const bytes = bytesSnapshot.get(id) ?? 0;
     void addStats(id, pkts, bytes);
   }
 }, 500);
