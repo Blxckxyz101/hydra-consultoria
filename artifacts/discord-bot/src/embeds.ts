@@ -60,13 +60,70 @@ const progressBar = (startedAt: string, durationSec: number) => {
   return `\`[${"█".repeat(filled)}${"░".repeat(18 - filled)}]\` ${Math.round(pct * 100)}%`;
 };
 
+// ── Target probe result (fed from index.ts polling) ──────────────────────────
+export type ProbeResult = {
+  up:        boolean;
+  latencyMs: number;
+  reason?:   string;
+};
+
 // Connection-based methods that show open conn counter
 const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy"]);
+
+// ── Sparkline helpers ─────────────────────────────────────────────────────────
+const sparkDot = (p: ProbeResult) => {
+  if (!p.up) return "🔴";
+  if (p.latencyMs > 4000) return "🟡";
+  if (p.latencyMs > 1500) return "🟠";
+  return "🟢";
+};
+
+const buildStatusField = (history: ProbeResult[], method: string) => {
+  if (history.length === 0) return { name: "🌐 Target Status", value: "_probing..._" };
+  const last    = history[history.length - 1];
+  const dots    = history.slice(-20).map(sparkDot).join("");
+  const downRun = history.slice(-3).every(p => !p.up);  // 3 consecutive downs = confirmed down
+
+  let statusLine: string;
+  if (!last.up && downRun) {
+    // Target confirmed DOWN — show cause
+    const causeMap: Record<string, string> = {
+      "geass-override": "All 5 vectors converged — TOTAL ANNIHILATION",
+      "http2-flood":    "H2 connection table saturated (CVE-2023-44487)",
+      "waf-bypass":     "WAF layer overwhelmed — origin exposed",
+      "conn-flood":     "TLS socket table exhausted — nginx fell",
+      "slowloris":      "Thread pool saturated — server frozen",
+      "udp-flood":      "Bandwidth saturated at L4",
+    };
+    const methodCause = causeMap[method] ?? "Server resources exhausted";
+    const probeCause  = last.reason ?? methodCause;
+    statusLine = `**💀 TARGET DOWN** — ${probeCause}`;
+  } else if (!last.up) {
+    statusLine = `**🔴 DEGRADED** — ${last.reason ?? "connection failing"} (${last.latencyMs}ms)`;
+  } else if (last.latencyMs > 4000) {
+    statusLine = `**🟡 CRITICAL LAG** — ${last.latencyMs}ms (on the edge)`;
+  } else if (last.latencyMs > 1500) {
+    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs}ms (rising)`;
+  } else {
+    statusLine = `**🟢 ONLINE** — ${last.latencyMs}ms (resisting so far)`;
+  }
+
+  return {
+    name:   "🌐 Target Status",
+    value:  `${dots}\n${statusLine}`,
+    inline: false,
+  };
+};
 
 // ── Attack Running/Live Embed ─────────────────────────────────────────────────
 // pps = calculated externally (delta packetsSent / 5s interval)
 // liveConns = from /api/attacks/:id/live endpoint (active open connections)
-export function buildAttackEmbed(attack: Attack, livePps = 0, liveConns = 0): EmbedBuilder {
+export function buildAttackEmbed(
+  attack: Attack,
+  livePps = 0,
+  liveConns = 0,
+  targetHistory: ProbeResult[] = [],
+): EmbedBuilder {
   const isRunning = attack.status === "running";
   const color     = isRunning ? COLORS.CRIMSON
     : attack.status === "finished" ? COLORS.GREEN
@@ -118,12 +175,18 @@ export function buildAttackEmbed(attack: Attack, livePps = 0, liveConns = 0): Em
       });
     }
     embed.addFields({ name: "\u200b", value: progressBar(attack.startedAt, attack.duration), inline: false });
+    // Target status sparkline — only shown during active attack
+    embed.addFields(buildStatusField(targetHistory, attack.method));
   } else {
     embed.addFields(
       { name: "📦 Total Packets",  value: `**${fmtNum(attack.packetsSent)}**`,   inline: true },
       { name: "💾 Total Data",     value: `**${fmtBytes(attack.bytesSent)}**`,   inline: true },
       { name: "⏳ Elapsed",        value: `**${elapsed(attack.startedAt)}**`,    inline: true },
     );
+    // Show final target status if we have probe history
+    if (targetHistory.length > 0) {
+      embed.addFields(buildStatusField(targetHistory, attack.method));
+    }
   }
 
   embed.setFooter(footer(`Attack #${attack.id}`)).setTimestamp();

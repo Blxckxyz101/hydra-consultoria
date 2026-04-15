@@ -101,6 +101,6 @@ export const api = {
   analyze: (target: string) =>
     req<AnalyzeResult>("/api/analyze", {
       method: "POST",
-      body:   JSON.stringify({ target }),
+      body:   JSON.stringify({ url: target }),  // API schema uses 'url', not 'target'
     }),
 };
