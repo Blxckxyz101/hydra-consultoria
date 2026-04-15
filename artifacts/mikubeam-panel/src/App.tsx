@@ -75,7 +75,7 @@ const PRESETS: Preset[] = [
   { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 8,    icon: "💥" },
   { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 500,  icon: "🔨" },
   { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 800,  icon: "☢️" },
-  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1500, icon: "👁"  },
+  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 2000, icon: "👁"  },
   { label: "Geass WAF",     method: "waf-bypass",     packetSize: 512,  duration: 180, delay: 0,   threads: 200,  icon: "🌐"  },
   { label: "HPACK Bomb",    method: "hpack-bomb",     packetSize: 512,  duration: 120, delay: 0,   threads: 200,  icon: "🧨"  },
   { label: "H2 Cont OOM",   method: "http2-continuation", packetSize: 64, duration: 120, delay: 0, threads: 100, icon: "💀"  },

