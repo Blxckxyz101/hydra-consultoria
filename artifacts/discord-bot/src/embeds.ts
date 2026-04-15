@@ -1,6 +1,26 @@
-import { EmbedBuilder } from "discord.js";
+import { EmbedBuilder, AttachmentBuilder } from "discord.js";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import type { Attack, AttackStats, AnalyzeResult, Method } from "./api.js";
 import { COLORS, METHOD_EMOJIS, AUTHOR, BOT_NAME } from "./config.js";
+
+// ── Asset paths ───────────────────────────────────────────────────────────────
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const GEASS_PNG = path.join(__dirname, "..", "assets", "geass-symbol.png");
+const LELOUCH_GIF = path.join(__dirname, "..", "assets", "lelouch.gif");
+
+/** Returns attachment files for embeds that include the Geass symbol.
+ *  Use in { embeds: [...], files: buildGeassFiles() } on one-shot sends (not edits). */
+export function buildGeassFiles(): AttachmentBuilder[] {
+  return [new AttachmentBuilder(GEASS_PNG, { name: "geass-symbol.png" })];
+}
+/** Returns both the Geass symbol + Lelouch GIF (for start/attack embeds). */
+export function buildAttackFiles(): AttachmentBuilder[] {
+  return [
+    new AttachmentBuilder(LELOUCH_GIF,  { name: "lelouch.gif" }),
+    new AttachmentBuilder(GEASS_PNG,    { name: "geass-symbol.png" }),
+  ];
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmtNum   = (n: number) => n.toLocaleString("en-US");
@@ -55,7 +75,7 @@ const methodLabel = (id: string) => {
     "mem-amp":             "Memcached Amp",
     "hpack-bomb":          "HPACK Bomb — RFC 7541 Table Exhaustion",
     "h2-settings-storm":   "H2 Settings Storm — HPACK + Flow Control Exhaustion",
-    "geass-override":      "Geass Override ∞ [ARES — 13 VECTORS]",
+    "geass-override":      "Geass Override ∞ [ARES OMNIVECT — 21 VECTORS]",
   };
   return map[id] ?? id;
 };
@@ -110,7 +130,7 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   if (!last.up && DEFINITIVE_DOWN(last.reason) && (downRun || anyDown3)) {
     // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
-      "geass-override":     "All 10 vectors converged — ABSOLUTE ANNIHILATION (DECA-VECTOR)",
+      "geass-override":     "All 21 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT)",
       "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
       "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
       "waf-bypass":         "WAF layer overwhelmed — origin exposed",
@@ -178,7 +198,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `👁️ **DECA-VECTOR ASSAULT** — 10 simultaneous vectors, all CVEs active, live monitoring`
+          ? `👁️ **ARES OMNIVECT** — 21 simultaneous real attack vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
@@ -229,12 +249,17 @@ export function buildAttackEmbed(
 // ── Attack Started Embed ──────────────────────────────────────────────────────
 export function buildStartEmbed(attack: Attack): EmbedBuilder {
   const emoji = METHOD_EMOJIS[attack.method] ?? "⚡";
+  const isGeass = attack.method === "geass-override";
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
     .setTitle(`${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
-      `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
+      isGeass
+        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT** — 21 real attack vectors deploying simultaneously`
+        : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
     )
+    .setImage("attachment://lelouch.gif")
+    .setThumbnail("attachment://geass-symbol.png")
     .addFields(
       { name: "🎯 Target",    value: `\`${attack.target}\``,                       inline: true },
       { name: "⚔️ Method",    value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
@@ -441,6 +466,7 @@ export function buildHelpEmbed(): EmbedBuilder {
     .setDescription(
       `> *"I am Zero — the man who will obliterate the world."*\n\nWelcome to the **${BOT_NAME}** network control interface.\nAll commands are slash commands — type \`/\` to browse them.`
     )
+    .setThumbnail("attachment://geass-symbol.png")
     .addFields(
       { name: "⚔️ `/attack start <target>`", value: "Launch attack — opens a **dropdown menu** to pick method, duration & threads.", inline: false },
       { name: "⏹️ `/attack stop <id>`",  value: "Stop a running attack by its ID number.",    inline: false },

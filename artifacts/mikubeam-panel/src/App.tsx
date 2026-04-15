@@ -293,15 +293,16 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 19 vectors`,
-  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+HTTPBypass on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 19-way siege, target has no defensive surface`,
-  (t: string) => `👁 ${t} overwhelmed — 19 concurrent attack vectors, absolute protocol annihilation`,
+  (t: string, n: string) => `👁 Geass Override ARES OMNIVECT: ${n} strikes obliterating ${t} on 21 vectors`,
+  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Pipeline+Storm+ICMP+DNS+NTP+Memc+SSDP on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 21-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 21 concurrent attack vectors, absolute protocol annihilation`,
   (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
   (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT flooding HPACK table into eviction loop`,
-  (t: string) => `👁 19-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC DCID flood`,
-  (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records`,
+  (t: string) => `👁 21-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC DCID+HTTPPipeline+H2Storm flood`,
+  (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records + Pipeline 300K req/s`,
+  (t: string) => `👁 ABSOLUTE GEASS — 21 real attack vectors firing simultaneously on ${t}, zero mercy`,
 ];
 
 /* ── Sparkline chart ── */
@@ -353,6 +354,26 @@ function GeassEye({ intensity = 0 }: { intensity?: number }) {
         <path d="M200,145 L212,170 L240,170 L218,188 L226,215 L200,198 L174,215 L182,188 L160,170 L188,170 Z"
           stroke={`rgba(192,57,43,${0.08 + intensity * 0.25})`} strokeWidth="1" fill="none"/>
       </svg>
+    </div>
+  );
+}
+
+/* ── Geass Override particle burst overlay ── */
+function GeassParticles() {
+  return (
+    <div className="lb-geass-particles" aria-hidden="true">
+      {Array.from({ length: 10 }, (_, i) => (
+        <div key={i} className="lb-particle" style={{
+          left: `${8 + i * 9}%`,
+          bottom: `${4 + (i % 4) * 7}%`,
+          animationDelay: `${i * 0.35}s`,
+          animationDuration: `${2.4 + (i % 3) * 0.5}s`,
+          width:  `${1 + (i % 3)}px`,
+          height: `${1 + (i % 3)}px`,
+          background: i % 2 === 0 ? "rgba(192,57,43,0.85)" : "rgba(212,175,55,0.7)",
+          boxShadow: i % 2 === 0 ? "0 0 4px rgba(192,57,43,0.8)" : "0 0 4px rgba(212,175,55,0.7)",
+        }} />
+      ))}
     </div>
   );
 }
@@ -487,6 +508,9 @@ function Panel() {
 
   /* Live active connection counter (slowloris / conn-flood / geass-override) */
   const [activeConns, setActiveConns] = useState(0);
+
+  /* Geass Override launch flash effect */
+  const [geassFlash, setGeassFlash] = useState(false);
 
   /* Cascade attack state */
   const [isCascading, setIsCascading] = useState(false);
@@ -880,7 +904,7 @@ function Panel() {
     const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — ARES OMNIVECT — target: ${target}`, "info");
-      addLog(`  13-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris | ${threads} threads | ${duration}s`, "info");
+      addLog(`  21-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris+Pipeline+H2Storm+ICMP+DNS+NTP+Memc+SSDP+UDP | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
@@ -899,6 +923,7 @@ function Panel() {
       });
       setCurrentAttackId(result.id);
       setIsRunning(true); isRunningRef.current = true;
+      if (method === "geass-override") { setGeassFlash(true); setTimeout(() => setGeassFlash(false), 1600); }
       targetRef.current = target.trim();
       startTimeRef.current = Date.now();
       durationRef.current = duration;
@@ -1333,8 +1358,10 @@ function Panel() {
     .slice(0, 5);
 
   return (
-    <div className={`lb-page ${entered ? "lb-entered" : ""}`}>
+    <div className={`lb-page ${entered ? "lb-entered" : ""} ${isRunning && method === "geass-override" ? "lb-page--geass-active" : ""}`}>
       <GeassEye intensity={eyeIntensity} />
+      {geassFlash && <div className="lb-geass-flash" aria-hidden="true" />}
+      {isRunning && method === "geass-override" && <GeassParticles />}
 
       {/* ── Toast container ── */}
       {toasts.length > 0 && (

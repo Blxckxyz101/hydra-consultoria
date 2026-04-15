@@ -28,6 +28,8 @@ import {
   buildMethodsEmbed,
   buildHelpEmbed,
   buildErrorEmbed,
+  buildGeassFiles,
+  buildAttackFiles,
   type ProbeResult,
 } from "./embeds.js";
 
@@ -526,7 +528,7 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
 }
 
 async function handleHelp(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.reply({ embeds: [buildHelpEmbed()] });
+  await interaction.reply({ embeds: [buildHelpEmbed()], files: buildGeassFiles() });
 }
 
 async function handleGeass(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -565,7 +567,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
     const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
     console.log(`[GEASS #${attack.id}] 21 Vectors online — ARES OMNIVECT → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
-    const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
+    const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
     const userId  = interaction.user.id;
     startMonitor(attack.id, msg as Message, target, userId);
   } catch (err: unknown) {
@@ -648,7 +650,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     try {
       const attack  = await api.startAttack({ target, method, threads, duration, port });
       const row     = buildAttackButtons(attack.id, true);
-      const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
+      const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
       const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
       startMonitor(attack.id, msg as Message, target, userId);
