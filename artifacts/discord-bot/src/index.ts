@@ -146,7 +146,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("info")
-    .setDescription("👁️ MikuBeam ARES — full platform info, live stats, arsenal breakdown & infrastructure"),
+    .setDescription("👁️ Lelouch Britannia — platform info, full cluster infrastructure & live stats (EN/PT)"),
 
   new SlashCommandBuilder()
     .setName("help")
@@ -554,29 +554,45 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
   }
 }
 
+function buildInfoLangRow(active: "en" | "pt"): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("info_lang:en")
+      .setLabel("🇺🇸  English")
+      .setStyle(active === "en" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("info_lang:pt")
+      .setLabel("🇧🇷  Português")
+      .setStyle(active === "pt" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
+}
+
+async function fetchInfoData() {
+  const [stats, clusterStatus] = await Promise.allSettled([
+    api.getStats(),
+    api.getClusterStatus(),
+  ]);
+  const s = stats.status === "fulfilled" ? stats.value : null;
+  const c = clusterStatus.status === "fulfilled" ? clusterStatus.value : null;
+  return {
+    guildCount:    botClient?.guilds.cache.size ?? 0,
+    totalAttacks:  s?.totalAttacks   ?? 0,
+    activeAttacks: s?.runningAttacks ?? 0,
+    uptimeMs:      botClient?.uptime ?? 0,
+    cpuCount:      s?.cpuCount,
+    totalPackets:  s?.totalPacketsSent ?? 0,
+    totalBytes:    s?.totalBytesSent   ?? 0,
+    clusterNodes:  c?.configuredNodes  ?? 0,
+  };
+}
+
 async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
   try {
-    const [stats, clusterStatus] = await Promise.allSettled([
-      api.getStats(),
-      api.getClusterStatus(),
-    ]);
-
-    const s = stats.status === "fulfilled" ? stats.value : null;
-    const c = clusterStatus.status === "fulfilled" ? clusterStatus.value : null;
-
-    const embed = buildInfoEmbed({
-      guildCount:    botClient?.guilds.cache.size ?? 0,
-      totalAttacks:  s?.totalAttacks  ?? 0,
-      activeAttacks: s?.runningAttacks ?? 0,
-      uptimeMs:      botClient?.uptime ?? 0,
-      cpuCount:      s?.cpuCount,
-      totalPackets:  s?.totalPacketsSent ?? 0,
-      totalBytes:    s?.totalBytesSent   ?? 0,
-      clusterNodes:  c?.configuredNodes ?? 0,
-    });
-
-    await interaction.editReply({ embeds: [embed], files: buildAttackFiles() });
+    const data  = await fetchInfoData();
+    const embed = buildInfoEmbed({ ...data, lang: "en" });
+    const row   = buildInfoLangRow("en");
+    await interaction.editReply({ embeds: [embed], files: buildAttackFiles(), components: [row] });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("INFO FAILED", message)] });
@@ -837,6 +853,22 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       console.log(`[BUTTON] ${interaction.user.tag} stopped attack #${id}`);
     } catch {
       await interaction.editReply({ embeds: [buildStopEmbed(id, false)] });
+    }
+    return;
+  }
+
+  // ── Info language toggle ──────────────────────────────────────────────────
+  if (customId === "info_lang:en" || customId === "info_lang:pt") {
+    const lang = customId.endsWith(":pt") ? "pt" as const : "en" as const;
+    await interaction.deferUpdate();
+    try {
+      const data  = await fetchInfoData();
+      const embed = buildInfoEmbed({ ...data, lang });
+      const row   = buildInfoLangRow(lang);
+      await interaction.editReply({ embeds: [embed], components: [row] });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      await interaction.editReply({ embeds: [buildErrorEmbed("LANG SWITCH FAILED", message)], components: [] });
     }
     return;
   }

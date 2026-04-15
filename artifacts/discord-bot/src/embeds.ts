@@ -493,16 +493,23 @@ export function buildHelpEmbed(): EmbedBuilder {
 
 // ── Info Embed ────────────────────────────────────────────────────────────────
 export function buildInfoEmbed(opts: {
-  guildCount:   number;
-  totalAttacks: number;
+  guildCount:    number;
+  totalAttacks:  number;
   activeAttacks: number;
-  uptimeMs:     number;
-  cpuCount?:    number;
-  totalPackets: number;
-  totalBytes:   number;
+  uptimeMs:      number;
+  cpuCount?:     number;
+  totalPackets:  number;
+  totalBytes:    number;
   clusterNodes?: number;
+  lang?:         "en" | "pt";
 }): EmbedBuilder {
-  const { guildCount, totalAttacks, activeAttacks, uptimeMs, cpuCount, totalPackets, totalBytes, clusterNodes = 0 } = opts;
+  const {
+    guildCount, totalAttacks, activeAttacks, uptimeMs,
+    cpuCount, totalPackets, totalBytes, clusterNodes = 0,
+    lang = "en",
+  } = opts;
+
+  const pt = lang === "pt";
 
   const fmtUptime = (ms: number) => {
     const s   = Math.floor(ms / 1000);
@@ -522,78 +529,129 @@ export function buildInfoEmbed(opts: {
     return String(n);
   };
 
-  const totalNodes = 10 + clusterNodes;
+  const totalNodes   = 10 + clusterNodes;
+  const totalVCPU    = totalNodes * 8;
+  const totalRAM     = totalNodes * 32;
+  const totalVectors = totalNodes * 21;
+
+  // ── Strings ────────────────────────────────────────────────────────────────
+  const T = {
+    title:       pt
+      ? "👁️  LELOUCH BRITANNIA  —  INTERFACE DE COMANDO GEASS"
+      : "👁️  LELOUCH BRITANNIA  —  GEASS COMMAND INTERFACE",
+    quote:       pt
+      ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Lelouch vi Britannia**, Código R-02`
+      : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Lelouch vi Britannia**, Code R-02`,
+    desc:        pt
+      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n21 vetores de ataque simultâneos, fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
+      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n21 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
+    secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
+    engineTitle: pt ? "🔴 Geass Override ∞ — 21 Vetores" : "🔴 Geass Override ∞ — 21 Vectors",
+    engineBox:
+      "```\n" +
+      (pt
+        ? "  TODOS OS 21 VETORES — SIMULTÂNEOS\n"
+        : "  ALL 21 VECTORS — SIMULTANEOUS\n") +
+      "  ┌───────────────────────────────────────┐\n" +
+      (pt
+        ? "  │  L7 Aplicação   ·  14 vetores         │\n"
+        : "  │  L7 Application ·  14 vectors         │\n") +
+      (pt
+        ? "  │  L4 Transporte  ·   4 vetores         │\n"
+        : "  │  L4 Transport   ·   4 vectors         │\n") +
+      (pt
+        ? "  │  L3 Rede        ·   3 vetores         │\n"
+        : "  │  L3 Network     ·   3 vectors         │\n") +
+      "  │  CVE-2024-27316 ·  H2 CONTINUATION   │\n" +
+      "  │  CVE-2023-44487 ·  Rapid Reset        │\n" +
+      "  │  RFC 9000       ·  QUIC / HTTP3       │\n" +
+      "  └───────────────────────────────────────┘\n" +
+      "```",
+    secInfra:    pt ? "━━━━ 🖥️  **INFRAESTRUTURA DO CLUSTER** ━━━━" : "━━━━ 🖥️  **CLUSTER INFRASTRUCTURE** ━━━━",
+    infraBox:
+      "```\n" +
+      (pt
+        ? `  CLUSTER COMPUTACIONAL — ${totalNodes} MÁQUINAS\n`
+        : `  COMPUTE CLUSTER — ${totalNodes} MACHINES\n`) +
+      "  ┌─────────────────────────────────────────┐\n" +
+      (pt
+        ? `  │  Máquinas    :  ${String(totalNodes).padEnd(4)} servidores dedicados  │\n`
+        : `  │  Machines    :  ${String(totalNodes).padEnd(4)} dedicated servers     │\n`) +
+      `  │  vCPU/node   :  8    →  ${String(totalVCPU).padStart(3)} vCPU total    │\n` +
+      `  │  RAM /node   :  32GB →  ${String(totalRAM).padStart(3)}GB  total     │\n` +
+      (pt
+        ? `  │  Nós cluster :  ${String(clusterNodes).padEnd(2)}  peer node(s)          │\n`
+        : `  │  Cluster peer:  ${String(clusterNodes).padEnd(2)}  node(s) configured    │\n`) +
+      (pt
+        ? `  │  Fan-out     :  ${String(totalNodes)}× poder — Geass Override ∞  │\n`
+        : `  │  Fan-out     :  ${String(totalNodes)}× power — Geass Override ∞  │\n`) +
+      (pt
+        ? `  │  Vetores tot.:  ${String(totalVectors)} simultâneos por disparo │\n`
+        : `  │  Total vects :  ${String(totalVectors)} simultaneous per fire    │\n`) +
+      "  ├─────────────────────────────────────────┤\n" +
+      (pt ? "  │  CAPACIDADE DOS THREAD POOLS (por nó) │\n" : "  │  THREAD POOL CAPACITY (per node)      │\n") +
+      "  │  HTTP Pipeline        →  1,200 threads  │\n" +
+      "  │  HTTP/2 Rapid Reset   →    800 sessions │\n" +
+      "  │  H2 CONTINUATION      →    650 threads  │\n" +
+      "  │  WAF Bypass / HPACK   →    400 threads  │\n" +
+      "  │  ICMP / DNS / NTP amp →    512 threads  │\n" +
+      "  │  H2 Sessions × Streams→ 800 × 1,000     │\n" +
+      "  ├─────────────────────────────────────────┤\n" +
+      (pt ? "  │  RUNTIME & STACK                      │\n" : "  │  RUNTIME & STACK                      │\n") +
+      "  │  Node.js 20 LTS  ·  TypeScript 5       │\n" +
+      "  │  Linux (Debian)  ·  pnpm workspace     │\n" +
+      "  │  Discord.js v14  ·  Hono REST API      │\n" +
+      "  └─────────────────────────────────────────┘\n" +
+      "```",
+    cpuLabel:    pt ? "💻 CPU Detectada" : "💻 CPU Detected",
+    cpuVal:      cpuCount ? `**${cpuCount}** core(s)` : "—",
+    freeMemLabel:pt ? "🟢 RAM Livre" : "🟢 Free RAM",
+    secStats:    pt ? "━━━━ 📊  **ESTATÍSTICAS DA SESSÃO** ━━━━" : "━━━━ 📊  **LIVE SESSION STATS** ━━━━",
+    guilds:      pt ? "🏰 Servidores" : "🏰 Guilds",
+    total:       pt ? "⚔️ Total Ataques" : "⚔️ Total Attacks",
+    active:      pt ? "🔴 Ativos Agora" : "🔴 Active Now",
+    pkts:        pt ? "📦 Pacotes Env." : "📦 Pkts Fired",
+    data:        pt ? "💾 Dados Enviados" : "💾 Data Sent",
+    uptime:      pt ? "⏱ Tempo Ativo" : "⏱ Uptime",
+    firing:      pt ? "disparando" : "firing",
+    secCmds:     pt ? "━━━━ 📖  **REFERÊNCIA DE COMANDOS** ━━━━" : "━━━━ 📖  **COMMAND REFERENCE** ━━━━",
+    coreTitle:   pt ? "⚡ Comandos Principais" : "⚡ Core Commands",
+    coreVal:     pt
+      ? "`/geass`  — Geass Override ∞ · 21 vetores\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
+      : "`/geass`  — Geass Override ∞ · 21 vectors max power\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
+    reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
+    reconVal:    pt
+      ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
+      : "`/analyze`  — Target recon & vector ranking\n`/methods`  — Full attack method list\n`/cluster status`  — Node health grid\n`/cluster broadcast`  — Fan-out Geass to all nodes\n`/info`  — This screen  ·  `/help`  — Quick reference",
+    footer:      pt
+      ? `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nós  •  🇧🇷 Português`
+      : `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nodes  •  🇺🇸 English`,
+  };
 
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
-    .setTitle("👁️  L E L O U C H  B R I T A N N I A  —  A R E S  C O M M A N D")
-    .setDescription(
-      `> *"The only ones who should kill, are those who are prepared to be killed."*\n` +
-      `> — **Lelouch vi Britannia**, Code R-02\n\n` +
-      `**MikuBeam ARES** is a next-generation network stress-testing platform.\n` +
-      `21 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`
-    )
+    .setTitle(T.title)
+    .setDescription(`${T.quote}\n\n${T.desc}`)
     .setImage("attachment://lelouch.gif")
     .setThumbnail("attachment://geass-symbol.png")
     .addFields(
-      // ── Divider ──
-      { name: "\u200b", value: "━━━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━━━", inline: false },
-      {
-        name: "🔴 Geass Override ∞",
-        value:
-          "```\n" +
-          "  ALL 21 VECTORS — SIMULTANEOUS\n" +
-          "  ┌─────────────────────────────────────┐\n" +
-          "  │  L7 Application  ·  14 vectors      │\n" +
-          "  │  L4 Transport    ·   4 vectors      │\n" +
-          "  │  L3 Network      ·   3 vectors      │\n" +
-          "  │  CVE-2024-27316  ·  H2 CONTINUATION │\n" +
-          "  │  CVE-2023-44487  ·  Rapid Reset      │\n" +
-          "  │  RFC 9000        ·  QUIC / HTTP3     │\n" +
-          "  └─────────────────────────────────────┘\n" +
-          "```",
-        inline: false,
-      },
-      // ── Infrastructure ──
-      { name: "\u200b", value: "━━━━━━ 🖥️  **INFRASTRUCTURE** ━━━━━━", inline: false },
-      { name: "⚙️ Nodes",       value: `**${totalNodes}** machines`,            inline: true },
-      { name: "🧠 vCPU / Node", value: `**8 vCPU** → **${totalNodes * 8}** total`, inline: true },
-      { name: "💾 RAM / Node",  value: `**32GB** → **${totalNodes * 32}GB** total`, inline: true },
-      { name: "🔁 Cluster Fan-out", value: `**${totalNodes}× power** on Geass Override ∞`, inline: true },
-      { name: "💻 CPU Cores",   value: cpuCount ? `**${cpuCount}** detected` : "**—**", inline: true },
-      { name: "🌐 API Version", value: `**v2.0  ·  Node.js 20**`,               inline: true },
-      // ── Live Stats ──
-      { name: "\u200b", value: "━━━━━━ 📊  **LIVE SESSION STATS** ━━━━━━", inline: false },
-      { name: "🏰 Guilds",       value: `**${fmtBig(guildCount)}**`,             inline: true },
-      { name: "⚔️ Total Attacks",value: `**${fmtBig(totalAttacks)}**`,           inline: true },
-      { name: "🔴 Active Now",   value: `**${activeAttacks}** firing`,           inline: true },
-      { name: "📦 Pkts Fired",   value: `**${fmtBig(totalPackets)}**`,           inline: true },
-      { name: "💾 Data Sent",    value: `**${fmtBytes(totalBytes)}**`,           inline: true },
-      { name: "⏱ Uptime",        value: fmtUptime(uptimeMs),                    inline: true },
-      // ── Commands ──
-      { name: "\u200b", value: "━━━━━━ 📖  **COMMAND REFERENCE** ━━━━━━", inline: false },
-      {
-        name: "⚡ Core Commands",
-        value:
-          "`/geass`  — Geass Override ∞ · 21 vectors max power\n" +
-          "`/attack start`  — Launch any single vector\n" +
-          "`/attack stop`   — Terminate by ID\n" +
-          "`/attack list`   — View all attacks\n" +
-          "`/attack stats`  — Session statistics",
-        inline: true,
-      },
-      {
-        name: "🔍 Recon & Cluster",
-        value:
-          "`/analyze`  — Target recon & vector ranking\n" +
-          "`/methods`  — Full attack method list\n" +
-          "`/cluster status`  — Node health grid\n" +
-          "`/cluster broadcast`  — Fan-out Geass to all nodes\n" +
-          "`/help`  — Quick reference",
-        inline: true,
-      },
+      { name: "\u200b",        value: T.secEngine,               inline: false },
+      { name: T.engineTitle,   value: T.engineBox,                inline: false },
+      { name: "\u200b",        value: T.secInfra,                 inline: false },
+      { name: "\u200b",        value: T.infraBox,                 inline: false },
+      { name: T.cpuLabel,      value: T.cpuVal,                   inline: true  },
+      { name: "\u200b",        value: T.secStats,                 inline: false },
+      { name: T.guilds,        value: `**${fmtBig(guildCount)}**`,  inline: true  },
+      { name: T.total,         value: `**${fmtBig(totalAttacks)}**`, inline: true  },
+      { name: T.active,        value: `**${activeAttacks}** ${T.firing}`, inline: true  },
+      { name: T.pkts,          value: `**${fmtBig(totalPackets)}**`, inline: true  },
+      { name: T.data,          value: `**${fmtBytes(totalBytes)}**`, inline: true  },
+      { name: T.uptime,        value: fmtUptime(uptimeMs),            inline: true  },
+      { name: "\u200b",        value: T.secCmds,                   inline: false },
+      { name: T.coreTitle,     value: T.coreVal,                   inline: true  },
+      { name: T.reconTitle,    value: T.reconVal,                  inline: true  },
     )
-    .setFooter({ text: `${AUTHOR}  •  MikuBeam ARES v2.0  •  ${totalNodes} Nodes Configured` })
+    .setFooter({ text: T.footer })
     .setTimestamp();
 }
 

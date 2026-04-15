@@ -31,7 +31,7 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 ### Frontend (`artifacts/mikubeam-panel`)
 
 - **Theme**: Lelouch Britannia — dark imperial background, gold/crimson accents, Cinzel display font
-- **Layout**: Single-page design matching MikuMikuBeam screenshot — centered card with character GIF, target input, attack controls, stats, progress bar, terminal
+- **Layout**: Single-page design — centered card with character GIF, target input, attack controls, stats, progress bar, terminal
 - **Mobile**: Fully responsive for iOS (safe-area insets, touch-friendly sizing, stacked layout)
 - **Fonts**: Cinzel (title), Crimson Text (body), Share Tech Mono (terminal)
 - **Character**: Lelouch GIF from `public/lelouch.gif`
@@ -141,8 +141,10 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Framework**: discord.js v14
 - **Env var**: `DISCORD_BOT_TOKEN`
 - **Application ID**: `1493775313749151754`
-- **Commands**: `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`
+- **Commands**: `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`, `/geass`, `/cluster status|broadcast`, `/info`
 - **Live monitoring**: polls `/api/attacks/:id` every 5s, calculates pps via delta, edits Discord message
+- **Language toggle**: `/info` supports 🇺🇸 English / 🇧🇷 Português via Discord buttons
+- **Cluster**: `/cluster status` shows node health grid; `/cluster broadcast` fires Geass Override to all nodes
 - **Invite URL**: `https://discord.com/api/oauth2/authorize?client_id=1493775313749151754&permissions=84992&scope=bot%20applications.commands`
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
