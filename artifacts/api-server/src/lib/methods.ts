@@ -90,7 +90,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 20 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm + HTTP Pipeline (300K req/s) + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SSDP M-SEARCH. VIGINTUS ARES COMMAND.",
+    description: "ABSOLUTE MAXIMUM — 21 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + UDP Flood + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SSDP M-SEARCH. ARES OMNIVECT — I, LELOUCH vi BRITANNIA, COMMAND YOU!",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────

@@ -151,7 +151,7 @@ async function runAttackWorkers(
     return;
   }
 
-  // ── GEASS OVERRIDE: VIGINTUS ARES — ABSOLUTE OMNIVECT DEVASTATION ──────
+  // ── GEASS OVERRIDE: ARES OMNIVECT — ABSOLUTE OMNIVECT DEVASTATION ───────
   // Vector  1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
   // Vector  2: Slowloris               — hold half-open TLS sockets, starve thread pool
   // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 512-stream RST burst, dominant CPU
@@ -160,22 +160,23 @@ async function runAttackWorkers(
   // Vector  6: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
   // Vector  7: WebSocket Exhaustion    — goroutine/thread per conn + large message frames
   // Vector  8: GraphQL Fragment Bomb   — fragment spread explosion: O(frags × fields) CPU
-  // Vector  9: RUDY v2 Slow POST       — multipart/form-data 1GB body, holds server threads
-  // Vector 10: Cache Poison            — CDN cache eviction, 100% origin miss rate
-  // Vector 11: TLS Renegotiation       — forced public-key handshake 1000×/sec on server CPU
-  // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
-  // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
-  // Vector 14: H2 Settings Storm       — CVE-2023-44487 variant: SETTINGS oscillation + WINDOW_UPDATE
-  // Vector 15: HTTP Pipeline Flood     — HTTP/1.1 pipelining 128 req/write, 300K req/s, keeps TCP alive
-  // Vector 16: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
+  // Vector  9: UDP Flood               — raw UDP burst engine, 32K pps per worker
+  // Vector 10: RUDY v2 Slow POST       — multipart/form-data 1GB body, holds server threads
+  // Vector 11: Cache Poison            — CDN cache eviction, 100% origin miss rate
+  // Vector 12: TLS Renegotiation       — forced public-key handshake 1000×/sec on server CPU
+  // Vector 13: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
+  // Vector 14: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
+  // Vector 15: H2 Settings Storm       — SETTINGS oscillation + WINDOW_UPDATE: 326K pps proved
+  // Vector 16: HTTP Pipeline Flood     — HTTP/1.1 pipelining 128 req/write, 300K req/s, no wait
+  // Vector 17: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
   //                                       (raw-socket Tier 1 / hping3 Tier 2 / UDP saturation Tier 3)
-  // Vector 17: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
+  // Vector 18: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
   //                                       forces recursive resolution, fills NXDOMAIN cache, no WAF
-  // Vector 18: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
-  // Vector 19: Memcached UDP Flood     — real binary Memcached protocol to port 11211
-  // Vector 20: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
+  // Vector 19: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
+  // Vector 20: Memcached UDP Flood     — real binary Memcached protocol to port 11211
+  // Vector 21: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
   //
-  // ★ 32GB RAM / 8 vCPU optimized — VIGINTUS: 20 simultaneous real attack vectors.
+  // ★ 32GB RAM / 8 vCPU optimized — ARES OMNIVECT: 21 simultaneous real attack vectors.
   // I/O-bound vectors (network + socket) — N > 8 workers is fine, each owns its own event loop.
   // CPU-intensive vectors (H2 RST, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers.
   // UDP/L3 vectors use a single worker with high socket concurrency (no multi-worker UDP lock).

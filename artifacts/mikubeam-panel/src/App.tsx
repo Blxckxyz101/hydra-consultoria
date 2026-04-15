@@ -42,7 +42,7 @@ const L7_PROXY_OK = new Set([
   "conn-flood","ws-flood","h2-settings-storm",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "VIGINTUS [20v]", cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")      return { badge: "ARES ∞ [21v]",  cls: "geass",     color: "#C0392B" };
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
