@@ -16,7 +16,7 @@ import {
   ComponentType,
   Events,
 } from "discord.js";
-import { BOT_TOKEN, APPLICATION_ID, COLORS, AUTHOR } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, GUILD_ID, COLORS, AUTHOR } from "./config.js";
 import { api } from "./api.js";
 import {
   buildAttackEmbed,
@@ -160,9 +160,9 @@ const COMMANDS = [
 async function deployCommands(): Promise<void> {
   const rest = new REST().setToken(BOT_TOKEN);
   try {
-    console.log("📡 Registering slash commands with Discord...");
-    await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: COMMANDS });
-    console.log(`✅ Registered ${COMMANDS.length} slash commands globally.`);
+    console.log("📡 Registering slash commands to guild (instant)...");
+    await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, GUILD_ID), { body: COMMANDS });
+    console.log(`✅ Registered ${COMMANDS.length} slash commands to guild ${GUILD_ID}.`);
   } catch (err) {
     console.error("❌ Failed to register commands:", err);
     throw err;

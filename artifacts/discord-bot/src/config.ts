@@ -1,5 +1,6 @@
-export const BOT_TOKEN     = process.env.DISCORD_BOT_TOKEN ?? "";
+export const BOT_TOKEN      = process.env.DISCORD_BOT_TOKEN ?? "";
 export const APPLICATION_ID = "1493775313749151754";
+export const GUILD_ID       = "1483182658971242546";
 export const API_BASE       = "http://localhost:8080";
 export const AUTHOR         = "Made by blxckxyz";
 export const BOT_NAME       = "Lelouch Britannia";
