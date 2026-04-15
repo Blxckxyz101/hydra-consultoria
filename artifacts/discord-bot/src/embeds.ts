@@ -71,8 +71,17 @@ export type ProbeResult = {
 const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy"]);
 
 // ── Sparkline helpers ─────────────────────────────────────────────────────────
+// Definitive DOWN reasons = server actively refused or DNS gone
+// (NOT timeouts/resets/inconclusive which can be OUR network under load during attack)
+const DEFINITIVE_DOWN = (reason?: string) => {
+  if (!reason) return false;
+  return reason.includes("refused") || reason.includes("DNS resolution failed");
+};
+
 const sparkDot = (p: ProbeResult) => {
-  if (!p.up) return "🔴";
+  if (!p.up && DEFINITIVE_DOWN(p.reason)) return "🔴"; // confirmed server crash/refusal
+  if (!p.up) return "🟠";                              // probe failed but inconclusive
+  if (p.latencyMs > 5000) return "🟡";                 // probe timed out or inconclusive (our net busy)
   if (p.latencyMs > 4000) return "🟡";
   if (p.latencyMs > 1500) return "🟠";
   return "🟢";
@@ -80,13 +89,16 @@ const sparkDot = (p: ProbeResult) => {
 
 const buildStatusField = (history: ProbeResult[], method: string) => {
   if (history.length === 0) return { name: "🌐 Target Status", value: "_probing..._" };
-  const last    = history[history.length - 1];
-  const dots    = history.slice(-20).map(sparkDot).join("");
-  const downRun = history.slice(-3).every(p => !p.up);  // 3 consecutive downs = confirmed down
+  const last     = history[history.length - 1];
+  const dots     = history.slice(-20).map(sparkDot).join("");
+  // 5 consecutive definitive DOWNs = confirmed down (ignore probe inconclusive)
+  const recent5  = history.slice(-5);
+  const downRun  = recent5.length >= 5 && recent5.every(p => !p.up && DEFINITIVE_DOWN(p.reason));
+  const anyDown3 = history.slice(-3).filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length >= 3;
 
   let statusLine: string;
-  if (!last.up && downRun) {
-    // Target confirmed DOWN — show cause
+  if (!last.up && DEFINITIVE_DOWN(last.reason) && (downRun || anyDown3)) {
+    // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
       "geass-override": "All 5 vectors converged — TOTAL ANNIHILATION",
       "http2-flood":    "H2 connection table saturated (CVE-2023-44487)",
@@ -98,8 +110,11 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
     const methodCause = causeMap[method] ?? "Server resources exhausted";
     const probeCause  = last.reason ?? methodCause;
     statusLine = `**💀 TARGET DOWN** — ${probeCause}`;
-  } else if (!last.up) {
-    statusLine = `**🔴 DEGRADED** — ${last.reason ?? "connection failing"} (${last.latencyMs}ms)`;
+  } else if (!last.up && DEFINITIVE_DOWN(last.reason)) {
+    statusLine = `**🔴 FAILING** — ${last.reason} (${last.latencyMs}ms) — confirming…`;
+  } else if (last.latencyMs > 5000) {
+    // Probe inconclusive or very slow — network under attack load
+    statusLine = `**🟠 UNCONFIRMED** — probe slow (${last.latencyMs}ms) — possible stress or probe saturated`;
   } else if (last.latencyMs > 4000) {
     statusLine = `**🟡 CRITICAL LAG** — ${last.latencyMs}ms (on the edge)`;
   } else if (last.latencyMs > 1500) {
