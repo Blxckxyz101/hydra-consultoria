@@ -39,24 +39,28 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override", label: "👁️ Geass Override ∞",        description: "MAXIMUM POWER — 5 simultaneous vectors (conn+slow+H2+WAF+UDP)", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 8 vectors: ConnFlood+Slow+H2RST+H2CONT+WAF+WS+GQL+UDP", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
-  { value: "waf-bypass",     label: "🟣 Geass WAF Bypass ∞",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",  emoji: "🟣" },
-  { value: "http2-flood",    label: "⚡ HTTP/2 Rapid Reset",       description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",           emoji: "⚡" },
-  { value: "slowloris",      label: "🐌 Slowloris",               description: "25K half-open connections — starves nginx/apache thread pool",   emoji: "🐌" },
-  { value: "conn-flood",     label: "🔗 TLS Connection Flood",     description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",  emoji: "🔗" },
-  { value: "http-flood",     label: "🌊 HTTP Flood",               description: "High-volume HTTP GET — overwhelms web server resources",        emoji: "🌊" },
-  { value: "http-bypass",    label: "🛡️ HTTP Bypass",             description: "Browser-emulated HTTP flood — bypasses basic bot protection",   emoji: "🛡️" },
-  { value: "rudy",           label: "🩸 R.U.D.Y (SlowPOST)",      description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",emoji: "🩸" },
+  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",       emoji: "🟣" },
+  { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",               emoji: "⚡" },
+  { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",          emoji: "💀" },
+  { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS connections open — goroutine/thread per conn", emoji: "🕸️" },
+  { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",       emoji: "🔮" },
+  { value: "slowloris",           label: "🐌 Slowloris",                  description: "25K half-open connections — starves nginx/apache thread pool",        emoji: "🐌" },
+  { value: "conn-flood",          label: "🔗 TLS Connection Flood",        description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",       emoji: "🔗" },
+  { value: "tls-renego",          label: "🔐 TLS Renegotiation DoS",      description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn",   emoji: "🔐" },
+  { value: "http-flood",          label: "🌊 HTTP Flood",                  description: "High-volume HTTP GET — overwhelms web server resources",             emoji: "🌊" },
+  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Browser-emulated HTTP flood — bypasses basic bot protection",        emoji: "🛡️" },
+  { value: "rudy",                label: "🩸 R.U.D.Y (SlowPOST)",         description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",   emoji: "🩸" },
   // ── L4 Transport ───────────────────────────────────────────────────────
-  { value: "udp-flood",      label: "💥 UDP Flood",               description: "Raw UDP packet flood — saturates L4 bandwidth",                 emoji: "💥" },
-  { value: "udp-bypass",     label: "🔀 UDP Bypass",              description: "UDP flood with randomized payloads to evade rate limiting",      emoji: "🔀" },
-  { value: "syn-flood",      label: "🔌 SYN Flood",               description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake", emoji: "🔌" },
-  { value: "tcp-flood",      label: "📡 TCP Flood",               description: "Raw TCP packet flood against open ports",                        emoji: "📡" },
+  { value: "udp-flood",           label: "💥 UDP Flood",                  description: "Raw UDP packet flood — saturates L4 bandwidth",                      emoji: "💥" },
+  { value: "udp-bypass",          label: "🔀 UDP Bypass",                 description: "UDP flood with randomized payloads to evade rate limiting",           emoji: "🔀" },
+  { value: "syn-flood",           label: "🔌 SYN Flood",                  description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake",      emoji: "🔌" },
+  { value: "tcp-flood",           label: "📡 TCP Flood",                  description: "Raw TCP packet flood against open ports",                             emoji: "📡" },
   // ── L3 Amplification ───────────────────────────────────────────────────
-  { value: "ntp-amp",        label: "🕐 NTP Amplification [556x]", description: "Monlist NTP abuse — 556× amplification factor",                emoji: "🕐" },
-  { value: "dns-amp",        label: "📛 DNS Amplification [54x]",  description: "Open resolver abuse — 54× amplification factor",               emoji: "📛" },
-  { value: "mem-amp",        label: "💾 Memcached [51000x]",      description: "Exposed Memcached — up to 51,000× amplification",               emoji: "💾" },
+  { value: "ntp-amp",             label: "🕐 NTP Amplification [556x]",   description: "Monlist NTP abuse — 556× amplification factor",                      emoji: "🕐" },
+  { value: "dns-amp",             label: "📛 DNS Amplification [54x]",    description: "Open resolver abuse — 54× amplification factor",                     emoji: "📛" },
+  { value: "mem-amp",             label: "💾 Memcached [51000x]",         description: "Exposed Memcached — up to 51,000× amplification",                    emoji: "💾" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────

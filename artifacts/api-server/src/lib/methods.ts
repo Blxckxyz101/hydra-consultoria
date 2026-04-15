@@ -90,7 +90,43 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "Absolute Geass command. 4 simultaneous vectors: Connection Flood (TLS exhaustion) + Slowloris + HTTP/2 Rapid Reset + UDP. Bypasses all rate limiting — operates below HTTP layer.",
+    description: "ABSOLUTE MAXIMUM — 8 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + WAF Bypass + WebSocket Exhaust + GraphQL DoS + UDP. Unstoppable.",
+  },
+
+  // ── NEW: CVE-2024-27316 H2 CONTINUATION ──────────────────
+  {
+    id: "http2-continuation",
+    name: "H2 CONTINUATION Flood (CVE-2024-27316)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends HEADERS frames without END_HEADERS flag, then floods CONTINUATION frames — server buffers all headers indefinitely → OOM. Affects nginx ≤1.25.4, Apache ≤2.4.58, Envoy, HAProxy.",
+  },
+
+  // ── NEW: TLS Renegotiation ────────────────────────────────
+  {
+    id: "tls-renego",
+    name: "TLS Renegotiation DoS",
+    layer: "L4" as const,
+    protocol: "TCP" as const,
+    description: "Forces TLS 1.2 renegotiation on every connection — each renegotiation = full public-key handshake (~3ms CPU on server). 200 slots × 5 renegotiations/sec = 1,000 handshakes/sec CPU drain.",
+  },
+
+  // ── NEW: WebSocket Exhaustion ─────────────────────────────
+  {
+    id: "ws-flood",
+    name: "WebSocket Exhaustion",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Opens thousands of WebSocket connections and holds them with pings. Servers allocate a goroutine/thread per WS — far more expensive than HTTP. DEV: 400 conns | PROD: 5,000 conns.",
+  },
+
+  // ── NEW: GraphQL Introspection DoS ───────────────────────
+  {
+    id: "graphql-dos",
+    name: "GraphQL Introspection DoS",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends deeply nested queries (15-level recursion, alias bombs, batched introspection). Exponential resolver CPU: O(N^15) complexity. Destroys unprotected GraphQL APIs.",
   },
 
   // ── Connection Flood ─────────────────────────────────────

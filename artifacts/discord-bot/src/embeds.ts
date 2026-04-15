@@ -31,21 +31,25 @@ const tierIcon = (t: string) =>
   t === "S" ? "🔴" : t === "A" ? "🟠" : t === "B" ? "🟡" : t === "C" ? "🔵" : "⚪";
 const methodLabel = (id: string) => {
   const map: Record<string, string> = {
-    "http-flood":     "HTTP Flood",
-    "http-bypass":    "HTTP Bypass",
-    "http2-flood":    "HTTP/2 Rapid Reset",
-    "waf-bypass":     "Geass WAF Bypass ∞",
-    "conn-flood":     "TLS Connection Flood",
-    "slowloris":      "Slowloris",
-    "rudy":           "R.U.D.Y",
-    "syn-flood":      "SYN Flood",
-    "tcp-flood":      "TCP Flood",
-    "udp-flood":      "UDP Flood",
-    "udp-bypass":     "UDP Bypass",
-    "dns-amp":        "DNS Amplification",
-    "ntp-amp":        "NTP Amplification",
-    "mem-amp":        "Memcached Amp",
-    "geass-override": "Geass Override ∞",
+    "http-flood":          "HTTP Flood",
+    "http-bypass":         "HTTP Bypass",
+    "http2-flood":         "HTTP/2 Rapid Reset",
+    "http2-continuation":  "H2 CONTINUATION (CVE-2024-27316)",
+    "waf-bypass":          "Geass WAF Bypass ∞",
+    "conn-flood":          "TLS Connection Flood",
+    "slowloris":           "Slowloris",
+    "tls-renego":          "TLS Renegotiation DoS",
+    "ws-flood":            "WebSocket Exhaustion",
+    "graphql-dos":         "GraphQL Introspection DoS",
+    "rudy":                "R.U.D.Y",
+    "syn-flood":           "SYN Flood",
+    "tcp-flood":           "TCP Flood",
+    "udp-flood":           "UDP Flood",
+    "udp-bypass":          "UDP Bypass",
+    "dns-amp":             "DNS Amplification",
+    "ntp-amp":             "NTP Amplification",
+    "mem-amp":             "Memcached Amp",
+    "geass-override":      "Geass Override ∞ [8-VECTOR]",
   };
   return map[id] ?? id;
 };
@@ -68,7 +72,7 @@ export type ProbeResult = {
 };
 
 // Connection-based methods that show open conn counter
-const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy"]);
+const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "ws-flood", "tls-renego", "http2-continuation"]);
 
 // ── Sparkline helpers ─────────────────────────────────────────────────────────
 // Definitive DOWN reasons = server actively refused or DNS gone
@@ -100,12 +104,16 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   if (!last.up && DEFINITIVE_DOWN(last.reason) && (downRun || anyDown3)) {
     // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
-      "geass-override": "All 5 vectors converged — TOTAL ANNIHILATION",
-      "http2-flood":    "H2 connection table saturated (CVE-2023-44487)",
-      "waf-bypass":     "WAF layer overwhelmed — origin exposed",
-      "conn-flood":     "TLS socket table exhausted — nginx fell",
-      "slowloris":      "Thread pool saturated — server frozen",
-      "udp-flood":      "Bandwidth saturated at L4",
+      "geass-override":     "All 8 vectors converged — ABSOLUTE ANNIHILATION",
+      "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
+      "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
+      "waf-bypass":         "WAF layer overwhelmed — origin exposed",
+      "conn-flood":         "TLS socket table exhausted — nginx fell",
+      "slowloris":          "Thread pool saturated — server frozen",
+      "tls-renego":         "TLS CPU exhausted — handshake queue overflowed",
+      "ws-flood":           "WebSocket goroutine pool drained — server unresponsive",
+      "graphql-dos":        "GraphQL resolver CPU limit hit — exponential query collapse",
+      "udp-flood":          "Bandwidth saturated at L4",
     };
     const methodCause = causeMap[method] ?? "Server resources exhausted";
     const probeCause  = last.reason ?? methodCause;
@@ -160,7 +168,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `⚡ **PENTA-VECTOR ASSAULT** — 5 simultaneous vectors, live monitoring active`
+          ? `👁️ **OCTA-VECTOR ASSAULT** — 8 simultaneous vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
