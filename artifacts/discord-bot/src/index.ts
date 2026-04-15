@@ -16,7 +16,7 @@ import {
   ComponentType,
   Events,
 } from "discord.js";
-import { BOT_TOKEN, APPLICATION_ID, GUILD_ID, COLORS, AUTHOR } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, GUILD_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
 import { api } from "./api.js";
 import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
 import {
@@ -207,9 +207,14 @@ const COMMANDS = [
 async function deployCommands(): Promise<void> {
   const rest = new REST().setToken(BOT_TOKEN);
   try {
-    console.log("📡 Registering slash commands to guild (instant)...");
-    await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, GUILD_ID), { body: COMMANDS });
-    console.log(`✅ Registered ${COMMANDS.length} slash commands to guild ${GUILD_ID}.`);
+    // Register instantly to every known guild
+    for (const gid of ALL_GUILD_IDS) {
+      await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, gid), { body: COMMANDS });
+      console.log(`✅ Registered ${COMMANDS.length} commands to guild ${gid}.`);
+    }
+    // Also register globally so new guilds get them automatically (propagates ~1h)
+    await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: COMMANDS });
+    console.log(`🌐 Registered ${COMMANDS.length} commands globally.`);
   } catch (err) {
     console.error("❌ Failed to register commands:", err);
     throw err;
