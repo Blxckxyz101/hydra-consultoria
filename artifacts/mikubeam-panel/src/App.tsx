@@ -17,6 +17,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 /* ── Types ── */
 type LogType = "info" | "success" | "error" | "warn";
+type AppTheme = "lelouch" | "suzaku";
 interface LogEntry       { id: number; text: string; type: LogType; ts: number; }
 interface CheckResult    { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
 interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
@@ -24,6 +25,8 @@ interface UserPreset     { id: string; label: string; method: string; packetSize
 interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
 interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; serverType: string; serverLabel: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
 interface NamedTarget    { url: string; label: string; }
+interface Toast          { id: string; type: "success"|"warn"|"error"|"geass"; title: string; msg?: string; }
+interface DomainScore    { total: number; downed: number; lastMethod: string; lastSeen: number; }
 
 /* ── Method classification ── */
 const L7_HTTP_FE  = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
@@ -64,6 +67,72 @@ const PRESETS: Preset[] = [
 /* ── Log counter ── */
 let _lid = 0;
 const mkLog = (text: string, type: LogType = "info"): LogEntry => ({ id: ++_lid, text, type, ts: Date.now() });
+
+/* ── Domain key helper ── */
+function getDomainKey(url: string): string {
+  try { return new URL(url.startsWith("http") ? url : `http://${url}`).hostname; } catch { return url; }
+}
+
+/* ── Terminal log highlighter ── */
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","geass-override","dns-amp","ntp-amp","mem-amp","rudy"];
+function highlightLog(text: string): React.ReactNode {
+  // Segment the text into colored spans
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+
+  // Build a list of match regions: [start, end, component]
+  type Region = { start: number; end: number; node: React.ReactNode };
+  const regions: Region[] = [];
+
+  // 1. URLs — gold
+  const urlRe = /https?:\/\/[^\s,;\"']+/g;
+  let m: RegExpExecArray | null;
+  while ((m = urlRe.exec(text)) !== null)
+    regions.push({ start: m.index, end: m.index + m[0].length, node: <span key={m.index} className="hl-url">{m[0]}</span> });
+
+  // 2. IPs — cyan
+  const ipRe = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b/g;
+  while ((m = ipRe.exec(text)) !== null) {
+    if (!regions.some(r => m!.index >= r.start && m!.index < r.end))
+      regions.push({ start: m.index, end: m.index + m[0].length, node: <span key={m.index+10000} className="hl-ip">{m[0]}</span> });
+  }
+
+  // 3. Method names — method color
+  for (const method of HIGHLIGHT_METHODS) {
+    const mre = new RegExp(`\\b${method}\\b`, "gi");
+    while ((m = mre.exec(text)) !== null) {
+      if (!regions.some(r => m!.index >= r.start && m!.index < r.end)) {
+        const mi = methodInfo(method);
+        regions.push({ start: m.index, end: m.index + m[0].length, node: <span key={m.index+20000} style={{ color: mi.color, fontWeight: 700 }}>{m[0]}</span> });
+      }
+    }
+  }
+
+  // 4. Numbers with units — bright white
+  const numRe = /\b[\d,]+(?:\.\d+)?\s*(?:pps|req\/s|pkts|Mbps|Gbps|Kbps|MB|GB|KB|ms)\b/g;
+  while ((m = numRe.exec(text)) !== null) {
+    if (!regions.some(r => m!.index >= r.start && m!.index < r.end))
+      regions.push({ start: m.index, end: m.index + m[0].length, node: <span key={m.index+30000} className="hl-num">{m[0]}</span> });
+  }
+
+  // 5. ID #N — dim gold
+  const idRe = /\bID #\d+\b/g;
+  while ((m = idRe.exec(text)) !== null) {
+    if (!regions.some(r => m!.index >= r.start && m!.index < r.end))
+      regions.push({ start: m.index, end: m.index + m[0].length, node: <span key={m.index+40000} className="hl-id">{m[0]}</span> });
+  }
+
+  // Sort by start position
+  regions.sort((a, b) => a.start - b.start);
+
+  for (const region of regions) {
+    if (region.start > cursor) parts.push(text.slice(cursor, region.start));
+    parts.push(region.node);
+    cursor = region.end;
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return <>{parts}</>;
+}
 
 /* ── Audio — singleton AudioContext, resumed on each play ── */
 let _audioCtx: AudioContext | null = null;
@@ -362,6 +431,22 @@ function Panel() {
   const [proxyIsFetching, setProxyIsFetching] = useState(false);
   const [proxyLastRefresh, setProxyLastRefresh] = useState<number>(0);
 
+  /* Toast notifications */
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  /* App theme */
+  const [theme, setTheme] = useState<AppTheme>(() =>
+    (localStorage.getItem("lb-theme") as AppTheme) || "lelouch"
+  );
+
+  /* Domain success scores */
+  const [domainScores, setDomainScores] = useState<Record<string, DomainScore>>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-domain-scores") || "{}"); } catch { return {}; }
+  });
+
+  /* Time remaining in current attack */
+  const [timeRemaining, setTimeRemaining] = useState(0);
+
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
   const startTimeRef   = useRef<number | null>(null);
@@ -385,6 +470,47 @@ function Panel() {
   const addLog = useCallback((text: string, type: LogType = "info") => {
     setLogs(prev => [...prev.slice(-99), mkLog(text, type)]);
   }, []);
+
+  /* ── Toast helper ── */
+  const addToast = useCallback((type: Toast["type"], title: string, msg?: string) => {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    setToasts(prev => [...prev.slice(-3), { id, type, title, msg }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4200);
+  }, []);
+
+  /* ── Domain score helper ── */
+  const recordDomainScore = useCallback((targetUrl: string, attackMethod: string, success: boolean) => {
+    const key = getDomainKey(targetUrl);
+    setDomainScores(prev => {
+      const curr = prev[key] ?? { total: 0, downed: 0, lastMethod: "", lastSeen: 0 };
+      const next: DomainScore = {
+        total: curr.total + 1,
+        downed: curr.downed + (success ? 1 : 0),
+        lastMethod: attackMethod,
+        lastSeen: Date.now(),
+      };
+      const updated = { ...prev, [key]: next };
+      localStorage.setItem("lb-domain-scores", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  /* ── Theme class on body ── */
+  useEffect(() => {
+    document.body.classList.toggle("theme-suzaku", theme === "suzaku");
+    localStorage.setItem("lb-theme", theme);
+  }, [theme]);
+
+  /* ── Time remaining countdown ── */
+  useEffect(() => {
+    if (!isRunning || startTimeRef.current === null) { setTimeRemaining(0); return; }
+    const iv = setInterval(() => {
+      const elapsed = (Date.now() - startTimeRef.current!) / 1000;
+      const rem = Math.max(0, durationRef.current - elapsed);
+      setTimeRemaining(Math.round(rem));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [isRunning]);
 
   useEffect(() => { soundRef.current = soundEnabled; }, [soundEnabled]);
   useEffect(() => { setEntered(true); }, []);
@@ -543,6 +669,8 @@ function Panel() {
             setTargetStatus("offline");
             addLog(`💥 TARGET DOWN! ${urlToCheck} — ${fails} consecutive probe failures — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
             addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
+            addToast("geass", "MISSION ACCOMPLISHED", `${urlToCheck} — TARGET ELIMINATED`);
+            recordDomainScore(urlToCheck, method, true);
             if (soundRef.current) playTone("kill");
             if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
           }
@@ -605,6 +733,8 @@ function Panel() {
         try {
           await stopAttack.mutateAsync({ id: currentAttackId });
           addLog("👁 Local node halted.", "success");
+          addToast("stop", "Strike Halted", `${getDomainKey(targetRef.current)} — Geass revoked`);
+          recordDomainScore(targetRef.current, method, targetStatus === "offline");
           if (soundRef.current) playTone("stop");
         } catch { addLog("✕ Failed to stop local attack.", "error"); }
       }
@@ -668,6 +798,7 @@ function Panel() {
       setLastAtkPkts(0); setLastAtkBytes(0); setClusterAttackIds([]); setClusterTotalPkts(0); setClusterTotalBytes(0);
       const mi = methodInfo(method);
       addLog(`👁 Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
+      addToast("launch", `Geass Activated`, `${method.toUpperCase()} → ${getDomainKey(target.trim())} [${duration}s]`);
 
       // Launch extra targets (multi-target mode)
       const activeExtras = extraTargets.filter(t => t.trim());
@@ -937,9 +1068,33 @@ function Panel() {
   const isUDP = L4_UDP_FE.has(method);
 
   /* ── JSX ── */
+  /* ── Domain scores sorted by last seen ── */
+  const topDomains = Object.entries(domainScores)
+    .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
+    .slice(0, 5);
+
   return (
     <div className={`lb-page ${entered ? "lb-entered" : ""}`}>
       <GeassEye intensity={eyeIntensity} />
+
+      {/* ── Toast container ── */}
+      {toasts.length > 0 && (
+        <div className="lb-toast-container" aria-live="polite">
+          {toasts.map(t => (
+            <div key={t.id} className={`lb-toast lb-toast--${t.type}`}>
+              <span className="lb-toast-icon">
+                {t.type === "launch" ? "👁" : t.type === "stop" ? "⏹" : t.type === "geass" ? "🟣" : "ℹ"}
+              </span>
+              <div className="lb-toast-body">
+                <div className="lb-toast-title">{t.title}</div>
+                {t.msg && <div className="lb-toast-msg">{t.msg}</div>}
+              </div>
+              <button className="lb-toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="lb-wrap">
 
         {/* ── Header ── */}
@@ -956,6 +1111,13 @@ function Panel() {
             <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
+          <button
+            className="lb-theme-toggle"
+            title={`Switch to ${theme === "lelouch" ? "Suzaku (navy)" : "Lelouch (crimson)"} theme`}
+            onClick={() => setTheme(t => t === "lelouch" ? "suzaku" : "lelouch")}
+          >
+            {theme === "lelouch" ? "⚔ Suzaku Mode" : "👁 Lelouch Mode"}
+          </button>
         </header>
 
         {/* ── Built-in Presets ── */}
@@ -1533,7 +1695,12 @@ function Panel() {
             <div className="lb-progress-wrap">
               <div className="lb-progress-label">
                 <span>Attack Progress</span>
-                <span>{Math.round(progress)}%</span>
+                <span style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+                  {isRunning && timeRemaining > 0 && (
+                    <span className="lb-time-remaining">{timeRemaining}s remaining</span>
+                  )}
+                  <span>{Math.round(progress)}%</span>
+                </span>
               </div>
               <div className="lb-progress-track">
                 <div className="lb-progress-fill" style={{ width: `${progress}%` }}/>
@@ -1544,7 +1711,7 @@ function Panel() {
             <div className="lb-terminal" ref={terminalRef}>
               {logs.map(l => (
                 <div key={l.id} className={`lb-line lb-line--${l.type}`}>
-                  <span className="lb-prompt">›</span> {l.text}
+                  <span className="lb-prompt">›</span> {highlightLog(l.text)}
                 </div>
               ))}
             </div>
@@ -1612,6 +1779,36 @@ function Panel() {
             </section>
           </div>
         </div>
+
+        {/* ── Domain Score History ── */}
+        {topDomains.length > 0 && (
+          <div className="lb-domain-scores">
+            <div className="lb-domain-scores-title">
+              <span>👁 Strike Intelligence</span>
+              <button className="lb-domain-scores-clear" onClick={() => {
+                setDomainScores({});
+                localStorage.removeItem("lb-domain-scores");
+              }}>Clear</button>
+            </div>
+            <div className="lb-domain-scores-list">
+              {topDomains.map(([domain, score]) => {
+                const pct = score.total > 0 ? Math.round((score.downed / score.total) * 100) : 0;
+                return (
+                  <div key={domain} className="lb-domain-score-row">
+                    <span className="lb-domain-score-name" title={domain}>{domain}</span>
+                    <span className="lb-domain-score-method">{score.lastMethod}</span>
+                    <div className="lb-domain-score-bar-wrap">
+                      <div className="lb-domain-score-bar-fill" style={{ width: `${pct}%`, background: pct >= 100 ? "#2ecc71" : pct > 0 ? "#D4AF37" : "#444" }}/>
+                    </div>
+                    <span className={`lb-domain-score-pct ${pct >= 100 ? "lb-domain-score-pct--down" : ""}`}>
+                      {pct >= 100 ? "💥 DOWN" : `${score.downed}/${score.total}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <footer className="lb-footer">
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>
