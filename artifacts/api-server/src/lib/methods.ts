@@ -90,7 +90,16 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 8 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + WAF Bypass + WebSocket Exhaust + GraphQL DoS + UDP. Unstoppable.",
+    description: "ABSOLUTE MAXIMUM — 13 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death. OMNIVECT ARES COMMAND.",
+  },
+
+  // ── NEW: HPACK Bomb ───────────────────────────────────────
+  {
+    id: "hpack-bomb",
+    name: "HPACK Bomb (RFC 7541 Table Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends HTTP/2 HEADERS frames packed with 50–150 unique headers using HPACK incremental indexing (type 0x40). Server MUST add each header to its dynamic HPACK table (64KB default) and continuously evict oldest entries → tight allocator + CPU eviction loop. Targets all H2 servers — nginx, h2o, Envoy, Cloudflare Workers, AWS ALB. No CVE patch exists; this exploits required RFC behavior.",
   },
 
   // ── NEW: CVE-2024-27316 H2 CONTINUATION ──────────────────

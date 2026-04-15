@@ -40,7 +40,7 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 
 - Routes: `/api/attacks` (CRUD + stop), `/api/attacks/stats`, `/api/methods`
 - **Real attack workers** using `worker_threads` + real network I/O (dgram UDP, net TCP, fetch HTTP)
-- Methods: 17 attack vectors — UDP Flood/Bypass, DNS/NTP/Mem/SSDP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, Slowloris, R.U.D.Y, Geass Override
+- Methods: 24 attack vectors — UDP Flood/Bypass, DNS/NTP/Mem/SSDP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, H2 CONTINUATION (CVE-2024-27316), Slowloris, R.U.D.Y, RUDY v2, WebSocket Exhaustion, GraphQL DoS, QUIC/HTTP3, Cache Poison, TLS Renegotiation, SSL Death Record, Conn Flood, HPACK Bomb, Geass Override (13 vectors)
 - DB: `attacks` table in PostgreSQL — live counter via SQL increment on each worker stats flush
 
 #### v3.0 Features (12 major additions)

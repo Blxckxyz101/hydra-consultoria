@@ -53,7 +53,8 @@ const methodLabel = (id: string) => {
     "dns-amp":             "DNS Amplification",
     "ntp-amp":             "NTP Amplification",
     "mem-amp":             "Memcached Amp",
-    "geass-override":      "Geass Override ∞ [DECA — 10 VECTORS]",
+    "hpack-bomb":          "HPACK Bomb — RFC 7541 Table Exhaustion",
+    "geass-override":      "Geass Override ∞ [ARES — 13 VECTORS]",
   };
   return map[id] ?? id;
 };

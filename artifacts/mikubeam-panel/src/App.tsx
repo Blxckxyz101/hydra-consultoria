@@ -37,14 +37,23 @@ const L4_TCP_FE   = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst","conn-f
 const L4_UDP_FE   = new Set(["udp-flood","udp-bypass"]);
 const L7_PROXY_OK = new Set(["http-flood","http-bypass"]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override") return { badge: "GEASS ∞",    cls: "geass",    color: "#C0392B" };
-  if (m === "waf-bypass")     return { badge: "WAF BYPASS", cls: "geass",    color: "#8E44AD" };
-  if (m === "http2-flood")    return { badge: "REAL H2",    cls: "real-http", color: "#1abc9c" };
-  if (m === "slowloris")      return { badge: "SLOWLORIS",  cls: "real-http", color: "#9b59b6" };
-  if (m === "conn-flood")     return { badge: "CONN FLOOD", cls: "real-tcp",  color: "#e74c3c" };
-  if (L7_HTTP_FE.has(m))     return { badge: "REAL HTTP",  cls: "real-http", color: "#2ecc71" };
-  if (L4_TCP_FE.has(m))      return { badge: "REAL TCP",   cls: "real-tcp",  color: "#3498db" };
-  if (L4_UDP_FE.has(m))      return { badge: "REAL UDP",   cls: "real-udp",  color: "#e67e22" };
+  if (m === "geass-override")      return { badge: "ARES ∞ [13v]",  cls: "geass",     color: "#C0392B" };
+  if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
+  if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
+  if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
+  if (m === "hpack-bomb")          return { badge: "HPACK BOMB",    cls: "real-http", color: "#e91e8c" };
+  if (m === "slowloris")           return { badge: "SLOWLORIS",     cls: "real-http", color: "#9b59b6" };
+  if (m === "rudy-v2")             return { badge: "RUDY v2",       cls: "real-http", color: "#c0392b" };
+  if (m === "ws-flood")            return { badge: "WS EXHAUST",    cls: "real-http", color: "#f39c12" };
+  if (m === "graphql-dos")         return { badge: "GRAPHQL",       cls: "real-http", color: "#8e44ad" };
+  if (m === "cache-poison")        return { badge: "CDN POISON",    cls: "real-http", color: "#16a085" };
+  if (m === "tls-renego")          return { badge: "TLS RENEGO",    cls: "real-tcp",  color: "#d35400" };
+  if (m === "ssl-death")           return { badge: "SSL DEATH",     cls: "real-tcp",  color: "#7f8c8d" };
+  if (m === "quic-flood")          return { badge: "QUIC/H3",       cls: "real-udp",  color: "#2980b9" };
+  if (m === "conn-flood")          return { badge: "CONN FLOOD",    cls: "real-tcp",  color: "#e74c3c" };
+  if (L7_HTTP_FE.has(m))          return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
+  if (L4_TCP_FE.has(m))           return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
+  if (L4_UDP_FE.has(m))           return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
   return { badge: "SIMULATED", cls: "simulated", color: "#8A7B65" };
 };
 
@@ -67,6 +76,8 @@ const PRESETS: Preset[] = [
   { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 800,  icon: "☢️" },
   { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1500, icon: "👁"  },
   { label: "Geass WAF",     method: "waf-bypass",     packetSize: 512,  duration: 180, delay: 0,   threads: 200,  icon: "🌐"  },
+  { label: "HPACK Bomb",    method: "hpack-bomb",     packetSize: 512,  duration: 120, delay: 0,   threads: 200,  icon: "🧨"  },
+  { label: "H2 Cont OOM",   method: "http2-continuation", packetSize: 64, duration: 120, delay: 0, threads: 100, icon: "💀"  },
 ];
 
 /* ── Log counter ── */
@@ -79,7 +90,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","geass-override","dns-amp","ntp-amp","mem-amp","rudy","waf-bypass"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
@@ -269,13 +280,15 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override PENTA-VECTOR: ${n} strikes annihilating ${t}`,
-  (t: string) => `👁 PENTA assault active — Conn Flood + Slowloris + H2 + WAF Bypass + UDP on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous CONN+SLOW+H2+WAF+UDP strikes — target cannot respond`,
-  (t: string) => `👁 ${t} overwhelmed — 5 concurrent attack vectors, no shield can hold`,
-  (_t: string, n: string) => `👁 ${n} req/s penta-vector — connection table, HTTP stack, WAF & UDP under siege`,
-  (t: string) => `👁 The king's Geass has been cast upon ${t} — absolute subjugation`,
-  (_t: string, n: string) => `👁 ${n} total vectors this second — CONN+SLOWLORIS+H2+WAF BYPASS+UDP`,
+  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 13 vectors`,
+  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 13-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 13 concurrent attack vectors, absolute protocol annihilation`,
+  (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
+  (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
+  (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT flooding HPACK table into eviction loop`,
+  (t: string) => `👁 13-vector storm on ${t}: RUDY v2 holding threads + TLS renego exhausting crypto + QUIC DCID flood`,
+  (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records`,
 ];
 
 /* ── Sparkline chart ── */
@@ -825,8 +838,8 @@ function Panel() {
     })();
     const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
-      addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
-      addLog(`  PENTA-vector: Conn Flood + Slowloris + HTTP/2 Rapid Reset + WAF Bypass + UDP | ${threads} threads | ${duration}s`, "info");
+      addLog(`👁 ABSOLUTE GEASS COMMAND — ARES OMNIVECT — target: ${target}`, "info");
+      addLog(`  13-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
