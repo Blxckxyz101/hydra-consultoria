@@ -29,7 +29,7 @@ interface NamedTarget    { url: string; label: string; }
 const L7_HTTP_FE  = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
 const L4_TCP_FE   = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst","conn-flood"]);
 const L4_UDP_FE   = new Set(["udp-flood","udp-bypass"]);
-const L7_PROXY_OK = new Set(["http-flood","http-bypass","http-pipeline"]);
+const L7_PROXY_OK = new Set(["http-flood","http-bypass"]);
 const methodInfo = (m: string) => {
   if (m === "geass-override") return { badge: "GEASS ∞",   cls: "geass",    color: "#C0392B" };
   if (m === "http2-flood")    return { badge: "REAL H2",   cls: "real-http", color: "#1abc9c" };
@@ -42,7 +42,7 @@ const methodInfo = (m: string) => {
 };
 
 /* ── Smart cluster LB — method assignment per node index ── */
-const CLUSTER_LB_METHODS = ["http-flood","tcp-flood","udp-flood","http-pipeline","http2-flood"];
+const CLUSTER_LB_METHODS = ["http-flood","tcp-flood","udp-flood","http-bypass","http2-flood"];
 function getSmartMethod(baseMethod: string, nodeIdx: number): string {
   if (nodeIdx === 0) return baseMethod;
   if (baseMethod === "geass-override") return baseMethod;
@@ -65,41 +65,53 @@ const PRESETS: Preset[] = [
 let _lid = 0;
 const mkLog = (text: string, type: LogType = "info"): LogEntry => ({ id: ++_lid, text, type, ts: Date.now() });
 
-/* ── Audio ── */
+/* ── Audio — singleton AudioContext, resumed on each play ── */
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext {
+  if (!_audioCtx || _audioCtx.state === "closed") {
+    _audioCtx = new AudioContext();
+  }
+  return _audioCtx;
+}
+
 function playTone(type: "start" | "stop" | "tick" | "check" | "kill") {
   try {
-    const ctx = new AudioContext();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    const t = ctx.currentTime;
-    if (type === "start") {
-      o.type = "sawtooth";
-      o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.3);
-      g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-      o.start(); o.stop(t + 0.55);
-    } else if (type === "stop") {
-      o.type = "sine";
-      o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(110, t + 0.4);
-      g.gain.setValueAtTime(0.09, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-      o.start(); o.stop(t + 0.55);
-    } else if (type === "kill") {
-      o.type = "square";
-      o.frequency.setValueAtTime(60, t); o.frequency.exponentialRampToValueAtTime(20, t + 0.8);
-      g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
-      o.start(); o.stop(t + 1.0);
-    } else if (type === "tick") {
-      o.type = "sine";
-      o.frequency.setValueAtTime(600, t);
-      g.gain.setValueAtTime(0.03, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-      o.start(); o.stop(t + 0.05);
-    } else {
-      o.type = "triangle";
-      o.frequency.setValueAtTime(528, t); o.frequency.exponentialRampToValueAtTime(1056, t + 0.18);
-      g.gain.setValueAtTime(0.07, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-      o.start(); o.stop(t + 0.3);
-    }
-  } catch { /* blocked */ }
+    const ctx = getAudioCtx();
+    // Browser autoplay policy: context may be suspended if created before
+    // a user gesture. resume() is a no-op if already running.
+    ctx.resume().then(() => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime;
+      if (type === "start") {
+        o.type = "sawtooth";
+        o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.3);
+        g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.start(); o.stop(t + 0.55);
+      } else if (type === "stop") {
+        o.type = "sine";
+        o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(110, t + 0.4);
+        g.gain.setValueAtTime(0.09, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.start(); o.stop(t + 0.55);
+      } else if (type === "kill") {
+        o.type = "square";
+        o.frequency.setValueAtTime(60, t); o.frequency.exponentialRampToValueAtTime(20, t + 0.8);
+        g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        o.start(); o.stop(t + 1.0);
+      } else if (type === "tick") {
+        o.type = "sine";
+        o.frequency.setValueAtTime(600, t);
+        g.gain.setValueAtTime(0.03, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+        o.start(); o.stop(t + 0.05);
+      } else {
+        o.type = "triangle";
+        o.frequency.setValueAtTime(528, t); o.frequency.exponentialRampToValueAtTime(1056, t + 0.18);
+        g.gain.setValueAtTime(0.07, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        o.start(); o.stop(t + 0.3);
+      }
+    }).catch(() => { /* user hasn't interacted yet — ignore */ });
+  } catch { /* Web Audio not supported */ }
 }
 
 /* ── Formatters ── */
@@ -1444,12 +1456,12 @@ function Panel() {
                    style={{ cursor: "pointer" }} onClick={() => { setShowProxyPanel(v => !v); }}>
                 <div className="lb-stat-head">
                   <span className="lb-stat-label">Proxies</span>
-                  <span className="lb-stat-live" style={{ color: proxyIsFetching ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#666" }}>
-                    {proxyIsFetching ? "SCAN" : proxyLiveCount > 0 ? "LIVE" : "NONE"}
+                  <span className="lb-stat-live" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#666" }}>
+                    {(proxyIsFetching || proxyFetching) ? "SCAN" : proxyLiveCount > 0 ? "LIVE" : "NONE"}
                   </span>
                 </div>
-                <div className="lb-stat-val" style={{ color: proxyLiveCount > 0 ? "#2ecc71" : "#555", fontSize: proxyLiveCount > 99 ? "1.4rem" : undefined }}>
-                  {proxyIsFetching ? "..." : proxyLiveCount}
+                <div className="lb-stat-val" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#888", fontSize: proxyLiveCount > 99 ? "1.4rem" : undefined }}>
+                  {(proxyIsFetching || proxyFetching) ? "…" : proxyLiveCount}
                 </div>
                 <div className="lb-stat-sub">
                   {proxyIsFetching
