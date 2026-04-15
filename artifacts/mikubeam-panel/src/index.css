@@ -1039,6 +1039,19 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   display:flex; align-items:center; justify-content:center;
   gap:10px;
 }
+.lb-footer-credit {
+  font-size:.7rem;
+  color: var(--gold);
+  opacity: .8;
+  letter-spacing: .06em;
+  font-style: normal;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin: 0 4px;
+  border: 1px solid rgba(212,175,55,.25);
+  padding: 1px 8px;
+  border-radius: 20px;
+}
 .lb-footer-symbol {
   width:22px; height:22px;
   object-fit:contain;

@@ -94,4 +94,19 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - Achieves ~130K pps, 1M+ pkts in 8 seconds
 - Geass Override: 4 HTTP workers + 2 TCP workers + 1 UDP worker (3 separate pools)
 
+#### v3.3 Features
+
+- **Geass WAF Bypass** (`waf-bypass` method): 4-layer Cloudflare/Akamai evasion — JA3 TLS fingerprint randomization (random cipher suite order per-session), Chrome-exact HTTP/2 AKAMAI SETTINGS (`headerTableSize:65536, initialWindowSize:6291456`), Chrome-exact header ordering, realistic `__cf_bm/__cfruid/cf_clearance` cookie simulation. Preset "🌐 Geass WAF" in panel. Analyzer recommends it as S-tier (88%) for Cloudflare-protected targets.
+- **Discord Bot** (`artifacts/discord-bot`): Full slash-command bot — `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`. Live embed updates every 5s with delta-calculated pps. Progress bar, Stop button, crimson/gold theme. Application ID `1493775313749151754`. Uses `discord.js` v14, registered 4 global slash commands.
+- **"Made by blxckxyz"** credit in panel footer (gold badge) and Discord bot startup banner.
+
+### Discord Bot (`artifacts/discord-bot`)
+
+- **Framework**: discord.js v14
+- **Env var**: `DISCORD_BOT_TOKEN`
+- **Application ID**: `1493775313749151754`
+- **Commands**: `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`
+- **Live monitoring**: polls `/api/attacks/:id` every 5s, calculates pps via delta, edits Discord message
+- **Invite URL**: `https://discord.com/api/oauth2/authorize?client_id=1493775313749151754&permissions=84992&scope=bot%20applications.commands`
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

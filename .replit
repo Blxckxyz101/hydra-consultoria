@@ -11,6 +11,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/discord-bot: Discord Bot"
+
+[[workflows.workflow]]
+name = "artifacts/discord-bot: Discord Bot"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/discord-bot run dev"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -30,3 +50,8 @@ externalPort = 80
 [[ports]]
 localPort = 22453
 externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+DISCORD_BOT_TOKEN = "MTQ5Mzc3NTMxMzc0OTE1MTc1NA.G4BVTS.eH74iP5vEYEOQSS0UnaOWat_EwRS9eDISq1c1E"

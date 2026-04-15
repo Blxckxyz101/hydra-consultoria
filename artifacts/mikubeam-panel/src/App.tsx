@@ -1928,7 +1928,8 @@ function Panel() {
 
         <footer className="lb-footer">
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>
-          v3.0 — Lelouch Britannia Command Panel
+          <span>v3.0 — Lelouch Britannia Command Panel</span>
+          <span className="lb-footer-credit">Made by blxckxyz</span>
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt="" aria-hidden="true"/>
         </footer>
         <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>
