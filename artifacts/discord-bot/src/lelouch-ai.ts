@@ -1,14 +1,14 @@
 /**
  * LELOUCH VI BRITANNIA — AI PERSONALITY MODULE
  *
- * Uses xAI Grok API (free tier) with full Lelouch personality.
+ * Uses Groq API (free tier) with llama-3.3-70b-versatile.
  * Helps with bot usage, DDoS techniques, web systems, code, and anything asked.
  */
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey:  process.env.GROK_API_KEY ?? "",
-  baseURL: "https://api.x.ai/v1",
+  apiKey:  process.env.GROQ_API_KEY ?? "",
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 // ── Per-user conversation memory (last 20 messages) ──────────────────────────
@@ -62,7 +62,7 @@ FORMATO:
 
 type HistoryEntry = { role: "user" | "assistant"; content: string };
 
-async function callGrok(model: string, history: HistoryEntry[]): Promise<string> {
+async function callGroq(model: string, history: HistoryEntry[]): Promise<string> {
   const response = await client.chat.completions.create({
     model,
     max_tokens: 600,
@@ -75,8 +75,8 @@ async function callGrok(model: string, history: HistoryEntry[]): Promise<string>
 }
 
 export async function askLelouch(userId: string, question: string): Promise<string> {
-  if (!process.env.GROK_API_KEY) {
-    return "❌ **GROK_API_KEY** não configurada. Configure o segredo no ambiente.";
+  if (!process.env.GROQ_API_KEY) {
+    return "❌ **GROQ_API_KEY** não configurada. Configure o segredo no ambiente.";
   }
 
   if (!conversationHistory.has(userId)) {
@@ -84,51 +84,41 @@ export async function askLelouch(userId: string, question: string): Promise<stri
   }
   const history = conversationHistory.get(userId)!;
 
-  // Add user message BEFORE the call
   history.push({ role: "user", content: question });
   while (history.length > MAX_HISTORY) history.shift();
 
   let reply: string;
   try {
-    reply = await callGrok("grok-3-mini", history);
+    reply = await callGroq("llama-3.3-70b-versatile", history);
   } catch (primaryErr: unknown) {
     const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
     const isModelError = msg.includes("model") || msg.includes("not found") || msg.includes("404");
 
     if (isModelError) {
-      // Fallback to grok-2 if model unavailable
       try {
-        reply = await callGrok("grok-2-1212", history);
+        reply = await callGroq("llama-3.1-8b-instant", history);
       } catch (fallbackErr: unknown) {
-        // Both models failed — remove dangling user message to keep history clean
         history.pop();
         const fMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
         console.error("[LELOUCH AI FALLBACK ERROR]", fMsg);
         return `⚠️ *O Geass encontrou resistência...* \`${fMsg.slice(0, 120)}\``;
       }
     } else {
-      // Non-model error — remove dangling user message to keep history clean
       history.pop();
       console.error("[LELOUCH AI ERROR]", msg);
 
-      // 403 billing / no credits
-      if (msg.includes("403") || msg.includes("credits") || msg.includes("licenses")) {
-        return (
-          "⚠️ **Lelouch AI — Sem créditos xAI**\n\n" +
-          "A chave API está configurada, mas a conta xAI ainda não tem créditos.\n\n" +
-          "**Para ativar:**\n" +
-          "1. Acesse **https://console.x.ai**\n" +
-          "2. Vá em **Billing → Add Credits**\n" +
-          "3. Adicione créditos à equipe\n\n" +
-          "*«Mesmo Lelouch precisa de recursos para guerrear.»*"
-        );
+      if (msg.includes("401") || msg.includes("invalid_api_key") || msg.includes("Unauthorized")) {
+        return "❌ **Chave Groq inválida.** Verifique o segredo `GROQ_API_KEY` no ambiente.";
+      }
+
+      if (msg.includes("429") || msg.includes("rate_limit")) {
+        return "⏳ *O Geass precisa de um momento...* Rate limit atingido. Tente novamente em alguns segundos.";
       }
 
       return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
     }
   }
 
-  // Persist assistant reply to history
   history.push({ role: "assistant", content: reply });
   while (history.length > MAX_HISTORY) history.shift();
 
