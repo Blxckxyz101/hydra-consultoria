@@ -100,6 +100,15 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Discord Bot** (`artifacts/discord-bot`): Full slash-command bot — `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`, `/geass`. Live embed updates every 5s with delta-calculated pps. Progress bar, Stop button, crimson/gold theme. Application ID `1493775313749151754`. Uses `discord.js` v14, registered 5 global slash commands.
 - **"Made by blxckxyz"** credit in panel footer (gold badge) and Discord bot startup banner.
 
+#### v3.5 — Critical Bug Fixes (28/28 Methods Working)
+
+- **CRITICAL: Port override bug fixed** — `targetPort = parseInt(u.port,10)||(protocol==='https:'?443:80)` was overwriting `cfg.port=443` with 80 when URL was constructed as `http://domain` (no explicit port). All H2/TLS methods (h2-settings-storm, http2-flood, http2-continuation, hpack-bomb, ssl-death, https-flood, tls-renego, conn-flood, ws-flood) were connecting to port 80 → TLS error. Fix: `parseInt(u.port,10) || cfg.port || (protocol default)`.
+- **`writeUInt32LE` signed-integer crash fixed** — `Math.random() * 0xFFFFFFFF | 0` produces signed negatives → `RangeError`. Caused tcp-flood, tcp-ack, tcp-rst to crash immediately (0 pkts). Fixed with `Math.random() * 0x100000000 >>> 0`. Fixed in 3 locations: tcp-flood junk, H2-continuation frame payload, WebSocket DATA frame.
+- **`writeUInt32LE` buffer overrun fixed** — Loop `for(i=0;i<buf.length;i+=4)` writes 4 bytes at `i` but crashes if `buf.length%4≠0`. Fixed with `i+4<=buf.length` condition in same 3 locations.
+- **quic-flood timer starvation fixed** — 200 concurrent UDP callbacks each scheduling `setImmediate(send)` = 200 setImmediate/tick → starved the 300ms stats timer. Stats only arrived at end. Fixed with `reschedPending` flag: only ONE setImmediate scheduled per tick.
+- **Worker error logging improved** — `.catch(()=>{})` now logs `[WORKER_ERR] method: message` to stderr instead of silently swallowing all errors.
+- **Regression: 28/28 methods fully tested and passing** (all with non-zero pkts in isolation).
+
 #### v3.4 — Bug Fixes & VM Deploy Prep
 
 - **H2 session dropout bug fixed (critical)**: Previous `runSession().then(finish)` chain caused `Promise.all` to resolve early (~18s) when Cloudflare rejected new connections — halting H2 pressure for the rest of the attack. Rewritten to `while (!signal.aborted)` persistent loop per session slot in both `runHTTP2Flood` and `runWAFBypass`. Sessions now reconnect indefinitely until signal aborted.
