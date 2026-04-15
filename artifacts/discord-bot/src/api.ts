@@ -95,6 +95,12 @@ export const api = {
   stopAttack:  (id: number) =>
     req<{ ok: boolean }>(`/api/attacks/${id}/stop`, { method: "POST" }),
 
+  extendAttack: (id: number, seconds = 60) =>
+    req<{ ok: boolean; extended: number } & Attack>(`/api/attacks/${id}/extend`, {
+      method: "PATCH",
+      body:   JSON.stringify({ seconds }),
+    }),
+
   deleteAttack: (id: number) =>
     req<{ ok: boolean }>(`/api/attacks/${id}`, { method: "DELETE" }),
 

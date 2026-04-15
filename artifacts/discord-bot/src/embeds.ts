@@ -41,6 +41,10 @@ const methodLabel = (id: string) => {
     "tls-renego":          "TLS Renegotiation DoS",
     "ws-flood":            "WebSocket Exhaustion",
     "graphql-dos":         "GraphQL Introspection DoS",
+    "quic-flood":          "QUIC / HTTP3 Flood (RFC 9000)",
+    "cache-poison":        "CDN Cache Poisoning DoS",
+    "rudy-v2":             "RUDY v2 — Multipart Slow POST",
+    "ssl-death":           "SSL Death Record",
     "rudy":                "R.U.D.Y",
     "syn-flood":           "SYN Flood",
     "tcp-flood":           "TCP Flood",
@@ -49,7 +53,7 @@ const methodLabel = (id: string) => {
     "dns-amp":             "DNS Amplification",
     "ntp-amp":             "NTP Amplification",
     "mem-amp":             "Memcached Amp",
-    "geass-override":      "Geass Override ∞ [8-VECTOR]",
+    "geass-override":      "Geass Override ∞ [DECA — 10 VECTORS]",
   };
   return map[id] ?? id;
 };
@@ -72,7 +76,7 @@ export type ProbeResult = {
 };
 
 // Connection-based methods that show open conn counter
-const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "ws-flood", "tls-renego", "http2-continuation"]);
+const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood", "tls-renego", "http2-continuation", "ssl-death"]);
 
 // ── Sparkline helpers ─────────────────────────────────────────────────────────
 // Definitive DOWN reasons = server actively refused or DNS gone
@@ -104,7 +108,7 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   if (!last.up && DEFINITIVE_DOWN(last.reason) && (downRun || anyDown3)) {
     // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
-      "geass-override":     "All 8 vectors converged — ABSOLUTE ANNIHILATION",
+      "geass-override":     "All 10 vectors converged — ABSOLUTE ANNIHILATION (DECA-VECTOR)",
       "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
       "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
       "waf-bypass":         "WAF layer overwhelmed — origin exposed",
@@ -113,6 +117,10 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
       "tls-renego":         "TLS CPU exhausted — handshake queue overflowed",
       "ws-flood":           "WebSocket goroutine pool drained — server unresponsive",
       "graphql-dos":        "GraphQL resolver CPU limit hit — exponential query collapse",
+      "quic-flood":         "QUIC DCID table exhausted — HTTP/3 crypto state OOM",
+      "cache-poison":       "CDN cache poisoned — 100% origin miss, server crushed",
+      "rudy-v2":            "Multipart buffer exhausted — server thread pool frozen",
+      "ssl-death":          "TLS crypto thread pool saturated — AES-GCM queue overflowed",
       "udp-flood":          "Bandwidth saturated at L4",
     };
     const methodCause = causeMap[method] ?? "Server resources exhausted";
@@ -168,7 +176,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `👁️ **OCTA-VECTOR ASSAULT** — 8 simultaneous vectors, all CVEs active, live monitoring`
+          ? `👁️ **DECA-VECTOR ASSAULT** — 10 simultaneous vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )

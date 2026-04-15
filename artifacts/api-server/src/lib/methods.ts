@@ -129,6 +129,42 @@ export const ATTACK_METHODS = [
     description: "Sends deeply nested queries (15-level recursion, alias bombs, batched introspection). Exponential resolver CPU: O(N^15) complexity. Destroys unprotected GraphQL APIs.",
   },
 
+  // ── NEW: QUIC/HTTP3 Flood ─────────────────────────────────
+  {
+    id: "quic-flood",
+    name: "QUIC / HTTP3 Flood (RFC 9000)",
+    layer: "L4" as const,
+    protocol: "UDP" as const,
+    description: "Sends QUIC Initial packets (Long Header + CRYPTO frame) with random DCIDs. Server allocates connection state per unique DCID → CPU + memory exhaustion. Targets port 443/UDP.",
+  },
+
+  // ── NEW: Cache Poisoning DoS ──────────────────────────────
+  {
+    id: "cache-poison",
+    name: "CDN Cache Poisoning DoS",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Fills CDN/reverse-proxy cache with unique keys (random params, X-Forwarded-Host, Range, Vary bombs) → evicts legitimate content, 100% origin miss rate. Kills Cloudflare/Fastly/Akamai/Varnish.",
+  },
+
+  // ── NEW: RUDY v2 Multipart ────────────────────────────────
+  {
+    id: "rudy-v2",
+    name: "RUDY v2 — Multipart Slow POST",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Enhanced R.U.D.Y using multipart/form-data with 70-char boundary and 1GB Content-Length. Server waits for closing boundary that never arrives while holding a thread per connection.",
+  },
+
+  // ── NEW: SSL Death Record ─────────────────────────────────
+  {
+    id: "ssl-death",
+    name: "SSL Death Record",
+    layer: "L4" as const,
+    protocol: "TCP" as const,
+    description: "Sends 1-byte TLS application records after handshake. Server AES-GCM decrypts + MAC-verifies each 1-byte record individually. 400 slots × 100 records/sec = 40,000 decrypt ops/sec on server CPU.",
+  },
+
   // ── Connection Flood ─────────────────────────────────────
   {
     id: "conn-flood",
