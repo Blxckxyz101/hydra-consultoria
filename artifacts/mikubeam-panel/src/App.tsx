@@ -25,7 +25,7 @@ interface UserPreset     { id: string; label: string; method: string; packetSize
 interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
 interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; serverType: string; serverLabel: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
 interface NamedTarget    { url: string; label: string; }
-interface Toast          { id: string; type: "success"|"warn"|"error"|"geass"; title: string; msg?: string; }
+interface Toast          { id: string; type: "success"|"warn"|"error"|"geass"|"launch"|"stop"; title: string; msg?: string; }
 interface DomainScore    { total: number; downed: number; lastMethod: string; lastSeen: number; }
 
 /* ── Method classification ── */
@@ -821,7 +821,7 @@ function Panel() {
     const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — target: ${target}`, "info");
-      addLog(`  QUAD-vector: Conn Flood + Slowloris + HTTP/2 + UDP | ${threads} threads | ${duration}s`, "info");
+      addLog(`  PENTA-vector: Conn Flood + Slowloris + HTTP/2 Rapid Reset + WAF Bypass + UDP | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");

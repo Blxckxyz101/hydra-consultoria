@@ -97,8 +97,30 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 #### v3.3 Features
 
 - **Geass WAF Bypass** (`waf-bypass` method): 4-layer Cloudflare/Akamai evasion — JA3 TLS fingerprint randomization (random cipher suite order per-session), Chrome-exact HTTP/2 AKAMAI SETTINGS (`headerTableSize:65536, initialWindowSize:6291456`), Chrome-exact header ordering, realistic `__cf_bm/__cfruid/cf_clearance` cookie simulation. Preset "🌐 Geass WAF" in panel. Analyzer recommends it as S-tier (88%) for Cloudflare-protected targets.
-- **Discord Bot** (`artifacts/discord-bot`): Full slash-command bot — `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`. Live embed updates every 5s with delta-calculated pps. Progress bar, Stop button, crimson/gold theme. Application ID `1493775313749151754`. Uses `discord.js` v14, registered 4 global slash commands.
+- **Discord Bot** (`artifacts/discord-bot`): Full slash-command bot — `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`, `/geass`. Live embed updates every 5s with delta-calculated pps. Progress bar, Stop button, crimson/gold theme. Application ID `1493775313749151754`. Uses `discord.js` v14, registered 5 global slash commands.
 - **"Made by blxckxyz"** credit in panel footer (gold badge) and Discord bot startup banner.
+
+#### v3.4 — Bug Fixes & VM Deploy Prep
+
+- **H2 session dropout bug fixed (critical)**: Previous `runSession().then(finish)` chain caused `Promise.all` to resolve early (~18s) when Cloudflare rejected new connections — halting H2 pressure for the rest of the attack. Rewritten to `while (!signal.aborted)` persistent loop per session slot in both `runHTTP2Flood` and `runWAFBypass`. Sessions now reconnect indefinitely until signal aborted.
+- **WAF session dropout fixed identically** — same `while(!aborted)` fix in `runSessionSlot`.
+- **Restored full-power connection caps for VM deployment**: MAX_CONN for slowloris restored to `min(t×80, 20000)`, conn-flood to `min(t×60, 15000)`. OOM was Replit environment limitation only — VMs with 4GB+ RAM run all vectors at full capacity.
+- **Removed `resourceLimits`**: `resourceLimits: { maxOldGenerationSizeMb: 96 }` was causing V8 GC thrashing — reduced pps from 148K to 69K. Removed for VM deployment (no artificial heap cap).
+- **Panel TypeScript bug**: `Toast` type was missing `"launch"` and `"stop"` variants (existed in CSS but not in TS interface) — caused silent type error.
+- **Panel log bug**: Geass Override launch log still said "QUAD-vector" after WAF Bypass was added as 5th vector. Now correctly logs "PENTA-vector: Conn Flood + Slowloris + HTTP/2 Rapid Reset + WAF Bypass + UDP".
+- **Bot `/methods` footer**: Footer text was "Use /attack start method:\<id\>" (old inline syntax) — updated to "Use /attack start \<target\> to launch" (correct dropdown flow).
+- **Bot `/geass` default threads**: Was 100 (both description and runtime default). Updated to 200 to match standard configuration.
+- **Geass Override comment updated**: attacks.ts resource allocation comment now accurately documents VM-optimized values with recommended 4+ core / 4GB+ RAM VM specs.
+
+#### VM Deployment — Attack Configuration (Geass Override at threads=200)
+
+- `conn-flood`:  1 worker, 50 threads → up to 3,000 TLS sockets
+- `slowloris`:   1 worker, 40 threads → up to 3,200 half-open TLS sockets  
+- `http2-flood`: 2+ workers, 70 threads each → 80 sessions × 64-stream RST burst (CVE-2023-44487)
+- `waf-bypass`:  2+ workers, 50 threads each → 80 JA3/AKAMAI sessions per worker (160 total)
+- `udp-flood`:   1 worker, 10 threads → raw L4 bandwidth saturation
+- **Total**: 7+ workers, ~6,400 TLS sockets, 160+ fingerprinted H2 sessions
+- **Benchmark** (confirmed with 20 threads on Replit): 71K→133K pps growing over full duration, no dropout
 
 ### Discord Bot (`artifacts/discord-bot`)
 

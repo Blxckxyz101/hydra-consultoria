@@ -333,7 +333,7 @@ export function buildMethodsEmbed(methods: Method[], layerFilter?: string): Embe
     });
   }
 
-  embed.setFooter(footer("Use /attack start method:<id>")).setTimestamp();
+  embed.setFooter(footer("Use /attack start <target> to launch")).setTimestamp();
   return embed;
 }
 

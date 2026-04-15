@@ -143,7 +143,7 @@ const COMMANDS = [
       opt.setName("duration").setDescription("Duration in seconds (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
     )
     .addIntegerOption(opt =>
-      opt.setName("threads").setDescription("Base thread count (default: 100)").setRequired(false).setMinValue(1).setMaxValue(2000)
+      opt.setName("threads").setDescription("Base thread count (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
     ),
 ].map(c => c.toJSON());
 
@@ -364,7 +364,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
   await interaction.deferReply();
   const target   = interaction.options.getString("target", true);
   const duration = interaction.options.getInteger("duration") ?? 60;
-  const threads  = interaction.options.getInteger("threads")  ?? 100;
+  const threads  = interaction.options.getInteger("threads")  ?? 200;
   const isHttps  = /^https:/i.test(target);
   const port     = isHttps ? 443 : 80;
   console.log(`[GEASS] ${interaction.user.tag} → ${target} | ${threads}t | ${duration}s`);
