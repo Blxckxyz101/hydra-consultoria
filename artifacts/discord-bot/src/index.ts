@@ -227,18 +227,18 @@ const COMMANDS = [
 // ── Deploy slash commands ─────────────────────────────────────────────────────
 async function deployCommands(): Promise<void> {
   const rest = new REST().setToken(BOT_TOKEN);
+  // Non-fatal — a registration failure should NEVER bring down the bot.
+  // Commands registered in a previous run remain valid; the bot keeps running.
   try {
-    // Register instantly to every known guild
     for (const gid of ALL_GUILD_IDS) {
       await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, gid), { body: COMMANDS });
       console.log(`✅ Registered ${COMMANDS.length} commands to guild ${gid}.`);
     }
-    // Also register globally so new guilds get them automatically (propagates ~1h)
     await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: COMMANDS });
     console.log(`🌐 Registered ${COMMANDS.length} commands globally.`);
   } catch (err) {
-    console.error("❌ Failed to register commands:", err);
-    throw err;
+    // Log but do NOT throw — bot will still start with previously registered commands
+    console.warn("⚠️ Command registration failed (non-fatal — using cached commands):", err);
   }
 }
 
@@ -1054,8 +1054,27 @@ async function main(): Promise<void> {
     console.error("[CLIENT ERROR]", err);
   });
 
+  // Gateway connection lifecycle — helps diagnose "bot stopped responding" issues
+  client.on(Events.ShardDisconnect, (closeEvent, shardId) => {
+    console.warn(`[SHARD ${shardId}] Disconnected — code ${closeEvent.code}. Auto-reconnecting...`);
+  });
+  client.on(Events.ShardReconnecting, (shardId) => {
+    console.log(`[SHARD ${shardId}] Reconnecting to Discord gateway...`);
+  });
+  client.on(Events.ShardResume, (shardId, replayedEvents) => {
+    console.log(`[SHARD ${shardId}] Resumed — replayed ${replayedEvents} events. Bot is back online.`);
+  });
+
   await client.login(BOT_TOKEN);
 }
+
+// ── Global safety net — prevent silent crashes from unhandled async errors ────
+process.on("unhandledRejection", (reason) => {
+  console.error("[UNHANDLED REJECTION — bot kept alive]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[UNCAUGHT EXCEPTION — bot kept alive]", err);
+});
 
 main().catch(err => {
   console.error("Fatal error:", err);
