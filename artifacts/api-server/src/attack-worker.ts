@@ -757,8 +757,9 @@ async function runSlowlorisReal(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // 80 connections per thread establishes quickly, refires at 10-25s (slowloris interval)
-  const MAX_CONN = Math.min(threads * 80, 20000);
+  // Capped at 800 total — each TLS socket uses ~80KB, container limit ~1GB
+  // More connections doesn't mean more effect; quality > quantity for slowloris
+  const MAX_CONN = Math.min(threads * 20, 800);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -860,9 +861,9 @@ async function runConnFlood(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // Cap at manageable number — too many simultaneous TLS handshakes stall the event loop
-  // 60 connections per thread ensures all establish quickly (< 3s ramp) then cycle at 5-20ms
-  const MAX_CONN = Math.min(threads * 60, 15000);
+  // Capped at 750 total — TLS sockets ~80KB each, container memory budget ~1GB
+  // conn-flood is supplementary to H2/WAF bypass; stay memory-safe
+  const MAX_CONN = Math.min(threads * 15, 750);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);

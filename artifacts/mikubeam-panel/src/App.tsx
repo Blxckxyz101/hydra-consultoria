@@ -266,13 +266,13 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override QUAD-VECTOR: ${n} strikes annihilating ${t}`,
-  (t: string) => `👁 QUAD assault active — Conn Flood + Slowloris + H2 + UDP on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous CONN+SLOW+H2+UDP strikes — target cannot respond`,
-  (t: string) => `👁 ${t} overwhelmed — 4 concurrent attack vectors, no shield can hold`,
-  (_t: string, n: string) => `👁 ${n} req/s quad-vector — connection table, HTTP stack, TLS & UDP under siege`,
+  (t: string, n: string) => `👁 Geass Override PENTA-VECTOR: ${n} strikes annihilating ${t}`,
+  (t: string) => `👁 PENTA assault active — Conn Flood + Slowloris + H2 + WAF Bypass + UDP on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous CONN+SLOW+H2+WAF+UDP strikes — target cannot respond`,
+  (t: string) => `👁 ${t} overwhelmed — 5 concurrent attack vectors, no shield can hold`,
+  (_t: string, n: string) => `👁 ${n} req/s penta-vector — connection table, HTTP stack, WAF & UDP under siege`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — absolute subjugation`,
-  (_t: string, n: string) => `👁 ${n} total vectors this second — CONN FLOOD + SLOWLORIS + H2 + UDP`,
+  (_t: string, n: string) => `👁 ${n} total vectors this second — CONN+SLOWLORIS+H2+WAF BYPASS+UDP`,
 ];
 
 /* ── Sparkline chart ── */

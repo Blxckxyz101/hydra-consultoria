@@ -295,8 +295,8 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
 
   if (topRec) {
     embed.addFields({
-      name: "💡 Quick Attack Command",
-      value: `\`\`\`\n/attack start target:${result.target} method:${topRec.method} threads:${topRec.suggestedThreads} duration:${topRec.suggestedDuration}\n\`\`\``,
+      name: "💡 Quick Attack",
+      value: `Run \`/attack start target:${result.target}\` — select **${methodLabel(topRec.method)}** from the dropdown, set threads to **${topRec.suggestedThreads}** and duration to **${topRec.suggestedDuration}s**.`,
       inline: false,
     });
   }
@@ -346,7 +346,7 @@ export function buildHelpEmbed(): EmbedBuilder {
       `> *"I am Zero — the man who will obliterate the world."*\n\nWelcome to the **${BOT_NAME}** network control interface.\nAll commands are slash commands — type \`/\` to browse them.`
     )
     .addFields(
-      { name: "⚔️ `/attack start <target> [method] [threads] [duration]`", value: "Launch a new attack. Method defaults to `http-flood`, 200 threads, 60s.", inline: false },
+      { name: "⚔️ `/attack start <target>`", value: "Launch attack — opens a **dropdown menu** to pick method, duration & threads.", inline: false },
       { name: "⏹️ `/attack stop <id>`",  value: "Stop a running attack by its ID number.",    inline: false },
       { name: "📋 `/attack list`",         value: "View all active and recent attacks.",         inline: false },
       { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },

