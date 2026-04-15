@@ -325,35 +325,60 @@ function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilde
 
 function startMonitor(attackId: number, msg: Message, target: string, userId?: string): void {
   if (monitors.has(attackId)) return;
-  const INTERVAL_MS = 5_000;
+
+  // MAX 5 concurrent monitors — prevents Discord request queue saturation that causes
+  // "The application did not respond" errors on unrelated commands (e.g. /lelouch ask)
+  if (monitors.size >= 5) {
+    console.warn(`[MONITOR] Max concurrent monitors (5) reached — skipping monitor for #${attackId}`);
+    return;
+  }
+
+  const INTERVAL_MS = 8_000; // 8s — was 5s, reduces Discord API call frequency by 37%
+  const MAX_LIFETIME_MS = 70 * 60 * 1000; // 70 min — force-kill monitor after max attack duration
+  const startedAt = Date.now();
+
   targetHistories.set(attackId, []);
   downAlertSent.set(attackId, false);
   let busy = false;
-  let nullAttackCount = 0; // consecutive null responses before giving up
+  let nullConsecutive = 0; // consecutive null responses
+  let nullTotal       = 0; // total null responses (catches flapping APIs)
+
+  const stopMonitor = () => {
+    clearInterval(tick);
+    monitors.delete(attackId);
+    prevPackets.delete(attackId);
+    targetHistories.delete(attackId);
+    downAlertSent.delete(attackId);
+  };
 
   const tick = setInterval(async () => {
     if (busy) return;
     busy = true;
     try {
+      // Force-kill stale monitors that outlive the longest possible attack
+      if (Date.now() - startedAt > MAX_LIFETIME_MS) {
+        console.log(`[MONITOR #${attackId}] Max lifetime reached — stopping.`);
+        stopMonitor();
+        return;
+      }
+
       const [attack, live, probe] = await Promise.all([
         api.getAttack(attackId),
         api.getLiveConns(attackId),
         probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
       ]);
 
-      // Only stop monitoring after 3 consecutive null responses (guards against transient failures)
+      // Stop if: 3 consecutive nulls OR 10 total nulls (catches flapping API)
       if (!attack) {
-        nullAttackCount++;
-        if (nullAttackCount >= 3) {
-          clearInterval(tick);
-          monitors.delete(attackId);
-          prevPackets.delete(attackId);
-          targetHistories.delete(attackId);
-          downAlertSent.delete(attackId);
+        nullConsecutive++;
+        nullTotal++;
+        if (nullConsecutive >= 3 || nullTotal >= 10) {
+          console.log(`[MONITOR #${attackId}] Stopping — nullConsec=${nullConsecutive} nullTotal=${nullTotal}`);
+          stopMonitor();
         }
         return;
       }
-      nullAttackCount = 0; // reset on successful fetch
+      nullConsecutive = 0; // reset consecutive on success, but keep total
 
       const history = targetHistories.get(attackId) ?? [];
       history.push(probe);
@@ -415,10 +440,7 @@ function startMonitor(attackId: number, msg: Message, target: string, userId?: s
       }
 
       if (!isRunning) {
-        clearInterval(tick);
-        monitors.delete(attackId);
-        prevPackets.delete(attackId);
-        setTimeout(() => { targetHistories.delete(attackId); downAlertSent.delete(attackId); }, 30_000);
+        stopMonitor();
       }
     } catch (monitorErr) {
       // Swallow monitor errors — API timeouts / DB flaps must NOT bubble up as
