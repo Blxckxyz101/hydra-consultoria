@@ -54,14 +54,14 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
-  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 80,   icon: "⚡" },
-  { label: "H2 Barrage",     method: "http2-flood",    packetSize: 512,  duration: 90,  delay: 0,   threads: 40,   icon: "⚛" },
-  { label: "Conn Flood",     method: "conn-flood",     packetSize: 64,   duration: 300, delay: 0,   threads: 50,   icon: "🔌" },
-  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 50,   icon: "🥷" },
-  { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 300,  icon: "💥" },
-  { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 400,  icon: "🔨" },
-  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 600,  icon: "☢️" },
-  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1000, icon: "👁"  },
+  { label: "Quick Strike",   method: "http-flood",     packetSize: 64,   duration: 60,  delay: 0,   threads: 200,  icon: "⚡" },
+  { label: "H2 Barrage",     method: "http2-flood",    packetSize: 512,  duration: 90,  delay: 0,   threads: 80,   icon: "⚛" },
+  { label: "Conn Flood",     method: "conn-flood",     packetSize: 64,   duration: 300, delay: 0,   threads: 200,  icon: "🔌" },
+  { label: "Slowloris",      method: "slowloris",      packetSize: 32,   duration: 300, delay: 0,   threads: 200,  icon: "🥷" },
+  { label: "UDP Hammer",     method: "udp-flood",      packetSize: 1024, duration: 120, delay: 0,   threads: 8,    icon: "💥" },
+  { label: "SYN Flood",      method: "syn-flood",      packetSize: 40,   duration: 90,  delay: 0,   threads: 500,  icon: "🔨" },
+  { label: "NTP Nuclear",    method: "ntp-amp",        packetSize: 46,   duration: 60,  delay: 0,   threads: 800,  icon: "☢️" },
+  { label: "Geass Override", method: "geass-override", packetSize: 512,  duration: 180, delay: 0,   threads: 1500, icon: "👁"  },
 ];
 
 /* ── Log counter ── */
