@@ -421,6 +421,13 @@ function Panel() {
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
   const [showAnalyze, setShowAnalyze]   = useState(false);
 
+  /* Origin IP Finder */
+  interface OriginFinding { source: string; host: string; ip: string; isCF: boolean; confidence: "high"|"medium"|"low"; }
+  interface OriginResult { domain: string; isCloudflare: boolean; originIPs: string[]; findings: OriginFinding[]; crtHostsFound: number; tip: string; }
+  const [originResult, setOriginResult]   = useState<OriginResult | null>(null);
+  const [isFindingOrigin, setIsFindingOrigin] = useState(false);
+  const [showOriginFinder, setShowOriginFinder] = useState(false);
+
   /* Proxy rotation */
   interface ProxyEntry { host: string; port: number; responseMs: number; }
   const [proxies, setProxies]             = useState<ProxyEntry[]>([]);
@@ -1014,6 +1021,38 @@ function Panel() {
     } catch { addLog("✕ Benchmark failed.", "error"); }
   }
 
+  async function handleFindOrigin() {
+    if (isFindingOrigin) return;
+    const rawTarget = target.trim() || "";
+    if (!rawTarget) { addLog("✕ Enter a target domain to find origin IP.", "error"); return; }
+    const domain = rawTarget.replace(/^https?:\/\//i,"").replace(/\/.*$/,"").trim();
+    setIsFindingOrigin(true);
+    setShowOriginFinder(true);
+    setOriginResult(null);
+    addLog(`🔍 Hunting origin IP for ${domain} — crt.sh · DNS · IPv6 · MX · SPF · subdomains...`, "info");
+    try {
+      const res = await fetch(`${BASE}/api/find-origin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      const data = await res.json() as OriginResult;
+      setOriginResult(data);
+      if (data.originIPs.length > 0) {
+        addLog(`🎯 Origin found! ${data.originIPs.join(", ")} — attack directly to bypass Cloudflare!`, "success");
+        addLog(`👁 Checked ${data.crtHostsFound} SSL cert history entries from crt.sh`, "info");
+      } else if (data.isCloudflare) {
+        addLog(`⚠ Target is Cloudflare-protected and origin IP is hidden. Check SecurityTrails.com manually.`, "warn");
+      } else {
+        addLog(`👁 No CDN detected — target is directly accessible at its DNS IP.`, "info");
+      }
+    } catch {
+      addLog("✕ Origin finder failed — check backend connection.", "error");
+    } finally {
+      setIsFindingOrigin(false);
+    }
+  }
+
   async function handleFetchProxies() {
     if (proxyFetching) return;
     setProxyFetching(true);
@@ -1218,6 +1257,14 @@ function Panel() {
                 title="Quick benchmark vs httpbin.org"
                 onClick={handleBenchmark}
               >⚗</button>
+              <button
+                className={`lb-btn-icon lb-btn-origin ${isFindingOrigin ? "lb-btn-analyzing" : ""}`}
+                title="Find real origin IP behind Cloudflare (crt.sh + DNS + IPv6 + subdomains)"
+                onClick={handleFindOrigin}
+                disabled={isFindingOrigin || !target.trim()}
+              >
+                {isFindingOrigin ? "⏳" : "🕵"}
+              </button>
             </div>
 
             {/* ── Analyzer Panel ── */}
@@ -1302,6 +1349,71 @@ function Panel() {
                       ))}
                     </div>
                   </>
+                )}
+              </div>
+            )}
+
+            {/* ── Origin IP Finder Panel ── */}
+            {showOriginFinder && (
+              <div className="lb-origin-panel">
+                <div className="lb-analyzer-header">
+                  <span className="lb-analyzer-title">🕵 ORIGIN IP RECON — CLOUDFLARE BYPASS</span>
+                  <button className="lb-analyzer-close" onClick={() => setShowOriginFinder(false)}>✕</button>
+                </div>
+                {isFindingOrigin && (
+                  <div className="lb-analyzer-loading">
+                    <div className="lb-analyzer-spinner"/>
+                    <span>Scanning crt.sh SSL history · DNS subdomains · IPv6 · MX · SPF records...</span>
+                  </div>
+                )}
+                {!isFindingOrigin && originResult && (
+                  <div className="lb-origin-body">
+                    <div className="lb-origin-summary">
+                      <span className="lb-origin-domain">{originResult.domain}</span>
+                      <span className={`lb-origin-badge ${originResult.isCloudflare ? "lb-origin-badge--cf" : "lb-origin-badge--direct"}`}>
+                        {originResult.isCloudflare ? "☁ CLOUDFLARE DETECTED" : "✓ DIRECT (No CDN)"}
+                      </span>
+                      {originResult.crtHostsFound > 0 && (
+                        <span className="lb-origin-stat">{originResult.crtHostsFound} SSL cert entries scanned</span>
+                      )}
+                    </div>
+
+                    {originResult.originIPs.length > 0 ? (
+                      <div className="lb-origin-found">
+                        <div className="lb-origin-found-title">🎯 ORIGIN IP(s) FOUND — BYPASS CLOUDFLARE</div>
+                        {originResult.originIPs.map(ip => (
+                          <div key={ip} className="lb-origin-ip-row">
+                            <span className="lb-origin-ip">{ip}</span>
+                            <button className="lb-origin-use-btn" onClick={() => {
+                              setTarget(ip);
+                              addLog(`🎯 Target set to origin IP: ${ip} — Cloudflare bypassed!`, "success");
+                              if (soundRef.current) playTone("geass");
+                              setShowOriginFinder(false);
+                            }}>USE AS TARGET</button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="lb-origin-notfound">
+                        <span>⚠ No unproxied origin IP found automatically.</span>
+                      </div>
+                    )}
+
+                    <div className="lb-origin-tip">{originResult.tip}</div>
+
+                    {originResult.findings.filter(f => !f.isCF).length > 0 && (
+                      <div className="lb-origin-findings">
+                        <div className="lb-origin-findings-title">Non-Cloudflare IPs discovered:</div>
+                        {originResult.findings.filter(f => !f.isCF).slice(0, 15).map((f, i) => (
+                          <div key={i} className={`lb-origin-finding lb-origin-finding--${f.confidence}`}>
+                            <span className={`lb-origin-conf lb-origin-conf--${f.confidence}`}>{f.confidence.toUpperCase()}</span>
+                            <span className="lb-origin-f-ip">{f.ip}</span>
+                            <span className="lb-origin-f-src">{f.source}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}

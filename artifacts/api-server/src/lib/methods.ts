@@ -119,23 +119,23 @@ export const ATTACK_METHODS = [
   },
   {
     id: "http2-flood",
-    name: "HTTP/2 Rapid Reset",
+    name: "HTTP/2 Rapid Reset ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "Exploits HTTP/2 multiplexing — HEADERS+RST_STREAM at extreme rate (CVE-2023-44487).",
+    description: "True CVE-2023-44487: sends HEADERS then immediate RST_STREAM — server wastes CPU on each cancel. 64-stream burst per tick, bypasses maxConcurrentStreams limit completely.",
   },
   {
     id: "slowloris",
     name: "Slowloris",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "Opens many connections and sends partial HTTP headers slowly, tying up server threads.",
+    description: "Opens 25,000 connections sending partial HTTP headers with 10-25s trickle — exhausts Apache/nginx worker pool without triggering rate limits.",
   },
   {
     id: "rudy",
-    name: "R.U.D.Y",
+    name: "R.U.D.Y (True SlowPOST)",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "R-U-Dead-Yet: sends POST data at an extremely slow rate, holding connections open indefinitely.",
+    description: "R-U-Dead-Yet: claims Content-Length: 1GB then sends 1-2 bytes every 5-15 seconds via raw socket. Apache/IIS hold the thread forever — 25K connections = full thread pool exhaustion.",
   },
 ];

@@ -1269,6 +1269,135 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   background: rgba(26,188,156,0.22);
 }
 
+.lb-btn-origin {
+  background: rgba(155,89,182,0.14);
+  border-color: rgba(155,89,182,0.4);
+  color: #b47fd8;
+  font-size: 1.1em;
+}
+.lb-btn-origin:hover { background: rgba(155,89,182,0.25); }
+
+/* ═══════════════════════════════════
+   ORIGIN IP FINDER PANEL
+═══════════════════════════════════ */
+.lb-origin-panel {
+  background: linear-gradient(135deg, rgba(60,0,90,0.92), rgba(30,0,60,0.97));
+  border: 1px solid rgba(155,89,182,0.45);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 10px 0;
+  font-size: 0.78rem;
+}
+.lb-origin-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.lb-origin-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lb-origin-domain {
+  font-family: monospace;
+  color: #b47fd8;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+.lb-origin-badge {
+  padding: 2px 9px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.75em;
+  letter-spacing: 0.04em;
+}
+.lb-origin-badge--cf  { background: rgba(255,100,0,0.18); color: #ff8844; border: 1px solid rgba(255,100,0,0.35); }
+.lb-origin-badge--direct { background: rgba(46,204,113,0.15); color: #2ecc71; border: 1px solid rgba(46,204,113,0.35); }
+.lb-origin-stat { color: #888; font-size: 0.7em; }
+
+.lb-origin-found {
+  background: rgba(255,50,50,0.1);
+  border: 1px solid rgba(255,50,50,0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.lb-origin-found-title {
+  color: #ff4444;
+  font-weight: 700;
+  font-size: 0.82em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.lb-origin-ip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+}
+.lb-origin-ip {
+  font-family: monospace;
+  color: #D4AF37;
+  font-size: 0.97em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.lb-origin-use-btn {
+  padding: 3px 12px;
+  background: rgba(212,175,55,0.2);
+  border: 1px solid rgba(212,175,55,0.5);
+  border-radius: 5px;
+  color: #D4AF37;
+  font-size: 0.72em;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: background 0.15s;
+}
+.lb-origin-use-btn:hover {
+  background: rgba(212,175,55,0.35);
+}
+
+.lb-origin-notfound {
+  color: #e67e22;
+  font-size: 0.8em;
+  padding: 6px 0;
+}
+.lb-origin-tip {
+  color: #aaa;
+  font-size: 0.75em;
+  font-style: italic;
+  padding: 4px 0;
+  border-top: 1px solid rgba(155,89,182,0.2);
+}
+
+.lb-origin-findings { display: flex; flex-direction: column; gap: 3px; }
+.lb-origin-findings-title {
+  color: #b47fd8;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.lb-origin-finding {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(155,89,182,0.07);
+}
+.lb-origin-finding--high   { border-left: 2px solid #ff4444; }
+.lb-origin-finding--medium { border-left: 2px solid #e67e22; }
+.lb-origin-finding--low    { border-left: 2px solid #555; }
+.lb-origin-conf {
+  font-size: 0.65em;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  min-width: 46px;
+  text-align: center;
+}
+.lb-origin-conf--high   { background: rgba(255,50,50,0.2);  color: #ff6666; }
+.lb-origin-conf--medium { background: rgba(230,126,34,0.2); color: #e67e22; }
+.lb-origin-conf--low    { background: rgba(85,85,85,0.2);   color: #777; }
+.lb-origin-f-ip   { font-family: monospace; color: #D4AF37; font-weight: 600; min-width: 110px; font-size: 0.88em; }
+.lb-origin-f-src  { color: #888; font-size: 0.72em; flex: 1; }
+
 /* ═══════════════════════════════════
    H2 FLOOD & SLOWLORIS BADGES
 ═══════════════════════════════════ */

@@ -58,7 +58,13 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Clickable history rows**: click to set target input
 - **Anti-false-positive target detection**: 3 consecutive probe failures required before "MISSION ACCOMPLISHED"
 
-#### v3.1 Features (latest)
+#### v3.2 Features (latest)
+
+- **True R.U.D.Y (Slow POST)**: Rewrote `runHTTPExhaust` → `runRUDY`. Uses raw TCP/TLS sockets. Claims `Content-Length: 1,000,000,000` (1 GB) then sends 1-2 random bytes every 5-15 seconds via `setInterval`. Apache/IIS/Tomcat hold a thread forever per connection. `MAX_CONN = threads*80, cap 25K`. Reconnects immediately on drop to maintain constant pressure.
+- **HTTP/2 Rapid Reset (CVE-2023-44487 True)**: Rewrote `pump()` in `runHTTP2Flood`. Now sends `stream.close(h2constants.NGHTTP2_NO_ERROR)` immediately after `client.request()`. Server must allocate resources on HEADERS frame before RST_STREAM arrives — all resources are wasted. Fires 64-stream bursts per tick via `setImmediate`. Bypasses `maxConcurrentStreams` limit since streams are cancelled before counting.
+- **Origin IP Finder** (`/api/find-origin`): New endpoint + UI (🕵 button). Discovers real server IP behind Cloudflare via: (1) crt.sh SSL certificate history for all subdomains, (2) 32 bypass subdomains (mail, ftp, cpanel, direct, origin, etc.), (3) IPv6 AAAA records (often not proxied through Cloudflare), (4) MX records (mail servers often on same IP), (5) SPF/TXT record IP extraction. Detects all 15 Cloudflare IP CIDR ranges. "USE AS TARGET" button instantly sets the discovered IP as the attack target.
+
+#### v3.1 Features
 
 - **Proxy Rotation System**: backend route `/api/proxies` fetches live HTTP proxies from 5 public sources (ProxyScrape, TheSpeedX, clarketm, monosans, hideip.me), tests them via TCP connect (4s timeout), caches working ones for 10 minutes. Confirmed 129 live proxies found in a single scan.
 - **Real Proxy Routing**: `fetchViaProxy()` in attack-worker routes HTTP through proxy (absolute URL form) and HTTPS through CONNECT tunnel (TLS over socket). HTTP Flood and HTTP Bypass use proxy rotation automatically when proxies are loaded — 50% of requests go through proxy pool, 50% direct for hybrid throughput.

