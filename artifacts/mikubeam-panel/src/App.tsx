@@ -848,7 +848,7 @@ function Panel() {
     }
     if (soundRef.current) playTone("start");
     if ("vibrate" in navigator) navigator.vibrate([200]);
-    if (proxyUsable) addLog(`👁 Proxy rotation enabled — ${proxies.length} proxies in pool [HTTP only]`, "success");
+    if (proxyUsable) addLog(`👁 Proxy rotation enabled — ${proxies.length} proxies in pool [HTTP+TLS]`, "success");
 
     try {
       const result = await createAttack.mutateAsync({

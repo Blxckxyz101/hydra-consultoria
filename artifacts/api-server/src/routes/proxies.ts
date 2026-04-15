@@ -15,7 +15,7 @@ import dns from "node:dns/promises";
 
 const router: IRouter = Router();
 
-export interface Proxy { host: string; port: number; responseMs: number; }
+export interface Proxy { host: string; port: number; responseMs: number; type: "http" | "socks5"; }
 
 // ── In-memory cache (exported so attacks.ts can read it) ─────────────────
 export let proxyCache: Proxy[] = [];
@@ -23,18 +23,24 @@ let lastFetch = 0;
 let isFetching = false;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-// ── Proxy sources (public HTTP proxy lists) ──────────────────────────────
-const SOURCES = [
+// ── Proxy sources ─────────────────────────────────────────────────────────
+const HTTP_SOURCES = [
   "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=5000&country=all&simplified=true",
   "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
   "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
   "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
   "https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt",
 ];
+const SOCKS5_SOURCES = [
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=5000&country=all&simplified=true",
+  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+  "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+  "https://raw.githubusercontent.com/zloi-user/hideip.me/main/socks5.txt",
+];
 
 // ── Parse proxy lines ─────────────────────────────────────────────────────
-function parseProxies(text: string): { host: string; port: number }[] {
-  const out: { host: string; port: number }[] = [];
+function parseProxies(text: string, type: "http" | "socks5"): { host: string; port: number; type: "http" | "socks5" }[] {
+  const out: { host: string; port: number; type: "http" | "socks5" }[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     // Match: ip:port or host:port (strip any leading "http://")
@@ -43,13 +49,13 @@ function parseProxies(text: string): { host: string; port: number }[] {
     if (!m) continue;
     const port = parseInt(m[2], 10);
     if (port < 1 || port > 65535) continue;
-    out.push({ host: m[1], port });
+    out.push({ host: m[1], port, type });
   }
   return out;
 }
 
 // ── Test a single proxy (TCP connect) ────────────────────────────────────
-async function testProxy(proxy: { host: string; port: number }): Promise<Proxy | null> {
+async function testProxy(proxy: { host: string; port: number; type: "http" | "socks5" }): Promise<Proxy | null> {
   const start = Date.now();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -58,33 +64,38 @@ async function testProxy(proxy: { host: string; port: number }): Promise<Proxy |
       sock.once("connect", () => { clearTimeout(t); sock.destroy(); resolve(); });
       sock.once("error",   (e) => { clearTimeout(t); reject(e); });
     });
-    return { host: proxy.host, port: proxy.port, responseMs: Date.now() - start };
+    return { host: proxy.host, port: proxy.port, responseMs: Date.now() - start, type: proxy.type };
   } catch {
     return null;
   }
 }
 
 // ── Fetch + test all sources ──────────────────────────────────────────────
-async function fetchAndTest(limit = 300): Promise<Proxy[]> {
-  const raw: { host: string; port: number }[] = [];
+async function fetchAndTest(limit = 400): Promise<Proxy[]> {
+  const raw: { host: string; port: number; type: "http" | "socks5" }[] = [];
 
-  // Fetch all sources concurrently
-  const fetches = await Promise.allSettled(
-    SOURCES.map(async (url) => {
+  // Fetch HTTP sources
+  const httpFetches = await Promise.allSettled(
+    HTTP_SOURCES.map(async (url) => {
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      const text = await res.text();
-      return parseProxies(text);
+      return parseProxies(await res.text(), "http");
     })
   );
+  for (const r of httpFetches) if (r.status === "fulfilled") raw.push(...r.value);
 
-  for (const r of fetches) {
-    if (r.status === "fulfilled") raw.push(...r.value);
-  }
+  // Fetch SOCKS5 sources
+  const socks5Fetches = await Promise.allSettled(
+    SOCKS5_SOURCES.map(async (url) => {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      return parseProxies(await res.text(), "socks5");
+    })
+  );
+  for (const r of socks5Fetches) if (r.status === "fulfilled") raw.push(...r.value);
 
   // Deduplicate
   const seen = new Set<string>();
   const unique = raw.filter(p => {
-    const k = `${p.host}:${p.port}`;
+    const k = `${p.type}:${p.host}:${p.port}`;
     if (seen.has(k)) return false;
     seen.add(k); return true;
   });
@@ -112,7 +123,7 @@ async function fetchAndTest(limit = 300): Promise<Proxy[]> {
 setTimeout(() => {
   if (!isFetching) {
     isFetching = true;
-    fetchAndTest(300)
+    fetchAndTest(400)
       .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
       .catch(() => { /* keep empty cache */ })
       .finally(() => { isFetching = false; });
@@ -123,7 +134,7 @@ setTimeout(() => {
 setInterval(() => {
   if (!isFetching) {
     isFetching = true;
-    fetchAndTest(300)
+    fetchAndTest(400)
       .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
       .catch(() => { /* keep old cache */ })
       .finally(() => { isFetching = false; });
@@ -152,10 +163,10 @@ router.post("/proxies/refresh", async (_req, res): Promise<void> => {
   }
   isFetching = true;
   const startTime = Date.now();
-  res.json({ status: "started", message: "Fetching proxies from 5 sources and testing..." });
+  res.json({ status: "started", message: "Fetching proxies from 9 sources (5 HTTP + 4 SOCKS5) and testing..." });
 
   try {
-    const fresh = await fetchAndTest(300);
+    const fresh = await fetchAndTest(400);
     proxyCache = fresh;
     lastFetch  = Date.now();
   } catch { /* keep old cache */ } finally {

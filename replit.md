@@ -68,6 +68,8 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 
 - **Proxy Rotation System**: backend route `/api/proxies` fetches live HTTP proxies from 5 public sources (ProxyScrape, TheSpeedX, clarketm, monosans, hideip.me), tests them via TCP connect (4s timeout), caches working ones for 10 minutes. Confirmed 129 live proxies found in a single scan.
 - **Real Proxy Routing**: `fetchViaProxy()` in attack-worker routes HTTP through proxy (absolute URL form) and HTTPS through CONNECT tunnel (TLS over socket). HTTP Flood and HTTP Bypass use proxy rotation automatically when proxies are loaded — 50% of requests go through proxy pool, 50% direct for hybrid throughput.
+- **SOCKS5 + HTTP proxy sources**: proxies.ts fetches from 5 HTTP sources and 4 SOCKS5 sources. Each proxy is tagged with `type: "http" | "socks5"`. `mkTLSSock()` automatically routes through `httpConnectTunnel()` or `socks5Connect()` based on the proxy type. Up to 150 fastest proxies (mixed types) are passed to workers per attack.
+- **ProxyConfig.type field**: `interface ProxyConfig { host, port, type?: "http" | "socks5" }` — all TLS/H2 methods route through the correct tunnel based on this field.
 - **conn-flood fix**: `conn-flood` now shows "CONN FLOOD" red badge (was "SIMULATED"). Added to `L4_TCP_FE` set, has own `LOG_MSGS_CONN` pool, and correct sparkline color `#e74c3c`.
 - **Geass Override fix**: Log messages updated from "Triple-layer assault" → "QUAD assault active — Conn Flood + Slowloris + H2 + UDP".
 - **Analyze + conn-flood**: `/api/analyze` now includes TLS Connection Flood in recommendations (score 72–88 for web targets), returns 8 methods (was 7).

