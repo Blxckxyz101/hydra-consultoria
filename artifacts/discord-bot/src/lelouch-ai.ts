@@ -110,6 +110,20 @@ export async function askLelouch(userId: string, question: string): Promise<stri
       // Non-model error — remove dangling user message to keep history clean
       history.pop();
       console.error("[LELOUCH AI ERROR]", msg);
+
+      // 403 billing / no credits
+      if (msg.includes("403") || msg.includes("credits") || msg.includes("licenses")) {
+        return (
+          "⚠️ **Lelouch AI — Sem créditos xAI**\n\n" +
+          "A chave API está configurada, mas a conta xAI ainda não tem créditos.\n\n" +
+          "**Para ativar:**\n" +
+          "1. Acesse **https://console.x.ai**\n" +
+          "2. Vá em **Billing → Add Credits**\n" +
+          "3. Adicione créditos à equipe\n\n" +
+          "*«Mesmo Lelouch precisa de recursos para guerrear.»*"
+        );
+      }
+
       return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
     }
   }
