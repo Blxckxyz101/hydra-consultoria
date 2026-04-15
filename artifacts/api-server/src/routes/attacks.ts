@@ -122,7 +122,14 @@ function spawnPool(
         ? threads - threadsPerWorker * (numWorkers - 1)
         : threadsPerWorker;
 
-      const w = new Worker(WORKER_FILE, { workerData: { method, target, port, threads: t, proxies } });
+      // In dev: cap worker heap to avoid container OOM (prod has 32GB, no limit needed)
+      const workerOpts: import("worker_threads").WorkerOptions = {
+        workerData: { method, target, port, threads: t, proxies },
+        ...(process.env.NODE_ENV !== "production" && {
+          resourceLimits: { maxOldGenerationSizeMb: 512 },
+        }),
+      };
+      const w = new Worker(WORKER_FILE, workerOpts);
       const idx = i;
       workers.push(w);
 

