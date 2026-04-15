@@ -6,6 +6,7 @@ import checkRouter from "./check";
 import analyzeRouter from "./analyze";
 import proxiesRouter from "./proxies";
 import originFinderRouter from "./origin-finder";
+import clusterRouter from "./cluster";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(checkRouter);
 router.use(analyzeRouter);
 router.use(proxiesRouter);
 router.use(originFinderRouter);
+router.use(clusterRouter);
 
 export default router;

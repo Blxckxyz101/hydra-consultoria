@@ -491,6 +491,50 @@ export function buildHelpEmbed(): EmbedBuilder {
     .setTimestamp();
 }
 
+// ── Cluster Status Embed ──────────────────────────────────────────────────────
+export function buildClusterEmbed(status: {
+  self:            { url: string; online: boolean; latencyMs: number; cpus: number; freeMem: number };
+  nodes:           { url: string; online: boolean; latencyMs: number; cpus?: number; freeMem?: number }[];
+  totalOnline:     number;
+  configuredNodes: number;
+}): EmbedBuilder {
+  const { self, nodes, totalOnline, configuredNodes } = status;
+  const allNodes = [{ ...self, url: "📍 This node (primary)" }, ...nodes];
+  const onlineCount = nodes.filter(n => n.online).length;
+
+  const nodeLines = allNodes.map((n, i) => {
+    const dot     = i === 0 ? "🟢" : n.online ? "🟢" : "🔴";
+    const lat     = n.latencyMs >= 0 ? `${n.latencyMs}ms` : "timeout";
+    const cpuStr  = n.cpus ? ` | ${n.cpus}vCPU` : "";
+    const memStr  = n.freeMem ? ` | ${n.freeMem}MB free` : "";
+    const label   = i === 0 ? n.url : `Node ${i}: \`${n.url}\``;
+    return `${dot} ${label} — **${lat}**${cpuStr}${memStr}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(totalOnline >= configuredNodes + 1 ? COLORS.GREEN : totalOnline > 1 ? COLORS.GOLD : COLORS.RED)
+    .setTitle(`🌐 CLUSTER STATUS — ${totalOnline} / ${configuredNodes + 1} NODES ONLINE`)
+    .setDescription(
+      configuredNodes === 0
+        ? `> No peer nodes configured. Set \`CLUSTER_NODES\` environment variable.\n> e.g. \`CLUSTER_NODES=https://node2.replit.app,https://node3.replit.app\``
+        : `> *"The king's command reaches all corners of the realm."*\n\n` +
+          nodeLines.join("\n")
+    )
+    .addFields(
+      { name: "🟢 Online",      value: `**${totalOnline}** node${totalOnline !== 1 ? "s" : ""}`, inline: true },
+      { name: "🔴 Offline",     value: `**${configuredNodes - onlineCount}** node${(configuredNodes - onlineCount) !== 1 ? "s" : ""}`, inline: true },
+      { name: "⚡ Geass Power", value: `**${totalOnline}×** multiplier`, inline: true },
+      { name: "💻 Primary CPU",  value: `${self.cpus} vCPU`, inline: true },
+      { name: "💾 Primary RAM",  value: `${self.freeMem} MB free`, inline: true },
+      { name: "👁️ Geass Override", value: configuredNodes > 0
+          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 21 ARES vectors simultaneously.`
+          : "Set `CLUSTER_NODES` to enable automatic fan-out.", inline: false },
+    )
+    .setThumbnail("attachment://geass-symbol.png")
+    .setFooter(footer())
+    .setTimestamp();
+}
+
 // ── Error Embed ───────────────────────────────────────────────────────────────
 export function buildErrorEmbed(title: string, description: string): EmbedBuilder {
   return new EmbedBuilder()

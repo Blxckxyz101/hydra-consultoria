@@ -455,13 +455,24 @@ function Panel() {
 
   /* Cluster mode */
   const [clusterNodes, setClusterNodes] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("lb-cluster-nodes") || "[]"); } catch { return []; }
+    try {
+      const saved = JSON.parse(localStorage.getItem("lb-cluster-nodes") || "[]") as string[];
+      if (saved.length > 0) return saved;
+      const envNodes = ((import.meta.env.VITE_CLUSTER_NODES as string) ?? "")
+        .split(",").map(s => s.trim()).filter(Boolean);
+      if (envNodes.length > 0) localStorage.setItem("lb-cluster-nodes", JSON.stringify(envNodes));
+      return envNodes;
+    } catch { return []; }
   });
   const [clusterInput,      setClusterInput]      = useState("");
   const [showCluster,       setShowCluster]        = useState(false);
   const [clusterAttackIds,  setClusterAttackIds]   = useState<{node: string; id: number; assignedMethod: string}[]>([]);
   const [clusterTotalPkts,  setClusterTotalPkts]   = useState(0);
   const [clusterTotalBytes, setClusterTotalBytes]  = useState(0);
+
+  /* Node health monitoring */
+  interface NodeHealth { url: string; online: boolean; latencyMs: number; cpus?: number; freeMem?: number; }
+  const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
@@ -632,6 +643,24 @@ function Panel() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ── Node health polling — updates every 5s when cluster nodes are configured ── */
+  useEffect(() => {
+    if (clusterNodes.length === 0) { setNodeHealth([]); return; }
+    const poll = async () => {
+      try {
+        const r = await fetch(`${BASE}/api/cluster/status`);
+        if (r.ok) {
+          const d = await r.json() as { nodes: { url: string; online: boolean; latencyMs: number; cpus?: number; freeMem?: number }[] };
+          setNodeHealth(d.nodes ?? []);
+        }
+      } catch { /* ignore — API may be starting */ }
+    };
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusterNodes.length]);
 
   /* Sync current packets/bytes to refs */
   useEffect(() => {
@@ -1858,7 +1887,14 @@ function Panel() {
                 </label>
                 {showCluster && (
                   <div className="lb-cluster-body">
-                    <div className="lb-cluster-hint">Add deployed API node URLs. All nodes attack simultaneously.</div>
+                    <div className="lb-cluster-hint">
+                      Add deployed API node URLs. Geass Override auto-fans out to all nodes via <code>CLUSTER_NODES</code> env var.
+                      {clusterNodes.length > 0 && nodeHealth.length > 0 && (
+                        <span className="lb-cluster-health-summary">
+                          {" "}— {nodeHealth.filter(n => n.online).length + 1}/{clusterNodes.length + 1} online
+                        </span>
+                      )}
+                    </div>
                     {/* Smart LB toggle */}
                     <label className="lb-smart-lb-toggle">
                       <input type="checkbox" checked={smartLB} onChange={e => {
@@ -1887,18 +1923,37 @@ function Panel() {
                     </div>
                     {clusterNodes.length > 0 && (
                       <div className="lb-cluster-list">
-                        {clusterNodes.map((node, nodeIdx) => (
-                          <div key={node} className={`lb-cluster-node ${isRunning && clusterAttackIds.some(a => a.node === node) ? "lb-cluster-node--active" : ""}`}>
-                            <span className="lb-cluster-node-dot"/>
-                            <span className="lb-cluster-node-url">{node}</span>
-                            {isRunning && clusterAttackIds.some(a => a.node === node) && (
-                              <span className="lb-cluster-node-firing">
-                                FIRING {smartLB ? `[${getSmartMethod(method, nodeIdx + 1).toUpperCase()}]` : ""}
-                              </span>
-                            )}
-                            <button className="lb-fav-rm" onClick={() => removeClusterNode(node)}>✕</button>
-                          </div>
-                        ))}
+                        {/* Primary node (self) — always show first */}
+                        <div className="lb-cluster-node lb-cluster-node--self">
+                          <span className="lb-cluster-node-dot" style={{ background: "#2ecc71", boxShadow: "0 0 6px #2ecc71" }}/>
+                          <span className="lb-cluster-node-url">📍 This node (primary)</span>
+                          <span className="lb-cluster-node-status lb-cluster-node-status--online">ONLINE</span>
+                        </div>
+                        {clusterNodes.map((node, nodeIdx) => {
+                          const health   = nodeHealth.find(h => h.url === node);
+                          const online   = health?.online ?? null;
+                          const latency  = health?.latencyMs ?? -1;
+                          const dotColor = online === null ? "#888" : online ? latency < 100 ? "#2ecc71" : "#e67e22" : "#C0392B";
+                          const isFiring = isRunning && clusterAttackIds.some(a => a.node === node);
+                          return (
+                            <div key={node} className={`lb-cluster-node ${isFiring ? "lb-cluster-node--active" : ""}`}>
+                              <span className="lb-cluster-node-dot" style={{ background: dotColor, boxShadow: `0 0 5px ${dotColor}` }}/>
+                              <span className="lb-cluster-node-url">{node}</span>
+                              {health && (
+                                <span className={`lb-cluster-node-status ${online ? "lb-cluster-node-status--online" : "lb-cluster-node-status--offline"}`}>
+                                  {online ? `${latency}ms` : "OFFLINE"}
+                                  {health.cpus ? ` · ${health.cpus}cpu` : ""}
+                                </span>
+                              )}
+                              {isFiring && (
+                                <span className="lb-cluster-node-firing">
+                                  FIRING {smartLB ? `[${getSmartMethod(method, nodeIdx + 1).toUpperCase()}]` : ""}
+                                </span>
+                              )}
+                              <button className="lb-fav-rm" onClick={() => removeClusterNode(node)}>✕</button>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

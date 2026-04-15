@@ -1907,3 +1907,29 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   box-shadow: 0 0 20px rgba(139,0,0,0.6), 0 0 8px rgba(212,175,55,0.3) !important;
   animation: fabPulse 1.2s ease-in-out infinite !important;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   CLUSTER NODE HEALTH GRID
+══════════════════════════════════════════════════════════════ */
+.lb-cluster-node--self {
+  background: rgba(46,204,113,0.06);
+  border-color: rgba(46,204,113,0.2) !important;
+}
+.lb-cluster-node-status {
+  font-family: var(--f-mono);
+  font-size: .65em;
+  letter-spacing: .06em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.lb-cluster-node-status--online  { color: #2ecc71; background: rgba(46,204,113,0.12); border: 1px solid rgba(46,204,113,0.3); }
+.lb-cluster-node-status--offline { color: #C0392B; background: rgba(192,57,43,0.12);  border: 1px solid rgba(192,57,43,0.3); }
+.lb-cluster-health-summary {
+  color: #2ecc71;
+  font-family: var(--f-mono);
+  font-size: .8em;
+  font-weight: 700;
+}

