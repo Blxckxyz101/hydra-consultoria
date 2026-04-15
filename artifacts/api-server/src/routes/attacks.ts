@@ -99,11 +99,13 @@ async function runL3Simulation(
 //  SPAWN POOL — spawns numWorkers workers for a single method
 // ─────────────────────────────────────────────────────────────────────────
 const HTTP_PROXY_METHODS = new Set([
-  // HTTP-layer methods (always used proxies)
+  // L7 HTTP methods — full proxy rotation (HTTP + SOCKS5)
   "http-flood", "http-bypass", "http-pipeline",
-  // TLS/H2 methods — now support HTTP CONNECT proxy tunnel
-  "http2-continuation", "hpack-bomb", "ssl-death", "tls-renego",
-  "conn-flood", "ws-flood", "h2-settings-storm",
+  // L7 application-layer attacks — now proxy-aware
+  "graphql-dos", "cache-poison", "rudy-v2",
+  // TLS/H2 methods — HTTP CONNECT + SOCKS5 tunnel
+  "http2-flood", "http2-continuation", "hpack-bomb", "ssl-death", "tls-renego",
+  "conn-flood", "ws-flood", "h2-settings-storm", "waf-bypass",
 ]);
 
 function spawnPool(

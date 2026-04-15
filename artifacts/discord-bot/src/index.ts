@@ -39,7 +39,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 13 vectors (ARES): H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+CACHE+TLS+QUIC+SSL...", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞",           description: "MAX POWER — 14 vectors (ARES): H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+CACHE+TLS+QUIC+SSL+HTTPBypass...", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",         description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",        emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",          description: "CVE-2023-44487 — 64-stream RST burst, millions req/s",                emoji: "⚡" },
@@ -55,7 +55,7 @@ const METHOD_OPTIONS = [
   { value: "rudy",                label: "🩸 R.U.D.Y (SlowPOST)",         description: "Claims 1GB body, sends 1 byte/5s — holds server threads forever",    emoji: "🩸" },
   { value: "rudy-v2",             label: "🩸 RUDY v2 — Multipart POST",   description: "multipart/form-data + 70-char boundary — harder to detect than RUDY", emoji: "🩸" },
   { value: "http-flood",          label: "🌊 HTTP Flood",                  description: "High-volume HTTP GET — overwhelms web server resources",              emoji: "🌊" },
-  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Browser-emulated HTTP flood — bypasses basic bot protection",         emoji: "🛡️" },
+  { value: "http-bypass",         label: "🛡️ HTTP Bypass",               description: "Chrome-fingerprinted 3-layer: fetch+Chrome headers+slow drain — defeats WAF/CDN bot detection", emoji: "🛡️" },
   // ── L4 Transport ───────────────────────────────────────────────────────
   { value: "quic-flood",          label: "⚡ QUIC/HTTP3 Flood (RFC 9000)", description: "QUIC Initial packets — server allocates crypto state per DCID → OOM", emoji: "⚡" },
   { value: "ssl-death",           label: "💀 SSL Death Record",            description: "1-byte TLS records — 40K AES-GCM decrypts/sec on server CPU",        emoji: "💀" },
@@ -146,7 +146,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("geass")
-    .setDescription("👁️ Launch Geass Override ∞ — DECA-VECTOR maximum power, 10 simultaneous vectors")
+    .setDescription("👁️ Launch Geass Override ∞ — ARES maximum power, 14 simultaneous vectors")
     .addStringOption(opt =>
       opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
     )

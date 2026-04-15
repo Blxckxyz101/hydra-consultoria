@@ -90,7 +90,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 13 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death. OMNIVECT ARES COMMAND.",
+    description: "ABSOLUTE MAXIMUM — 14 simultaneous vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + HTTP Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death. OMNIVECT ARES COMMAND.",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────
@@ -205,7 +205,7 @@ export const ATTACK_METHODS = [
     name: "HTTP Bypass",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "HTTP flood with browser emulation to bypass basic bot protection and challenge pages.",
+    description: "Chrome-fingerprinted 3-layer bypass: Layer A=fetch+Chrome headers+proxy rotation (50%), Layer B=raw HTTP/1.1 high-concurrency (30%), Layer C=slow-drain incomplete requests (20%). JA3+AKAMAI fingerprint — defeats Cloudflare/Akamai bot detection.",
   },
   {
     id: "http2-flood",
