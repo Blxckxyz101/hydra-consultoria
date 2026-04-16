@@ -573,6 +573,81 @@ const downAlertSent   = new Map<number, boolean>(); // prevent DM spam
 // Module-level client ref (set in main()) for DM support
 let botClient: Client | null = null;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGINATION HELPER — Arrow-button embed pager (5 min TTL)
+// ═══════════════════════════════════════════════════════════════════════════
+async function sendPaginated(
+  interaction: ChatInputCommandInteraction,
+  pages: EmbedBuilder[],
+  options: { timeoutMs?: number; ephemeral?: boolean } = {},
+): Promise<void> {
+  const { timeoutMs = 300_000, ephemeral = false } = options;
+  if (pages.length === 0) return;
+  if (pages.length === 1) {
+    await interaction.editReply({ embeds: [pages[0]], components: [] });
+    return;
+  }
+
+  let page = 0;
+
+  const buildRow = (disabled = false) => new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("pg_first")
+      .setLabel("⏮️")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled || page === 0),
+    new ButtonBuilder()
+      .setCustomId("pg_prev")
+      .setLabel("◀️")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled || page === 0),
+    new ButtonBuilder()
+      .setCustomId("pg_indicator")
+      .setLabel(`${page + 1} / ${pages.length}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId("pg_next")
+      .setLabel("▶️")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled || page === pages.length - 1),
+    new ButtonBuilder()
+      .setCustomId("pg_last")
+      .setLabel("⏭️")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled || page === pages.length - 1),
+  );
+
+  const msg = await interaction.editReply({
+    embeds: [pages[page]],
+    components: [buildRow()],
+  });
+
+  const collector = msg.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    filter: (btn) => btn.user.id === interaction.user.id && btn.customId.startsWith("pg_"),
+    time: timeoutMs,
+  });
+
+  collector.on("collect", async (btn) => {
+    if (btn.customId === "pg_first")     page = 0;
+    else if (btn.customId === "pg_prev") page = Math.max(0, page - 1);
+    else if (btn.customId === "pg_next") page = Math.min(pages.length - 1, page + 1);
+    else if (btn.customId === "pg_last") page = pages.length - 1;
+
+    await btn.update({
+      embeds: [pages[page]],
+      components: [buildRow()],
+    });
+  });
+
+  collector.on("end", async () => {
+    try {
+      await interaction.editReply({ components: [buildRow(true)] });
+    } catch { /* expired */ }
+  });
+}
+
 function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -2529,11 +2604,13 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     } catch { /* tracker unavailable — skip silently */ }
   }
 
+  embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 1/3 — Use as setas para navegar` });
+  embedServer.setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 2/3 — Servidor & Papéis` });
   embedTech
-    .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Dossier gerado em ${new Date().toISOString()}` })
+    .setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 3/3 — Técnico & Risco` })
     .setTimestamp();
 
-  await interaction.editReply({ embeds: [embedIdentity, embedServer, embedTech] });
+  await sendPaginated(interaction, [embedIdentity, embedServer, embedTech]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2586,23 +2663,21 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
       await interaction.editReply({ embeds: [buildErrorEmbed("⛔", "Apenas donos podem listar servidores.")] });
       return;
     }
-    const lines = botClient!.guilds.cache.map(g =>
-      `**${g.name}** • \`${g.id}\` • ${g.memberCount ?? "?"} membros`
-    );
-    const chunks: string[] = [];
-    let cur = "";
-    for (const l of lines) {
-      if ((cur + "\n" + l).length > 3900) { chunks.push(cur); cur = l; }
-      else cur += (cur ? "\n" : "") + l;
+    const allGuilds = [...botClient!.guilds.cache.values()];
+    const CHUNK_SIZE = 15;
+    const totalPages = Math.max(1, Math.ceil(allGuilds.length / CHUNK_SIZE));
+    const guildPages: EmbedBuilder[] = [];
+    for (let i = 0; i < allGuilds.length; i += CHUNK_SIZE) {
+      const chunk = allGuilds.slice(i, i + CHUNK_SIZE);
+      guildPages.push(new EmbedBuilder()
+        .setColor(COLORS.PURPLE)
+        .setTitle(`🌐 SERVIDORES — ${allGuilds.length} total`)
+        .setDescription(chunk.map(g => `**${g.name}** • \`${g.id}\` • ${g.memberCount ?? "?"} membros`).join("\n"))
+        .setFooter({ text: `${AUTHOR} ▸ Página ${Math.ceil((i + 1) / CHUNK_SIZE)}/${totalPages}` })
+      );
     }
-    if (cur) chunks.push(cur);
-
-    const embeds = chunks.slice(0, 3).map((chunk, i) => new EmbedBuilder()
-      .setColor(COLORS.PURPLE)
-      .setTitle(i === 0 ? `🌐 SERVIDORES (${botClient!.guilds.cache.size} total)` : `🌐 SERVIDORES (cont. ${i + 1})`)
-      .setDescription(chunk)
-    );
-    await interaction.editReply({ embeds });
+    if (guildPages.length === 0) guildPages.push(new EmbedBuilder().setColor(COLORS.PURPLE).setTitle("🌐 SERVIDORES").setDescription("Nenhum servidor."));
+    await sendPaginated(interaction, guildPages);
     return;
   }
 

