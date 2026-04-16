@@ -538,16 +538,31 @@ const attackAborts  = new Map<number, AbortController>();
 const attackTimers  = new Map<number, ReturnType<typeof setTimeout>>();
 
 router.get("/attacks/stats", async (_req, res): Promise<void> => {
-  const attacks = await db.select().from(attacksTable).orderBy(desc(attacksTable.createdAt));
-  const methodMap: Record<string, number> = {};
-  for (const a of attacks) methodMap[a.method] = (methodMap[a.method] ?? 0) + 1;
+  // Run all 3 queries in parallel — no full table scan in JS
+  const [aggRows, methodRows, recentAttacks] = await Promise.all([
+    // 1. Aggregate totals — O(1) via SQL COUNT/SUM
+    db.select({
+      totalAttacks:     sql<number>`COUNT(*)::int`,
+      runningAttacks:   sql<number>`COUNT(*) FILTER (WHERE status = 'running')::int`,
+      totalPacketsSent: sql<number>`COALESCE(SUM(packets_sent), 0)::bigint`,
+      totalBytesSent:   sql<number>`COALESCE(SUM(bytes_sent), 0)::bigint`,
+    }).from(attacksTable),
+    // 2. Per-method counts — O(distinct methods) index scan
+    db.select({
+      method: attacksTable.method,
+      count:  sql<number>`COUNT(*)::int`,
+    }).from(attacksTable).groupBy(attacksTable.method),
+    // 3. Recent 10 only — O(10) with LIMIT
+    db.select().from(attacksTable).orderBy(desc(attacksTable.createdAt)).limit(10),
+  ]);
+  const agg = aggRows[0];
   res.json({
-    totalAttacks:     attacks.length,
-    runningAttacks:   attacks.filter(a => a.status === "running").length,
-    totalPacketsSent: attacks.reduce((s, a) => s + (a.packetsSent ?? 0), 0),
-    totalBytesSent:   attacks.reduce((s, a) => s + (a.bytesSent   ?? 0), 0),
-    attacksByMethod:  Object.entries(methodMap).map(([method, count]) => ({ method, count })),
-    recentAttacks:    attacks.slice(0, 10),
+    totalAttacks:     agg.totalAttacks,
+    runningAttacks:   agg.runningAttacks,
+    totalPacketsSent: Number(agg.totalPacketsSent),
+    totalBytesSent:   Number(agg.totalBytesSent),
+    attacksByMethod:  methodRows,
+    recentAttacks,
     cpuCount:         CPU_COUNT,
   });
 });
