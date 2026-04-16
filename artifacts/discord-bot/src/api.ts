@@ -36,15 +36,28 @@ export interface Method {
 
 export interface AnalyzeResult {
   target:           string;
+  ip:               string | null;
+  allIPs:           string[];
+  isIP:             boolean;
   hasDNS:           boolean;
   httpAvailable:    boolean;
   httpsAvailable:   boolean;
   responseTimeMs:   number;
+  serverHeader:     string;
   serverType:       string;
-  statusCode:       number;
+  serverLabel:      string;
   isCDN:            boolean;
   cdnProvider:      string;
-  isIP:             boolean;
+  hasWAF:           boolean;
+  wafProvider:      string;
+  supportsH2:       boolean;
+  supportsH3:       boolean;
+  altSvc:           string;
+  hasHSTS:          boolean;
+  hstsMaxAge:       number;
+  hasGraphQL:       boolean;
+  hasWebSocket:     boolean;
+  openPorts:        number[];
   recommendations:  Recommendation[];
 }
 

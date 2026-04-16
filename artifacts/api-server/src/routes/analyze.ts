@@ -184,6 +184,7 @@ function scoreMethodsFor(opts: {
   openPorts:         number[];
   hasGraphQL:        boolean;
   hasWebSocket:      boolean;
+  hostname:          string;
 }): MethodRec[] {
   const {
     isIP, httpAvailable, httpsAvailable, responseTimeMs,
@@ -528,7 +529,7 @@ function scoreMethodsFor(opts: {
       method: "dns-amp", name: "DNS Water Torture [NS bypass]",
       score, tier: tierFromScore(score),
       reason: isCDN
-        ? `${cdnProvider} CDN detected — but NS servers (${(opts as { hostname?: string }).hostname ?? "target"}) are NOT behind CDN. DNS Water Torture floods NS servers directly, bypasses ALL CDN/WAF protection completely. Random subdomain queries fill NXDOMAIN cache.`
+        ? `${cdnProvider} CDN detected — but NS servers (${opts.hostname}) are NOT behind CDN. DNS Water Torture floods NS servers directly, bypasses ALL CDN/WAF protection completely. Random subdomain queries fill NXDOMAIN cache.`
         : `Floods target NS servers with random subdomain queries — forces recursive resolution, fills NXDOMAIN cache. NS servers are rarely DDoS-protected.`,
       suggestedThreads: 1024, suggestedDuration: 120, protocol: "UDP/DNS", amplification: 1,
     });
@@ -771,7 +772,7 @@ router.post("/analyze", async (req, res): Promise<void> => {
     hasGraphQL,
     hasWebSocket,
     hostname,
-  } as Parameters<typeof scoreMethodsFor>[0] & { hostname: string });
+  });
 
   res.json({
     target:        hostname,

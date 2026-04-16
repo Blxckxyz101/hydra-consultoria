@@ -398,8 +398,46 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
 
-  const serverDisplay = !result.serverType || result.serverType === "unknown" ? "Unknown" : result.serverType;
-  const cdnDisplay    = result.isCDN ? `✅ **${result.cdnProvider}**` : "❌ None detected";
+  const serverDisplay = result.serverLabel && result.serverLabel !== "Unknown"
+    ? result.serverLabel
+    : result.serverType && result.serverType !== "unknown"
+      ? result.serverType
+      : "Unknown";
+
+  // CDN / WAF line
+  let shieldLine: string;
+  if (result.isCDN && result.hasWAF) {
+    shieldLine = `⚠️ **${result.cdnProvider}** + **${result.wafProvider}**`;
+  } else if (result.isCDN) {
+    shieldLine = `✅ CDN: **${result.cdnProvider}**`;
+  } else if (result.hasWAF) {
+    shieldLine = `🛡️ WAF: **${result.wafProvider}**`;
+  } else {
+    shieldLine = "❌ None detected";
+  }
+
+  // HTTP version support
+  const h2h3Parts: string[] = [];
+  if (result.supportsH2) h2h3Parts.push("**H/2**");
+  if (result.supportsH3) h2h3Parts.push("**H/3**");
+  const protocolLine = h2h3Parts.length > 0 ? `✅ ${h2h3Parts.join(" + ")}` : "HTTP/1.1 only";
+
+  // Features line (GraphQL, WebSocket, HSTS)
+  const featureParts: string[] = [];
+  if (result.hasGraphQL)  featureParts.push("GraphQL");
+  if (result.hasWebSocket) featureParts.push("WebSocket");
+  if (result.hasHSTS)      featureParts.push(`HSTS${result.hstsMaxAge ? ` (${Math.round(result.hstsMaxAge / 86400)}d)` : ""}`);
+  const featuresLine = featureParts.length > 0 ? featureParts.join(", ") : "None detected";
+
+  // Open ports
+  const portsLine = result.openPorts.length > 0
+    ? result.openPorts.map(p => `\`${p}\``).join(" ")
+    : "None scanned";
+
+  // All IPs
+  const ipsLine = result.allIPs?.length > 0
+    ? result.allIPs.slice(0, 5).join(", ") + (result.allIPs.length > 5 ? ` +${result.allIPs.length - 5} more` : "")
+    : result.ip ?? "Unknown";
 
   const recoLines = top6.length > 0
     ? top6.map((r, i) => {
@@ -412,21 +450,34 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
 
   const topRec = top6[0];
 
+  const color = result.isCDN && result.hasWAF ? COLORS.RED
+    : result.isCDN ? COLORS.ORANGE
+    : result.hasWAF ? COLORS.CRIMSON
+    : COLORS.TEAL;
+
   const embed = new EmbedBuilder()
-    .setColor(result.isCDN ? COLORS.ORANGE : COLORS.TEAL)
+    .setColor(color)
     .setTitle(`🔍 TARGET RECON: \`${result.target}\``)
     .setDescription(
       result.hasDNS
-        ? `✅ Target analyzed successfully.\n${result.isCDN ? `⚠️ **${result.cdnProvider}** detected — use WAF bypass for best results.` : "Direct server — no CDN detected."}`
-        : "❌ **DNS resolution failed.** Target may be offline or invalid."
+        ? `✅ Target analyzed — **${result.recommendations.length}** attack vectors scored.\n${
+            result.isCDN && result.hasWAF ? `🔴 **${result.cdnProvider}** + **${result.wafProvider}** detected — heavily shielded.` :
+            result.isCDN ? `⚠️ **${result.cdnProvider}** CDN detected — DNS Water Torture bypasses it.` :
+            result.hasWAF ? `⚠️ **${result.wafProvider}** detected — use HTTP Bypass or Pipeline vectors.` :
+            "✅ Direct server — no CDN/WAF detected. All vectors viable."
+          }`
+        : "❌ **DNS resolution failed.** Target may be offline or the domain is invalid."
     )
     .addFields(
-      { name: "🌐 HTTP",     value: result.httpAvailable  ? "✅ Available"          : "❌ Offline",         inline: true },
-      { name: "🔒 HTTPS",    value: result.httpsAvailable ? "✅ Available"          : "❌ Offline",         inline: true },
-      { name: "⚡ Response",  value: result.responseTimeMs > 0 ? `**${result.responseTimeMs}ms**` : "N/A", inline: true },
-      { name: "🖥️ Server",   value: `**${serverDisplay}**`,                                               inline: true },
-      { name: "🛡️ CDN/WAF",  value: cdnDisplay,                                                           inline: true },
-      { name: "📡 DNS",      value: result.hasDNS ? "✅ Resolved" : "❌ Failed",                           inline: true },
+      { name: "🌐 HTTP",      value: result.httpAvailable  ? "✅ Online" : "❌ Offline",                  inline: true },
+      { name: "🔒 HTTPS",     value: result.httpsAvailable ? "✅ Online" : "❌ Offline",                  inline: true },
+      { name: "⚡ Response",   value: result.responseTimeMs > 0 ? `**${result.responseTimeMs}ms**` : "N/A", inline: true },
+      { name: "🖥️ Server",    value: `**${serverDisplay}**`,                                              inline: true },
+      { name: "🛡️ CDN/WAF",   value: shieldLine,                                                         inline: true },
+      { name: "📡 Protocol",   value: protocolLine,                                                        inline: true },
+      { name: "🔬 Features",   value: featuresLine,                                                        inline: true },
+      { name: "🔌 Open Ports", value: portsLine,                                                           inline: true },
+      { name: "🌍 IP(s)",      value: ipsLine,                                                             inline: true },
       { name: "\u200b", value: "━━━━━━━━━━ 🎯 **VULNERABILITY REPORT** ━━━━━━━━━━", inline: false },
       { name: `Top ${top6.length} Vectors (sorted by effectiveness)`, value: recoLines, inline: false },
     );
@@ -434,7 +485,7 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
   if (topRec) {
     embed.addFields({
       name: "💡 Quick Attack",
-      value: `Run \`/attack start target:${result.target}\` — select **${methodLabel(topRec.method)}** from the dropdown, set threads to **${topRec.suggestedThreads}** and duration to **${topRec.suggestedDuration}s**.`,
+      value: `\`/attack start target:${result.target}\` → **${methodLabel(topRec.method)}** | threads: **${topRec.suggestedThreads}** | duration: **${topRec.suggestedDuration}s**`,
       inline: false,
     });
   }

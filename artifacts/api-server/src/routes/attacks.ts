@@ -50,6 +50,10 @@ const WORKER_FILE = path.join(
 // ── Live in-memory connection counter (slowloris + conn-flood) ─────────────
 export const attackLiveConns = new Map<number, number>();
 
+// ── Attack end-time tracking — used to correctly compute remaining time on Extend ──
+// Stores absolute epoch-ms when each attack is scheduled to stop.
+const attackEndTimes = new Map<number, number>();
+
 // ── In-memory live stats (no DB latency) ───────────────────────────────────
 // Accumulated since attack start — never reset until attack ends
 const livePackets   = new Map<number, number>(); // total packets in memory
@@ -363,11 +367,13 @@ router.post("/attacks", async (req, res): Promise<void> => {
 
   const id   = attack.id;
   const ctrl = new AbortController();
+  const endTime = Date.now() + duration * 1000;
   const stopTimer = setTimeout(() => ctrl.abort("duration_expired"), duration * 1000);
 
   // Store for manual stop + extend support
   attackAborts.set(id, ctrl);
   attackTimers.set(id, stopTimer);
+  attackEndTimes.set(id, endTime);
 
   // Init in-memory counters
   livePackets.set(id, 0);
@@ -403,6 +409,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
     if (t) clearTimeout(t);
     attackTimers.delete(id);
     attackAborts.delete(id);
+    attackEndTimes.delete(id);
     try {
       const [cur] = await db.select().from(attacksTable).where(eq(attacksTable.id, id));
       if (cur?.status === "running") {
@@ -476,10 +483,16 @@ router.patch("/attacks/:id/extend", async (req, res): Promise<void> => {
   if (!ctrl) { res.status(404).json({ error: "Attack not running" }); return; }
   const addSec = typeof req.body?.seconds === "number" ? Math.min(req.body.seconds, 3600) : 60;
 
-  // Clear old stop timer, arm new one
+  // Clear old stop timer, arm new one using correct remaining time
+  // Bug-fix: previously reset timer to addSec from NOW, losing remaining original time.
+  // Now we compute: newEndTime = max(now, currentEndTime) + addSec
   const old = attackTimers.get(id);
   if (old) clearTimeout(old);
-  const newTimer = setTimeout(() => ctrl.abort("duration_expired"), addSec * 1000);
+  const currentEnd = attackEndTimes.get(id) ?? Date.now();
+  const newEnd     = Math.max(Date.now(), currentEnd) + addSec * 1000;
+  const msFromNow  = newEnd - Date.now();
+  attackEndTimes.set(id, newEnd);
+  const newTimer = setTimeout(() => ctrl.abort("duration_expired"), msFromNow);
   attackTimers.set(id, newTimer);
 
   const [a] = await db.update(attacksTable)
