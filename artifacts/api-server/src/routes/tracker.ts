@@ -391,14 +391,24 @@ function loadStore(): void {
   } catch { /* no file yet */ }
 }
 
+// Debounced async write — coalesces rapid saves into a single disk write per 500ms window
+let _saveTimer: ReturnType<typeof setTimeout> | null = null;
 function saveStore(): void {
-  try {
-    fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
-    fs.writeFileSync(STORE_PATH, JSON.stringify([...store.values()], null, 2));
-  } catch { /* non-fatal */ }
+  if (_saveTimer) return; // already scheduled — coalesced
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
+      fs.writeFileSync(STORE_PATH, JSON.stringify([...store.values()], null, 2));
+    } catch { /* non-fatal */ }
+  }, 500);
 }
 
 loadStore();
+
+// Set of tokens currently undergoing geolocation — prevents duplicate geolocate calls
+// on concurrent requests for the same token (race condition guard)
+const geolocating = new Set<string>();
 
 // Purge entries older than 7 days every hour
 setInterval(() => {
@@ -512,9 +522,10 @@ async function handleBaitRoute(
 
   const ua = (req.headers["user-agent"] as string) ?? "unknown";
 
-  if (!entry.capturedIp) {
-    // First capture — geolocate async
-    const geo = await geolocate(rawIp);
+  if (!entry.capturedIp && !geolocating.has(token)) {
+    // First capture — geolocate async (guard prevents duplicate calls on concurrent hits)
+    geolocating.add(token);
+    const geo = await geolocate(rawIp).finally(() => geolocating.delete(token));
     entry.capturedIp = rawIp;
     entry.capturedAt = Date.now();
     entry.userAgent  = ua;
