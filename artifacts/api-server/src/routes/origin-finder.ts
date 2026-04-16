@@ -64,25 +64,44 @@ function fetchJSON(url: string, timeoutMs = 8000): Promise<unknown> {
   });
 }
 
-// ── crt.sh SSL certificate history ──────────────────────────────────────
+// ── crt.sh SSL certificate history — extended mining ─────────────────────
+// Queries both wildcard (%.domain) and exact (domain) patterns, plus
+// expired/revoked certs which often point to old origin IPs before CF migration.
 async function queryCrtSh(domain: string): Promise<string[]> {
-  try {
-    const data = await fetchJSON(
-      `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`,
-      12000,
-    ) as Array<{ name_value?: string; common_name?: string }> | null;
-
-    if (!Array.isArray(data)) return [];
-    const hosts = new Set<string>();
+  const hosts = new Set<string>();
+  const queries = [
+    `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`,          // wildcard subdomains
+    `https://crt.sh/?q=${encodeURIComponent(domain)}&output=json`,               // exact domain
+    `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&exclude=expired&output=json`, // exclude expired
+  ];
+  const results = await Promise.allSettled(queries.map(url => fetchJSON(url, 12000)));
+  for (const r of results) {
+    if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
+    const data = r.value as Array<{ name_value?: string; common_name?: string }>;
     for (const cert of data) {
       const names = [cert.name_value, cert.common_name].filter(Boolean).join("\n");
       for (const name of names.split("\n")) {
-        const h = name.trim().replace(/^\*\./, "");
-        if (h && h.includes(".") && !h.includes("*")) hosts.add(h.toLowerCase());
+        const h = name.trim().replace(/^\*\./, "").toLowerCase();
+        if (h && h.includes(".") && !h.includes("*") && h.endsWith(domain)) hosts.add(h);
       }
     }
-    return [...hosts];
-  } catch { return []; }
+  }
+  return [...hosts];
+}
+
+// ── ASN lookup — identify hosting provider for each origin IP ─────────────
+// Uses bgpview.io API to get ASN + org name, flagging non-CDN hosting providers
+async function lookupASN(ip: string): Promise<{ asn: number; name: string; country: string } | null> {
+  try {
+    const data = await fetchJSON(`https://api.bgpview.io/ip/${ip}`, 5000) as {
+      status?: string;
+      data?: { prefixes?: Array<{ asn?: { asn?: number; name?: string; country_code?: string } }> };
+    } | null;
+    if (data?.status !== "ok" || !Array.isArray(data?.data?.prefixes)) return null;
+    const prefix = data.data.prefixes[0];
+    if (!prefix?.asn) return null;
+    return { asn: prefix.asn.asn ?? 0, name: prefix.asn.name ?? "Unknown", country: prefix.asn.country_code ?? "??" };
+  } catch { return null; }
 }
 
 // ── Resolve a hostname, return IPs that are NOT Cloudflare ──────────────
@@ -196,10 +215,10 @@ router.post("/find-origin", async (req, res) => {
     }
   }
 
-  // ── 6. crt.sh SSL history ────────────────────────────────────────────
+  // ── 6. crt.sh SSL history — extended (3 query variants, top 80 hosts) ──
   const crtHosts = await queryCrtSh(bare);
-  // Resolve top 40 unique crt.sh hosts to avoid excessive DNS queries
-  const crtSample = crtHosts.slice(0, 40);
+  // Resolve top 80 unique crt.sh hosts (was 40) — more coverage for older certs
+  const crtSample = crtHosts.slice(0, 80);
   const crtResults = await Promise.allSettled(
     crtSample.map(async host => {
       const ips = await dns.resolve4(host).catch(() => [] as string[]);
@@ -211,29 +230,40 @@ router.post("/find-origin", async (req, res) => {
     const { host, ips } = r.value;
     for (const ip of ips) {
       const isCF = isCloudflareIP(ip);
-      addIP(`crt.sh SSL cert history (${host})`, host, ip, isCF ? "low" : "high");
+      addIP(`crt.sh cert history (${host})`, host, ip, isCF ? "low" : "high");
     }
   }
 
-  // ── Compute summary ──────────────────────────────────────────────────
+  // ── 7. ASN lookup for all non-CF origin IPs ──────────────────────────
   const originIPs = findings.filter(f => !f.isCF).map(f => f.ip);
   const uniqueOrigins = [...new Set(originIPs)];
+  const asnMap: Record<string, { asn: number; name: string; country: string }> = {};
+  // Lookup ASN for up to 10 origin IPs in parallel (rate-limit friendly)
+  const asnLookups = await Promise.allSettled(
+    uniqueOrigins.slice(0, 10).map(async ip => ({ ip, asn: await lookupASN(ip) }))
+  );
+  for (const r of asnLookups) {
+    if (r.status === "fulfilled" && r.value.asn) asnMap[r.value.ip] = r.value.asn;
+  }
+
+  // ── Compute summary ──────────────────────────────────────────────────
   const isProtected  = mainIPsAll.every(ip => isCloudflareIP(ip));
 
   return res.json({
     domain:       bare,
     isCloudflare: isProtected,
     originIPs:    uniqueOrigins,
+    asnInfo:      asnMap,
     findings:     findings.sort((a, b) => {
       const order = { high: 0, medium: 1, low: 2 };
       return (a.isCF ? 10 : 0) - (b.isCF ? 10 : 0) + order[a.confidence] - order[b.confidence];
     }),
     crtHostsFound: crtHosts.length,
     tip: isProtected && uniqueOrigins.length === 0
-      ? "No origin IP found yet. Try checking DNS history on SecurityTrails.com, or look for mail.domain.com or cpanel.domain.com manually."
+      ? "No origin IP found yet. Try SecurityTrails.com DNS history or check mail.domain.com / cpanel.domain.com manually."
       : uniqueOrigins.length > 0
-        ? `Found ${uniqueOrigins.length} potential origin IP(s). Attack directly using UDP/TCP flood, bypassing Cloudflare!`
-        : "Domain appears to be directly accessible (no CDN detected).",
+        ? `Found ${uniqueOrigins.length} potential origin IP(s). Attack directly to bypass Cloudflare!`
+        : "Domain appears directly accessible (no CDN detected).",
   });
 });
 

