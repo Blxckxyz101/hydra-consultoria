@@ -14,8 +14,8 @@ interface BotConfig {
   panelMods:       string[];               // Discord user IDs with limited mod access
 }
 
-// blxckxyz is always hardcoded as bootstrap owner (by username — new Discord system)
-export const BOOTSTRAP_OWNER_USERNAME = "blxckxyz";
+// blxckxyz. is always hardcoded as bootstrap owner (new Discord username system — note the period)
+export const BOOTSTRAP_OWNER_USERNAME = "blxckxyz.";
 
 let config: BotConfig = {
   logChannels:     {},

