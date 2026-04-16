@@ -63,5 +63,8 @@ export const METHOD_EMOJIS: Record<string, string> = {
   "h2-ping-storm":       "🏓",
   "http-smuggling":      "🎭",
   "doh-flood":           "🌐",
-  "keepalive-exhaust":   "⛓️",
+  "keepalive-exhaust":    "⛓️",
+  "app-smart-flood":      "🎯",
+  "large-header-bomb":    "💣",
+  "http2-priority-storm": "🌀",
 };

@@ -660,6 +660,55 @@ function scoreMethodsFor(opts: {
     });
   }
 
+  // ── App Smart Flood ────────────────────────────────────────────────────
+  if (isWebServer) {
+    let score = isCDN ? 65 : 88;
+    if (serverType === "nodejs")   score = Math.min(score + 10, 97);  // event loop single-threaded
+    if (serverType === "gunicorn") score = Math.min(score + 8,  96);  // sync workers block on DB
+    if (serverType === "tomcat")   score = Math.min(score + 7,  95);  // thread pool per request
+    if (serverType === "apache")   score = Math.min(score + 5,  94);  // thread/process model
+    if (serverType === "cloudflare") score = Math.max(score - 8, 55); // workers mitigate app attacks
+    if (isCDN) score = Math.max(score - 8, 55);
+    recs.push({
+      method: "app-smart-flood", name: "App Smart Flood [DB query exhaust]",
+      score, tier: tierFromScore(score),
+      reason: `POSTs randomized data to /login, /search, /checkout, /register — forces uncacheable DB query per request. Exhausts DB connection pool and backend thread pool simultaneously. Cache cannot protect against this vector.`,
+      suggestedThreads: 500, suggestedDuration: 90, protocol: "HTTP",
+    });
+  }
+
+  // ── Large Header Bomb ──────────────────────────────────────────────────
+  if (isWebServer) {
+    let score = isCDN ? 60 : 82;
+    if (serverType === "nginx")    score = Math.min(score + 10, 93);  // nginx 8KB default limit causes OOM
+    if (serverType === "apache")   score = Math.min(score + 8,  91);  // LimitRequestFieldSize
+    if (serverType === "iis")      score = Math.min(score + 6,  89);  // IIS MaxRequestBytes
+    if (serverType === "nodejs")   score = Math.min(score + 5,  88);  // http.IncomingMessage maxHeaderSize
+    if (isCDN) score = Math.max(score - 12, 48);
+    recs.push({
+      method: "large-header-bomb", name: "Large Header Bomb [16KB header flood]",
+      score, tier: tierFromScore(score),
+      reason: `Sends 16KB+ of randomized X-* headers per request — forces HTTP parser to allocate a large heap buffer per connection. Bypasses WAFs that only inspect body. ${serverType === "nginx" ? "nginx default max_headers=8KB — forces 400 error allocation storm." : "Server must parse and reject each oversized request, wasting CPU+heap."}`,
+      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP",
+    });
+  }
+
+  // ── H2 PRIORITY Storm ──────────────────────────────────────────────────
+  if (supportsH2) {
+    let score = isCDN ? 58 : 80;
+    if (serverType === "nginx")    score = Math.min(score + 8,  90);
+    if (serverType === "apache")   score = Math.min(score + 6,  88);
+    if (serverType === "nodejs")   score = Math.min(score + 10, 92); // h2 module sorts per frame
+    if (serverType === "cloudflare") score = Math.max(score - 5, 52);
+    if (isCDN) score = Math.max(score - 8, 50);
+    recs.push({
+      method: "http2-priority-storm", name: "H2 PRIORITY Storm [stream dependency exhaust]",
+      score, tier: tierFromScore(score),
+      reason: `Each HTTP/2 PRIORITY frame (RFC 7540 §6.3) forces server to rebuild its stream dependency tree — no frame limit in spec. Sends 66K+ PRIORITY frames/sec per connection. Pure CPU+heap exhaustion that bypasses all connection-count limits and WAF inspection.`,
+      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP/2",
+    });
+  }
+
   // Deduplicate and sort: real methods above simulated at equal score, all returned (no limit)
   return recs.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;

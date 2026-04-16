@@ -73,9 +73,19 @@ const methodLabel = (id: string) => {
     "dns-amp":             "DNS Amplification",
     "ntp-amp":             "NTP Amplification",
     "mem-amp":             "Memcached Amp",
-    "hpack-bomb":          "HPACK Bomb — RFC 7541 Table Exhaustion",
-    "h2-settings-storm":   "H2 Settings Storm — HPACK + Flow Control Exhaustion",
-    "geass-override":      "Geass Override ∞ [ARES OMNIVECT — 30 VECTORS]",
+    "hpack-bomb":           "HPACK Bomb — RFC 7541 Table Exhaustion",
+    "h2-settings-storm":    "H2 Settings Storm — HPACK + Flow Control Exhaustion",
+    "slow-read":            "Slow Read — TCP Buffer Exhaust",
+    "range-flood":          "Range Flood — 500× I/O Per Request",
+    "xml-bomb":             "XML Bomb — Billion Laughs XXE",
+    "h2-ping-storm":        "H2 PING Storm — RFC 7540 §6.7 ACK Flood",
+    "http-smuggling":       "HTTP Request Smuggling — TE/CL Desync",
+    "doh-flood":            "DoH Flood — DNS-over-HTTPS Exhaust",
+    "keepalive-exhaust":    "Keepalive Exhaust — 128-Req Pipeline",
+    "app-smart-flood":      "App Smart Flood — DB Query Exhaust",
+    "large-header-bomb":    "Large Header Bomb — 16KB Header Overflow",
+    "http2-priority-storm": "H2 PRIORITY Storm — Stream Reorder Exhaust",
+    "geass-override":       "Geass Override ∞ [ARES OMNIVECT — 33 VECTORS]",
   };
   return map[id] ?? id;
 };
@@ -100,7 +110,7 @@ export type ProbeResult = {
 };
 
 // Connection-based methods that show open conn counter
-const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood", "tls-renego", "http2-continuation", "ssl-death"]);
+const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood", "tls-renego", "http2-continuation", "ssl-death", "slow-read", "keepalive-exhaust", "http-smuggling", "h2-ping-storm"]);
 
 // ── Sparkline helpers ─────────────────────────────────────────────────────────
 // Definitive DOWN = server actively refused connections (ECONNREFUSED from TARGET's TCP stack)
@@ -138,7 +148,17 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   if (!last.up && DEFINITIVE_DOWN(last.reason) && downRun5) {
     // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
-      "geass-override":     "All 23 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT)",
+      "geass-override":     "All 33 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT ∞)",
+      "slow-read":          "Server send buffer full — all threads blocked on TCP write",
+      "range-flood":        "500× byte-range I/O exhausted disk seek queue — server froze",
+      "xml-bomb":           "XML entity expansion exceeded memory — OOM parser crash",
+      "h2-ping-storm":      "H2 PING ACK queue overflowed — server CPU melted",
+      "http-smuggling":     "Request queue poisoned — backend thread pool deadlocked",
+      "doh-flood":          "DNS resolver thread pool exhausted — all lookups queued forever",
+      "keepalive-exhaust":  "Keep-alive pool saturated — MaxKeepAliveRequests hit on all workers",
+      "app-smart-flood":    "DB query pool drained — all backend threads blocked on SQL",
+      "large-header-bomb":  "HTTP parser buffer overflowed — server OOM on header allocation",
+      "http2-priority-storm": "H2 stream dependency tree exhausted — priority queue OOM",
       "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
       "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
       "waf-bypass":         "WAF layer overwhelmed — origin exposed",
@@ -215,7 +235,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `👁️ **ARES OMNIVECT ∞** — 30 simultaneous real attack vectors, all CVEs active, live monitoring`
+          ? `👁️ **ARES OMNIVECT ∞** — 33 simultaneous real attack vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
@@ -272,7 +292,7 @@ export function buildStartEmbed(attack: Attack): EmbedBuilder {
     .setTitle(`${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
       isGeass
-        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 30 real attack vectors deploying simultaneously`
+        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 33 real attack vectors deploying simultaneously`
         : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
     )
     .setImage("attachment://lelouch.gif")
@@ -547,7 +567,7 @@ export function buildHelpEmbed(): EmbedBuilder {
       { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },
       { name: "🔍 `/analyze <target>`",    value: "Scan a target and get ranked recommendations for best attack vectors.", inline: false },
       { name: "⚡ `/methods [layer]`",          value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.",          inline: false },
-      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT ∞ 30 vectors.", inline: false },
+      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT ∞ 33 vectors.", inline: false },
       { name: "🌐 `/cluster status`",            value: "Check health & latency of all cluster nodes.",                       inline: false },
       { name: "🌐 `/cluster broadcast <target>`",value: "Fire Geass Override to ALL nodes simultaneously (10× power).",       inline: false },
       { name: "🤖 `/lelouch ask <message>`",     value: "Talk to **Lelouch AI** — helps with the bot, code, web systems & anything else.",  inline: false },
@@ -623,15 +643,15 @@ export function buildInfoEmbed(opts: {
       ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Lelouch vi Britannia**, Código R-02`
       : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Lelouch vi Britannia**, Code R-02`,
     desc:        pt
-      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n30 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
-      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n30 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
+      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n33 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
+      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n33 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
     secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
-    engineTitle: pt ? "🔴 Geass Override ∞ — 30 Vetores" : "🔴 Geass Override ∞ — 30 Vectors",
+    engineTitle: pt ? "🔴 Geass Override ∞ — 33 Vetores" : "🔴 Geass Override ∞ — 33 Vectors",
     engineBox:
       "```\n" +
       (pt
-        ? "  TODOS OS 30 VETORES — SIMULTÂNEOS\n"
-        : "  ALL 30 VECTORS — SIMULTANEOUS\n") +
+        ? "  TODOS OS 33 VETORES — SIMULTÂNEOS\n"
+        : "  ALL 33 VECTORS — SIMULTANEOUS\n") +
       "  ┌───────────────────────────────────────┐\n" +
       (pt
         ? "  │  L7 App     ·  12  │  L7 H2  ·   4  │\n"
@@ -700,8 +720,8 @@ export function buildInfoEmbed(opts: {
     secCmds:     pt ? "━━━━ 📖  **REFERÊNCIA DE COMANDOS** ━━━━" : "━━━━ 📖  **COMMAND REFERENCE** ━━━━",
     coreTitle:   pt ? "⚡ Comandos Principais" : "⚡ Core Commands",
     coreVal:     pt
-      ? "`/geass`  — Geass Override ∞ · 30 vetores ARES OMNIVECT ∞\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
-      : "`/geass`  — Geass Override ∞ · 30 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
+      ? "`/geass`  — Geass Override ∞ · 33 vetores ARES OMNIVECT ∞\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
+      : "`/geass`  — Geass Override ∞ · 33 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
       ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/lelouch ask`  — IA Lelouch · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
@@ -774,7 +794,7 @@ export function buildClusterEmbed(status: {
       { name: "💻 Primary CPU",  value: `${self.cpus} vCPU`, inline: true },
       { name: "💾 Primary RAM",  value: `${self.freeMem} MB free`, inline: true },
       { name: "👁️ Geass Override", value: configuredNodes > 0
-          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 23 ARES vectors simultaneously.`
+          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 33 ARES vectors simultaneously.`
           : "Set `CLUSTER_NODES` to enable automatic fan-out.", inline: false },
     )
     .setThumbnail("attachment://geass-symbol.png")

@@ -43,11 +43,11 @@ Você conhece profundamente o sistema Lelouch Britannia:
 - L7 Application: conn-flood, slowloris, http2-flood (CVE-2023-44487), http2-continuation (CVE-2024-27316), hpack-bomb, waf-bypass, ws-flood, graphql-dos, rudy-v2, cache-poison, http-bypass, keepalive-exhaust
 - L7 Advanced H2: h2-settings-storm, http-pipeline, h2-ping-storm, http-smuggling
 - TLS/Crypto: tls-renego, ssl-death, quic-flood
-- Extended App: xml-bomb, slow-read, range-flood
+- Extended App: xml-bomb, slow-read, range-flood, app-smart-flood, large-header-bomb, http2-priority-storm
 - L4: syn-flood
 - L3/Amplification: icmp-flood, dns-amp, ntp-amp, mem-amp, ssdp-amp
 - UDP/Volumetric: udp-flood, doh-flood
-- Geass Override (ARES OMNIVECT ∞) = todos os 30 simultâneos + Adaptive Burst Mode (ondas de +60% threads a cada 15s)
+- Geass Override (ARES OMNIVECT ∞) = todos os 33 simultâneos + Adaptive Burst Mode (ondas alternadas: ímpares=H2 +60%, pares=App +80%, 3ª=Máximo +120%)
 - Discord Bot com comandos: /attack, /geass, /analyze, /methods, /cluster, /info, /help, /lelouch
 - Cluster de 10 máquinas × 8 vCPU × 32GB RAM
 - Painel web React (porta 22453)

