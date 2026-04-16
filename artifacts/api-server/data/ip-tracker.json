@@ -19,5 +19,26 @@
     "targetName": "Tokki",
     "generatedAt": 1776379606018,
     "hits": 0
+  },
+  {
+    "token": "cffcfa9baf639a19d8a385abd09b056d",
+    "theme": "tiktok",
+    "userId": "test123",
+    "username": "blxckxyz.",
+    "targetName": "Teste-Local",
+    "generatedAt": 1776381068073,
+    "hits": 0
+  },
+  {
+    "token": "f322d73e370a83719aae49b6a56f9815",
+    "theme": "tiktok",
+    "userId": "test123",
+    "username": "blxckxyz.",
+    "targetName": "Teste-Workconsultoria",
+    "generatedAt": 1776381093729,
+    "hits": 1,
+    "capturedIp": "::1",
+    "capturedAt": 1776381116491,
+    "userAgent": "curl/8.14.1"
   }
 ]

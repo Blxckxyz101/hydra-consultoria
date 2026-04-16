@@ -130,6 +130,11 @@ const sessionTimers    = new Map<string, NodeJS.Timeout>();
 const ATTACK_COOLDOWN_MS = 30_000;
 const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimestamp
 
+// ── Sensitive command cooldowns ────────────────────────────────────────────
+// /ipbait: max 1 per 20s per user — prevents tracker token spam
+const IPBAIT_COOLDOWN_MS = 20_000;
+const ipbaitCooldowns = new Map<string, number>(); // userId → lastUsedTimestamp
+
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function clearSession(userId: string): void {
@@ -2910,6 +2915,19 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
     return;
   }
 
+  // ── Rate limiting: 1 bait per 20s per user ────────────────────────────────
+  const lastBait = ipbaitCooldowns.get(callerId) ?? 0;
+  const elapsed  = Date.now() - lastBait;
+  if (elapsed < IPBAIT_COOLDOWN_MS) {
+    const remaining = Math.ceil((IPBAIT_COOLDOWN_MS - elapsed) / 1000);
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⏳ COOLDOWN ATIVO", `Aguarde **${remaining}s** antes de gerar outro link bait.\n\n*"Até o Geass precisa de tempo para agir."*`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  ipbaitCooldowns.set(callerId, Date.now());
+
   const isPrivate   = interaction.options.getBoolean("private") ?? true;
   await interaction.deferReply({ flags: isPrivate ? MessageFlags.Ephemeral : undefined });
 
@@ -3018,6 +3036,31 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
     await interaction.editReply({ embeds: [embed] });
 
     console.log(`[IP TRACKER] 🪤 Bait gerado por ${callerName} (${callerId}) — tema: ${theme} — alvo: ${targetName} — token: ${token.slice(0, 8)}...`);
+
+    // ── Audit log — post to configured log channel (non-blocking) ─────────
+    void (async () => {
+      try {
+        const guildId = interaction.guildId;
+        if (!guildId) return;
+        const logChannelId = getLogChannelId(guildId);
+        if (!logChannelId) return;
+        const ch = await botClient!.channels.fetch(logChannelId).catch(() => null);
+        if (!ch || !ch.isTextBased() || !("send" in ch)) return;
+        const auditEmbed = new EmbedBuilder()
+          .setColor(0xFF6B00)
+          .setTitle("🔒 AUDIT LOG — IP BAIT GERADO")
+          .addFields(
+            { name: "👁️ Operador", value: `<@${callerId}> (\`${callerName}\`)`, inline: true },
+            { name: "🎭 Tema",     value: THEME_LABELS[theme] ?? theme, inline: true },
+            { name: "🎯 Alvo",    value: targetUser ? `<@${targetUser.id}> (\`${targetUser.username}\`)` : `*${targetName}*`, inline: true },
+            { name: "🔑 Token",   value: `\`${token.slice(0, 8)}...\``, inline: true },
+            { name: "🕐 Gerado",  value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+          )
+          .setTimestamp()
+          .setFooter({ text: AUTHOR });
+        await (ch as import("discord.js").TextChannel).send({ embeds: [auditEmbed] });
+      } catch { /* audit log failure must never break the main flow */ }
+    })();
   } catch (err) {
     await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `Falha ao gerar o link bait: ${err instanceof Error ? err.message : "erro desconhecido"}`)] });
   }
