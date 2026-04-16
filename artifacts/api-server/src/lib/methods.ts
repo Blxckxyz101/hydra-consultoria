@@ -244,7 +244,7 @@ export const ATTACK_METHODS = [
     name: "Geass WAF Bypass ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "4-layer Cloudflare/Akamai/AWS evasion: JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering + __cf_bm/__cfruid cookie simulation. Each connection appears as a distinct real Chrome browser.",
+    description: "GEASS WAF OMNIVECT ∞ — 7-vector simultaneous Cloudflare/Akamai/AWS destruction: (I) Chrome H2 Primary Flood (256 streams/conn, 10ms reconnect) + (II) Subresource Storm (15-18 asset requests per page load, 15-18× RPS multiplier) + (III) Cache Annihilator (unique Vary dimensions = 100% CDN origin miss) + (IV) Session Amplifier (5-step user journeys, forces DB + session state) + (V) Origin Direct Fire (DNS subdomain enumeration bypasses CF edge entirely) + (VI) H2 Stream Drain (64 frozen buffers per conn) + (VII) Adaptive Burst Mode (fires at T+20s, 15s waves at 2.0× rate). JA3 fingerprint randomization + Chrome AKAMAI H2 + __cf_bm/__cfruid simulation throughout.",
   },
 
   // ── New ARES OMNIVECT ∞ Vectors ──────────────────────────────────────
