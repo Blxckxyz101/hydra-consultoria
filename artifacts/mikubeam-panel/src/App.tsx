@@ -563,9 +563,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   const [scheduledList, setScheduledList] = useState<Array<{ id: string; target: string; scheduledAt: string; method: string; status: string }>>([]);
 
   /* AI Advisor */
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiLoading, setAiLoading]   = useState(false);
+  const [aiData,    setAiData]      = useState<Record<string, unknown> | null>(null);
+  const [aiError,   setAiError]     = useState<string | null>(null);
   const [showAiModal, setShowAiModal] = useState(false);
+
+  /* Residential proxy count (from server) */
+  const [residentialCount, setResidentialCount] = useState(0);
 
   /* Refs */
   const terminalRef    = useRef<HTMLDivElement>(null);
@@ -646,11 +650,16 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
     async function pollProxyCount() {
       try {
-        const r = await fetch(`${BASE}/api/proxies/count`);
-        const d = await r.json() as { count: number; fetching: boolean; lastFetch: number };
+        const [r, rs] = await Promise.all([
+          fetch(`${BASE}/api/proxies/count`),
+          fetch(`${BASE}/api/proxies/stats`),
+        ]);
+        const d  = await r.json() as { count: number; fetching: boolean; lastFetch: number };
+        const ds = await rs.json() as { count: number; residentialCount?: number; fresh?: boolean };
         setProxyLiveCount(d.count);
         setProxyIsFetching(d.fetching);
         if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
+        if ((ds.residentialCount ?? 0) > 0) setResidentialCount(ds.residentialCount ?? 0);
         // Sync displayed list if count changed and we're showing the panel
         if (d.count > 0 && proxies.length === 0 && !d.fetching) {
           const r2 = await fetch(`${BASE}/api/proxies`);
@@ -1495,8 +1504,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   /* ── AI Advisor ── */
   async function handleAiAdvisor() {
     if (!target.trim()) { addLog("✕ Set a target to get AI attack recommendations.", "error"); return; }
-    setAiLoading(true); setShowAiModal(true); setAiResult(null);
-    addLog("👁 Consulting Lelouch AI Advisor (Groq llama-3.3-70b)... probing target...", "info");
+    setAiLoading(true); setShowAiModal(true); setAiData(null); setAiError(null);
+    addLog("👁 Consulting Lelouch AI Advisor (Groq llama-3.3-70b)… probing target…", "info");
     try {
       const url = (currentAttackId !== null && currentAttackId > 0)
         ? `${BASE}/api/attacks/${currentAttackId}/ai-advisor`
@@ -1504,24 +1513,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       const r = await fetch(url);
       const d = await r.json() as Record<string, unknown>;
       if (d.error) throw new Error(String(d.error));
-      // Format JSON fields into readable advisory text
-      const lines: string[] = [];
-      if (d.analysis)              lines.push(`ANALYSIS:\n${d.analysis}`);
-      if (d.primaryRecommendation) lines.push(`\nRECOMMENDATION:\n${d.primaryRecommendation}`);
-      if (d.boostVector)           lines.push(`\nBOOST VECTOR: ${d.boostVector}`);
-      if (d.reduceVector)          lines.push(`REDUCE VECTOR: ${d.reduceVector}`);
-      if (d.severity)              lines.push(`SEVERITY: ${String(d.severity).toUpperCase()}`);
-      if (d.effectiveness != null) lines.push(`EFFECTIVENESS: ${d.effectiveness}%`);
-      if (d.estimatedDownIn)       lines.push(`EST. TIME TO DOWN: ${d.estimatedDownIn}`);
-      if (d.tip)                   lines.push(`\nTACTICAL TIP:\n${d.tip}`);
-      if (d.targetStatus)          lines.push(`\nTARGET STATUS: HTTP ${d.targetStatus} — ${d.latencyMs}ms`);
-      if (lines.length === 0)      lines.push(JSON.stringify(d, null, 2));
-      setAiResult(lines.join("\n"));
-      addLog("👁 AI Advisor analysis complete — see recommendations.", "success");
+      setAiData(d);
+      const sev = d.severity ? String(d.severity).toUpperCase() : "";
+      const eff = d.effectiveness != null ? ` · ${d.effectiveness}% effectiveness` : "";
+      addLog(`👁 AI Advisor: ${sev}${eff} — boost: ${d.boostVector ?? "—"}`, "success");
     } catch (e: unknown) {
-      const msg = `AI Advisor error: ${e instanceof Error ? e.message : String(e)}`;
-      setAiResult(msg);
-      addLog(`✕ ${msg}`, "error");
+      const msg = e instanceof Error ? e.message : String(e);
+      setAiError(msg);
+      addLog(`✕ AI Advisor error: ${msg}`, "error");
     } finally {
       setAiLoading(false);
     }
@@ -2305,32 +2304,43 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         </label>
                       )}
                     </div>
+                    {/* Residential proxy badge */}
+                    {residentialCount > 0 && (
+                      <div className="lb-proxy-residential">
+                        <span className="lb-proxy-res-dot"/>
+                        <span className="lb-proxy-res-label">
+                          {residentialCount.toLocaleString()} RESIDENTIAL · Proxying.io
+                        </span>
+                        <span className="lb-proxy-res-badge">ROTATING</span>
+                      </div>
+                    )}
                     {proxies.length > 0 && (() => {
                       const httpCount   = proxies.filter(p => p.type === "http" || !p.type).length;
                       const socks5Count = proxies.filter(p => p.type === "socks5").length;
                       const avgMs       = Math.round(proxies.slice(0,20).reduce((a,p)=>a+p.responseMs,0)/Math.min(20,proxies.length));
                       return (
                         <div className="lb-proxy-list">
-                          <div className="lb-proxy-header">
-                            <span className="lb-proxy-stat">{proxies.length} live proxies</span>
-                            <span className="lb-proxy-stat" style={{ color: "#3498db" }}>HTTP: {httpCount}</span>
-                            <span className="lb-proxy-stat" style={{ color: "#9b59b6" }}>SOCKS5: {socks5Count}</span>
-                            <span className="lb-proxy-stat">avg {avgMs}ms</span>
-                            <span className="lb-proxy-stat">fastest: {proxies[0]?.responseMs}ms</span>
+                          <div className="lb-proxy-header2">
+                            <span className="lb-proxy-hstat">{proxies.length} <span style={{ color:"#888" }}>public</span></span>
+                            <span className="lb-proxy-hstat" style={{ color: "#3498db" }}>HTTP <strong>{httpCount}</strong></span>
+                            <span className="lb-proxy-hstat" style={{ color: "#9b59b6" }}>SOCKS5 <strong>{socks5Count}</strong></span>
+                            <span className="lb-proxy-hstat">avg <strong>{avgMs}ms</strong></span>
+                            <span className="lb-proxy-hstat">best <strong style={{ color:"#2ecc71" }}>{proxies[0]?.responseMs}ms</strong></span>
                           </div>
                           {proxies.slice(0, 6).map((p, i) => {
                             const pType = p.type ?? "http";
+                            const latColor = p.responseMs < 200 ? "#2ecc71" : p.responseMs < 800 ? "#e67e22" : "#C0392B";
                             return (
-                              <div key={i} className="lb-cluster-node">
-                                <span className="lb-cluster-node-dot" style={{ background: p.responseMs < 500 ? "#2ecc71" : p.responseMs < 1500 ? "#e67e22" : "#C0392B" }}/>
-                                <span className="lb-cluster-node-url">{p.host}:{p.port}</span>
-                                <span className="lb-proxy-ms" style={{ color: pType === "socks5" ? "#9b59b6" : "#3498db", fontSize: "0.7em", fontWeight: 600 }}>{pType.toUpperCase()}</span>
-                                <span className="lb-proxy-ms">{p.responseMs}ms</span>
+                              <div key={i} className="lb-cluster-node lb-proxy-row">
+                                <span className="lb-cluster-node-dot" style={{ background: latColor, boxShadow: `0 0 4px ${latColor}` }}/>
+                                <span className="lb-cluster-node-url lb-proxy-host">{p.host}:{p.port}</span>
+                                <span className="lb-proxy-type-badge" style={{ color: pType === "socks5" ? "#9b59b6" : "#3498db", borderColor: pType === "socks5" ? "rgba(155,89,182,0.4)" : "rgba(52,152,219,0.4)" }}>{pType.toUpperCase()}</span>
+                                <span className="lb-proxy-latency" style={{ color: latColor }}>{p.responseMs}ms</span>
                               </div>
                             );
                           })}
                           {proxies.length > 6 && (
-                            <div className="lb-proxy-more">+{proxies.length - 6} more proxies in rotation pool</div>
+                            <div className="lb-proxy-more">+{proxies.length - 6} more in rotation pool</div>
                           )}
                         </div>
                       );
@@ -2356,7 +2366,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   <div className="lb-stat-head">
                     <span className="lb-stat-label">Open Conns</span>
                     <span className="lb-stat-live" style={{ color: activeConns > 0 ? "#e74c3c" : "#555" }}>
-                      {activeConns > 0 ? "HOLDING" : "RAMP"}
+                      {activeConns > 0 ? "HOLD" : "RAMP"}
                     </span>
                   </div>
                   <div className="lb-stat-val" style={{ color: activeConns > 1000 ? "#e74c3c" : activeConns > 200 ? "#e67e22" : "#D4AF37" }}>
@@ -2593,34 +2603,137 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         )}
 
         {/* ── AI Advisor Modal ── */}
-        {showAiModal && (
+        {showAiModal && (() => {
+          const sev = aiData?.severity ? String(aiData.severity).toLowerCase() : null;
+          const eff = aiData?.effectiveness != null ? Number(aiData.effectiveness) : null;
+          const effColor = eff !== null ? (eff >= 80 ? "#e74c3c" : eff >= 60 ? "#e67e22" : "#D4AF37") : "#D4AF37";
+          const sevColors: Record<string, string> = { critical: "#ff2222", high: "#e74c3c", medium: "#e67e22", low: "#2ecc71" };
+          const sevColor = sev ? (sevColors[sev] ?? "#D4AF37") : "#D4AF37";
+          return (
           <div className="lb-modal-overlay" onClick={() => setShowAiModal(false)}>
-            <div className="lb-modal" onClick={e => e.stopPropagation()}>
-              <div className="lb-modal-header">
-                <span>🧠 LELOUCH AI ADVISOR</span>
-                <button className="lb-modal-close" onClick={() => setShowAiModal(false)}>✕</button>
+            <div className="lb-advisor-modal" onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="lb-advisor-modal-hdr">
+                <div className="lb-advisor-modal-title">
+                  <span className={`lb-advisor-eye-icon${aiLoading ? " lb-advisor-eye-spin" : ""}`}>👁</span>
+                  LELOUCH AI ADVISOR
+                </div>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  {sev && <span className="lb-advisor-sev-badge" style={{ background: `${sevColor}22`, border: `1px solid ${sevColor}66`, color: sevColor }}>{sev.toUpperCase()}</span>}
+                  <button className="lb-modal-close" onClick={() => setShowAiModal(false)}>✕</button>
+                </div>
               </div>
-              <div className="lb-modal-body">
+
+              {/* Body */}
+              <div className="lb-advisor-modal-body">
                 {aiLoading ? (
-                  <div style={{ textAlign: "center", padding: "24px 0", color: "#8E44AD" }}>
-                    <div style={{ fontSize: 32, marginBottom: 8 }}>👁</div>
-                    <div>Analyzing target... consulting Lelouch AI...</div>
+                  <div className="lb-advisor-loading">
+                    <div className="lb-advisor-loading-eye">👁</div>
+                    <div className="lb-advisor-loading-title">Analyzing target…</div>
+                    <div className="lb-advisor-loading-sub">Consulting Groq llama-3.3-70b · probing latency & headers</div>
+                    <div className="lb-advisor-loading-dots"><span/><span/><span/></div>
                   </div>
-                ) : aiResult ? (
-                  <pre className="lb-ai-result">{aiResult}</pre>
+                ) : aiError ? (
+                  <div className="lb-advisor-error">
+                    <div className="lb-advisor-error-icon">⚠</div>
+                    <div className="lb-advisor-error-msg">{aiError}</div>
+                    <div className="lb-advisor-error-hint">Check target URL format and API connectivity.</div>
+                  </div>
+                ) : aiData ? (
+                  <div className="lb-advisor-content">
+                    {/* Effectiveness bar */}
+                    {eff !== null && (
+                      <div className="lb-advisor-eff-wrap">
+                        <div className="lb-advisor-eff-row">
+                          <span className="lb-advisor-eff-lbl">EFFECTIVENESS</span>
+                          <span className="lb-advisor-eff-pct" style={{ color: effColor }}>{eff}%</span>
+                        </div>
+                        <div className="lb-advisor-eff-track">
+                          <div className="lb-advisor-eff-fill" style={{ width:`${eff}%`, background: effColor, boxShadow:`0 0 8px ${effColor}88` }}/>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Analysis */}
+                    {aiData.analysis && (
+                      <div className="lb-advisor-card">
+                        <div className="lb-advisor-card-label">ANALYSIS</div>
+                        <div className="lb-advisor-card-text">{String(aiData.analysis)}</div>
+                      </div>
+                    )}
+
+                    {/* Recommendation */}
+                    {aiData.primaryRecommendation && (
+                      <div className="lb-advisor-card lb-advisor-card--rec">
+                        <div className="lb-advisor-card-label">RECOMMENDATION</div>
+                        <div className="lb-advisor-card-text">{String(aiData.primaryRecommendation)}</div>
+                      </div>
+                    )}
+
+                    {/* Vectors row */}
+                    <div className="lb-advisor-vectors-row">
+                      {aiData.boostVector && (
+                        <div className="lb-advisor-vec lb-advisor-vec--boost">
+                          <span className="lb-advisor-vec-lbl">⚡ BOOST VECTOR</span>
+                          <span className="lb-advisor-vec-method">{String(aiData.boostVector).toUpperCase()}</span>
+                        </div>
+                      )}
+                      {aiData.reduceVector && String(aiData.reduceVector) !== "null" && (
+                        <div className="lb-advisor-vec lb-advisor-vec--reduce">
+                          <span className="lb-advisor-vec-lbl">↓ REDUCE</span>
+                          <span className="lb-advisor-vec-method" style={{ color:"#e67e22" }}>{String(aiData.reduceVector)}</span>
+                        </div>
+                      )}
+                      {aiData.estimatedDownIn && (
+                        <div className="lb-advisor-vec lb-advisor-vec--est">
+                          <span className="lb-advisor-vec-lbl">⏱ EST. DOWN IN</span>
+                          <span className="lb-advisor-vec-method" style={{ color:"#D4AF37" }}>{String(aiData.estimatedDownIn)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Tip */}
+                    {aiData.tip && (
+                      <div className="lb-advisor-card lb-advisor-card--tip">
+                        <div className="lb-advisor-card-label">⚔ TACTICAL TIP</div>
+                        <div className="lb-advisor-card-text lb-advisor-tip">{String(aiData.tip)}</div>
+                      </div>
+                    )}
+
+                    {/* Target status */}
+                    {aiData.targetStatus && (
+                      <div className="lb-advisor-target-row">
+                        <span className="lb-advisor-ts-dot" style={{ background: String(aiData.targetStatus).startsWith("2") ? "#2ecc71" : "#e74c3c" }}/>
+                        <span className="lb-advisor-ts-code">HTTP {String(aiData.targetStatus)}</span>
+                        {aiData.latencyMs != null && <span className="lb-advisor-ts-lat">{String(aiData.latencyMs)}ms probe</span>}
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  <div style={{ color: "#888" }}>No recommendation yet.</div>
+                  <div className="lb-advisor-empty">No recommendation yet.</div>
                 )}
               </div>
+
+              {/* Footer */}
               {!aiLoading && (
-                <div className="lb-modal-footer">
-                  <button className="lb-cluster-add-btn" onClick={() => handleAiAdvisor()} style={{ marginRight: 8 }}>REFRESH</button>
-                  <button className="lb-fav-rm" style={{ padding: "6px 14px", borderRadius: 4 }} onClick={() => setShowAiModal(false)}>CLOSE</button>
+                <div className="lb-advisor-modal-ftr">
+                  {aiData?.boostVector && methods.some(m => m.method === String(aiData.boostVector)) && (
+                    <button className="lb-advisor-apply-btn" onClick={() => {
+                      setMethod(String(aiData!.boostVector));
+                      addLog(`👁 Applied boost vector: ${String(aiData!.boostVector).toUpperCase()}`, "success");
+                      setShowAiModal(false);
+                    }}>
+                      ⚡ APPLY {String(aiData.boostVector).toUpperCase()}
+                    </button>
+                  )}
+                  <button className="lb-advisor-refresh-btn" onClick={handleAiAdvisor}>↺ REFRESH</button>
+                  <button className="lb-advisor-close-btn" onClick={() => setShowAiModal(false)}>CLOSE</button>
                 </div>
               )}
             </div>
           </div>
-        )}
+          );
+        })()}
 
         <footer className="lb-footer">
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>

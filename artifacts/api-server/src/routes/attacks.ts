@@ -165,7 +165,18 @@ setInterval(async () => {
 }, 10_000);
 
 // ── AI Advisor — live Groq-powered tactical analysis ──────────────────────
-const GROQ_SYSTEM = `You are an elite offensive security AI advisor for a penetration testing platform called "Lelouch Britannia". Analyze live attack metrics and return ONLY a valid JSON object. No markdown, no explanation.`;
+const GROQ_SYSTEM = `You are an elite offensive security AI advisor for a penetration testing platform called "Lelouch Britannia". Analyze live attack metrics and return ONLY a valid JSON object. No markdown, no explanation, no code fences.`;
+
+/** Safely parse Groq response — strips markdown fences and finds first JSON block */
+function parseGroqJSON(raw: string): Record<string, unknown> {
+  // Strip markdown code fences (```json ... ```)
+  let s = raw.replace(/^```(?:json)?\s*/im, "").replace(/\s*```\s*$/im, "").trim();
+  // Find first complete { ... } block in case of leading/trailing text
+  const a = s.indexOf("{"); const b = s.lastIndexOf("}");
+  if (a !== -1 && b !== -1 && b > a) s = s.slice(a, b + 1);
+  try { return JSON.parse(s); }
+  catch { return { analysis: raw.length > 0 ? raw : "No analysis available." }; }
+}
 async function groqAdvisor(attack: typeof attacksTable.$inferSelect, pps: number, bps: number, conns: number, targetStatus: string, targetLatencyMs: number): Promise<Record<string, unknown>> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return { error: "GROQ_API_KEY not set" };
@@ -185,8 +196,9 @@ Respond with JSON: {"analysis":"brief tactical assessment","primaryRecommendatio
     }),
     signal: AbortSignal.timeout(15_000),
   });
-  const data = await resp.json() as { choices?: [{ message?: { content?: string } }] };
-  return JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+  const data = await resp.json() as { choices?: [{ message?: { content?: string } }]; error?: { message?: string } };
+  if (data.error) throw new Error(data.error.message ?? "Groq API error");
+  return parseGroqJSON(data?.choices?.[0]?.message?.content ?? "{}");
 }
 
 // ── Standalone AI Advisor (no attack required) — probe + analyse ──────────
@@ -215,8 +227,9 @@ Respond with JSON: {"analysis":"brief target assessment","primaryRecommendation"
     }),
     signal: AbortSignal.timeout(15_000),
   });
-  const data = await resp.json() as { choices?: [{ message?: { content?: string } }] };
-  return JSON.parse(data?.choices?.[0]?.message?.content ?? "{}");
+  const data = await resp.json() as { choices?: [{ message?: { content?: string } }]; error?: { message?: string } };
+  if (data.error) throw new Error(data.error.message ?? "Groq API error");
+  return parseGroqJSON(data?.choices?.[0]?.message?.content ?? "{}");
 }
 
 // GET /api/advisor?target=<url>  — standalone AI advisory (no active attack needed)
