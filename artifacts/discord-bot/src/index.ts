@@ -14,6 +14,7 @@ import {
   StringSelectMenuOptionBuilder,
   ComponentType,
   Events,
+  PermissionFlagsBits,
   type MessageActionRowComponentBuilder,
 } from "discord.js";
 
@@ -25,7 +26,7 @@ type MonitorEditFn = (opts: {
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
-import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
+import { askLelouch, clearLelouchHistory, getLelouchMemoryStats } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
   buildStartEmbed,
@@ -231,7 +232,7 @@ const COMMANDS = [
     .setDescription("👁️ Fale com Lelouch vi Britannia — IA com personalidade completa do anime")
     .addSubcommand(sub =>
       sub.setName("ask")
-        .setDescription("💬 Faça uma pergunta ou pedido ao Lelouch")
+        .setDescription("💬 Faça uma pergunta ou pedido ao Lelouch (qualquer assunto)")
         .addStringOption(opt =>
           opt.setName("message").setDescription("Sua mensagem para Lelouch").setRequired(true)
         )
@@ -239,6 +240,10 @@ const COMMANDS = [
     .addSubcommand(sub =>
       sub.setName("reset")
         .setDescription("🔄 Limpar histórico de conversa — começar do zero")
+    )
+    .addSubcommand(sub =>
+      sub.setName("memory")
+        .setDescription("🧠 Ver o que Lelouch aprendeu — base de conhecimento global")
     ),
 
   // ── /schedule ─────────────────────────────────────────────────────────────
@@ -299,6 +304,50 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("stats")
     .setDescription("📡 Server health — uptime, RAM, CPU load, active attacks"),
+
+  // ── /admin ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("admin")
+    .setDescription("👁️ Lelouch Kingdom Administration — moderation commands")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .addSubcommand(sub =>
+      sub.setName("ban")
+        .setDescription("⚔️ Banish a subject from the kingdom")
+        .addUserOption(opt => opt.setName("user").setDescription("Subject to banish").setRequired(true))
+        .addStringOption(opt => opt.setName("reason").setDescription("Reason for banishment").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("unban")
+        .setDescription("🕊️ Grant pardon — restore access to a banished subject")
+        .addStringOption(opt => opt.setName("userid").setDescription("User ID to unban").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("clear")
+        .setDescription("🗑️ Erase evidence — delete messages from this channel")
+        .addIntegerOption(opt =>
+          opt.setName("amount").setDescription("Number of messages to delete (1–100)").setRequired(true).setMinValue(1).setMaxValue(100)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("warn")
+        .setDescription("⚠️ Issue a Geass warning to a subject")
+        .addUserOption(opt => opt.setName("user").setDescription("Subject to warn").setRequired(true))
+        .addStringOption(opt => opt.setName("reason").setDescription("Reason for warning").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("mute")
+        .setDescription("🔇 Silence a subject by Geass command")
+        .addUserOption(opt => opt.setName("user").setDescription("Subject to silence").setRequired(true))
+        .addIntegerOption(opt =>
+          opt.setName("duration").setDescription("Timeout duration in minutes (1–10080)").setRequired(false).setMinValue(1).setMaxValue(10080)
+        )
+        .addStringOption(opt => opt.setName("reason").setDescription("Reason for silencing").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("unmute")
+        .setDescription("🔊 Restore voice to a silenced subject")
+        .addUserOption(opt => opt.setName("user").setDescription("Subject to restore voice").setRequired(true))
+    ),
 
 ].map(c => c.toJSON());
 
@@ -1347,16 +1396,41 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
 
   if (sub === "reset") {
     clearLelouchHistory(interaction.user.id);
+    const memStats = getLelouchMemoryStats();
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.PURPLE)
-          .setTitle("👁️ MEMÓRIA APAGADA")
-          .setDescription("*\"Até os reis precisam começar do zero às vezes.\"*\n\nHistórico de conversa limpo. Nossa próxima sessão começa sem memória anterior.")
+          .setTitle("👁️ MEMÓRIA PESSOAL APAGADA")
+          .setDescription("*\"Até os reis precisam começar do zero às vezes.\"*\n\nSeu histórico de conversa foi limpo. Minha memória global de **" + memStats.topics + "** tópicos permanece intacta.")
           .setFooter({ text: AUTHOR })
           .setTimestamp(),
       ],
       ephemeral: true,
+    });
+    return;
+  }
+
+  if (sub === "memory") {
+    const memStats = getLelouchMemoryStats();
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.PURPLE)
+          .setTitle("🧠 GEASS KNOWLEDGE BASE — O QUE APRENDI")
+          .setDescription(`*"Um estrategista nunca para de aprender. Cada conversa me torna mais formidável."*\n\n**${memStats.topics}** tópicos na base de conhecimento global.`)
+          .addFields(
+            {
+              name: "📚 Assuntos mais discutidos",
+              value: memStats.topTopics.length > 0
+                ? memStats.topTopics.map((t, i) => `${i + 1}. ${t}`).join("\n")
+                : "*Nenhum tópico ainda — use /lelouch ask para começar*",
+              inline: false,
+            },
+          )
+          .setFooter({ text: `${AUTHOR} • Memória evolui automaticamente com cada conversa` })
+          .setTimestamp(),
+      ],
     });
     return;
   }
@@ -1391,11 +1465,233 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
   }
 }
 
+// ── /admin handler ────────────────────────────────────────────────────────────
+const LELOUCH_BAN_QUOTES = [
+  "*\"You are hereby banished from my kingdom. The Geass has spoken.\"*",
+  "*\"By the power of Geass, I banish you to the void. Farewell, pawn.\"*",
+  "*\"Britannia has no use for those who defy its order. Be gone.\"*",
+  "*\"Your existence in this realm ends here — by my absolute command.\"*",
+];
+const LELOUCH_MUTE_QUOTES = [
+  "*\"Silence. A king need not tolerate the noise of the unworthy.\"*",
+  "*\"Your voice has been stripped by Geass. Know your place.\"*",
+  "*\"I, Lelouch vi Britannia, command you — speak no more.\"*",
+  "*\"The strategy requires silence. You have volunteered.\"*",
+];
+const LELOUCH_WARN_QUOTES = [
+  "*\"Consider this your final warning. My Geass does not issue thirds.\"*",
+  "*\"I am watching. My Geass sees all. One more transgression and you are finished.\"*",
+  "*\"A pawn that moves out of turn is sacrificed. Remember that.\"*",
+];
+const LELOUCH_CLEAR_QUOTES = [
+  "*\"Erase the evidence of their incompetence. Clean slates are the foundation of strategy.\"*",
+  "*\"A battlefield must be clear before the next engagement. Proceed.\"*",
+  "*\"History is written by the victors. The rest — deleted.\"*",
+];
+
+function getRandQuote(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  // ── BAN ──────────────────────────────────────────────────────────────────
+  if (sub === "ban") {
+    const target = interaction.options.getUser("user", true);
+    const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+    if (target.id === interaction.user.id) { await interaction.editReply({ embeds: [buildErrorEmbed("GEASS NEGADO", "Até um rei não pode banir a si mesmo.")] }); return; }
+
+    try {
+      await interaction.guild.members.ban(target.id, { reason: `[Lelouch] ${reason}` });
+      const embed = new EmbedBuilder()
+        .setColor(0xC0392B)
+        .setTitle("⚔️ BANISHMENT DECREE — GEASS ABSOLUTE")
+        .setDescription(getRandQuote(LELOUCH_BAN_QUOTES))
+        .addFields(
+          { name: "⛔ Banished Subject", value: `${target.tag} (${target.id})`, inline: true },
+          { name: "👁️ Decreed By",      value: `${interaction.user.tag}`,        inline: true },
+          { name: "📜 Reason",           value: reason,                           inline: false },
+        )
+        .setThumbnail(target.displayAvatarURL())
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      console.log(`[ADMIN BAN] ${interaction.user.tag} banned ${target.tag} — ${reason}`);
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("BANISHMENT FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── UNBAN ────────────────────────────────────────────────────────────────
+  if (sub === "unban") {
+    const userId = interaction.options.getString("userid", true).trim();
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+
+    try {
+      await interaction.guild.members.unban(userId, `[Lelouch] Pardon by ${interaction.user.tag}`);
+      const embed = new EmbedBuilder()
+        .setColor(0x2ecc71)
+        .setTitle("🕊️ PARDON GRANTED — BY ROYAL DECREE")
+        .setDescription(`*"Even kings must sometimes show mercy — when it serves the strategy."*`)
+        .addFields(
+          { name: "✅ Pardoned ID",  value: `\`${userId}\``,         inline: true },
+          { name: "👁️ Pardoned By", value: `${interaction.user.tag}`, inline: true },
+        )
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("PARDON FAILED", `Could not unban \`${userId}\`. Ensure the ID is correct.\n\`${String(e).slice(0, 200)}\``)] });
+    }
+    return;
+  }
+
+  // ── CLEAR ────────────────────────────────────────────────────────────────
+  if (sub === "clear") {
+    const amount = interaction.options.getInteger("amount", true);
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.channel || !interaction.channel.isTextBased()) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Canal de texto não encontrado.")] }); return;
+    }
+
+    try {
+      const channel = interaction.channel as import("discord.js").TextChannel;
+      const deleted = await channel.bulkDelete(amount, true); // true = skip >14d old
+      const embed = new EmbedBuilder()
+        .setColor(0xf39c12)
+        .setTitle("🗑️ EVIDENCE ERASED — GEASS CLEAN SWEEP")
+        .setDescription(getRandQuote(LELOUCH_CLEAR_QUOTES))
+        .addFields(
+          { name: "🗑️ Deleted",   value: `**${deleted.size}** messages`, inline: true },
+          { name: "📍 Channel",   value: `<#${channel.id}>`,              inline: true },
+          { name: "👁️ By Order", value: `${interaction.user.tag}`,        inline: true },
+        )
+        .setFooter({ text: `${AUTHOR} • Messages older than 14 days cannot be bulk deleted` })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      console.log(`[ADMIN CLEAR] ${interaction.user.tag} deleted ${deleted.size} messages in #${channel.name}`);
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("CLEAR FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── WARN ─────────────────────────────────────────────────────────────────
+  if (sub === "warn") {
+    const target = interaction.options.getUser("user", true);
+    const reason = interaction.options.getString("reason", true);
+    await interaction.deferReply();
+
+    const embed = new EmbedBuilder()
+      .setColor(0xe67e22)
+      .setTitle("⚠️ GEASS WARNING — FINAL NOTICE")
+      .setDescription(getRandQuote(LELOUCH_WARN_QUOTES))
+      .addFields(
+        { name: "⚠️ Warned Subject", value: `${target} (${target.tag})`, inline: true },
+        { name: "👁️ Issued By",      value: `${interaction.user.tag}`,    inline: true },
+        { name: "📜 Reason",          value: reason,                       inline: false },
+      )
+      .setThumbnail(target.displayAvatarURL())
+      .setFooter({ text: `${AUTHOR} • Next violation results in mute or ban` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+
+    // Attempt to DM the warned user
+    try {
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0xe67e22)
+        .setTitle(`⚠️ You received a warning in ${interaction.guild?.name ?? "the server"}`)
+        .setDescription(`*"You have been warned by the king's Geass. Do not test my patience."*`)
+        .addFields({ name: "📜 Reason", value: reason })
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await target.send({ embeds: [dmEmbed] });
+    } catch { /* DM closed */ }
+    console.log(`[ADMIN WARN] ${interaction.user.tag} warned ${target.tag} — ${reason}`);
+    return;
+  }
+
+  // ── MUTE (timeout) ───────────────────────────────────────────────────────
+  if (sub === "mute") {
+    const target  = interaction.options.getUser("user", true);
+    const minutes = interaction.options.getInteger("duration") ?? 10;
+    const reason  = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+
+    try {
+      const member = await interaction.guild.members.fetch(target.id);
+      await member.timeout(minutes * 60_000, `[Lelouch] ${reason}`);
+      const embed = new EmbedBuilder()
+        .setColor(0x9b59b6)
+        .setTitle("🔇 SILENCED BY GEASS — ROYAL DECREE")
+        .setDescription(getRandQuote(LELOUCH_MUTE_QUOTES))
+        .addFields(
+          { name: "🔇 Silenced Subject", value: `${target.tag}`,                                   inline: true },
+          { name: "⏱️ Duration",         value: `**${minutes}** minute${minutes > 1 ? "s" : ""}`, inline: true },
+          { name: "👁️ By Order",         value: `${interaction.user.tag}`,                         inline: true },
+          { name: "📜 Reason",            value: reason,                                            inline: false },
+        )
+        .setThumbnail(target.displayAvatarURL())
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      console.log(`[ADMIN MUTE] ${interaction.user.tag} muted ${target.tag} for ${minutes}m — ${reason}`);
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("MUTE FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── UNMUTE ───────────────────────────────────────────────────────────────
+  if (sub === "unmute") {
+    const target = interaction.options.getUser("user", true);
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+
+    try {
+      const member = await interaction.guild.members.fetch(target.id);
+      await member.timeout(null);
+      const embed = new EmbedBuilder()
+        .setColor(0x2ecc71)
+        .setTitle("🔊 VOICE RESTORED — BY GEASS DECREE")
+        .setDescription(`*"Your silence served its purpose. Rise, and speak carefully."*`)
+        .addFields(
+          { name: "🔊 Restored",   value: `${target.tag}`,         inline: true },
+          { name: "👁️ By Order",  value: `${interaction.user.tag}`, inline: true },
+        )
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("UNMUTE FAILED", String(e))] });
+    }
+    return;
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   await deployCommands();
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages] });
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildModeration,
+    ],
+  });
   botClient = client; // make accessible for DM alerts
 
   client.once(Events.ClientReady, c => {
@@ -1455,6 +1751,8 @@ async function main(): Promise<void> {
         await handleProxy(interaction);
       } else if (commandName === "stats") {
         await handleStats(interaction);
+      } else if (commandName === "admin") {
+        await handleAdmin(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

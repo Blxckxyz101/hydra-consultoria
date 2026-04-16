@@ -226,12 +226,23 @@ setInterval(() => void runHarvest(600), 5 * 60 * 1000);
 // GET /api/proxies — return cached live proxies
 router.get("/proxies", (_req, res): void => {
   const age = Date.now() - lastFetch;
+  // Separate residential (auth'd) from public proxies for clean display
+  const residentialHost = residentialCreds?.host;
+  const publicProxies   = proxyCache.filter(p => !p.username || p.host !== residentialHost);
+  const residentialProxies = residentialCreds
+    ? proxyCache.filter(p => p.username && p.host === residentialHost)
+    : [];
   res.json({
-    count:     proxyCache.length,
-    proxies:   proxyCache.slice(0, 200), // max 200 in response
-    ageMs:     age,
-    fresh:     age < CACHE_TTL,
-    fetching:  isFetching,
+    count:              proxyCache.length,
+    publicCount:        publicProxies.length,
+    residentialCount:   residentialProxies.length,
+    proxies:            publicProxies.slice(0, 200), // public only (no auth dupes)
+    residential:        residentialCreds
+      ? { host: residentialCreds.host, port: residentialCreds.port, count: residentialCreds.count, username: residentialCreds.username }
+      : null,
+    ageMs:              age,
+    fresh:              age < CACHE_TTL,
+    fetching:           isFetching,
   });
 });
 

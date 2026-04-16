@@ -624,6 +624,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   /* Proxy rotation */
   interface ProxyEntry { host: string; port: number; responseMs: number; type?: "http" | "socks5"; }
+  interface ResidentialInfo { host: string; port: number; count: number; username: string; }
   const [proxies, setProxies]             = useState<ProxyEntry[]>([]);
   const [proxyEnabled, setProxyEnabled]   = useState(false);
   const [proxyFetching, setProxyFetching] = useState(false);
@@ -631,6 +632,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   const [proxyLiveCount, setProxyLiveCount] = useState<number>(0);
   const [proxyIsFetching, setProxyIsFetching] = useState(false);
   const [proxyLastRefresh, setProxyLastRefresh] = useState<number>(0);
+  const [residentialInfo, setResidentialInfo] = useState<ResidentialInfo | null>(null);
+  const [showResForm, setShowResForm]       = useState(false);
+  const [resFormHost, setResFormHost]       = useState("");
+  const [resFormPort, setResFormPort]       = useState("8080");
+  const [resFormUser, setResFormUser]       = useState("");
+  const [resFormPass, setResFormPass]       = useState("");
+  const [resFormCount, setResFormCount]     = useState("25");
+  const [resSaving, setResSaving]           = useState(false);
 
   /* Toast notifications */
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -673,7 +682,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   const [aiError,   setAiError]     = useState<string | null>(null);
   const [showAiModal, setShowAiModal] = useState(false);
 
-  /* Residential proxy count (from server) */
+  /* Residential proxy count (legacy — now tracked via residentialInfo) */
   const [residentialCount, setResidentialCount] = useState(0);
 
   /* Refs */
@@ -760,16 +769,22 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           fetch(`${BASE}/api/proxies/stats`),
         ]);
         const d  = await r.json() as { count: number; fetching: boolean; lastFetch: number };
-        const ds = await rs.json() as { count: number; residentialCount?: number; fresh?: boolean };
+        const ds = await rs.json() as { count: number; residentialCount?: number; residential?: { host: string; port: number; count: number } | null; fresh?: boolean };
         setProxyLiveCount(d.count);
         setProxyIsFetching(d.fetching);
         if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
         if ((ds.residentialCount ?? 0) > 0) setResidentialCount(ds.residentialCount ?? 0);
         // Sync displayed list if count changed and we're showing the panel
         if (d.count > 0 && proxies.length === 0 && !d.fetching) {
-          const r2 = await fetch(`${BASE}/api/proxies`);
-          const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
+          const r2  = await fetch(`${BASE}/api/proxies`);
+          const d2  = await r2.json() as {
+            count: number; publicCount?: number; residentialCount?: number;
+            proxies: ProxyEntry[];
+            residential?: ResidentialInfo | null;
+          };
           setProxies(d2.proxies ?? []);
+          if (d2.residential) setResidentialInfo(d2.residential);
+          if ((d2.residentialCount ?? 0) > 0) setResidentialCount(d2.residentialCount ?? 0);
         }
       } catch { /* ignore */ }
     }
@@ -781,9 +796,11 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     // Client-side auto-refresh trigger every 10 minutes (backend also refreshes, this syncs state)
     autoRefreshTimer = setTimeout(function triggerRefresh() {
       fetch(`${BASE}/api/proxies`).then(async r => {
-        const d = await r.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
+        const d = await r.json() as { count: number; proxies: ProxyEntry[]; residential?: ResidentialInfo | null; residentialCount?: number };
         if (d.count > 0) setProxies(d.proxies ?? []);
         setProxyLiveCount(d.count);
+        if (d.residential) setResidentialInfo(d.residential);
+        if ((d.residentialCount ?? 0) > 0) setResidentialCount(d.residentialCount ?? 0);
       }).catch(() => {});
       autoRefreshTimer = setTimeout(triggerRefresh, 10 * 60 * 1000);
     }, 10 * 60 * 1000);
@@ -1532,10 +1549,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             clearInterval(poll);
             // Load final list
             const r2 = await fetch(`${BASE}/api/proxies`);
-            const d2 = await r2.json() as { count: number; proxies: { host: string; port: number; responseMs: number; type?: "http" | "socks5" }[] };
+            const d2 = await r2.json() as { count: number; publicCount?: number; residentialCount?: number; proxies: ProxyEntry[]; residential?: ResidentialInfo | null };
             setProxies(d2.proxies ?? []);
-            addLog(`👁 Proxy scan complete — ${d2.count} live proxies found`, d2.count > 0 ? "success" : "warn");
-            if (d2.count > 0) addLog(`👁 Fastest: ${d2.proxies[0]?.host}:${d2.proxies[0]?.port} (${d2.proxies[0]?.responseMs}ms)`, "info");
+            if (d2.residential) setResidentialInfo(d2.residential);
+            if ((d2.residentialCount ?? 0) > 0) setResidentialCount(d2.residentialCount ?? 0);
+            const totalMsg = d2.residentialCount ? ` + ${d2.residentialCount} residential` : "";
+            addLog(`👁 Proxy scan complete — ${d2.publicCount ?? d2.count} public${totalMsg} live proxies`, d2.count > 0 ? "success" : "warn");
+            if (d2.proxies[0]) addLog(`👁 Fastest: ${d2.proxies[0].host}:${d2.proxies[0].port} (${d2.proxies[0].responseMs}ms)`, "info");
             setProxyFetching(false);
           }
         } catch { /**/ }
@@ -2377,27 +2397,110 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               <div className="lb-field lb-field--cluster">
                 <label className="lb-webhook-toggle" onClick={() => setShowProxyPanel(v => !v)}>
                   {showProxyPanel ? "▲" : "▼"} Proxy Rotation
-                  {proxies.length > 0 && (
+                  {(proxies.length > 0 || residentialInfo) && (
                     <span className={`lb-cluster-badge${proxyEnabled ? " lb-cluster-badge--active" : ""}`}>
-                      {proxies.length} LIVE{proxyEnabled ? " · ON" : ""}
+                      {proxies.length + (residentialInfo?.count ?? 0)} LIVE{proxyEnabled ? " · ON" : ""}
                     </span>
                   )}
+                  {residentialInfo && <span className="lb-cluster-badge" style={{ background: "rgba(155,89,182,0.2)", color: "#9b59b6", borderColor: "rgba(155,89,182,0.4)" }}>🏠 RESIDENTIAL</span>}
                   {proxyFetching && <span className="lb-cluster-badge lb-cluster-badge--fetching">SCANNING...</span>}
                 </label>
                 {showProxyPanel && (
                   <div className="lb-cluster-body">
                     <div className="lb-cluster-hint">
-                      Fetches live HTTP + SOCKS5 proxies from 9 public sources, tests latency, and rotates IPs across all L7 attack methods. Active for: HTTP Flood, HTTP Bypass, WAF Bypass, GraphQL DoS, Cache Poison, RUDY v2, H2 methods.
+                      Fetches live HTTP + SOCKS5 proxies from 22 public sources, tests latency, and rotates IPs across all L7 methods. Also supports residential rotating proxies (user:pass@host:port).
                     </div>
+
+                    {/* ── Residential proxy section ── */}
+                    <div style={{ marginBottom: "8px" }}>
+                      {residentialInfo ? (
+                        <div className="lb-proxy-residential" style={{ flexDirection: "column", alignItems: "flex-start", gap: "6px", padding: "10px 12px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%" }}>
+                            <span className="lb-proxy-res-dot"/>
+                            <span className="lb-proxy-res-label" style={{ flex: 1 }}>
+                              🏠 <strong>{residentialInfo.count}</strong> RESIDENTIAL SLOTS — <code style={{ color: "#9b59b6", fontSize: "0.8em" }}>{residentialInfo.host}:{residentialInfo.port}</code>
+                            </span>
+                            <span className="lb-proxy-res-badge">ROTATING</span>
+                            <button
+                              onClick={() => { setShowResForm(v => !v); }}
+                              style={{ background: "transparent", border: "1px solid rgba(155,89,182,0.4)", color: "#9b59b6", borderRadius: "4px", padding: "2px 8px", cursor: "pointer", fontSize: "0.75em" }}
+                            >{showResForm ? "✕" : "⚙ Edit"}</button>
+                          </div>
+                          <div style={{ fontSize: "0.72em", color: "#888", paddingLeft: "18px" }}>
+                            Each connection exits via a different residential IP — max WAF evasion
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setShowResForm(v => !v)}
+                          style={{ background: "rgba(155,89,182,0.1)", border: "1px solid rgba(155,89,182,0.3)", color: "#9b59b6", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontSize: "0.8em", width: "100%" }}
+                        >
+                          🏠 {showResForm ? "✕ Cancel" : "+ Configure Residential Proxies"}
+                        </button>
+                      )}
+
+                      {showResForm && (
+                        <div style={{ marginTop: "8px", background: "rgba(155,89,182,0.07)", border: "1px solid rgba(155,89,182,0.25)", borderRadius: "6px", padding: "10px" }}>
+                          <div style={{ fontSize: "0.75em", color: "#9b59b6", marginBottom: "8px", fontWeight: 700 }}>⚙ RESIDENTIAL PROXY CREDENTIALS</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 80px", gap: "6px", marginBottom: "6px" }}>
+                            <input placeholder="host (e.g. proxy.proxying.io)" value={resFormHost} onChange={e => setResFormHost(e.target.value)}
+                              style={{ background: "#1a1a2e", border: "1px solid rgba(155,89,182,0.4)", borderRadius: "4px", color: "#fff", padding: "5px 8px", fontSize: "0.8em" }}/>
+                            <input placeholder="port" value={resFormPort} onChange={e => setResFormPort(e.target.value)}
+                              style={{ background: "#1a1a2e", border: "1px solid rgba(155,89,182,0.4)", borderRadius: "4px", color: "#fff", padding: "5px 8px", fontSize: "0.8em" }}/>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "6px" }}>
+                            <input placeholder="username" value={resFormUser} onChange={e => setResFormUser(e.target.value)}
+                              style={{ background: "#1a1a2e", border: "1px solid rgba(155,89,182,0.4)", borderRadius: "4px", color: "#fff", padding: "5px 8px", fontSize: "0.8em" }}/>
+                            <input placeholder="password" type="password" value={resFormPass} onChange={e => setResFormPass(e.target.value)}
+                              style={{ background: "#1a1a2e", border: "1px solid rgba(155,89,182,0.4)", borderRadius: "4px", color: "#fff", padding: "5px 8px", fontSize: "0.8em" }}/>
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                            <input placeholder="slots (25)" value={resFormCount} onChange={e => setResFormCount(e.target.value)}
+                              style={{ background: "#1a1a2e", border: "1px solid rgba(155,89,182,0.4)", borderRadius: "4px", color: "#fff", padding: "5px 8px", fontSize: "0.8em", width: "80px" }}/>
+                            <button
+                              disabled={resSaving || !resFormHost || !resFormUser || !resFormPass}
+                              onClick={async () => {
+                                setResSaving(true);
+                                try {
+                                  const r = await fetch(`${BASE}/api/proxies/residential`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ host: resFormHost, port: parseInt(resFormPort)||8080, username: resFormUser, password: resFormPass, count: parseInt(resFormCount)||25 }),
+                                  });
+                                  const d = await r.json() as { status?: string; residential?: ResidentialInfo; totalProxies?: number };
+                                  if (d.residential) setResidentialInfo({ ...d.residential, username: resFormUser });
+                                  setResidentialCount(parseInt(resFormCount)||25);
+                                  setShowResForm(false);
+                                  addLog(`🏠 Residential proxies configured — ${resFormCount} slots via ${resFormHost}:${resFormPort}`, "success");
+                                } catch { addLog("✕ Failed to configure residential proxies", "error"); }
+                                setResSaving(false);
+                              }}
+                              style={{ background: "#9b59b6", border: "none", color: "#fff", borderRadius: "4px", padding: "5px 14px", cursor: "pointer", fontSize: "0.8em", opacity: resSaving ? 0.6 : 1 }}
+                            >{resSaving ? "Saving..." : "💾 Save"}</button>
+                            {residentialInfo && (
+                              <button
+                                onClick={async () => {
+                                  await fetch(`${BASE}/api/proxies/pinned`, { method: "DELETE" });
+                                  setResidentialInfo(null); setResidentialCount(0); setShowResForm(false);
+                                  addLog("🏠 Residential proxies removed", "warn");
+                                }}
+                                style={{ background: "transparent", border: "1px solid rgba(192,57,43,0.5)", color: "#C0392B", borderRadius: "4px", padding: "5px 10px", cursor: "pointer", fontSize: "0.8em" }}
+                              >✕ Remove</button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="lb-proxy-controls">
                       <button
                         className={`lb-cluster-add-btn lb-proxy-fetch-btn${proxyFetching ? " lb-proxy-fetching" : ""}`}
                         onClick={handleFetchProxies}
                         disabled={proxyFetching}
                       >
-                        {proxyFetching ? "⏳ SCANNING..." : "🌐 FETCH PROXIES"}
+                        {proxyFetching ? "⏳ SCANNING..." : "🌐 FETCH PUBLIC PROXIES"}
                       </button>
-                      {proxies.length > 0 && (
+                      {(proxies.length > 0 || residentialInfo) && (
                         <label className="lb-smart-lb-toggle">
                           <input type="checkbox" checked={proxyEnabled} onChange={e => setProxyEnabled(e.target.checked)}/>
                           <span className="lb-smart-lb-label">
@@ -2410,16 +2513,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         </label>
                       )}
                     </div>
-                    {/* Residential proxy badge */}
-                    {residentialCount > 0 && (
-                      <div className="lb-proxy-residential">
-                        <span className="lb-proxy-res-dot"/>
-                        <span className="lb-proxy-res-label">
-                          {residentialCount.toLocaleString()} RESIDENTIAL · Proxying.io
-                        </span>
-                        <span className="lb-proxy-res-badge">ROTATING</span>
-                      </div>
-                    )}
+
                     {proxies.length > 0 && (() => {
                       const httpCount   = proxies.filter(p => p.type === "http" || !p.type).length;
                       const socks5Count = proxies.filter(p => p.type === "socks5").length;
