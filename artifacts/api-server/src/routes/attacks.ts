@@ -338,12 +338,13 @@ function spawnPool(
         ? threads - threadsPerWorker * (numWorkers - 1)
         : threadsPerWorker;
 
-      // Always cap worker heap — prevents OS-level OOM kill on deployed containers.
-      // Production: 512MB per worker keeps total under container limit.
-      // Dev: 256MB to avoid local OOM on smaller machines.
+      // Heap cap per worker isolate.
+      // Deployed (REPLIT_DEPLOYMENT=1): 512MB → full power for dedicated containers.
+      // Dev workspace: 64MB → 33 pools × 64MB = ~2GB max, keeps API server alive.
+      // NOTE: do NOT use NODE_ENV — dev script sets NODE_ENV=production.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        resourceLimits: { maxOldGenerationSizeMb: process.env.NODE_ENV === "production" ? 512 : 256 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 512 : 64 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       const idx = i;

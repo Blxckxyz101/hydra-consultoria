@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 2,
   "memory": {
     "somos do bem ou do mal": {
       "topic": "somos do bem ou do mal",
@@ -27,6 +27,13 @@
       "summary": "**Análise em andamento...**  O site `lula.com.br` é um domínio registrado no Brasil, sob o top-level domain (TLD) `.br`. Aqui estão algumas informações que consegui coletar:  * **Registro de domínio**",
       "learnedAt": 1776378745645,
       "mentionCount": 1,
+      "category": "general"
+    },
+    "analise melhor metodo": {
+      "topic": "analise melhor metodo",
+      "summary": "**Análise em andamento...**  O site `vestibulinho.etec.sp.gov.br` é um domínio governamental, específico para o vestibulinho da ETEC (Escola Técnica Estadual) no estado de São Paulo, Brasil. Aqui estã",
+      "learnedAt": 1776379037938,
+      "mentionCount": 2,
       "category": "general"
     }
   }

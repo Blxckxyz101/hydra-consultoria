@@ -2921,6 +2921,27 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
 
     try {
       const channel = interaction.channel as import("discord.js").TextChannel;
+
+      // ── Pre-flight: verify bot has required permissions in this channel ──
+      const botMember = interaction.guild?.members.me;
+      if (botMember) {
+        const botPerms = channel.permissionsFor(botMember);
+        const missing: string[] = [];
+        if (!botPerms?.has(PermissionFlagsBits.ManageMessages))     missing.push("`Manage Messages`");
+        if (!botPerms?.has(PermissionFlagsBits.ReadMessageHistory))  missing.push("`Read Message History`");
+        if (missing.length > 0) {
+          await interaction.editReply({ embeds: [buildErrorEmbed(
+            "⚠️ BOT SEM PERMISSÕES",
+            `O bot não tem as permissões necessárias em <#${channel.id}>.\n\n` +
+            `**Faltando:**\n${missing.join("\n")}\n\n` +
+            `**Como corrigir:**\n` +
+            `Vá em **Configurações do Servidor → Roles → [Cargo do Bot]** ` +
+            `e ative as permissões acima. Ou edite as permissões do canal diretamente.`
+          )] });
+          return;
+        }
+      }
+
       const deleted = await channel.bulkDelete(amount, true); // true = skip >14d old
       const embed = new EmbedBuilder()
         .setColor(0xf39c12)

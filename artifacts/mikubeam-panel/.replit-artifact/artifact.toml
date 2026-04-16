@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "MikuMikuBeam Panel"
+title = "LelouchBritannia Panel"
 version = "1.0.0"
 id = "artifacts/mikubeam-panel"
 router = "path"
