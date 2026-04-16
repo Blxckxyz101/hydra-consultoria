@@ -280,10 +280,17 @@ const LOG_MSGS_SLOW = [
   (t: string) => `👁 ${t} connection table: slots filling — server starving`,
   (_t: string, n: string) => `👁 ${n} TCP sockets open, trickling headers — server frozen`,
 ];
-const LOG_MSGS_SIM = [
-  (_t: string, n: string) => `👁 ${n} amplified packets computed [SIMULATED]`,
-  () => `👁 Amplification multiplier calculated — simulated vector active`,
-  (_t: string, n: string) => `👁 ${n} pkt/s — amplification vector engaged`,
+const LOG_MSGS_AMP = [
+  (t: string, n: string) => `👁 ${n} amplified packets fired → ${t} [REAL UDP AMP]`,
+  (_t: string, n: string) => `👁 ${n} pkt/s — amplification factor active, bandwidth multiplied`,
+  (t: string) => `👁 Amplification layer hammering ${t} — reflection flood engaged`,
+  (_t: string, n: string) => `👁 ${n} packets dispatched — DNS/NTP/Memcached/SSDP reflecting`,
+];
+const LOG_MSGS_TLS = [
+  (t: string, n: string) => `👁 ${n} TLS sessions held → ${t} [CONN EXHAUST]`,
+  (_t: string, n: string) => `👁 ${n} encrypted channels open — TLS stack saturating`,
+  (t: string) => `👁 ${t} TLS worker pool draining — renegotiation storm active`,
+  (_t: string, n: string) => `👁 ${n} SSL/TLS handshakes/sec — cipher CPU consumed`,
 ];
 const LOG_MSGS_CONN = [
   (t: string, n: string) => `👁 ${n} TLS connections held open → ${t} [CONN FLOOD]`,
@@ -728,15 +735,24 @@ function Panel() {
         const n = fmtNum(displayPps);
         const t = targetRef.current;
         let msgs: ((t: string, n: string) => string)[];
-        if (method === "geass-override")  msgs = LOG_MSGS_GEASS;
-        else if (method === "waf-bypass") msgs = LOG_MSGS_H2;
-        else if (method === "http2-flood") msgs = LOG_MSGS_H2;
-        else if (method === "slowloris")  msgs = LOG_MSGS_SLOW;
-        else if (method === "conn-flood") msgs = LOG_MSGS_CONN;
-        else if (L7_HTTP_FE.has(method)) msgs = LOG_MSGS_HTTP;
-        else if (L4_TCP_FE.has(method))  msgs = LOG_MSGS_TCP;
-        else if (L4_UDP_FE.has(method))  msgs = LOG_MSGS_UDP;
-        else msgs = LOG_MSGS_SIM;
+        const H2_LOG_SET  = new Set(["http2-flood","h2-settings-storm","hpack-bomb","http2-continuation","http-pipeline","http2-priority-storm","large-header-bomb","h2-ping-storm","waf-bypass","quic-flood"]);
+        const AMP_LOG_SET = new Set(["dns-amp","ntp-amp","mem-amp","ssdp-amp","icmp-flood"]);
+        const TLS_LOG_SET = new Set(["tls-renego","ssl-death","keepalive-exhaust","http-smuggling"]);
+        const CONN_LOG_SET= new Set(["conn-flood","ws-flood","rudy-v2"]);
+        const SLOW_LOG_SET= new Set(["slowloris","slow-read","rudy"]);
+        const HTTP_LOG_SET= new Set(["http-flood","http-bypass","graphql-dos","cache-poison","xml-bomb","range-flood","app-smart-flood","http2-flood"]);
+        const TCP_LOG_SET = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
+        const UDP_LOG_SET = new Set(["udp-flood","udp-bypass"]);
+        if (method === "geass-override")       msgs = LOG_MSGS_GEASS;
+        else if (H2_LOG_SET.has(method))       msgs = LOG_MSGS_H2;
+        else if (SLOW_LOG_SET.has(method))     msgs = LOG_MSGS_SLOW;
+        else if (CONN_LOG_SET.has(method))     msgs = LOG_MSGS_CONN;
+        else if (TLS_LOG_SET.has(method))      msgs = LOG_MSGS_TLS;
+        else if (AMP_LOG_SET.has(method))      msgs = LOG_MSGS_AMP;
+        else if (HTTP_LOG_SET.has(method))     msgs = LOG_MSGS_HTTP;
+        else if (TCP_LOG_SET.has(method))      msgs = LOG_MSGS_TCP;
+        else if (UDP_LOG_SET.has(method))      msgs = LOG_MSGS_UDP;
+        else                                   msgs = LOG_MSGS_HTTP;
         addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
         if (soundRef.current) playTone("tick");
       }
@@ -854,7 +870,7 @@ function Panel() {
   }, [isRunning, currentAttackId, refetchAttack]);
 
   /* Live active-connection reset — conns are now fetched by the per-second metric effect above */
-  const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy","ws-flood","rudy-v2","tls-renego","ssl-death","http2-continuation"]);
+  const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy","ws-flood","rudy-v2","tls-renego","ssl-death","http2-continuation","keepalive-exhaust","slow-read"]);
   useEffect(() => {
     if (!isRunning || !CONN_TRACKING_METHODS.has(method)) {
       setActiveConns(0);
@@ -2042,7 +2058,7 @@ function Panel() {
                 <div className="lb-stat-sub">Peak {fmtNum(peakPps)}</div>
               </div>
               {/* Active connections — only for connection-based methods */}
-              {(new Set(["slowloris","conn-flood","geass-override","rudy"])).has(method) ? (
+              {(new Set(["slowloris","conn-flood","geass-override","rudy","ws-flood","rudy-v2","tls-renego","ssl-death","keepalive-exhaust","slow-read"])).has(method) ? (
                 <div className="lb-stat lb-stat--conns">
                   <div className="lb-stat-head">
                     <span className="lb-stat-label">Open Conns</span>
@@ -2054,9 +2070,11 @@ function Panel() {
                     {activeConns > 0 ? fmtNum(activeConns) : "…"}
                   </div>
                   <div className="lb-stat-sub">
-                    {method === "slowloris" ? `cap ${fmtNum(Math.min(threads * 80, 25000))}` :
-                     method === "conn-flood" ? `cap ${fmtNum(Math.min(threads * 100, 30000))}` :
-                     "conn-flood + slowloris"}
+                    {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 200, 100000) * 6)}` :
+                     method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 150, 80000) * 6)}` :
+                     method === "ws-flood" ? `cap ${fmtNum(Math.min(threads * 200, 40000))}` :
+                     method === "geass-override" ? "33-vector conn hold" :
+                     "conn hold"}
                   </div>
                 </div>
               ) : (
