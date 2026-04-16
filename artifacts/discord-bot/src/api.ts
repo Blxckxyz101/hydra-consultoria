@@ -58,6 +58,8 @@ export interface AnalyzeResult {
   hasGraphQL:       boolean;
   hasWebSocket:     boolean;
   openPorts:        number[];
+  originIP:         string | null;
+  originSubdomain:  string | null;
   recommendations:  Recommendation[];
 }
 

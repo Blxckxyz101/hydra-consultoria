@@ -57,4 +57,11 @@ export const METHOD_EMOJIS: Record<string, string> = {
   "icmp-flood":          "🔴",
   "http-pipeline":       "🚇",
   "geass-override":      "👁",
+  "slow-read":           "🐌",
+  "range-flood":         "📐",
+  "xml-bomb":            "💾",
+  "h2-ping-storm":       "🏓",
+  "http-smuggling":      "🎭",
+  "doh-flood":           "🌐",
+  "keepalive-exhaust":   "⛓️",
 };

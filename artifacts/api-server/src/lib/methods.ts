@@ -90,7 +90,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 23 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + UDP Flood + RUDY v2 + Cache Poison + TLS Renegotiation + QUIC/H3 + SSL Death + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + ICMP Flood + DNS Water Torture (CDN-bypass!) + NTP Flood + Memcached UDP + SYN Flood + HTTP Bypass + SSDP M-SEARCH. ARES OMNIVECT — I, LELOUCH vi BRITANNIA, COMMAND YOU!",
+    description: "ABSOLUTE MAXIMUM — 30 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + HTTP Bypass + Keepalive Exhaust + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + H2 PING Storm + HTTP Smuggling + TLS Renegotiation + SSL Death + QUIC/H3 + XML Bomb + Slow Read + Range Flood + SYN Flood + ICMP Flood + DNS Water Torture + NTP Flood + Memcached UDP + SSDP M-SEARCH + UDP Flood + DoH Flood. ARES OMNIVECT ∞ — I, LELOUCH vi BRITANNIA, COMMAND YOU!",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────
@@ -245,5 +245,56 @@ export const ATTACK_METHODS = [
     layer: "L7" as const,
     protocol: "HTTP" as const,
     description: "4-layer Cloudflare/Akamai/AWS evasion: JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering + __cf_bm/__cfruid cookie simulation. Each connection appears as a distinct real Chrome browser.",
+  },
+
+  // ── New ARES OMNIVECT ∞ Vectors ──────────────────────────────────────
+  {
+    id: "slow-read",
+    name: "Slow Read (TCP Buffer Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Establishes HTTP/HTTPS connections, sends valid requests, then pauses TCP receive (socket.pause()). The server's send buffer fills up and server threads stay blocked indefinitely. Effective against Apache, Tomcat, IIS. Drip-reads 1 byte/600ms to prevent server FIN.",
+  },
+  {
+    id: "range-flood",
+    name: "HTTP Range Flood (Multi-Range Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends Range: bytes=0-0,1-1,...,499-499 forcing server to validate all 500 ranges against the resource, build a multipart/byteranges response with 500 MIME parts, and perform 500× disk/memory seeks per request. Effectively multiplies server I/O cost 500×.",
+  },
+  {
+    id: "xml-bomb",
+    name: "XML Bomb / XXE DoS (Billion Laughs)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "POSTs billion-laughs-lite XML payload to SOAP/XMLRPC/XML REST endpoints. If server parses XML without entity limits, parser expands &d; → 16^3 × 64B = gigabytes of memory/CPU. Also includes XXE probe to detect out-of-band exfiltration vulnerabilities.",
+  },
+  {
+    id: "h2-ping-storm",
+    name: "HTTP/2 PING Storm (PING Frame Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP/2" as const,
+    description: "Every HTTP/2 PING frame MUST be ACK'd by the server per RFC 7540 §6.7. Sends 10,000 PING frames/second per connection — server must context-switch, allocate a PING ACK frame, and write it to the connection's write queue for every single PING. Massive CPU + network overhead.",
+  },
+  {
+    id: "http-smuggling",
+    name: "HTTP Request Smuggling (TE/CL Desync)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends requests with conflicting Transfer-Encoding: chunked and Content-Length headers that disagree, exploiting HA/load-balancer parsing inconsistencies (CL.TE and TE.CL variants). Poisons the backend request queue — subsequent victims' requests are intercepted.",
+  },
+  {
+    id: "doh-flood",
+    name: "DNS over HTTPS Flood (DoH Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Floods DNS-over-HTTPS endpoint (/dns-query) with RFC 8484 wire-format DNS queries for random domains. Forces resolver to perform recursive DNS lookups, exhausting the DNS resolver thread pool and upstream DNS bandwidth. Effective against any server running a DNS resolver.",
+  },
+  {
+    id: "keepalive-exhaust",
+    name: "Keepalive Exhaust (HTTP/1.1 Connection Pool)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Opens keep-alive connections and pipelines 128 requests per connection in a burst without waiting for responses. Server must process all queued requests before closing. Combined with POST bodies, saturates the server's keep-alive connection pool (MaxKeepAliveRequests limit).",
   },
 ];

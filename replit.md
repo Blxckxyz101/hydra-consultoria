@@ -40,7 +40,8 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 
 - Routes: `/api/attacks` (CRUD + stop), `/api/attacks/stats`, `/api/methods`
 - **Real attack workers** using `worker_threads` + real network I/O (dgram UDP, net TCP, fetch HTTP)
-- Methods: 29 attack vectors — UDP Flood/Bypass, DNS/NTP/Mem/SSDP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, H2 CONTINUATION (CVE-2024-27316), H2 Settings Storm, Slowloris, R.U.D.Y, RUDY v2 (proxy-aware), WebSocket Exhaustion, GraphQL DoS (proxy-aware), QUIC/HTTP3, Cache Poison (proxy-aware), TLS Renegotiation, SSL Death Record, Conn Flood, HPACK Bomb, WAF Bypass, Geass Override (14 vectors)
+- Methods: **37 registered attack vectors** — UDP Flood/Bypass, DNS/NTP/Mem/SSDP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, H2 CONTINUATION (CVE-2024-27316), H2 Settings Storm, H2 PING Storm, HTTP Smuggling, Slowloris, R.U.D.Y, RUDY v2 (proxy-aware), WebSocket Exhaustion, GraphQL DoS, QUIC/HTTP3, Cache Poison, TLS Renegotiation, SSL Death Record, Conn Flood, HPACK Bomb, WAF Bypass, Keepalive Exhaust, Slow Read, HTTP Range Flood, XML Bomb, DoH Flood, Geass Override ∞ (30 simultaneous vectors)
+- **Geass Override ARES OMNIVECT ∞**: 30 simultaneous vectors in 6 layers (L7 App×12, L7 H2×4, TLS×3, Extended App×3, L4×1, L3×5, UDP×2) with Adaptive Burst Mode (30s warmup + 15s-on/15s-off waves at +60% thread spike)
 - **Chrome TLS Fingerprinting**: Chrome 130-135 profiles with sec-ch-ua-arch/bitness/wow64/full-version-list; CHROME_H2_SETTINGS on HTTP/2 Flood (Akamai fingerprint); JA3 cipher randomization on all TLS methods
 - **HTTP Bypass (3-layer)**: Layer A=fetch+Chrome headers+proxy rotation (50%), Layer B=raw HTTP/1.1 high-concurrency (30%), Layer C=slow-drain incomplete requests (20%)
 - **Proxy**: HTTP + SOCKS5 from 9 sources, 400 limit, top 150 passed to workers; panel shows HTTP/SOCKS5 breakdown per proxy

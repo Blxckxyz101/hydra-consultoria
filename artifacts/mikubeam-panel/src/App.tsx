@@ -293,7 +293,7 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override ARES OMNIVECT: ${n} strikes obliterating ${t} on 23 vectors`,
+  (t: string, n: string) => `👁 Geass Override ARES OMNIVECT ∞: ${n} strikes obliterating ${t} on 30 vectors`,
   (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Pipeline+Storm+ICMP+DNS+NTP+Memc+SSDP on ${t}`,
   (_t: string, n: string) => `👁 ${n} simultaneous vectors — 21-way siege, target has no defensive surface`,
   (t: string) => `👁 ${t} overwhelmed — 21 concurrent attack vectors, absolute protocol annihilation`,

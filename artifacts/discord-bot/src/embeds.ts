@@ -75,7 +75,7 @@ const methodLabel = (id: string) => {
     "mem-amp":             "Memcached Amp",
     "hpack-bomb":          "HPACK Bomb — RFC 7541 Table Exhaustion",
     "h2-settings-storm":   "H2 Settings Storm — HPACK + Flow Control Exhaustion",
-    "geass-override":      "Geass Override ∞ [ARES OMNIVECT — 21 VECTORS]",
+    "geass-override":      "Geass Override ∞ [ARES OMNIVECT — 30 VECTORS]",
   };
   return map[id] ?? id;
 };
@@ -215,7 +215,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `👁️ **ARES OMNIVECT** — 23 simultaneous real attack vectors, all CVEs active, live monitoring`
+          ? `👁️ **ARES OMNIVECT ∞** — 30 simultaneous real attack vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
@@ -272,7 +272,7 @@ export function buildStartEmbed(attack: Attack): EmbedBuilder {
     .setTitle(`${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
       isGeass
-        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT** — 23 real attack vectors deploying simultaneously`
+        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 30 real attack vectors deploying simultaneously`
         : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
     )
     .setImage("attachment://lelouch.gif")
@@ -478,6 +478,11 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
       { name: "🔬 Features",   value: featuresLine,                                                        inline: true },
       { name: "🔌 Open Ports", value: portsLine,                                                           inline: true },
       { name: "🌍 IP(s)",      value: ipsLine,                                                             inline: true },
+      ...(result.originIP ? [{
+        name:   "🎯 Origin IP Found!",
+        value:  `\`${result.originIP}\`${result.originSubdomain ? ` via \`${result.originSubdomain}\`` : " (SPF record)"} — **bypass CDN directly!**`,
+        inline: false,
+      }] : []),
       { name: "\u200b", value: "━━━━━━━━━━ 🎯 **VULNERABILITY REPORT** ━━━━━━━━━━", inline: false },
       { name: `Top ${top6.length} Vectors (sorted by effectiveness)`, value: recoLines, inline: false },
     );
@@ -542,7 +547,7 @@ export function buildHelpEmbed(): EmbedBuilder {
       { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },
       { name: "🔍 `/analyze <target>`",    value: "Scan a target and get ranked recommendations for best attack vectors.", inline: false },
       { name: "⚡ `/methods [layer]`",          value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.",          inline: false },
-      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT 23 vectors.",   inline: false },
+      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT ∞ 30 vectors.", inline: false },
       { name: "🌐 `/cluster status`",            value: "Check health & latency of all cluster nodes.",                       inline: false },
       { name: "🌐 `/cluster broadcast <target>`",value: "Fire Geass Override to ALL nodes simultaneously (10× power).",       inline: false },
       { name: "🤖 `/lelouch ask <message>`",     value: "Talk to **Lelouch AI** — helps with the bot, code, web systems & anything else.",  inline: false },
@@ -618,25 +623,28 @@ export function buildInfoEmbed(opts: {
       ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Lelouch vi Britannia**, Código R-02`
       : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Lelouch vi Britannia**, Code R-02`,
     desc:        pt
-      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n23 vetores de ataque simultâneos, fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
-      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n23 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
+      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n30 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
+      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n30 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
     secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
-    engineTitle: pt ? "🔴 Geass Override ∞ — 21 Vetores" : "🔴 Geass Override ∞ — 21 Vectors",
+    engineTitle: pt ? "🔴 Geass Override ∞ — 30 Vetores" : "🔴 Geass Override ∞ — 30 Vectors",
     engineBox:
       "```\n" +
       (pt
-        ? "  TODOS OS 21 VETORES — SIMULTÂNEOS\n"
-        : "  ALL 21 VECTORS — SIMULTANEOUS\n") +
+        ? "  TODOS OS 30 VETORES — SIMULTÂNEOS\n"
+        : "  ALL 30 VECTORS — SIMULTANEOUS\n") +
       "  ┌───────────────────────────────────────┐\n" +
       (pt
-        ? "  │  L7 Aplicação   ·  14 vetores         │\n"
-        : "  │  L7 Application ·  14 vectors         │\n") +
+        ? "  │  L7 App     ·  12  │  L7 H2  ·   4  │\n"
+        : "  │  L7 App     ·  12  │  L7 H2  ·   4  │\n") +
       (pt
-        ? "  │  L4 Transporte  ·   4 vetores         │\n"
-        : "  │  L4 Transport   ·   4 vectors         │\n") +
+        ? "  │  TLS/Crypto ·   3  │  Ext App ·  3  │\n"
+        : "  │  TLS/Crypto ·   3  │  Ext App ·  3  │\n") +
       (pt
-        ? "  │  L3 Rede        ·   3 vetores         │\n"
-        : "  │  L3 Network     ·   3 vectors         │\n") +
+        ? "  │  L4 SYN     ·   1  │  L3 Amp  ·  5  │\n"
+        : "  │  L4 SYN     ·   1  │  L3 Amp  ·  5  │\n") +
+      (pt
+        ? "  │  UDP/Vol    ·   2  │  TOTAL   · 30  │\n"
+        : "  │  UDP/Vol    ·   2  │  TOTAL   · 30  │\n") +
       "  │  CVE-2024-27316 ·  H2 CONTINUATION   │\n" +
       "  │  CVE-2023-44487 ·  Rapid Reset        │\n" +
       "  │  RFC 9000       ·  QUIC / HTTP3       │\n" +
@@ -692,8 +700,8 @@ export function buildInfoEmbed(opts: {
     secCmds:     pt ? "━━━━ 📖  **REFERÊNCIA DE COMANDOS** ━━━━" : "━━━━ 📖  **COMMAND REFERENCE** ━━━━",
     coreTitle:   pt ? "⚡ Comandos Principais" : "⚡ Core Commands",
     coreVal:     pt
-      ? "`/geass`  — Geass Override ∞ · 23 vetores\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
-      : "`/geass`  — Geass Override ∞ · 23 vectors max power\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
+      ? "`/geass`  — Geass Override ∞ · 30 vetores ARES OMNIVECT ∞\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
+      : "`/geass`  — Geass Override ∞ · 30 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
       ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/lelouch ask`  — IA Lelouch · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
