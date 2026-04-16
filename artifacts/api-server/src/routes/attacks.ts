@@ -119,6 +119,16 @@ setInterval(() => {
 // ── CPU count (how many parallel workers to spawn) ────────────────────────
 const CPU_COUNT = Math.max(1, os.cpus().length);
 
+// ── OOM Guard — cap workers per pool in dev to prevent container kill ──────
+// Replit dev containers: ~2GB RAM shared. Each worker_thread = ~60-80MB baseline.
+// 33 geass-override pools × 8 workers × 60MB = 15GB peak → instant OOM kill.
+// DETECTION: REPLIT_DEPLOYMENT is set ONLY in deployed (production) containers.
+//            In dev workspaces it is absent regardless of NODE_ENV.
+// In deployed: REPLIT_DEPLOYMENT=1 → no cap (dedicated resources, full power).
+// In dev:      absent → cap at 1 worker/pool → 33 workers × 60MB = ~2GB max.
+const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
+const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 1;
+
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
   try {
@@ -307,6 +317,8 @@ function spawnPool(
   method: string, target: string, port: number, threads: number,
   numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
+  // Apply OOM guard — cap workers in dev to prevent container kill
+  numWorkers = Math.min(numWorkers, MAX_WORKERS_PER_POOL);
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);

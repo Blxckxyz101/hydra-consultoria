@@ -16,6 +16,7 @@ import {
   Events,
   PermissionFlagsBits,
   AttachmentBuilder,
+  MessageFlags,
   type MessageActionRowComponentBuilder,
 } from "discord.js";
 
@@ -944,7 +945,7 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
             .setFooter({ text: `${AUTHOR} • Cooldown: ${ATTACK_COOLDOWN_MS / 1000}s` })
             .setTimestamp(),
         ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -973,7 +974,6 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   await interaction.reply({
     embeds: [buildLauncherEmbed(target, session)],
     components: [...components, buttonRow],
-    ephemeral: false,
   });
 }
 
@@ -1371,7 +1371,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     const session = pendingSessions.get(userId);
     const method  = pendingMethodMap.get(userId);
     if (!session || !method) {
-      await interaction.reply({ content: "❌ Session expired. Run `/attack start` again.", ephemeral: true });
+      await interaction.reply({ content: "❌ Session expired. Run `/attack start` again.", flags: MessageFlags.Ephemeral });
       return;
     }
     clearSession(userId);
@@ -1421,7 +1421,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
   // ── Stop button ───────────────────────────────────────────────────────────
   if (customId.startsWith("stop_")) {
     const id = parseInt(customId.slice(5), 10);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const result = await api.stopAttack(id);
       const ok     = result?.ok ?? false;
@@ -1453,7 +1453,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
   // ── Extend +60s button ────────────────────────────────────────────────────
   if (customId.startsWith("extend_")) {
     const id = parseInt(customId.slice(7), 10);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
       const result = await api.extendAttack(id, 60);
       await interaction.editReply({
@@ -1528,7 +1528,7 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
   const threads    = interaction.options.getInteger("threads")  ?? 200;
   const fireDate   = new Date(when);
   if (isNaN(fireDate.getTime()) || fireDate <= new Date()) {
-    await interaction.reply({ ephemeral: true, embeds: [buildErrorEmbed("INVALID TIME",
+    await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [buildErrorEmbed("INVALID TIME",
       "Forneça um horário ISO 8601 futuro válido.\nExemplo: `2026-04-17T14:00:00Z`")] });
     return;
   }
@@ -1662,7 +1662,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
           .setFooter({ text: AUTHOR })
           .setTimestamp(),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -2217,7 +2217,7 @@ function computeRisk(params: {
 
 async function handleWhois(interaction: ChatInputCommandInteraction): Promise<void> {
   const isEphemeral = interaction.options.getBoolean("private") ?? false;
-  await interaction.deferReply({ ephemeral: isEphemeral });
+  await interaction.deferReply({ flags: isEphemeral ? MessageFlags.Ephemeral : undefined });
 
   const targetUser = interaction.options.getUser("user") ?? interaction.user;
 
@@ -2652,12 +2652,12 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
   if (!isOwner(callerId, callerUsername) && !isMod(callerId, callerUsername)) {
     await interaction.reply({
       embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerUsername}** — Apenas donos e mods autorizados podem usar este painel.\n\n*"Meu Geass não reconhece você como aliado."*`)],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
 
   // ── STATUS ──────────────────────────────────────────────────────────────
@@ -2856,7 +2856,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   if (sub === "ban") {
     const target = interaction.options.getUser("user", true);
     const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
     if (target.id === interaction.user.id) { await interaction.editReply({ embeds: [buildErrorEmbed("GEASS NEGADO", "Até um rei não pode banir a si mesmo.")] }); return; }
@@ -2887,7 +2887,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── UNBAN ────────────────────────────────────────────────────────────────
   if (sub === "unban") {
     const userId = interaction.options.getString("userid", true).trim();
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
@@ -2913,7 +2913,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── CLEAR ────────────────────────────────────────────────────────────────
   if (sub === "clear") {
     const amount = interaction.options.getInteger("amount", true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.channel || !interaction.channel.isTextBased()) {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Canal de texto não encontrado.")] }); return;
@@ -2981,7 +2981,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
     const target  = interaction.options.getUser("user", true);
     const minutes = interaction.options.getInteger("duration") ?? 10;
     const reason  = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
@@ -3012,7 +3012,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── UNMUTE ───────────────────────────────────────────────────────────────
   if (sub === "unmute") {
     const target = interaction.options.getUser("user", true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
@@ -3041,7 +3041,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   if (sub === "kick") {
     const target = interaction.options.getUser("user", true);
     const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
     if (target.id === interaction.user.id) { await interaction.editReply({ embeds: [buildErrorEmbed("GEASS NEGADO", "Até um rei não pode expulsar a si mesmo.")] }); return; }
@@ -3073,7 +3073,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── SLOWMODE ─────────────────────────────────────────────────────────────
   if (sub === "slowmode") {
     const seconds = interaction.options.getInteger("seconds", true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.channel || !interaction.channel.isTextBased()) {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Canal de texto não encontrado.")] }); return;
@@ -3109,7 +3109,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── LOGCHANNEL ────────────────────────────────────────────────────────────
   if (sub === "logchannel") {
     const channel = interaction.options.getChannel("channel", true);
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guildId) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
@@ -3231,7 +3231,7 @@ async function main(): Promise<void> {
       try {
         const errEmbed = buildErrorEmbed("INTERNAL ERROR", "An unexpected error occurred. Please try again.");
         if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-          await interaction.reply({ embeds: [errEmbed], ephemeral: true });
+          await interaction.reply({ embeds: [errEmbed], flags: MessageFlags.Ephemeral });
         }
       } catch { /**/ }
     }
