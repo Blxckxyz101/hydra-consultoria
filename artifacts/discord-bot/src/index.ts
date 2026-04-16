@@ -24,7 +24,7 @@ type MonitorEditFn = (opts: {
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
-import { api } from "./api.js";
+import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
 import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
@@ -240,6 +240,61 @@ const COMMANDS = [
       sub.setName("reset")
         .setDescription("🔄 Limpar histórico de conversa — começar do zero")
     ),
+
+  // ── /schedule ─────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("schedule")
+    .setDescription("⏰ Agendar um ataque para disparar em horário futuro")
+    .addSubcommand(sub =>
+      sub.setName("add")
+        .setDescription("➕ Criar novo ataque agendado")
+        .addStringOption(opt =>
+          opt.setName("target").setDescription("URL ou IP do alvo").setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("when").setDescription("Horário ISO 8601 (ex: 2026-04-16T14:00:00Z)").setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("method").setDescription("Método de ataque (default: geass-override)").setRequired(false)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("duration").setDescription("Duração em segundos (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("threads").setDescription("Threads (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("list")
+        .setDescription("📋 Listar ataques agendados pendentes")
+    )
+    .addSubcommand(sub =>
+      sub.setName("cancel")
+        .setDescription("✕ Cancelar um ataque agendado")
+        .addStringOption(opt =>
+          opt.setName("id").setDescription("ID do agendamento (sched_...)").setRequired(true)
+        )
+    ),
+
+  // ── /advisor ──────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("advisor")
+    .setDescription("🧠 Lelouch AI Advisor — análise táctica com Groq llama-3.3-70b")
+    .addStringOption(opt =>
+      opt.setName("target").setDescription("URL ou IP para analisar").setRequired(true)
+    ),
+
+  // ── /proxy ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("proxy")
+    .setDescription("🌐 Gestão do pool de proxies automático")
+    .addSubcommand(sub =>
+      sub.setName("stats").setDescription("📊 Ver estatísticas do pool de proxies")
+    )
+    .addSubcommand(sub =>
+      sub.setName("refresh").setDescription("🔄 Forçar re-harvest de proxies agora (22 fontes)")
+    ),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -995,6 +1050,176 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
   }
 }
 
+// ── /schedule handler ──────────────────────────────────────────────────────────
+async function handleSchedule(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "list") {
+    await interaction.deferReply();
+    try {
+      const scheduled = await api.getScheduled();
+      if (scheduled.length === 0) {
+        await interaction.editReply({ embeds: [new EmbedBuilder()
+          .setColor(COLORS.GOLD).setTitle("⏰ SCHEDULED ATTACKS").setDescription("Nenhum ataque agendado pendente.")
+          .setFooter({ text: AUTHOR }).setTimestamp()] });
+        return;
+      }
+      const fields = scheduled.slice(0, 10).map(s => ({
+        name: `${s.method.toUpperCase()} → ${s.target.slice(0, 40)}`,
+        value: `ID: \`${s.id}\`\nFire: <t:${Math.floor(s.scheduledFor / 1000)}:R>\nThreads: ${s.threads} | Duration: ${s.duration}s`,
+        inline: false,
+      }));
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.CRIMSON).setTitle(`⏰ SCHEDULED ATTACKS — ${scheduled.length} pending`)
+        .addFields(fields).setFooter({ text: AUTHOR }).setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("SCHEDULE LIST FAILED", String(e))] });
+    }
+    return;
+  }
+
+  if (sub === "cancel") {
+    const id = interaction.options.getString("id", true);
+    await interaction.deferReply();
+    try {
+      await api.cancelScheduled(id);
+      await interaction.editReply({ embeds: [new EmbedBuilder()
+        .setColor(COLORS.GOLD).setTitle("✕ SCHEDULED ATTACK CANCELLED")
+        .setDescription(`Agendamento \`${id}\` cancelado com sucesso.`)
+        .setFooter({ text: AUTHOR }).setTimestamp()] });
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("CANCEL FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // sub === "add"
+  const target     = interaction.options.getString("target", true);
+  const when       = interaction.options.getString("when", true);
+  const method     = interaction.options.getString("method")    ?? "geass-override";
+  const duration   = interaction.options.getInteger("duration") ?? 60;
+  const threads    = interaction.options.getInteger("threads")  ?? 200;
+  const fireDate   = new Date(when);
+  if (isNaN(fireDate.getTime()) || fireDate <= new Date()) {
+    await interaction.reply({ ephemeral: true, embeds: [buildErrorEmbed("INVALID TIME",
+      "Forneça um horário ISO 8601 futuro válido.\nExemplo: `2026-04-17T14:00:00Z`")] });
+    return;
+  }
+  const isHttps = /^https:/i.test(target);
+  const port    = isHttps ? 443 : 80;
+  await interaction.deferReply();
+  try {
+    const s = await api.scheduleAttack({ target, port, method, duration, threads, scheduledFor: fireDate.toISOString() });
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.CRIMSON)
+      .setTitle("⏰ ATAQUE AGENDADO — GEASS COMMAND SCHEDULED")
+      .setDescription(`> *"The stage is set — the pieces in place. At the appointed hour, my Geass shall be absolute!"*`)
+      .addFields(
+        { name: "🎯 Target",   value: `\`${target}\``,              inline: true },
+        { name: "⚔ Method",   value: `\`${method.toUpperCase()}\``, inline: true },
+        { name: "⏱ Fire At",  value: `<t:${Math.floor(fireDate.getTime() / 1000)}:F> (<t:${Math.floor(fireDate.getTime() / 1000)}:R>)`, inline: false },
+        { name: "🧵 Threads", value: `${threads}`,                  inline: true },
+        { name: "⏳ Duration", value: `${duration}s`,               inline: true },
+        { name: "🆔 ID",       value: `\`${s.id}\``,               inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • Use /schedule cancel id:${s.id} para cancelar` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`[SCHEDULE ADD] ${interaction.user.tag} → ${target} at ${fireDate.toISOString()}`);
+  } catch (e: unknown) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("SCHEDULING FAILED", String(e))] });
+  }
+}
+
+// ── /advisor handler ──────────────────────────────────────────────────────────
+async function handleAdvisor(interaction: ChatInputCommandInteraction): Promise<void> {
+  const target = interaction.options.getString("target", true);
+  await interaction.deferReply();
+  try {
+    await interaction.editReply({ embeds: [new EmbedBuilder()
+      .setColor(COLORS.CRIMSON)
+      .setTitle("🧠 LELOUCH AI ADVISOR — ANALYSING...")
+      .setDescription(`> *"Intelligence is the cornerstone of absolute victory."*\n\n⏳ Consultando Groq llama-3.3-70b... analisando \`${target}\`...`)
+      .setFooter({ text: AUTHOR })] });
+
+    const advice: AiAdvice = await api.getAiAdvice(target);
+
+    if (advice.error) throw new Error(advice.error);
+
+    const sevColor: Record<string, number> = { critical: 0xC0392B, high: 0xe74c3c, medium: 0xf39c12, low: 0x2ecc71 };
+    const color = sevColor[advice.severity ?? "medium"] ?? COLORS.CRIMSON;
+
+    const embed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle(`🧠 AI ADVISOR — ${(advice.severity ?? "unknown").toUpperCase()} SEVERITY`)
+      .setDescription(`**🎯 Target:** \`${target}\`\n**🌐 Status:** HTTP ${advice.targetStatus ?? "?"} — ${advice.latencyMs ?? "?"}ms`)
+      .addFields(
+        { name: "📊 Analysis",           value: advice.analysis             ?? "N/A", inline: false },
+        { name: "⚔ Primary Recommendation", value: advice.primaryRecommendation ?? "N/A", inline: false },
+        { name: "🚀 Boost Vector",        value: `\`${advice.boostVector ?? "N/A"}\``,  inline: true  },
+        { name: "📈 Effectiveness",       value: `${advice.effectiveness ?? 0}%`,        inline: true  },
+        { name: "⏱ Est. Time to Down",   value: advice.estimatedDownIn ?? "Unknown",   inline: true  },
+        { name: "💡 Tactical Tip",        value: advice.tip ?? "N/A",                   inline: false },
+      )
+      .setFooter({ text: `${AUTHOR} • Powered by Groq llama-3.3-70b` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+    console.log(`[ADVISOR] ${interaction.user.tag} → ${target} | sev=${advice.severity} vec=${advice.boostVector}`);
+  } catch (e: unknown) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("AI ADVISOR FAILED", String(e))] });
+  }
+}
+
+// ── /proxy handler ──────────────────────────────────────────────────────────
+async function handleProxy(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "refresh") {
+    await interaction.deferReply();
+    try {
+      await api.refreshProxies();
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.GOLD)
+        .setTitle("🔄 PROXY HARVEST INICIADO")
+        .setDescription("Re-harvest de proxies disparado — 22 fontes (14 HTTP + 8 SOCKS5) a serem varridas.\nUse `/proxy stats` em ~30s para ver os resultados.")
+        .setFooter({ text: AUTHOR }).setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("PROXY REFRESH FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // sub === "stats"
+  await interaction.deferReply();
+  try {
+    const stats: ProxyStats = await api.getProxyStats();
+    const lastFetchAgo = stats.lastFetch > 0 ? `<t:${Math.floor(stats.lastFetch / 1000)}:R>` : "Nunca";
+    const freshBadge = stats.fresh ? "✅ FRESH" : stats.fetching ? "⏳ FETCHING..." : "⚠️ STALE";
+    const embed = new EmbedBuilder()
+      .setColor(stats.count > 50 ? COLORS.CRIMSON : COLORS.GOLD)
+      .setTitle(`🌐 PROXY POOL — ${stats.count} LIVE PROXIES`)
+      .setDescription(`> *"Every great strategist controls the battlefield — including the network."*`)
+      .addFields(
+        { name: "📊 Total Live",    value: `**${stats.count}** proxies`,         inline: true },
+        { name: "🔵 HTTP",          value: `${stats.httpCount}`,                 inline: true },
+        { name: "🟣 SOCKS5",        value: `${stats.socks5Count}`,               inline: true },
+        { name: "⚡ Avg Latency",   value: `${stats.avgResponseMs}ms`,           inline: true },
+        { name: "🏆 Fastest",       value: stats.fastest ? `${stats.fastest.host}:${stats.fastest.port} (${stats.fastest.responseMs}ms)` : "N/A", inline: true },
+        { name: "🔄 Fontes",        value: `${stats.sources.http} HTTP + ${stats.sources.socks5} SOCKS5 = ${stats.sources.total} total`, inline: false },
+        { name: "🕐 Último Harvest", value: lastFetchAgo,                        inline: true },
+        { name: "📡 Status",         value: freshBadge,                          inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • Use /proxy refresh para forçar re-harvest` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+  } catch (e: unknown) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("PROXY STATS FAILED", String(e))] });
+  }
+}
+
 // ── /lelouch handler ──────────────────────────────────────────────────────────
 async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
@@ -1101,6 +1326,12 @@ async function main(): Promise<void> {
         await handleGeass(interaction);
       } else if (commandName === "lelouch") {
         await handleLelouch(interaction);
+      } else if (commandName === "schedule") {
+        await handleSchedule(interaction);
+      } else if (commandName === "advisor") {
+        await handleAdvisor(interaction);
+      } else if (commandName === "proxy") {
+        await handleProxy(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

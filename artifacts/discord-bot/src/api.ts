@@ -145,7 +145,73 @@ export const api = {
 
   getClusterNodes: () =>
     req<{ nodes: string[]; count: number; cpus: number; totalRamMb: number; freeRamMb: number }>("/api/cluster/nodes"),
+
+  // ── Scheduling ──────────────────────────────────────────────────────────
+  getScheduled: () =>
+    req<ScheduledAttack[]>("/api/attacks/scheduled"),
+
+  scheduleAttack: (body: {
+    target: string; port: number; method: string;
+    duration: number; threads: number; scheduledFor: string;
+  }) => req<ScheduledAttack>("/api/attacks/schedule", {
+    method: "POST", body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5_000),
+  }),
+
+  cancelScheduled: (id: string) =>
+    req<{ ok: boolean }>(`/api/attacks/scheduled/${id}`, { method: "DELETE" }),
+
+  // ── AI Advisor ──────────────────────────────────────────────────────────
+  getAiAdvice: (target: string) =>
+    req<AiAdvice>(`/api/advisor?target=${encodeURIComponent(target)}`, {
+      signal: AbortSignal.timeout(20_000),
+    }),
+
+  // ── Proxy Stats ─────────────────────────────────────────────────────────
+  getProxyStats: () =>
+    req<ProxyStats>("/api/proxies/stats"),
+
+  refreshProxies: () =>
+    req<{ ok: boolean }>("/api/proxies/refresh", {
+      method: "POST", signal: AbortSignal.timeout(5_000),
+    }),
 };
+
+export interface ScheduledAttack {
+  id:          string;
+  target:      string;
+  port:        number;
+  method:      string;
+  duration:    number;
+  threads:     number;
+  scheduledFor: number;
+  createdAt:   number;
+}
+
+export interface AiAdvice {
+  analysis?:             string;
+  primaryRecommendation?: string;
+  boostVector?:          string;
+  severity?:             string;
+  estimatedDownIn?:      string;
+  tip?:                  string;
+  effectiveness?:        number;
+  targetStatus?:         string;
+  latencyMs?:            number;
+  error?:                string;
+}
+
+export interface ProxyStats {
+  count:       number;
+  httpCount:   number;
+  socks5Count: number;
+  avgResponseMs: number;
+  fastest:     { host: string; port: number; responseMs: number } | null;
+  sources:     { http: number; socks5: number; total: number };
+  lastFetch:   number;
+  fetching:    boolean;
+  fresh:       boolean;
+}
 
 export interface ClusterNodeResult {
   url:       string;
