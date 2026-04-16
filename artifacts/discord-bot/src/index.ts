@@ -405,9 +405,12 @@ const COMMANDS = [
   // ── /whois ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("whois")
-    .setDescription("🔍 Geass Intelligence — full dossier on a Discord user")
+    .setDescription("🔍 Geass Intelligence — dossier completo: identidade, cargos, permissões, risco e mais")
     .addUserOption(opt =>
-      opt.setName("user").setDescription("The subject to investigate").setRequired(false)
+      opt.setName("user").setDescription("O sujeito a investigar (padrão: você mesmo)").setRequired(false)
+    )
+    .addBooleanOption(opt =>
+      opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: não)").setRequired(false)
     ),
 
 ].map(c => c.toJSON());
@@ -1682,90 +1685,449 @@ async function sendAdminLog(
   }
 }
 
-// ── /whois handler ────────────────────────────────────────────────────────────
+// ── /whois — GEASS INTELLIGENCE (full investigation) ──────────────────────────
+
+// All Discord permission flags with human descriptions
+const PERM_LABELS: Partial<Record<string, string>> = {
+  Administrator:             "👑 Administrator",
+  ManageGuild:               "🏰 Manage Server",
+  ManageRoles:               "🎭 Manage Roles",
+  ManageChannels:            "📋 Manage Channels",
+  ManageMessages:            "🗑️ Manage Messages",
+  ManageWebhooks:            "🔗 Manage Webhooks",
+  ManageNicknames:           "📛 Manage Nicknames",
+  ManageThreads:             "🧵 Manage Threads",
+  ManageEvents:              "📅 Manage Events",
+  KickMembers:               "👢 Kick Members",
+  BanMembers:                "🔨 Ban Members",
+  MuteMembers:               "🔇 Mute Members (Voice)",
+  DeafenMembers:             "🔕 Deafen Members",
+  MoveMembers:               "↗️ Move Members",
+  ModerateMembers:           "⏳ Timeout Members",
+  ViewAuditLog:              "📜 View Audit Log",
+  MentionEveryone:           "📢 Mention Everyone",
+  CreateInstantInvite:       "🔗 Create Invites",
+  SendMessages:              "💬 Send Messages",
+  SendMessagesInThreads:     "🧵 Send in Threads",
+  EmbedLinks:                "🔗 Embed Links",
+  AttachFiles:               "📎 Attach Files",
+  AddReactions:              "👍 Add Reactions",
+  UseExternalEmojis:         "😎 External Emojis",
+  UseExternalStickers:       "🖼️ External Stickers",
+  UseApplicationCommands:    "⚡ Use Slash Commands",
+  UseVAD:                    "🎤 Voice Activity",
+  PrioritySpeaker:           "🔊 Priority Speaker",
+  Stream:                    "📺 Go Live",
+  Connect:                   "🔌 Connect Voice",
+  Speak:                     "🗣️ Speak",
+  RequestToSpeak:            "✋ Request to Speak",
+  ViewChannel:               "👁️ View Channels",
+  ReadMessageHistory:        "📚 Read History",
+  ChangeNickname:            "✏️ Change Own Nickname",
+};
+
+// Flag names → readable badges
+const FLAG_MAP: Record<string, string> = {
+  Staff:                    "👑 Discord Staff",
+  Partner:                  "🤝 Partnered Server Owner",
+  Hypesquad:                "🏠 HypeSquad Events Host",
+  BugHunterLevel1:          "🐛 Bug Hunter",
+  BugHunterLevel2:          "🥇 Bug Hunter Gold",
+  HypeSquadOnlineHouse1:    "🟠 HypeSquad Bravery",
+  HypeSquadOnlineHouse2:    "🟡 HypeSquad Brilliance",
+  HypeSquadOnlineHouse3:    "🔵 HypeSquad Balance",
+  PremiumEarlySupporter:    "💜 Early Nitro Supporter",
+  TeamPseudoUser:           "👥 Team User",
+  VerifiedBot:              "✅ Verified Bot",
+  VerifiedDeveloper:        "🔧 Verified Bot Developer",
+  CertifiedModerator:       "🛡️ Discord Certified Mod",
+  ActiveDeveloper:          "⚒️ Active Developer",
+  Quarantined:              "🔒 Quarantined",
+  Collaborator:             "🤝 Discord Collaborator",
+  RestrictedCollaborator:   "🔐 Restricted Collaborator",
+};
+
+// Snowflake deconstruct (Discord epoch = 2015-01-01T00:00:00.000Z)
+function deconstructSnowflake(id: string): { timestamp: number; workerId: number; processId: number; increment: number } {
+  const DISCORD_EPOCH = 1420070400000n;
+  const bigId = BigInt(id);
+  return {
+    timestamp:  Number((bigId >> 22n) + DISCORD_EPOCH),
+    workerId:   Number((bigId & 0x3E0000n) >> 17n),
+    processId:  Number((bigId & 0x1F000n) >> 12n),
+    increment:  Number(bigId & 0xFFFn),
+  };
+}
+
+// Calculate account age in human-readable form
+function ageString(ms: number): string {
+  const days    = Math.floor(ms / 86_400_000);
+  const years   = Math.floor(days / 365);
+  const months  = Math.floor((days % 365) / 30);
+  const remDays = days % 30;
+  const parts: string[] = [];
+  if (years  > 0) parts.push(`${years}y`);
+  if (months > 0) parts.push(`${months}mo`);
+  if (remDays > 0 || parts.length === 0) parts.push(`${remDays}d`);
+  return parts.join(" ");
+}
+
+// Risk scoring
+function computeRisk(params: {
+  accountAgeDays: number; hasAvatar: boolean; hasRoles: boolean; isBot: boolean;
+  hasAdminPerms: boolean; hasDangerPerms: boolean; username: string; hasNitro: boolean;
+  isBoosting: boolean; isTimedOut: boolean; hasCustomStatus: boolean; mutualServerCount: number;
+}): { score: number; level: "🟢 LOW" | "🟡 MEDIUM" | "🟠 HIGH" | "🔴 CRITICAL"; factors: string[] } {
+  let score = 0;
+  const factors: string[] = [];
+
+  if (params.isBot) { return { score: 0, level: "🟢 LOW", factors: ["Bot account — different risk model"] }; }
+  if (params.accountAgeDays < 3)   { score += 50; factors.push("⚠️ Account is less than 3 days old"); }
+  else if (params.accountAgeDays < 7)  { score += 35; factors.push("⚠️ Account is less than 7 days old"); }
+  else if (params.accountAgeDays < 30) { score += 20; factors.push("⚠️ Account is less than 30 days old"); }
+  else if (params.accountAgeDays < 90) { score += 10; factors.push("🔍 Account is less than 3 months old"); }
+
+  if (!params.hasAvatar) { score += 10; factors.push("📷 Default avatar — never customized"); }
+  if (!params.hasRoles)  { score += 5;  factors.push("🎭 No server roles assigned"); }
+  if (!params.hasNitro && !params.hasCustomStatus && params.accountAgeDays > 30) { score += 3; factors.push("💤 Minimal profile activity"); }
+
+  // Username patterns
+  const digits = (params.username.match(/\d/g) ?? []).length;
+  const digitRatio = digits / params.username.length;
+  if (digitRatio > 0.5 && params.username.length > 8) { score += 15; factors.push("🔢 Username is mostly numbers (possible alt/bot)"); }
+
+  const randomLookingPattern = /^[a-z]{2,5}\d{4,}$/i.test(params.username);
+  if (randomLookingPattern) { score += 10; factors.push("🤖 Username matches common bot/alt pattern (letters+numbers)"); }
+
+  if (params.isTimedOut) { score += 10; factors.push("⏳ Currently under server timeout"); }
+  if (params.hasAdminPerms) { score -= 15; factors.push("👑 Has Administrator permission (trusted)"); }
+  else if (params.hasDangerPerms) { score += 8; factors.push("⚠️ Has dangerous permissions (Ban/Kick) without admin role"); }
+  if (params.isBoosting) { score -= 10; factors.push("💎 Server booster — genuine investment"); }
+  if (params.mutualServerCount > 1) { score -= 5; factors.push("🌐 Seen in multiple servers with bot"); }
+
+  score = Math.max(0, Math.min(100, score));
+  const level = score >= 70 ? "🔴 CRITICAL" : score >= 45 ? "🟠 HIGH" : score >= 25 ? "🟡 MEDIUM" : "🟢 LOW";
+  if (factors.length === 0) factors.push("✅ No suspicious indicators detected");
+  return { score, level, factors };
+}
+
 async function handleWhois(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.deferReply();
+  const isEphemeral = interaction.options.getBoolean("private") ?? false;
+  await interaction.deferReply({ ephemeral: isEphemeral });
 
-  const target = interaction.options.getUser("user") ?? interaction.user;
+  const targetUser = interaction.options.getUser("user") ?? interaction.user;
 
-  // Re-fetch with force to get banner + latest data
-  const fetched = await target.fetch(true).catch(() => target);
+  // ── Fetch everything in parallel ─────────────────────────────────────────
+  const [fetched, member, banEntry, guildInvites] = await Promise.all([
+    targetUser.fetch(true).catch(() => targetUser),
+    interaction.guild ? interaction.guild.members.fetch({ user: targetUser.id, withPresences: true }).catch(() => null) : Promise.resolve(null),
+    interaction.guild ? interaction.guild.bans.fetch(targetUser.id).catch(() => null) : Promise.resolve(null),
+    interaction.guild ? interaction.guild.invites.fetch().catch(() => null) : Promise.resolve(null),
+  ]);
 
-  // Flag names → readable badges
-  const FLAG_MAP: Record<string, string> = {
-    Staff:                       "👑 Discord Staff",
-    Partner:                     "🤝 Partnered Server Owner",
-    Hypesquad:                   "🏠 HypeSquad Events",
-    BugHunterLevel1:             "🐛 Bug Hunter",
-    BugHunterLevel2:             "🐛 Bug Hunter Gold",
-    HypeSquadOnlineHouse1:       "🟠 HypeSquad Bravery",
-    HypeSquadOnlineHouse2:       "🟡 HypeSquad Brilliance",
-    HypeSquadOnlineHouse3:       "🔵 HypeSquad Balance",
-    PremiumEarlySupporter:       "💜 Early Supporter",
-    TeamPseudoUser:              "👥 Team User",
-    VerifiedBot:                 "✅ Verified Bot",
-    VerifiedDeveloper:           "🔧 Verified Bot Developer",
-    CertifiedModerator:          "🛡️ Certified Moderator",
-    ActiveDeveloper:             "🔨 Active Developer",
-    Quarantined:                 "🔒 Quarantined",
-    Collaborator:                "🤝 Collaborator",
+  // ── Snowflake deconstruction ──────────────────────────────────────────────
+  const sf = deconstructSnowflake(fetched.id);
+  const createdTs = Math.floor(sf.timestamp / 1000);
+  const accountAgeDays = Math.floor((Date.now() - sf.timestamp) / 86_400_000);
+
+  // ── Avatar analysis ───────────────────────────────────────────────────────
+  const avatarHash = fetched.avatar;
+  const isAnimatedAvatar = avatarHash?.startsWith("a_") ?? false;
+  const hasDefaultAvatar = !avatarHash;
+  const avatarURL = fetched.displayAvatarURL({ size: 512 });
+  const bannerURL = fetched.bannerURL({ size: 1024 });
+  const hasBanner = !!fetched.banner;
+
+  // ── Nitro detection (behavioral indicators) ───────────────────────────────
+  const nitroIndicators: string[] = [];
+  if (isAnimatedAvatar)   nitroIndicators.push("Animated avatar (requires Nitro)");
+  if (hasBanner)          nitroIndicators.push("Profile banner (requires Nitro)");
+  if (fetched.globalName && fetched.globalName !== fetched.username) nitroIndicators.push("Custom display name set");
+  const accentColor = fetched.accentColor;
+  if (accentColor)        nitroIndicators.push(`Profile accent color: \`#${accentColor.toString(16).padStart(6, "0").toUpperCase()}\``);
+  const hasNitro = nitroIndicators.length >= 1;
+
+  // ── Badges ────────────────────────────────────────────────────────────────
+  const flags = fetched.flags?.toArray() ?? [];
+  const badgeList = flags.map(f => FLAG_MAP[f as string] ?? `\`${String(f)}\``);
+  if (fetched.bot && !flags.includes("VerifiedBot" as never)) badgeList.push("🤖 Unverified Bot");
+
+  // ── Presence & activities ─────────────────────────────────────────────────
+  const presence = member?.presence;
+  const status = presence?.status ?? "offline";
+  const STATUS_LABELS: Record<string, string> = {
+    online: "🟢 Online", idle: "🟡 Idle", dnd: "🔴 Do Not Disturb",
+    offline: "⚫ Offline", invisible: "⚫ Invisible",
   };
 
-  const flags = fetched.flags?.toArray() ?? [];
-  const badgeStr = flags.length > 0
-    ? flags.map(f => FLAG_MAP[f as string] ?? `\`${String(f)}\``).join("\n")
-    : "*No special badges*";
+  const activities = presence?.activities ?? [];
+  const customStatus = activities.find(a => a.type === 4);
+  const playingActivity = activities.find(a => a.type === 0);
+  const streamingActivity = activities.find(a => a.type === 1);
+  const listeningActivity = activities.find(a => a.type === 2);
+  const watchingActivity = activities.find(a => a.type === 3);
+  const competingActivity = activities.find(a => a.type === 5);
 
-  // Creation date from snowflake
-  const createdAt = fetched.createdAt;
-  const createdTs = Math.floor(createdAt.getTime() / 1000);
+  const activityLines: string[] = [];
+  if (customStatus?.state)          activityLines.push(`💬 **Status:** ${customStatus.state.slice(0, 100)}`);
+  if (streamingActivity)            activityLines.push(`📺 **Streaming:** ${streamingActivity.name}${streamingActivity.url ? ` ([link](${streamingActivity.url}))` : ""}`);
+  if (playingActivity)              activityLines.push(`🎮 **Playing:** ${playingActivity.name}`);
+  if (listeningActivity)            activityLines.push(`🎵 **Listening:** ${listeningActivity.name}${listeningActivity.details ? ` — ${listeningActivity.details}` : ""}`);
+  if (watchingActivity)             activityLines.push(`👁️ **Watching:** ${watchingActivity.name}`);
+  if (competingActivity)            activityLines.push(`🏆 **Competing:** ${competingActivity.name}`);
 
-  // Avatar + banner
-  const avatarURL = fetched.displayAvatarURL({ size: 256 });
-  const bannerURL = fetched.bannerURL({ size: 512 });
+  // ── Voice channel ─────────────────────────────────────────────────────────
+  const voiceState = member?.voice;
+  const voiceChannel = voiceState?.channel;
 
-  const embed = new EmbedBuilder()
+  // ── Roles analysis ────────────────────────────────────────────────────────
+  const nonEveryoneRoles = member?.roles.cache
+    .filter(r => r.id !== interaction.guild?.id)
+    .sort((a, b) => b.position - a.position) ?? new Map();
+
+  const rolesArray = [...nonEveryoneRoles.values()];
+  const highestRole = rolesArray[0];
+  const roleCount = rolesArray.length;
+  const roleDisplay = rolesArray.slice(0, 20).map(r => `<@&${r.id}>`).join(" ");
+
+  // ── Permissions analysis ──────────────────────────────────────────────────
+  const permissions = member?.permissions;
+  const isAdmin = permissions?.has("Administrator") ?? false;
+  const dangerPerms = ["BanMembers", "KickMembers", "ManageRoles", "ManageGuild", "ManageMessages", "MuteMembers", "ModerateMembers"] as const;
+  const hasDangerPerms = dangerPerms.some(p => permissions?.has(p) ?? false);
+
+  let permDisplay = "";
+  if (isAdmin) {
+    permDisplay = "👑 **ADMINISTRATOR** — all permissions granted";
+  } else if (permissions) {
+    const activePerms = Object.entries(PERM_LABELS)
+      .filter(([key]) => permissions.has(key as never))
+      .map(([, label]) => label);
+    permDisplay = activePerms.length > 0 ? activePerms.slice(0, 18).join("\n") : "*No significant permissions*";
+  }
+
+  // ── Join order (requires GuildMembers privileged intent — optional) ──────
+  let joinPosition: number | null = null;
+  if (interaction.guild && member?.joinedAt) {
+    try {
+      // guild.members.fetch() with no args requires GuildMembers privileged intent.
+      // If the intent isn't enabled this will throw — we catch gracefully.
+      const allMembers = await interaction.guild.members.fetch({ limit: 1000 });
+      const sorted = [...allMembers.values()]
+        .filter(m => m.joinedAt)
+        .sort((a, b) => (a.joinedAt!.getTime()) - (b.joinedAt!.getTime()));
+      joinPosition = sorted.findIndex(m => m.id === fetched.id) + 1;
+    } catch { /* GuildMembers privileged intent not enabled — skip join order */ }
+  }
+
+  // ── Invites created by this user ──────────────────────────────────────────
+  const userInvites = guildInvites?.filter(inv => inv.inviterId === fetched.id) ?? null;
+  const totalInviteUses = userInvites?.reduce((acc, inv) => acc + (inv.uses ?? 0), 0) ?? 0;
+
+  // ── Risk assessment ───────────────────────────────────────────────────────
+  const risk = computeRisk({
+    accountAgeDays, hasAvatar: !hasDefaultAvatar, hasRoles: roleCount > 0, isBot: fetched.bot,
+    hasAdminPerms: isAdmin, hasDangerPerms, username: fetched.username, hasNitro,
+    isBoosting: !!member?.premiumSince, isTimedOut: member?.isCommunicationDisabled() ?? false,
+    hasCustomStatus: !!customStatus, mutualServerCount: 1,
+  });
+
+  const joinedTs = member?.joinedAt ? Math.floor(member.joinedAt.getTime() / 1000) : null;
+
+  // ════════════════════════════════════════════════════════════════════════
+  // EMBED 1 — IDENTITY & ACCOUNT INTELLIGENCE
+  // ════════════════════════════════════════════════════════════════════════
+  const embedIdentity = new EmbedBuilder()
     .setColor(fetched.bot ? COLORS.BLUE : COLORS.PURPLE)
-    .setTitle(`🔍 GEASS INTELLIGENCE DOSSIER`)
+    .setTitle("🔍 GEASS INTELLIGENCE — DOSSIER COMPLETO")
     .setDescription(
-      `> *"My Geass sees all — every subject has a history, and I have read yours."*\n\n` +
-      `**${fetched.username}** ${fetched.bot ? "🤖" : "👤"}`
+      `> *"Meu Geass vê tudo. Cada pessoa tem uma história — e eu já li a sua."*\n\n` +
+      `**${fetched.username}** ${fetched.bot ? "🤖 BOT" : "👤 USUÁRIO"} ${fetched.system ? "⚙️ SISTEMA" : ""}`
     )
     .setThumbnail(avatarURL)
     .addFields(
-      { name: "🪪 ID",              value: `\`${fetched.id}\``,                        inline: true },
-      { name: "🏷️ Username",        value: fetched.username,                            inline: true },
-      { name: "📛 Display Name",    value: fetched.displayName || "*none*",             inline: true },
-      { name: "📅 Account Created", value: `<t:${createdTs}:F>\n<t:${createdTs}:R>`,   inline: false },
-      { name: "🤖 Bot Account",     value: fetched.bot ? "Yes" : "No",                 inline: true },
-      { name: "🎭 Badges",          value: badgeStr,                                   inline: false },
+      {
+        name: "🪪 IDENTIFICAÇÃO",
+        value: [
+          `**ID:** \`${fetched.id}\``,
+          `**Username:** \`${fetched.username}\``,
+          `**Nome Global:** ${fetched.globalName ?? "*não definido*"}`,
+          `**Nickname:** ${member?.nickname ?? "*nenhum*"}`,
+          `**Display Name:** ${fetched.displayName}`,
+          `**Bot:** ${fetched.bot ? "✅ Sim" : "❌ Não"}${fetched.system ? " | ⚙️ Sistema Discord" : ""}`,
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "📅 LINHA DO TEMPO",
+        value: [
+          `**Conta criada:** <t:${createdTs}:F>`,
+          `**Idade da conta:** \`${ageString(accountAgeDays * 86_400_000)}\` *(${accountAgeDays} dias)*`,
+          joinedTs ? `**Entrou no servidor:** <t:${joinedTs}:F>` : null,
+          joinedTs ? `**Tempo no servidor:** \`${ageString((Date.now() / 1000 - joinedTs) * 1000)}\`` : null,
+          joinPosition ? `**Posição de entrada:** \`#${joinPosition}\` de ${interaction.guild?.memberCount ?? "?"} membros` : null,
+        ].filter(Boolean).join("\n"),
+        inline: false,
+      },
+      {
+        name: `🎭 BADGES & FLAGS (${badgeList.length})`,
+        value: badgeList.length > 0 ? badgeList.join("\n") : "*Nenhuma badge especial*",
+        inline: true,
+      },
+      {
+        name: "💎 NITRO",
+        value: hasNitro
+          ? nitroIndicators.join("\n")
+          : "*Sem indicadores de Nitro*",
+        inline: true,
+      },
     );
 
-  // Guild member info
-  if (interaction.guild) {
-    try {
-      const member = await interaction.guild.members.fetch(fetched.id);
-      const joinedTs = member.joinedAt ? Math.floor(member.joinedAt.getTime() / 1000) : null;
-      const roles = member.roles.cache
-        .filter(r => r.id !== interaction.guild!.id) // exclude @everyone
-        .sort((a, b) => b.position - a.position)
-        .map(r => `<@&${r.id}>`)
-        .slice(0, 10);
+  // ── Presence section ──────────────────────────────────────────────────────
+  embedIdentity.addFields({
+    name: `🌐 PRESENÇA — ${STATUS_LABELS[status] ?? status}`,
+    value: activityLines.length > 0 ? activityLines.join("\n") : "*Nenhuma atividade detectada*",
+    inline: false,
+  });
 
-      embed.addFields(
-        { name: "📅 Server Joined",  value: joinedTs ? `<t:${joinedTs}:F>\n<t:${joinedTs}:R>` : "*Unknown*", inline: false },
-        { name: `🎖️ Roles (${member.roles.cache.size - 1})`, value: roles.length > 0 ? roles.join(" ") : "*No roles*", inline: false },
-        { name: "📝 Nickname",       value: member.nickname ?? "*None*",                   inline: true },
-        { name: "⏳ Timeout",        value: member.isCommunicationDisabled() ? `Until <t:${Math.floor((member.communicationDisabledUntil?.getTime() ?? 0) / 1000)}:R>` : "None", inline: true },
-        { name: "🛡️ Boosting",      value: member.premiumSince ? `<t:${Math.floor(member.premiumSince.getTime() / 1000)}:R>` : "No", inline: true },
-      );
-    } catch { /* member not in this guild */ }
+  if (bannerURL) embedIdentity.setImage(bannerURL);
+  embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Página 1/3` });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // EMBED 2 — SERVER INTELLIGENCE
+  // ════════════════════════════════════════════════════════════════════════
+  const embedServer = new EmbedBuilder()
+    .setColor(highestRole?.color ?? COLORS.PURPLE)
+    .setTitle("⚔️ GEASS INTELLIGENCE — SERVIDOR")
+    .addFields(
+      {
+        name: `🎖️ CARGOS (${roleCount})`,
+        value: roleDisplay || "*Sem cargos*",
+        inline: false,
+      },
+    );
+
+  if (highestRole) {
+    embedServer.addFields({
+      name: "🏆 CARGO MAIS ALTO",
+      value: [
+        `<@&${highestRole.id}> (posição #${highestRole.position})`,
+        `Cor: \`#${highestRole.color.toString(16).padStart(6, "0").toUpperCase()}\``,
+        highestRole.hoist ? "Exibido separadamente: ✅" : "Exibido separadamente: ❌",
+        highestRole.mentionable ? "Mencionável: ✅" : "Mencionável: ❌",
+      ].join("\n"),
+      inline: false,
+    });
   }
 
-  if (bannerURL) embed.setImage(bannerURL);
-  embed.setFooter({ text: `${AUTHOR} • Dossier compiled by Geass Intelligence` }).setTimestamp();
+  embedServer.addFields(
+    {
+      name: "🔐 PERMISSÕES EFETIVAS",
+      value: permDisplay || "*Membro não encontrado*",
+      inline: false,
+    },
+    {
+      name: "🛡️ STATUS DE MODERAÇÃO",
+      value: [
+        `**Timeout:** ${member?.isCommunicationDisabled() ? `⏳ Até <t:${Math.floor((member.communicationDisabledUntil?.getTime() ?? 0) / 1000)}:R>` : "Nenhum"}`,
+        `**Banido atualmente:** ${banEntry ? `🔨 Sim — Razão: *${banEntry.reason ?? "não informada"}*` : "❌ Não"}`,
+        `**Boosting:** ${member?.premiumSince ? `💎 Sim, desde <t:${Math.floor(member.premiumSince.getTime() / 1000)}:R>` : "❌ Não"}`,
+        `**Pendência de verificação:** ${member?.pending ? "⚠️ Sim (screening)" : "✅ Não"}`,
+      ].join("\n"),
+      inline: false,
+    },
+  );
 
-  await interaction.editReply({ embeds: [embed] });
+  if (voiceChannel) {
+    embedServer.addFields({
+      name: "🔊 VOZ ATUAL",
+      value: [
+        `Canal: <#${voiceChannel.id}> (\`${voiceChannel.name}\`)`,
+        `Mudo (self): ${voiceState?.selfMute ? "✅" : "❌"} | Deafened: ${voiceState?.selfDeaf ? "✅" : "❌"}`,
+        `Mudo (server): ${voiceState?.serverMute ? "✅" : "❌"} | Streamndo: ${voiceState?.streaming ? "📺 Sim" : "❌"}`,
+        `Camera: ${voiceState?.selfVideo ? "📷 Ligada" : "❌"}`,
+      ].join("\n"),
+      inline: false,
+    });
+  } else if (interaction.guild) {
+    embedServer.addFields({ name: "🔊 VOZ", value: "*Não está em canal de voz*", inline: true });
+  }
+
+  if (userInvites !== null) {
+    embedServer.addFields({
+      name: `🔗 CONVITES CRIADOS (${userInvites.size})`,
+      value: userInvites.size > 0
+        ? userInvites.map(inv => `\`${inv.code}\` — ${inv.uses ?? 0} usos${inv.maxUses ? `/${inv.maxUses}` : ""} — <#${inv.channelId}>`).slice(0, 5).join("\n") +
+          (userInvites.size > 5 ? `\n*...e mais ${userInvites.size - 5}*` : "")
+        : "*Nenhum convite ativo*",
+      inline: false,
+    });
+    if (totalInviteUses > 0) {
+      embedServer.addFields({ name: "📊 TOTAL DE USOS DE CONVITES", value: `\`${totalInviteUses}\` pessoas convidadas`, inline: true });
+    }
+  }
+
+  embedServer.setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Página 2/3` });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // EMBED 3 — TECHNICAL & RISK ASSESSMENT
+  // ════════════════════════════════════════════════════════════════════════
+  const sfDate = new Date(sf.timestamp);
+  const embedTech = new EmbedBuilder()
+    .setColor(risk.level.includes("CRITICAL") ? 0xFF0000 : risk.level.includes("HIGH") ? 0xFF8800 : risk.level.includes("MEDIUM") ? 0xFFFF00 : 0x00FF00)
+    .setTitle("🧬 GEASS INTELLIGENCE — TÉCNICO & RISCO")
+    .addFields(
+      {
+        name: "🔬 DECONSTRUÇÃO DO SNOWFLAKE",
+        value: [
+          `**ID completo:** \`${fetched.id}\``,
+          `**Timestamp extraído:** \`${sfDate.toISOString()}\``,
+          `**Worker ID:** \`${sf.workerId}\` (servidor Discord que criou a conta)`,
+          `**Process ID:** \`${sf.processId}\``,
+          `**Sequência:** \`${sf.increment}\` (ordem de criação no mesmo ms)`,
+          `**Época Discord:** 2015-01-01 00:00:00 UTC`,
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: "🖼️ ANÁLISE DE AVATAR",
+        value: [
+          `**Avatar hash:** \`${avatarHash ?? "nenhum (padrão)"}\``,
+          `**Animado (GIF):** ${isAnimatedAvatar ? "✅ Sim — indica Nitro" : "❌ Não"}`,
+          `**Avatar padrão:** ${hasDefaultAvatar ? "✅ Nunca trocou o avatar" : "❌ Tem avatar customizado"}`,
+          `**Banner:** ${hasBanner ? `✅ Possui — hash: \`${fetched.banner}\`` : "❌ Sem banner"}`,
+          `**Accent color:** ${accentColor ? `#${accentColor.toString(16).padStart(6, "0").toUpperCase()}` : "*não definido*"}`,
+        ].join("\n"),
+        inline: false,
+      },
+      {
+        name: `⚠️ AVALIAÇÃO DE RISCO — ${risk.level} (${risk.score}/100)`,
+        value: risk.factors.join("\n"),
+        inline: false,
+      },
+    );
+
+  // Risk score bar
+  const scoreBar = "█".repeat(Math.floor(risk.score / 10)) + "░".repeat(10 - Math.floor(risk.score / 10));
+  embedTech.addFields({
+    name: "📊 SCORE DE RISCO",
+    value: `\`[${scoreBar}]\` ${risk.score}/100 — ${risk.level}`,
+    inline: false,
+  });
+
+  if (member?.premiumSince) {
+    embedTech.addFields({
+      name: "💎 BOOST",
+      value: `Boostando desde <t:${Math.floor(member.premiumSince.getTime() / 1000)}:F> (<t:${Math.floor(member.premiumSince.getTime() / 1000)}:R>)`,
+      inline: false,
+    });
+  }
+
+  embedTech
+    .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Dossier gerado em ${new Date().toISOString()}` })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embedIdentity, embedServer, embedTech] });
 }
 
 async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -2068,6 +2430,12 @@ async function main(): Promise<void> {
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildModeration,
+      // NOTE: GuildMembers & GuildPresences are Privileged Intents.
+      // To enable them: Discord Developer Portal → Bot → Privileged Gateway Intents
+      // → toggle "Server Members Intent" and "Presence Intent" → Save → restart bot.
+      // Then uncomment the two lines below for join-order and live presence features:
+      // GatewayIntentBits.GuildMembers,
+      // GatewayIntentBits.GuildPresences,
     ],
   });
   botClient = client; // make accessible for DM alerts
