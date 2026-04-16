@@ -6,7 +6,7 @@ import { attackLiveConns, attackAborts } from "./attacks.js";
 const router: IRouter = Router();
 const STARTED_AT = Date.now();
 
-router.get("/healthz", (_req, res) => {
+router.get(["/healthz", "/health"], (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
   res.json(data);
 });

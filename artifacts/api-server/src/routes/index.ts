@@ -8,6 +8,7 @@ import proxiesRouter from "./proxies";
 import originFinderRouter from "./origin-finder";
 import clusterRouter from "./cluster";
 import eventsRouter from "./events";
+import imageRouter from "./image";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(analyzeRouter);
 router.use(proxiesRouter);
 router.use(originFinderRouter);
 router.use(clusterRouter);
+router.use(imageRouter);
 
 export default router;

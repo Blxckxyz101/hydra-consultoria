@@ -17,6 +17,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "express-rate-limit": "^8.3.2",
+    "openai": "^6",
     "pino": "^9",
     "pino-http": "^10",
     "raw-socket": "^1.8.1"

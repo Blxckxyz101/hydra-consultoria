@@ -15,6 +15,7 @@ import {
   ComponentType,
   Events,
   PermissionFlagsBits,
+  AttachmentBuilder,
   type MessageActionRowComponentBuilder,
 } from "discord.js";
 
@@ -240,6 +241,33 @@ const COMMANDS = [
         .setDescription("💬 Faça uma pergunta ou pedido ao Lelouch (qualquer assunto)")
         .addStringOption(opt =>
           opt.setName("message").setDescription("Sua mensagem para Lelouch").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("draw")
+        .setDescription("🎨 Gere uma imagem com o Geass de Lelouch — qualquer coisa que imaginar")
+        .addStringOption(opt =>
+          opt.setName("prompt").setDescription("O que você quer que o Geass crie?").setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("style")
+            .setDescription("Estilo visual (padrão: Code Geass dark art)")
+            .setRequired(false)
+            .addChoices(
+              { name: "🎌 Code Geass — dark anime art (padrão)", value: "geass" },
+              { name: "📸 Realista — fotorrealista de alta qualidade", value: "realistic" },
+              { name: "◾ Minimal — design limpo e moderno", value: "minimal" },
+            )
+        )
+        .addStringOption(opt =>
+          opt.setName("size")
+            .setDescription("Formato da imagem")
+            .setRequired(false)
+            .addChoices(
+              { name: "⬜ 1024×1024 — quadrado (padrão)", value: "1024x1024" },
+              { name: "🖥️ 1536×1024 — paisagem / widescreen", value: "1536x1024" },
+              { name: "📱 1024×1536 — retrato / vertical", value: "1024x1536" },
+            )
         )
     )
     .addSubcommand(sub =>
@@ -1490,6 +1518,91 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
           .setTimestamp(),
       ],
     });
+    return;
+  }
+
+  // ── draw — image generation ──────────────────────────────────────────────
+  if (sub === "draw") {
+    const prompt = interaction.options.getString("prompt", true);
+    const style  = interaction.options.getString("style")  ?? "geass";
+    const size   = interaction.options.getString("size")   ?? "1024x1024";
+
+    await interaction.deferReply();
+
+    // Lelouch's dramatic reaction while generating
+    const thinkingQuotes = [
+      "*\"Deixe o Geass pintar o que sua mente não consegue imaginar...\"*",
+      "*\"O poder de Geass agora serve a sua visão. Um momento.\"*",
+      "*\"Até um rei precisa de tempo para criar obras dignas de Britannia...\"*",
+      "*\"O tabuleiro se transforma. A imagem emerge das sombras do Geass.\"*",
+    ];
+    const quote = thinkingQuotes[Math.floor(Math.random() * thinkingQuotes.length)];
+
+    try {
+      const r = await fetch(`${API_BASE}/api/generate-image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, style, size }),
+        signal: AbortSignal.timeout(90_000), // image gen can take up to 60s
+      });
+
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({ error: r.statusText })) as { error?: string };
+        throw new Error(errBody.error ?? `HTTP ${r.status}`);
+      }
+
+      const data = await r.json() as {
+        b64_json: string;
+        prompt: string;
+        enhancedPrompt: string;
+        revisedPrompt: string | null;
+        size: string;
+      };
+
+      // Convert base64 to Buffer for Discord attachment
+      const imageBuffer = Buffer.from(data.b64_json, "base64");
+      const attachment   = new AttachmentBuilder(imageBuffer, { name: "geass-vision.png" });
+
+      const styleLabels: Record<string, string> = {
+        geass: "🎌 Code Geass dark anime art",
+        realistic: "📸 Fotorrealista",
+        minimal: "◾ Minimal",
+      };
+
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.PURPLE)
+            .setAuthor({ name: "Lelouch vi Britannia — Geass Vision", iconURL: "attachment://geass-symbol.png" })
+            .setTitle("🎨 GEASS VISION — CRIAÇÃO COMPLETA")
+            .setDescription(quote + `\n\n**Prompt:** \`${prompt.slice(0, 200)}\``)
+            .addFields(
+              { name: "🖼️ Estilo",     value: styleLabels[style] ?? style, inline: true },
+              { name: "📐 Resolução",  value: data.size,                    inline: true },
+              ...(data.revisedPrompt ? [{
+                name: "✨ Prompt refinado pela IA",
+                value: data.revisedPrompt.slice(0, 300),
+                inline: false,
+              }] : []),
+            )
+            .setImage("attachment://geass-vision.png")
+            .setFooter({ text: `${AUTHOR} • /lelouch draw para criar mais` })
+            .setTimestamp(),
+        ],
+        files: [attachment, ...buildGeassFiles()],
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[LELOUCH DRAW ERROR]", msg);
+      await interaction.editReply({
+        embeds: [buildErrorEmbed(
+          "GEASS VISION FALHOU",
+          msg.includes("content policy") || msg.includes("rejected")
+            ? `O Geass rejeitou este prompt por violar as diretrizes de conteúdo.\n\nTente uma descrição diferente.`
+            : `O Geass encontrou resistência inesperada.\n\`${msg.slice(0, 200)}\``
+        )],
+      });
+    }
     return;
   }
 
