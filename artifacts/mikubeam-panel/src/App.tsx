@@ -26,7 +26,19 @@ interface CheckResult    { up: boolean; status: number; statusText: string; resp
 interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
 interface UserPreset     { id: string; label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; }
 interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
-interface AnalyzeResult  { target: string; ip: string | null; isIP: boolean; httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number; serverHeader: string; serverType: string; serverLabel: string; isCDN: boolean; cdnProvider: string; openPorts: number[]; recommendations: MethodRec[]; }
+interface AnalyzeResult  {
+  target: string; ip: string | null; allIPs: string[]; isIP: boolean; hasDNS: boolean;
+  httpAvailable: boolean; httpsAvailable: boolean; responseTimeMs: number;
+  serverHeader: string; serverType: string; serverLabel: string;
+  isCDN: boolean; cdnProvider: string;
+  hasWAF: boolean; wafProvider: string;
+  supportsH2: boolean; supportsH3: boolean; altSvc: string;
+  hasHSTS: boolean; hstsMaxAge: number;
+  hasGraphQL: boolean; hasWebSocket: boolean;
+  openPorts: number[];
+  originIP: string | null; originSubdomain: string | null;
+  recommendations: MethodRec[];
+}
 interface NamedTarget    { url: string; label: string; }
 interface Toast          { id: string; type: "success"|"warn"|"error"|"geass"|"launch"|"stop"; title: string; msg?: string; }
 interface DomainScore    { total: number; downed: number; lastMethod: string; lastSeen: number; }
@@ -1613,48 +1625,124 @@ function Panel() {
                   <span className="lb-analyzer-title">👁 INTELLIGENCE ANALYSIS</span>
                   <button className="lb-analyzer-close" onClick={() => setShowAnalyze(false)}>✕</button>
                 </div>
+
                 {isAnalyzing && (
                   <div className="lb-analyzer-loading">
                     <div className="lb-analyzer-spinner"/>
-                    <span>Scanning target vectors...</span>
+                    <span>Scanning — ports, WAF, H2/H3, origin IP, GraphQL...</span>
                   </div>
                 )}
+
                 {!isAnalyzing && analyzeResult && (
                   <>
-                    <div className="lb-analyze-info">
-                      <span className="lai-item"><span className="lai-key">TARGET</span>{analyzeResult.target}</span>
-                      {analyzeResult.ip && <span className="lai-item"><span className="lai-key">IP</span>{analyzeResult.ip}</span>}
-                      <span className="lai-item">
-                        <span className="lai-key">HTTP</span>
-                        <span style={{ color: analyzeResult.httpAvailable || analyzeResult.httpsAvailable ? "#2ecc71" : "#C0392B" }}>
-                          {analyzeResult.httpAvailable ? "80 ✓" : ""}{analyzeResult.httpAvailable && analyzeResult.httpsAvailable ? "  " : ""}{analyzeResult.httpsAvailable ? "443 ✓" : ""}
-                          {!analyzeResult.httpAvailable && !analyzeResult.httpsAvailable ? "CLOSED" : ""}
-                        </span>
+                    {/* ── Identity Row: host + IP + latency ── */}
+                    <div className="lai-identity">
+                      <span className="lai-host">{analyzeResult.target}</span>
+                      {analyzeResult.ip && (
+                        <span className="lai-ip-badge">{analyzeResult.ip}</span>
+                      )}
+                      {(analyzeResult.allIPs ?? []).length > 1 && (
+                        <span className="lai-multi-ip">⇄ {analyzeResult.allIPs.length} IPs</span>
+                      )}
+                      <span className={`lai-latency lai-latency--${
+                        analyzeResult.responseTimeMs === 0 ? "dead"
+                        : analyzeResult.responseTimeMs > 600 ? "slow"
+                        : analyzeResult.responseTimeMs > 200 ? "warn"
+                        : "fast"
+                      }`}>
+                        {analyzeResult.responseTimeMs > 0 ? `${analyzeResult.responseTimeMs}ms` : "OFFLINE"}
                       </span>
-                      {analyzeResult.responseTimeMs > 0 && (
-                        <span className="lai-item"><span className="lai-key">LATENCY</span>
-                          <span style={{ color: analyzeResult.responseTimeMs > 500 ? "#e67e22" : "#2ecc71" }}>{analyzeResult.responseTimeMs}ms</span>
-                        </span>
-                      )}
-                      {analyzeResult.serverHeader && (
-                        <span className="lai-item">
-                          <span className="lai-key">SERVER</span>
-                          <span className="lai-server-raw">{analyzeResult.serverHeader}</span>
-                        </span>
-                      )}
-                      {(analyzeResult.serverType && analyzeResult.serverType !== "unknown") && (
-                        <span className="lai-item">
-                          <span className="lai-key">TYPE</span>
+                    </div>
+
+                    {/* ── Server Type + Raw Header ── */}
+                    {(analyzeResult.serverHeader || (analyzeResult.serverType && analyzeResult.serverType !== "unknown")) && (
+                      <div className="lai-server-row">
+                        {analyzeResult.serverType && analyzeResult.serverType !== "unknown" && (
                           <span className={`lai-server-badge lai-server-badge--${analyzeResult.serverType}`}>
                             {analyzeResult.serverLabel || analyzeResult.serverType}
                           </span>
-                        </span>
+                        )}
+                        {analyzeResult.serverHeader && (
+                          <span className="lai-server-raw">{analyzeResult.serverHeader}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Protocol / Feature Chips ── */}
+                    <div className="lai-chips">
+                      <span className={`lai-chip ${analyzeResult.httpAvailable  ? "lai-chip--on"  : "lai-chip--off"}`}>HTTP</span>
+                      <span className={`lai-chip ${analyzeResult.httpsAvailable ? "lai-chip--on"  : "lai-chip--off"}`}>HTTPS</span>
+                      <span className={`lai-chip ${analyzeResult.supportsH2     ? "lai-chip--on"  : "lai-chip--off"}`}>HTTP/2</span>
+                      <span className={`lai-chip lai-chip--h3 ${analyzeResult.supportsH3 ? "lai-chip--on" : "lai-chip--off"}`}>HTTP/3</span>
+                      <span className={`lai-chip lai-chip--ws  ${analyzeResult.hasWebSocket ? "lai-chip--on" : "lai-chip--off"}`}>WebSocket</span>
+                      <span className={`lai-chip lai-chip--gql ${analyzeResult.hasGraphQL  ? "lai-chip--on" : "lai-chip--off"}`}>GraphQL</span>
+                      <span className={`lai-chip lai-chip--hsts ${analyzeResult.hasHSTS    ? "lai-chip--on" : "lai-chip--off"}`}>
+                        HSTS{analyzeResult.hasHSTS && analyzeResult.hstsMaxAge > 0 ? ` ${Math.round(analyzeResult.hstsMaxAge/86400)}d` : ""}
+                      </span>
+                      {analyzeResult.hasDNS && (
+                        <span className="lai-chip lai-chip--on lai-chip--dns">DNS ✓</span>
                       )}
-                      {analyzeResult.isCDN && (
-                        <span className="lai-item lai-cdn">
-                          <span className="lai-key">CDN</span>{analyzeResult.cdnProvider} ⚠
-                        </span>
-                      )}
+                    </div>
+
+                    {/* ── CDN / WAF Threat Alerts ── */}
+                    {(analyzeResult.isCDN || analyzeResult.hasWAF) && (
+                      <div className="lai-threat-row">
+                        {analyzeResult.isCDN && (
+                          <div className="lai-threat lai-threat--cdn">
+                            <span className="lai-threat-icon">☁</span>
+                            <div className="lai-threat-body">
+                              <span className="lai-threat-label">CDN DETECTED</span>
+                              <span className="lai-threat-prov">{analyzeResult.cdnProvider}</span>
+                            </div>
+                            <span className="lai-threat-note">L7 edge-mitigated</span>
+                          </div>
+                        )}
+                        {analyzeResult.hasWAF && (
+                          <div className="lai-threat lai-threat--waf">
+                            <span className="lai-threat-icon">🛡</span>
+                            <div className="lai-threat-body">
+                              <span className="lai-threat-label">WAF DETECTED</span>
+                              <span className="lai-threat-prov">{analyzeResult.wafProvider}</span>
+                            </div>
+                            <span className="lai-threat-note">Use waf-bypass</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Open Ports ── */}
+                    {analyzeResult.openPorts.length > 0 && (
+                      <div className="lai-ports">
+                        <span className="lai-ports-label">PORTS</span>
+                        <div className="lai-ports-list">
+                          {analyzeResult.openPorts.map(p => (
+                            <span key={p} className="lai-port">{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Origin IP Discovery ── */}
+                    {analyzeResult.originIP && (
+                      <div className="lai-origin">
+                        <span className="lai-origin-label">🎯 ORIGIN IP — CLOUDFLARE BYPASS</span>
+                        <div className="lai-origin-body">
+                          <span className="lai-origin-ip">{analyzeResult.originIP}</span>
+                          {analyzeResult.originSubdomain && (
+                            <span className="lai-origin-sub">via {analyzeResult.originSubdomain}</span>
+                          )}
+                          <button className="lai-origin-use" onClick={() => {
+                            setTarget(analyzeResult!.originIP!);
+                            addLog(`🎯 Target → ${analyzeResult!.originIP} (origin IP — CF bypassed)`, "success");
+                            setShowAnalyze(false);
+                          }}>USE DIRECT</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Ranked Recommendations ── */}
+                    <div className="lai-recs-header">
+                      <span>VECTORS RANKED — {analyzeResult.recommendations.length} methods scored</span>
                     </div>
                     <div className="lb-recs">
                       {analyzeResult.recommendations.map((rec, i) => (

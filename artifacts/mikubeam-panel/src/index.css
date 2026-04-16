@@ -899,6 +899,146 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   color:#ff9aaa;
 }
 
+/* ── Analyzer: Identity Row ── */
+.lai-identity {
+  display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px;
+  padding:10px 14px 8px;
+  border-bottom:1px solid rgba(100,180,255,0.1);
+}
+.lai-host {
+  font-family:var(--f-mono); font-size:.82rem; color:#e0ecff;
+  font-weight:700; letter-spacing:.02em;
+}
+.lai-ip-badge {
+  font-family:var(--f-mono); font-size:.7rem;
+  padding:2px 7px; border-radius:4px;
+  background:rgba(100,180,255,0.1); color:#88ccff;
+  border:1px solid rgba(100,180,255,0.25);
+}
+.lai-multi-ip {
+  font-family:var(--f-mono); font-size:.67rem; color:#e67e22;
+  padding:2px 7px; border-radius:4px;
+  background:rgba(230,126,34,0.1); border:1px solid rgba(230,126,34,0.3);
+}
+.lai-latency {
+  font-family:var(--f-mono); font-size:.72rem; font-weight:700;
+  padding:2px 8px; border-radius:4px; margin-left:auto;
+}
+.lai-latency--fast { color:#2ecc71; background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.3); }
+.lai-latency--warn { color:#e67e22; background:rgba(230,126,34,0.12); border:1px solid rgba(230,126,34,0.3); }
+.lai-latency--slow { color:#e74c3c; background:rgba(231,76,60,0.12);  border:1px solid rgba(231,76,60,0.3);  }
+.lai-latency--dead { color:#666;    background:rgba(60,60,60,0.2);     border:1px solid rgba(80,80,80,0.3);   }
+
+/* ── Analyzer: Server Row ── */
+.lai-server-row {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:7px 14px;
+  border-bottom:1px solid rgba(100,180,255,0.08);
+}
+
+/* ── Analyzer: Feature Chips ── */
+.lai-chips {
+  display:flex; flex-wrap:wrap; gap:5px;
+  padding:8px 14px;
+  border-bottom:1px solid rgba(100,180,255,0.08);
+}
+.lai-chip {
+  font-family:var(--f-mono); font-size:.65rem; font-weight:700;
+  padding:3px 8px; border-radius:4px;
+  letter-spacing:.06em; text-transform:uppercase;
+  transition:opacity .2s;
+}
+.lai-chip--on  { color:#2ecc71; background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35); }
+.lai-chip--off { color:#3a4450; background:rgba(40,50,60,0.4);    border:1px solid rgba(60,80,100,0.2); opacity:.55; }
+.lai-chip--h3.lai-chip--on   { color:#9b59b6; background:rgba(155,89,182,0.12); border-color:rgba(155,89,182,0.35); }
+.lai-chip--ws.lai-chip--on   { color:#00d4ff; background:rgba(0,212,255,0.1);   border-color:rgba(0,212,255,0.35); }
+.lai-chip--gql.lai-chip--on  { color:#e10098; background:rgba(225,0,152,0.1);   border-color:rgba(225,0,152,0.35); }
+.lai-chip--hsts.lai-chip--on { color:#f39c12; background:rgba(243,156,18,0.1); border-color:rgba(243,156,18,0.35); }
+.lai-chip--dns.lai-chip--on  { color:#88ccff; background:rgba(100,180,255,0.1); border-color:rgba(100,180,255,0.3); }
+
+/* ── Analyzer: Threat Alerts (CDN / WAF) ── */
+.lai-threat-row {
+  display:flex; flex-direction:column; gap:2px;
+  padding:6px 14px;
+  border-bottom:1px solid rgba(100,180,255,0.08);
+}
+.lai-threat {
+  display:flex; align-items:center; gap:8px;
+  padding:6px 10px; border-radius:5px;
+  font-family:var(--f-mono);
+}
+.lai-threat--cdn { background:rgba(230,126,34,0.1); border:1px solid rgba(230,126,34,0.25); }
+.lai-threat--waf { background:rgba(231,76,60,0.1);  border:1px solid rgba(231,76,60,0.25); }
+.lai-threat-icon { font-size:.9rem; flex-shrink:0; }
+.lai-threat-body { display:flex; flex-direction:column; gap:1px; flex:1; min-width:0; }
+.lai-threat-label { font-size:.65rem; font-weight:700; letter-spacing:.1em; color:#e67e22; }
+.lai-threat--waf .lai-threat-label { color:#e74c3c; }
+.lai-threat-prov  { font-size:.72rem; color:#c8a88a; }
+.lai-threat--waf .lai-threat-prov  { color:#c8a8a8; }
+.lai-threat-note  { font-size:.62rem; color:#88ccff55; margin-left:auto; white-space:nowrap; }
+
+/* ── Analyzer: Open Ports ── */
+.lai-ports {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:7px 14px;
+  border-bottom:1px solid rgba(100,180,255,0.08);
+}
+.lai-ports-label {
+  font-family:var(--f-mono); font-size:.62rem; color:#88ccff66;
+  letter-spacing:.1em; flex-shrink:0;
+}
+.lai-ports-list { display:flex; flex-wrap:wrap; gap:4px; }
+.lai-port {
+  font-family:var(--f-mono); font-size:.68rem;
+  padding:2px 7px; border-radius:3px;
+  background:rgba(100,180,255,0.08); color:#88ccff;
+  border:1px solid rgba(100,180,255,0.2);
+}
+
+/* ── Analyzer: Origin IP Discovery ── */
+.lai-origin {
+  margin:6px 14px;
+  border-radius:6px;
+  background:rgba(255,0,51,0.07);
+  border:1px solid rgba(255,0,51,0.3);
+  overflow:hidden;
+}
+.lai-origin-label {
+  display:block; padding:6px 12px;
+  font-family:var(--f-display); font-size:.68rem;
+  letter-spacing:.1em; color:#ff6680;
+  background:rgba(255,0,51,0.1);
+  border-bottom:1px solid rgba(255,0,51,0.2);
+}
+.lai-origin-body {
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:8px 12px;
+}
+.lai-origin-ip {
+  font-family:var(--f-mono); font-size:.82rem; font-weight:700;
+  color:#ff9aaa; letter-spacing:.04em;
+}
+.lai-origin-sub {
+  font-family:var(--f-mono); font-size:.67rem; color:#ff668066;
+}
+.lai-origin-use {
+  margin-left:auto;
+  padding:5px 12px;
+  background:rgba(255,0,51,0.2); border:1px solid rgba(255,0,51,0.5);
+  border-radius:5px; color:#ff6680;
+  font-family:var(--f-display); font-size:.7rem; letter-spacing:.08em;
+  cursor:pointer; transition:all .2s;
+}
+.lai-origin-use:hover { background:rgba(255,0,51,0.35); color:#ff9aaa; }
+
+/* ── Analyzer: Recs Section Header ── */
+.lai-recs-header {
+  padding:7px 14px 5px;
+  font-family:var(--f-mono); font-size:.62rem;
+  color:#88ccff44; letter-spacing:.1em; text-transform:uppercase;
+  border-top:1px solid rgba(100,180,255,0.1);
+}
+
 /* ═══════════════════════════════════
    RESPONSIVE
 ═══════════════════════════════════ */
