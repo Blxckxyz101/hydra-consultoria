@@ -15,13 +15,17 @@ import dns from "node:dns/promises";
 
 const router: IRouter = Router();
 
-export interface Proxy { host: string; port: number; responseMs: number; type: "http" | "socks5"; }
+export interface Proxy { host: string; port: number; responseMs: number; type: "http" | "socks5"; username?: string; password?: string; }
 
 // ── In-memory cache (exported so attacks.ts can read it) ─────────────────
 export let proxyCache: Proxy[] = [];
 let lastFetch = 0;
 let isFetching = false;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// ── Pinned proxies — custom/residential proxies that survive cache refresh ─
+let pinnedProxies: Proxy[] = [];
+let residentialCreds: { host: string; port: number; username: string; password: string; count: number } | null = null;
 
 // ── Proxy sources — expanded v3 (14 HTTP + 8 SOCKS5) ────────────────────
 const HTTP_SOURCES = [
@@ -149,9 +153,33 @@ async function runHarvest(limit = 600): Promise<void> {
     // Merge with existing cache (keep fast proxies that are still valid)
     const merged = new Map<string, Proxy>();
     for (const p of [...proxyCache, ...fresh]) merged.set(`${p.type}:${p.host}:${p.port}`, p);
-    proxyCache = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs).slice(0, 1000);
+    // Always keep pinned proxies at the front (fastest priority)
+    const harvested = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs).slice(0, 1000);
+    const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
+    const nonDup = harvested.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`));
+    proxyCache = [...pinnedProxies, ...nonDup];
     lastFetch  = Date.now();
   } catch { /* keep old cache */ } finally { isFetching = false; }
+}
+
+// ── Parse custom proxy string (supports user:pass@host:port & plain host:port) ─
+function parseCustomProxy(line: string): { host: string; port: number; username?: string; password?: string } | null {
+  const s = line.trim().replace(/^https?:\/\//i, "");
+  // user:pass@host:port
+  const authMatch = s.match(/^([^:@]+):([^@]+)@([\d.a-z-]+):(\d+)$/i);
+  if (authMatch) {
+    const port = parseInt(authMatch[4], 10);
+    if (port < 1 || port > 65535) return null;
+    return { username: authMatch[1], password: authMatch[2], host: authMatch[3], port };
+  }
+  // host:port
+  const plain = s.match(/^([\d.]+|[a-z0-9.-]+):(\d+)$/i);
+  if (plain) {
+    const port = parseInt(plain[2], 10);
+    if (port < 1 || port > 65535) return null;
+    return { host: plain[1], port };
+  }
+  return null;
 }
 
 // Initial harvest after 30 seconds
@@ -192,26 +220,114 @@ router.get("/proxies/count", (_req, res): void => {
 // GET /api/proxies/stats — detailed harvester stats
 router.get("/proxies/stats", (_req, res): void => {
   const ageMs = Date.now() - lastFetch;
-  const httpCount   = proxyCache.filter(p => p.type === "http").length;
-  const socks5Count = proxyCache.filter(p => p.type === "socks5").length;
+  const httpCount      = proxyCache.filter(p => p.type === "http").length;
+  const socks5Count    = proxyCache.filter(p => p.type === "socks5").length;
+  const pinnedCount    = pinnedProxies.length;
+  const residentialCount = residentialCreds ? residentialCreds.count : 0;
   const avgMs = proxyCache.length > 0
     ? Math.round(proxyCache.reduce((a, p) => a + p.responseMs, 0) / proxyCache.length)
     : 0;
   res.json({
-    count:         proxyCache.length,
+    count:            proxyCache.length,
     httpCount,
     socks5Count,
-    avgResponseMs: avgMs,
-    fastest:       proxyCache[0] ?? null,
-    sources:       { http: HTTP_SOURCES.length, socks5: SOCKS5_SOURCES.length, total: HTTP_SOURCES.length + SOCKS5_SOURCES.length },
+    pinnedCount,
+    residentialCount,
+    residential:      residentialCreds ? { host: residentialCreds.host, port: residentialCreds.port, count: residentialCreds.count } : null,
+    avgResponseMs:    avgMs,
+    fastest:          proxyCache[0] ?? null,
+    sources:          { http: HTTP_SOURCES.length, socks5: SOCKS5_SOURCES.length, total: HTTP_SOURCES.length + SOCKS5_SOURCES.length },
     lastFetch,
     ageMs,
-    fresh:         ageMs < CACHE_TTL,
-    fetching:      isFetching,
+    fresh:            ageMs < CACHE_TTL,
+    fetching:         isFetching,
     totalTested,
     totalFound,
-    nextRefreshIn: Math.max(0, 5 * 60 * 1000 - ageMs),
+    nextRefreshIn:    Math.max(0, 5 * 60 * 1000 - ageMs),
   });
+});
+
+// POST /api/proxies/import — import custom proxy list (host:port or user:pass@host:port lines)
+router.post("/proxies/import", (req, res): void => {
+  const { proxies: lines, test = false } = req.body as { proxies: string[]; test?: boolean };
+  if (!Array.isArray(lines) || lines.length === 0) {
+    res.status(400).json({ error: "proxies must be a non-empty array of strings" }); return;
+  }
+  const parsed: Proxy[] = [];
+  for (const line of lines) {
+    const p = parseCustomProxy(line);
+    if (!p) continue;
+    parsed.push({ host: p.host, port: p.port, responseMs: 1, type: "http", username: p.username, password: p.password });
+  }
+  if (parsed.length === 0) { res.status(400).json({ error: "no valid proxies found in input" }); return; }
+
+  if (test) {
+    // Test connectivity first (parallel, 4s timeout)
+    res.json({ status: "testing", message: `Testing ${parsed.length} proxies... check /api/proxies/stats for results` });
+    void (async () => {
+      const live: Proxy[] = [];
+      const BATCH = 50;
+      for (let i = 0; i < parsed.length; i += BATCH) {
+        const batch = parsed.slice(i, i + BATCH);
+        const results = await Promise.allSettled(batch.map(testProxy));
+        for (const r of results) if (r.status === "fulfilled" && r.value) live.push(r.value);
+      }
+      // Preserve auth credentials (testProxy strips them)
+      const liveWithAuth = live.map(lp => {
+        const orig = parsed.find(p => p.host === lp.host && p.port === lp.port);
+        return { ...lp, username: orig?.username, password: orig?.password };
+      });
+      pinnedProxies = [...pinnedProxies, ...liveWithAuth];
+      const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
+      proxyCache = [...pinnedProxies, ...proxyCache.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`))];
+      lastFetch = Date.now();
+    })();
+    return;
+  }
+
+  // Direct add without testing
+  pinnedProxies = [...pinnedProxies, ...parsed];
+  const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
+  proxyCache = [...pinnedProxies, ...proxyCache.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`))];
+  lastFetch = Date.now();
+  res.json({ status: "imported", added: parsed.length, total: proxyCache.length });
+});
+
+// POST /api/proxies/residential — configure rotating residential proxy credentials
+// Creates N virtual entries all pointing to the same host (each connection gets a different residential IP)
+router.post("/proxies/residential", (req, res): void => {
+  const { host, port, username, password, count = 25 } = req.body as {
+    host: string; port: number; username: string; password: string; count?: number;
+  };
+  if (!host || !port || !username || !password) {
+    res.status(400).json({ error: "host, port, username, password required" }); return;
+  }
+  residentialCreds = { host, port: Number(port), username, password, count: Number(count) };
+  // Create `count` virtual proxy entries — same endpoint, each connection rotates IP
+  const residential: Proxy[] = Array.from({ length: Number(count) }, (_, i) => ({
+    host, port: Number(port), responseMs: i + 1, type: "http" as const, username, password,
+  }));
+  // Remove old residential entries from pinned
+  pinnedProxies = pinnedProxies.filter(p => !(p.username === username && p.host === host));
+  pinnedProxies = [...residential, ...pinnedProxies];
+  // Rebuild cache with residential proxies at front
+  const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
+  proxyCache = [...pinnedProxies, ...proxyCache.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`))];
+  lastFetch = Date.now();
+  res.json({
+    status: "configured", residential: residentialCreds,
+    message: `${count} rotating residential proxy slots added — each connection exits via a different IP`,
+    totalProxies: proxyCache.length,
+  });
+});
+
+// DELETE /api/proxies/pinned — clear all pinned/imported/residential proxies
+router.delete("/proxies/pinned", (_req, res): void => {
+  const removed = pinnedProxies.length;
+  pinnedProxies = [];
+  residentialCreds = null;
+  proxyCache = proxyCache.filter(p => !p.username);
+  res.json({ status: "cleared", removed, remaining: proxyCache.length });
 });
 
 export default router;

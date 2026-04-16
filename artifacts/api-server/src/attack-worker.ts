@@ -21,7 +21,7 @@ const HTTP_AGENT  = new http.Agent({ maxSockets: Infinity, keepAlive: false, sch
 const HTTPS_AGENT = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
 
 // ── Types ─────────────────────────────────────────────────────────────────
-interface ProxyConfig { host: string; port: number; type?: "http" | "socks5"; }
+interface ProxyConfig { host: string; port: number; type?: "http" | "socks5"; username?: string; password?: string; }
 interface WorkerConfig {
   method:   string;
   target:   string;
@@ -780,9 +780,14 @@ function fetchViaProxy(
     const finish = (bytes: number) => resolve(bytes);
     const fail   = ()             => resolve(100);
 
+    // Build Proxy-Authorization header if credentials present
+    const proxyAuth = proxy.username
+      ? { "Proxy-Authorization": "Basic " + Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64") }
+      : {};
+
     if (!isHttps) {
       // HTTP through proxy — send absolute URL
-      const absHeaders = Object.assign({}, headers, {
+      const absHeaders = Object.assign({}, headers, proxyAuth, {
         Host: targetHost,
         "Content-Length": bodyBuf ? String(bodyBuf.length) : undefined,
       } as Record<string, string | undefined>);
@@ -2417,10 +2422,14 @@ function httpConnectTunnel(
     const cleanup = (e: Error) => { try { sock.destroy(); } catch {/**/} reject(e); };
 
     sock.once("connect", () => {
+      const authHdr = proxy.username
+        ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n`
+        : "";
       sock.write(
         `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
         `Host: ${targetHost}:${targetPort}\r\n` +
-        `Proxy-Connection: keep-alive\r\n\r\n`,
+        `Proxy-Connection: keep-alive\r\n` +
+        `${authHdr}\r\n`,
       );
 
       let buf = "";
