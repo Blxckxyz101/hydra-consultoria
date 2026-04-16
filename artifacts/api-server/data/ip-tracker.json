@@ -1,0 +1,14 @@
+[
+  {
+    "token": "2f3d113e9d487d86472205a86adf8c53",
+    "theme": "instagram",
+    "userId": "123",
+    "username": "testuser",
+    "targetName": "TestTarget",
+    "generatedAt": 1776378127671,
+    "hits": 1,
+    "capturedIp": "::1",
+    "capturedAt": 1776378133118,
+    "userAgent": "curl/8.14.1"
+  }
+]

