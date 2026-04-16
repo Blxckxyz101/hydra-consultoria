@@ -42,7 +42,7 @@ const L7_PROXY_OK = new Set([
   "conn-flood","ws-flood","h2-settings-storm",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "ARES ∞ [21v]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")      return { badge: "ARES ∞ [33V]",  cls: "geass",     color: "#C0392B" };
   if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
@@ -295,14 +295,14 @@ const LOG_MSGS_CONN = [
 const LOG_MSGS_GEASS = [
   (t: string, n: string) => `👁 Geass Override ARES OMNIVECT ∞: ${n} strikes obliterating ${t} on 33 vectors`,
   (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Pipeline+Storm+ICMP+DNS+NTP+Memc+SSDP on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 21-way siege, target has no defensive surface`,
-  (t: string) => `👁 ${t} overwhelmed — 21 concurrent attack vectors, absolute protocol annihilation`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 33-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 33 concurrent attack vectors, absolute protocol annihilation`,
   (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
-  (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT flooding HPACK table into eviction loop`,
-  (t: string) => `👁 21-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC DCID+HTTPPipeline+H2Storm flood`,
+  (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT+AppSmartFlood+LargeHeaderBomb+H2Priority flooding into eviction loop`,
+  (t: string) => `👁 33-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC+Pipeline+H2Storm+AppSmart+LargeHeader+H2Priority flood`,
   (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records + Pipeline 300K req/s`,
-  (t: string) => `👁 ABSOLUTE GEASS — 23 real attack vectors firing simultaneously on ${t}, zero mercy`,
+  (t: string) => `👁 ABSOLUTE GEASS — 33 real attack vectors firing simultaneously on ${t}, zero mercy`,
 ];
 
 /* ── Sparkline chart ── */
@@ -933,7 +933,7 @@ function Panel() {
     const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — ARES OMNIVECT — target: ${target}`, "info");
-      addLog(`  21-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris+Pipeline+H2Storm+ICMP+DNS+NTP+Memc+SSDP+UDP | ${threads} threads | ${duration}s`, "info");
+      addLog(`  33-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris+Pipeline+H2Storm+ICMP+DNS+NTP+Memc+SSDP+UDP+AppSmart+LargeHeader+H2Prio | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
