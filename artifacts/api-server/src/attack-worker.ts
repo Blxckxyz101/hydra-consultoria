@@ -814,7 +814,10 @@ function fetchViaProxy(
       const timer = setTimeout(() => { sock.destroy(); fail(); }, timeoutMs);
 
       sock.once("connect", () => {
-        sock.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\nProxy-Connection: keep-alive\r\n\r\n`);
+        const proxyAuthHeader = proxy.username
+          ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ""}`).toString("base64")}\r\n`
+          : "";
+        sock.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\nProxy-Connection: keep-alive\r\n${proxyAuthHeader}\r\n`);
         sock.once("data", (chunk) => {
           if (!chunk.toString().startsWith("HTTP/1.") || !chunk.toString().includes(" 200")) {
             clearTimeout(timer); sock.destroy(); fail(); return;

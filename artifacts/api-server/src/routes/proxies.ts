@@ -215,8 +215,8 @@ function parseCustomProxy(line: string): { host: string; port: number; username?
   return null;
 }
 
-// Initial harvest after 30 seconds
-setTimeout(() => void runHarvest(600), 30_000);
+// Initial harvest after 10 seconds
+setTimeout(() => void runHarvest(600), 10_000);
 
 // Continuous harvest every 5 minutes
 setInterval(() => void runHarvest(600), 5 * 60 * 1000);
