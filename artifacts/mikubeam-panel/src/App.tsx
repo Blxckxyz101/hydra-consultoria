@@ -624,7 +624,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   /* Proxy rotation */
   interface ProxyEntry { host: string; port: number; responseMs: number; type?: "http" | "socks5"; }
-  interface ResidentialInfo { host: string; port: number; count: number; username: string; }
+  interface ResidentialInfo { host: string; port: number; count: number; username?: string; }
   const [proxies, setProxies]             = useState<ProxyEntry[]>([]);
   const [proxyEnabled, setProxyEnabled]   = useState(false);
   const [proxyFetching, setProxyFetching] = useState(false);
@@ -769,12 +769,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           fetch(`${BASE}/api/proxies/stats`),
         ]);
         const d  = await r.json() as { count: number; fetching: boolean; lastFetch: number };
-        const ds = await rs.json() as { count: number; residentialCount?: number; residential?: { host: string; port: number; count: number } | null; fresh?: boolean };
+        const ds = await rs.json() as { count: number; residentialCount?: number; residential?: ResidentialInfo | null; fresh?: boolean };
         setProxyLiveCount(d.count);
         setProxyIsFetching(d.fetching);
         if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
-        if ((ds.residentialCount ?? 0) > 0) setResidentialCount(ds.residentialCount ?? 0);
-        // Sync displayed list if count changed and we're showing the panel
+        // Always sync residential info from stats
+        if ((ds.residentialCount ?? 0) > 0) {
+          setResidentialCount(ds.residentialCount ?? 0);
+          if (ds.residential) setResidentialInfo(prev => prev ?? ds.residential!);
+        } else if (ds.residentialCount === 0) {
+          setResidentialInfo(null);
+          setResidentialCount(0);
+        }
+        // Sync displayed public proxy list if empty
         if (d.count > 0 && proxies.length === 0 && !d.fetching) {
           const r2  = await fetch(`${BASE}/api/proxies`);
           const d2  = await r2.json() as {
@@ -1660,7 +1667,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   const totalPackets = localPkts  + (isRunning ? clusterTotalPkts  : 0);
   const totalBytes   = localBytes + (isRunning ? clusterTotalBytes : 0);
   const totalNodes   = clusterNodes.filter(n => n.trim()).length + 1;
-  const proxyUsable  = proxyEnabled && proxies.length > 0 && L7_PROXY_OK.has(method);
+  const proxyUsable  = proxyEnabled && (proxies.length > 0 || residentialInfo !== null) && L7_PROXY_OK.has(method);
 
   // Intensity for GeassEye animation (0–1 based on pps relative to a high reference)
   const eyeIntensity = isRunning ? Math.min(1, pps / 50000) : 0;
@@ -2857,7 +2864,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       <div className="lb-advisor-eff-wrap">
                         <div className="lb-advisor-eff-row">
                           <span className="lb-advisor-eff-lbl">EFFECTIVENESS</span>
-                          <span className="lb-advisor-eff-pct" style={{ color: effColor }}>{eff}%</span>
+                          <span className="lb-advisor-eff-pct" style={{ color: effColor }}>{String(eff)}%</span>
                         </div>
                         <div className="lb-advisor-eff-track">
                           <div className="lb-advisor-eff-fill" style={{ width:`${eff}%`, background: effColor, boxShadow:`0 0 8px ${effColor}88` }}/>
@@ -2866,7 +2873,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     )}
 
                     {/* Analysis */}
-                    {aiData.analysis && (
+                    {Boolean(aiData.analysis) && (
                       <div className="lb-advisor-card">
                         <div className="lb-advisor-card-label">ANALYSIS</div>
                         <div className="lb-advisor-card-text">{String(aiData.analysis)}</div>
@@ -2874,7 +2881,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     )}
 
                     {/* Recommendation */}
-                    {aiData.primaryRecommendation && (
+                    {Boolean(aiData.primaryRecommendation) && (
                       <div className="lb-advisor-card lb-advisor-card--rec">
                         <div className="lb-advisor-card-label">RECOMMENDATION</div>
                         <div className="lb-advisor-card-text">{String(aiData.primaryRecommendation)}</div>
@@ -2883,19 +2890,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
                     {/* Vectors row */}
                     <div className="lb-advisor-vectors-row">
-                      {aiData.boostVector && (
+                      {Boolean(aiData.boostVector) && (
                         <div className="lb-advisor-vec lb-advisor-vec--boost">
                           <span className="lb-advisor-vec-lbl">⚡ BOOST VECTOR</span>
                           <span className="lb-advisor-vec-method">{String(aiData.boostVector).toUpperCase()}</span>
                         </div>
                       )}
-                      {aiData.reduceVector && String(aiData.reduceVector) !== "null" && (
+                      {Boolean(aiData.reduceVector) && String(aiData.reduceVector) !== "null" && (
                         <div className="lb-advisor-vec lb-advisor-vec--reduce">
                           <span className="lb-advisor-vec-lbl">↓ REDUCE</span>
                           <span className="lb-advisor-vec-method" style={{ color:"#e67e22" }}>{String(aiData.reduceVector)}</span>
                         </div>
                       )}
-                      {aiData.estimatedDownIn && (
+                      {Boolean(aiData.estimatedDownIn) && (
                         <div className="lb-advisor-vec lb-advisor-vec--est">
                           <span className="lb-advisor-vec-lbl">⏱ EST. DOWN IN</span>
                           <span className="lb-advisor-vec-method" style={{ color:"#D4AF37" }}>{String(aiData.estimatedDownIn)}</span>
@@ -2904,7 +2911,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     </div>
 
                     {/* Tip */}
-                    {aiData.tip && (
+                    {Boolean(aiData.tip) && (
                       <div className="lb-advisor-card lb-advisor-card--tip">
                         <div className="lb-advisor-card-label">⚔ TACTICAL TIP</div>
                         <div className="lb-advisor-card-text lb-advisor-tip">{String(aiData.tip)}</div>
@@ -2912,7 +2919,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     )}
 
                     {/* Target status */}
-                    {aiData.targetStatus && (
+                    {Boolean(aiData.targetStatus) && (
                       <div className="lb-advisor-target-row">
                         <span className="lb-advisor-ts-dot" style={{ background: String(aiData.targetStatus).startsWith("2") ? "#2ecc71" : "#e74c3c" }}/>
                         <span className="lb-advisor-ts-code">HTTP {String(aiData.targetStatus)}</span>
@@ -2928,13 +2935,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               {/* Footer */}
               {!aiLoading && (
                 <div className="lb-advisor-modal-ftr">
-                  {aiData?.boostVector && methods.some(m => m.method === String(aiData.boostVector)) && (
+                  {Boolean(aiData?.boostVector) && methods.some(m => m.id === String(aiData!.boostVector)) && (
                     <button className="lb-advisor-apply-btn" onClick={() => {
                       setMethod(String(aiData!.boostVector));
                       addLog(`👁 Applied boost vector: ${String(aiData!.boostVector).toUpperCase()}`, "success");
                       setShowAiModal(false);
                     }}>
-                      ⚡ APPLY {String(aiData.boostVector).toUpperCase()}
+                      ⚡ APPLY {String(aiData!.boostVector).toUpperCase()}
                     </button>
                   )}
                   <button className="lb-advisor-refresh-btn" onClick={handleAiAdvisor}>↺ REFRESH</button>
