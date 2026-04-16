@@ -669,9 +669,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       } catch { /* ignore */ }
     }
 
-    // Poll count every 30 seconds
+    // Poll count every 10 seconds for fast recovery display after server restart
     pollProxyCount();
-    const countInterval = setInterval(pollProxyCount, 30_000);
+    const countInterval = setInterval(pollProxyCount, 10_000);
 
     // Client-side auto-refresh trigger every 10 minutes (backend also refreshes, this syncs state)
     autoRefreshTimer = setTimeout(function triggerRefresh() {

