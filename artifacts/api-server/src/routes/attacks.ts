@@ -64,6 +64,10 @@ const liveBps       = new Map<number, number>(); // current bps
 // Previous snapshot for delta calculation
 const prevPktsSnap  = new Map<number, number>();
 const prevBytesSnap = new Map<number, number>();
+// Ring buffer of last 60 samples per attack: { t, pps, bps, conns }
+interface TimeseriesSample { t: number; pps: number; bps: number; conns: number }
+const liveTimeseries = new Map<number, TimeseriesSample[]>();
+const TIMESERIES_MAX = 60;
 
 // ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
 // Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
@@ -95,6 +99,19 @@ setInterval(() => {
     const delta = Math.max(0, total - prev);
     prevBytesSnap.set(id, total);
     liveBps.set(id, delta);
+  }
+  // Push timeseries sample for every running attack
+  const now = Date.now();
+  for (const id of attackAborts.keys()) {
+    let series = liveTimeseries.get(id);
+    if (!series) { series = []; liveTimeseries.set(id, series); }
+    series.push({
+      t:     now,
+      pps:   livePps.get(id) ?? 0,
+      bps:   liveBps.get(id) ?? 0,
+      conns: attackLiveConns.get(id) ?? 0,
+    });
+    if (series.length > TIMESERIES_MAX) series.shift();
   }
 }, 1000);
 
@@ -657,6 +674,8 @@ router.post("/attacks", async (req, res): Promise<void> => {
     liveBps.delete(id);
     prevPktsSnap.delete(id);
     prevBytesSnap.delete(id);
+    // Keep timeseries for 60s after attack ends so panel can render final chart
+    setTimeout(() => liveTimeseries.delete(id), 60_000);
     const t = attackTimers.get(id);
     if (t) clearTimeout(t);
     attackTimers.delete(id);
@@ -677,7 +696,7 @@ router.post("/attacks", async (req, res): Promise<void> => {
 });
 
 // Map for abort controllers + stop timers (for Extend support)
-const attackAborts  = new Map<number, AbortController>();
+export const attackAborts  = new Map<number, AbortController>();
 const attackTimers  = new Map<number, ReturnType<typeof setTimeout>>();
 
 // ── Scheduled attacks (GET must be BEFORE /attacks/:id to avoid conflict) ──
@@ -713,6 +732,14 @@ router.get("/attacks/stats", async (_req, res): Promise<void> => {
     recentAttacks,
     cpuCount:         CPU_COUNT,
   });
+});
+
+// Live timeseries — last 60 samples (1 per second) for chart rendering
+router.get("/attacks/:id/timeseries", (req, res): void => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const series = liveTimeseries.get(id) ?? [];
+  res.json({ samples: series, max: TIMESERIES_MAX });
 });
 
 // Live in-memory stats — real-time, no DB latency
@@ -875,6 +902,7 @@ router.post("/attacks/multi", async (req, res): Promise<void> => {
       prevPktsSnap.delete(aid);    prevBytesSnap.delete(aid);
       const t = attackTimers.get(aid); if (t) clearTimeout(t);
       attackTimers.delete(aid); attackAborts.delete(aid); attackEndTimes.delete(aid);
+      setTimeout(() => liveTimeseries.delete(aid), 60_000);
       try {
         const [cur] = await db.select().from(attacksTable).where(eq(attacksTable.id, aid));
         if (cur?.status === "running") {

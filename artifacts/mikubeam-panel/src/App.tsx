@@ -1,5 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
 import {
   useListMethods,
   useCreateAttack,
@@ -348,6 +351,107 @@ function Sparkline({ data, color = "#D4AF37" }: { data: number[]; color?: string
   );
 }
 
+/* ── Live RPS chart — Recharts AreaChart with axes, tooltip, peak marker ── */
+const fmtChartNum = (v: number): string => {
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
+  if (v >= 1_000)     return (v / 1_000).toFixed(1) + "K";
+  return String(Math.round(v));
+};
+
+function LiveRpsChart({
+  ppsData, bpsData, color = "#D4AF37", peakPps,
+}: {
+  ppsData: number[]; bpsData: number[]; color?: string; peakPps: number;
+}) {
+  const chartData = useMemo(() => {
+    const len = Math.max(ppsData.length, bpsData.length);
+    return Array.from({ length: len }, (_, i) => ({
+      t:    i - len + 1,                 // negative = seconds ago
+      pps:  ppsData[i]  ?? 0,
+      mbps: ((bpsData[i] ?? 0) * 8) / 1_048_576, // bytes/s → Mbps
+    }));
+  }, [ppsData, bpsData]);
+
+  if (chartData.length < 2) return null;
+
+  return (
+    <div style={{ width: "100%", height: 140, marginTop: "0.4rem" }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={chartData} margin={{ top: 6, right: 6, left: -10, bottom: 0 }}>
+          <defs>
+            <linearGradient id="rps-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor={color} stopOpacity={0.55}/>
+              <stop offset="100%" stopColor={color} stopOpacity={0.02}/>
+            </linearGradient>
+            <linearGradient id="bps-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="#9b59b6" stopOpacity={0.30}/>
+              <stop offset="100%" stopColor="#9b59b6" stopOpacity={0.01}/>
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false}/>
+          <XAxis
+            dataKey="t"
+            tick={{ fill: "rgba(255,255,255,0.42)", fontSize: 9 }}
+            axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+            tickLine={false}
+            tickFormatter={(v) => v === 0 ? "now" : `${v}s`}
+            interval="preserveStartEnd"
+          />
+          <YAxis
+            yAxisId="pps"
+            tick={{ fill: "rgba(212,175,55,0.55)", fontSize: 9 }}
+            axisLine={false} tickLine={false}
+            tickFormatter={fmtChartNum}
+            width={42}
+          />
+          <YAxis
+            yAxisId="mbps" orientation="right"
+            tick={{ fill: "rgba(155,89,182,0.55)", fontSize: 9 }}
+            axisLine={false} tickLine={false}
+            tickFormatter={(v) => v.toFixed(0)}
+            width={28}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "rgba(8,8,12,0.95)",
+              border: "1px solid rgba(212,175,55,0.35)",
+              borderRadius: 4, fontSize: 11, padding: "6px 10px",
+            }}
+            labelStyle={{ color: "rgba(255,255,255,0.5)", fontSize: 10 }}
+            itemStyle={{ padding: 0 }}
+            labelFormatter={(v) => v === 0 ? "now" : `${v}s ago`}
+            formatter={(v: number, n: string) => {
+              if (n === "pps")  return [fmtChartNum(v) + " pps", "RPS"];
+              if (n === "mbps") return [v.toFixed(2) + " Mbps", "Bandwidth"];
+              return [v, n];
+            }}
+          />
+          <Area
+            yAxisId="pps" type="monotone" dataKey="pps"
+            stroke={color} strokeWidth={1.6} fill="url(#rps-grad)"
+            isAnimationActive={false}
+          />
+          <Area
+            yAxisId="mbps" type="monotone" dataKey="mbps"
+            stroke="#9b59b6" strokeWidth={1.2} fill="url(#bps-grad)"
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+      {peakPps > 0 && (
+        <div style={{
+          display: "flex", justifyContent: "space-between",
+          fontSize: 10, color: "rgba(255,255,255,0.45)",
+          marginTop: 2, padding: "0 4px",
+        }}>
+          <span>Peak <strong style={{ color }}>{fmtChartNum(peakPps)} pps</strong></span>
+          <span style={{ color: "rgba(155,89,182,0.7)" }}>● Bandwidth (Mbps)</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Pulsing Geass Eye SVG (intensity 0–1 drives animation speed & glow) ── */
 function GeassEye({ intensity = 0 }: { intensity?: number }) {
   const speed  = Math.max(2, 20 - intensity * 18); // 20s idle → 2s at max power
@@ -425,6 +529,7 @@ function Panel() {
   const [peakPps, setPeakPps]    = useState(0);
   const [peakBps, setPeakBps]    = useState(0);
   const [ppsHistory, setPpsHistory] = useState<number[]>([]);
+  const [bpsHistory, setBpsHistory] = useState<number[]>([]);
   const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const [lastAtkPkts,  setLastAtkPkts]  = useState(0);
   const [lastAtkBytes, setLastAtkBytes] = useState(0);
@@ -782,7 +887,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
         setPps(displayPps);
         setBps(displayBps);
-        setPpsHistory(prev => [...prev.slice(-29), displayPps]);
+        setPpsHistory(prev => [...prev.slice(-59), displayPps]);
+        setBpsHistory(prev => [...prev.slice(-59), displayBps]);
         if (displayPps > peakPpsRef.current) { peakPpsRef.current = displayPps; setPeakPps(displayPps); }
         if (displayBps > peakBpsRef.current) { peakBpsRef.current = displayBps; setPeakBps(displayBps); }
 
@@ -1043,7 +1149,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       currentPacketsRef.current = 0; currentBytesRef.current = 0;
       lastPacketsRef.current = 0;   lastBytesRef.current = 0;
       peakPpsRef.current = 0; peakBpsRef.current = 0;
-      setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]);
+      setProgress(0); setPps(0); setBps(0); setPeakPps(0); setPeakBps(0); setPpsHistory([]); setBpsHistory([]);
       setLastAtkPkts(0); setLastAtkBytes(0); setClusterAttackIds([]); setClusterTotalPkts(0); setClusterTotalBytes(0);
       const mi = methodInfo(method);
       addLog(`👁 Strike launched [ID #${result.id}] — vector: ${method.toUpperCase()} [${mi.badge}]`, "success");
@@ -2432,14 +2538,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 );
               })()}
 
-              {/* Sparklines */}
+              {/* Live RPS chart with PPS + Bandwidth */}
               {isRunning && ppsHistory.length > 1 && (
                 <div className="lb-sparkline-block">
                   <div className="lb-sparkline-label">
                     <span>LIVE TRAFFIC — {method.toUpperCase()}</span>
                     <span className={`lb-method-badge lb-method-badge--${mi.cls}`}>{mi.badge}</span>
                   </div>
-                  <Sparkline data={ppsHistory} color={sparklineColor} />
+                  <LiveRpsChart
+                    ppsData={ppsHistory}
+                    bpsData={bpsHistory}
+                    color={sparklineColor}
+                    peakPps={peakPps}
+                  />
                 </div>
               )}
 

@@ -23,7 +23,7 @@ type MonitorEditFn = (opts: {
   embeds:     EmbedBuilder[];
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
-import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
 import { askLelouch, clearLelouchHistory } from "./lelouch-ai.js";
 import {
@@ -295,6 +295,11 @@ const COMMANDS = [
       sub.setName("refresh").setDescription("🔄 Forçar re-harvest de proxies agora (22 fontes)")
     ),
 
+  // ── /stats ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("stats")
+    .setDescription("📡 Server health — uptime, RAM, CPU load, active attacks"),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -396,7 +401,7 @@ function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilde
   );
 }
 
-function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, userId?: string): void {
+function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, userId?: string, channelId?: string): void {
   if (monitors.has(attackId)) return;
 
   // MAX 5 concurrent monitors — prevents Discord request queue saturation that causes
@@ -515,6 +520,47 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
       }
 
       if (!isRunning) {
+        // Send finish notification to the channel where attack was launched
+        if (channelId && botClient) {
+          try {
+            const ch = await botClient.channels.fetch(channelId);
+            if (ch && ch.isTextBased() && "send" in ch) {
+              const finishColor = attack.status === "finished" ? COLORS.GREEN
+                                : attack.status === "stopped"  ? COLORS.GOLD
+                                : COLORS.RED;
+              const finishIcon  = attack.status === "finished" ? "✅"
+                                : attack.status === "stopped"  ? "⏹️"
+                                : "⚠️";
+              const fmtNum = (n: number) => n.toLocaleString("en-US");
+              const fmtMB  = (b: number) => (b / 1048576).toFixed(2) + " MB";
+              const elapsed = attack.stoppedAt && attack.startedAt
+                ? Math.round((new Date(attack.stoppedAt).getTime() - new Date(attack.startedAt).getTime()) / 1000)
+                : attack.duration;
+              const avgPps = elapsed > 0 ? Math.round(attack.packetsSent / elapsed) : 0;
+              await ch.send({
+                content: userId ? `<@${userId}>` : undefined,
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor(finishColor)
+                    .setTitle(`${finishIcon} ATTACK #${attackId} ${attack.status.toUpperCase()}`)
+                    .setDescription(`Attack against \`${target}\` has ended.`)
+                    .addFields(
+                      { name: "🎯 Target",     value: `\`${target}\``,            inline: true },
+                      { name: "⚔️ Method",     value: `\`${attack.method}\``,     inline: true },
+                      { name: "⏱️ Duration",   value: `${elapsed}s`,              inline: true },
+                      { name: "📦 Packets",    value: fmtNum(attack.packetsSent), inline: true },
+                      { name: "💾 Bytes",      value: fmtMB(attack.bytesSent),    inline: true },
+                      { name: "📊 Avg PPS",    value: fmtNum(avgPps),             inline: true },
+                    )
+                    .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
+                    .setTimestamp(),
+                ],
+              });
+            }
+          } catch (notifyErr) {
+            console.warn(`[MONITOR #${attackId}] notify failed:`, notifyErr instanceof Error ? notifyErr.message : notifyErr);
+          }
+        }
         stopMonitor();
       }
     } catch (monitorErr) {
@@ -658,6 +704,81 @@ async function handleAttackList(interaction: ChatInputCommandInteraction): Promi
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("FETCH FAILED", message)] });
+  }
+}
+
+interface ServerHealth {
+  status: "healthy" | "warning" | "critical";
+  uptimeSec: number;
+  process:   { heapUsedMB: number; heapTotalMB: number; rssMB: number; pid: number };
+  system:    { cpus: number; load1: number; load5: number; load15: number; loadPct: number;
+               totalRamMB: number; usedRamMB: number; freeRamMB: number; ramPct: number;
+               hostname: string; platform: string };
+  attacks:   { active: number; totalConns: number };
+}
+
+async function handleStats(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+  try {
+    const r = await fetch(`${API_BASE}/api/health/live`, { signal: AbortSignal.timeout(2500) });
+    if (!r.ok) {
+      await interaction.editReply(`⚠ Health endpoint returned **HTTP ${r.status}** — server may be degraded.`);
+      return;
+    }
+    const h = (await r.json()) as ServerHealth;
+
+    const fmtUptime = (s: number): string => {
+      const d = Math.floor(s / 86400);
+      const hr = Math.floor((s % 86400) / 3600);
+      const m  = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      if (d > 0)  return `${d}d ${hr}h ${m}m`;
+      if (hr > 0) return `${hr}h ${m}m ${sec}s`;
+      if (m > 0)  return `${m}m ${sec}s`;
+      return `${sec}s`;
+    };
+    const fmtBar = (pct: number): string => {
+      const n = Math.min(20, Math.max(0, Math.round(pct / 5)));
+      return "█".repeat(n) + "░".repeat(20 - n);
+    };
+
+    const color = h.status === "healthy"  ? COLORS.GREEN
+                : h.status === "warning"  ? COLORS.GOLD
+                : COLORS.RED;
+    const icon  = h.status === "healthy"  ? "🟢"
+                : h.status === "warning"  ? "🟡"
+                : "🔴";
+
+    const stats = await api.getStats().catch(() => null);
+
+    const embed = new EmbedBuilder()
+      .setColor(color)
+      .setTitle(`${icon} LELOUCH BRITANNIA — SERVER HEALTH`)
+      .setDescription(
+        `**Status:** \`${h.status.toUpperCase()}\` — node \`${h.system.hostname}\`\n` +
+        `**Uptime:** \`${fmtUptime(h.uptimeSec)}\``
+      )
+      .addFields(
+        { name: `🧠 RAM ${h.system.ramPct}%`,
+          value: `\`${fmtBar(h.system.ramPct)}\`\n${h.system.usedRamMB} / ${h.system.totalRamMB} MB used\nFree: \`${h.system.freeRamMB} MB\``,
+          inline: false },
+        { name: `⚡ CPU Load ${h.system.loadPct}%`,
+          value: `\`${fmtBar(h.system.loadPct)}\`\n${h.system.cpus} cores · 1m: \`${h.system.load1.toFixed(2)}\` · 5m: \`${h.system.load5.toFixed(2)}\` · 15m: \`${h.system.load15.toFixed(2)}\``,
+          inline: false },
+        { name: "🟣 Process",
+          value: `Heap: \`${h.process.heapUsedMB} / ${h.process.heapTotalMB} MB\`\nRSS: \`${h.process.rssMB} MB\` · PID: \`${h.process.pid}\``,
+          inline: true },
+        { name: "⚔️ Attacks",
+          value: `Active: \`${h.attacks.active}\`\nLive Conns: \`${h.attacks.totalConns.toLocaleString("en-US")}\`${stats ? `\nTotal: \`${stats.totalAttacks}\`` : ""}`,
+          inline: true },
+      )
+      .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await interaction.editReply({ embeds: [buildErrorEmbed("STATS FAILED", message)] });
   }
 }
 
@@ -835,7 +956,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
       });
 
       const userId = interaction.user.id;
-      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
+      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId, interaction.channelId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("BROADCAST FAILED", message)] });
@@ -967,7 +1088,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
       const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
-      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
+      startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId, interaction.channelId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("ATTACK FAILED", message)], components: [] });
@@ -1332,6 +1453,8 @@ async function main(): Promise<void> {
         await handleAdvisor(interaction);
       } else if (commandName === "proxy") {
         await handleProxy(interaction);
+      } else if (commandName === "stats") {
+        await handleStats(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
