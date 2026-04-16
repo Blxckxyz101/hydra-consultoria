@@ -12,6 +12,8 @@
 import { Router, type IRouter } from "express";
 import net from "node:net";
 import dns from "node:dns/promises";
+import fs from "node:fs";
+import path from "node:path";
 
 const router: IRouter = Router();
 
@@ -26,6 +28,37 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 // ── Pinned proxies — custom/residential proxies that survive cache refresh ─
 let pinnedProxies: Proxy[] = [];
 let residentialCreds: { host: string; port: number; username: string; password: string; count: number } | null = null;
+
+// ── Persistence — save/load residential config across restarts ────────────
+const CONFIG_FILE = path.join(process.cwd(), "data", "proxy-config.json");
+
+function saveConfig(): void {
+  try {
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ residential: residentialCreds }, null, 2));
+  } catch { /* non-fatal */ }
+}
+
+function loadConfig(): void {
+  try {
+    const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+    const cfg = JSON.parse(raw) as { residential?: typeof residentialCreds };
+    if (cfg.residential) {
+      residentialCreds = cfg.residential;
+      pinnedProxies = Array.from({ length: cfg.residential.count }, (_, i) => ({
+        host: cfg.residential!.host, port: cfg.residential!.port,
+        responseMs: i + 1, type: "http" as const,
+        username: cfg.residential!.username, password: cfg.residential!.password,
+      }));
+      proxyCache = [...pinnedProxies];
+      lastFetch = Date.now();
+      console.log(`[PROXIES] Restored ${cfg.residential.count} residential slots from config (${cfg.residential.host})`);
+    }
+  } catch { /* no saved config */ }
+}
+
+// Load persisted config immediately on startup
+loadConfig();
 
 // ── Proxy sources — expanded v3 (14 HTTP + 8 SOCKS5) ────────────────────
 const HTTP_SOURCES = [
@@ -314,6 +347,7 @@ router.post("/proxies/residential", (req, res): void => {
   const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
   proxyCache = [...pinnedProxies, ...proxyCache.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`))];
   lastFetch = Date.now();
+  saveConfig();
   res.json({
     status: "configured", residential: residentialCreds,
     message: `${count} rotating residential proxy slots added — each connection exits via a different IP`,
