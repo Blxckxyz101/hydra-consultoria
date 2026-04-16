@@ -422,6 +422,12 @@ function Panel() {
   const lastBytesRef   = useRef(0);
   const currentPacketsRef = useRef(0);
   const currentBytesRef   = useRef(0);
+  // Client-side PPS calculation refs — avoids server-side timer drift
+  const prevLivePktsRef   = useRef<number | null>(null);
+  const prevLiveBytesRef  = useRef<number | null>(null);
+  const prevLivePollMs    = useRef<number | null>(null);
+  const emaPpsRef         = useRef(0);
+  const emaBpsRef         = useRef(0);
 
   /* Target monitoring */
   const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
@@ -553,7 +559,7 @@ function Panel() {
   });
   const { data: currentAttack, refetch: refetchAttack } = useGetAttack(
     currentAttackId ?? 0,
-    { query: { queryKey: getGetAttackQueryKey(currentAttackId ?? 0), enabled: currentAttackId !== null, refetchInterval: isRunning ? 600 : false } }
+    { query: { queryKey: getGetAttackQueryKey(currentAttackId ?? 0), enabled: currentAttackId !== null, refetchInterval: isRunning ? 3000 : false } }
   );
   const { data: allAttacks = [], refetch: refetchHistory } = useListAttacks(
     { query: { queryKey: getListAttacksQueryKey(), refetchInterval: showHistory ? 5000 : false } }
@@ -676,87 +682,107 @@ function Panel() {
     currentBytesRef.current   = currentAttack.bytesSent   ?? 0;
   }, [currentAttack]);
 
-  /* Per-second metric calculation — polls /live endpoint for real-time stats (no DB lag)
-   * Falls back to DB delta if live endpoint returns 0 (attack just started or finished) */
+  /* Per-second metric calculation — polls /live endpoint at 500ms for real-time stats.
+   * PPS is computed CLIENT-SIDE from totalPackets delta to avoid server-side timer drift.
+   * EMA (α=0.35) smooths spikes so the display never "freezes" between server windows. */
   useEffect(() => {
-    if (!isRunning) { setPps(0); setBps(0); return; }
-    lastPacketsRef.current = currentPacketsRef.current;
-    lastBytesRef.current   = currentBytesRef.current;
-    // Track last log time to avoid spamming logs during fast geass-override
+    if (!isRunning) {
+      setPps(0); setBps(0);
+      prevLivePktsRef.current  = null;
+      prevLiveBytesRef.current = null;
+      prevLivePollMs.current   = null;
+      emaPpsRef.current = 0;
+      emaBpsRef.current = 0;
+      return;
+    }
+    // Reset EMA + prev snapshot on attack start
+    prevLivePktsRef.current  = null;
+    prevLiveBytesRef.current = null;
+    prevLivePollMs.current   = null;
+    emaPpsRef.current = 0;
+    emaBpsRef.current = 0;
     let lastLogMs = 0;
+    const EMA_ALPHA = 0.35;
 
     const iv = setInterval(async () => {
-      let displayPps = 0;
-      let displayBps = 0;
+      if (currentAttackId === null) return;
+      const pollNow = Date.now();
 
-      // Try live endpoint first (no DB lag — instant in-memory stats)
-      if (currentAttackId !== null) {
-        try {
-          const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
-          if (r.ok) {
-            const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean };
-            if (live.pps > 0 || live.bps > 0) {
-              displayPps = live.pps;
-              displayBps = live.bps;
-              // Also sync totals to refs so progress bar + final count is accurate
-              if (live.totalPackets > currentPacketsRef.current) {
-                currentPacketsRef.current = live.totalPackets;
-              }
-              if (live.totalBytes > currentBytesRef.current) {
-                currentBytesRef.current = live.totalBytes;
-              }
-              // Update live conn counter
-              if (live.conns > 0) setActiveConns(live.conns);
-            }
+      try {
+        const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
+        if (!r.ok) return;
+        const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean };
+
+        // Sync accumulator refs so progress bar + final count stay accurate
+        if (live.totalPackets > currentPacketsRef.current) currentPacketsRef.current = live.totalPackets;
+        if (live.totalBytes   > currentBytesRef.current)  currentBytesRef.current   = live.totalBytes;
+
+        // Update live conn counter
+        if (live.conns > 0) setActiveConns(live.conns);
+
+        // Client-side PPS/BPS delta — immune to server-side 1s timer drift
+        let rawPps = 0;
+        let rawBps = 0;
+        if (prevLivePktsRef.current !== null && prevLivePollMs.current !== null) {
+          const dt = (pollNow - prevLivePollMs.current) / 1000; // seconds
+          if (dt > 0) {
+            rawPps = Math.max(0, (live.totalPackets - prevLivePktsRef.current) / dt);
+            rawBps = Math.max(0, (live.totalBytes   - (prevLiveBytesRef.current ?? 0)) / dt);
           }
-        } catch { /* ignore, fall through to DB delta */ }
-      }
+        }
+        prevLivePktsRef.current  = live.totalPackets;
+        prevLiveBytesRef.current = live.totalBytes;
+        prevLivePollMs.current   = pollNow;
 
-      // Fallback: delta from DB-backed currentPacketsRef (slower but always available)
-      if (displayPps === 0) {
-        const nowPkts  = currentPacketsRef.current;
-        const nowBytes = currentBytesRef.current;
-        displayPps = Math.max(0, nowPkts  - lastPacketsRef.current);
-        displayBps = Math.max(0, nowBytes - lastBytesRef.current);
-        lastPacketsRef.current = nowPkts;
-        lastBytesRef.current   = nowBytes;
-      }
+        // EMA smoothing — eliminates the brief 0-dip when server window resets
+        const smoothPps = rawPps > 0
+          ? EMA_ALPHA * rawPps + (1 - EMA_ALPHA) * emaPpsRef.current
+          : emaPpsRef.current * 0.8; // decay slowly instead of dropping to 0
+        const smoothBps = rawBps > 0
+          ? EMA_ALPHA * rawBps + (1 - EMA_ALPHA) * emaBpsRef.current
+          : emaBpsRef.current * 0.8;
+        emaPpsRef.current = smoothPps;
+        emaBpsRef.current = smoothBps;
 
-      setPps(displayPps);
-      setBps(displayBps);
-      setPpsHistory(prev => [...prev.slice(-29), displayPps]);
-      if (displayPps > peakPpsRef.current)  { peakPpsRef.current = displayPps;  setPeakPps(displayPps); }
-      if (displayBps > peakBpsRef.current) { peakBpsRef.current = displayBps; setPeakBps(displayBps); }
+        const displayPps = Math.round(smoothPps);
+        const displayBps = Math.round(smoothBps);
 
-      // Log at most once per 2s to prevent terminal spam during geass-override
-      const now = Date.now();
-      if (displayPps > 0 && now - lastLogMs >= 2000) {
-        lastLogMs = now;
-        const n = fmtNum(displayPps);
-        const t = targetRef.current;
-        let msgs: ((t: string, n: string) => string)[];
-        const H2_LOG_SET  = new Set(["http2-flood","h2-settings-storm","hpack-bomb","http2-continuation","http-pipeline","http2-priority-storm","large-header-bomb","h2-ping-storm","waf-bypass","quic-flood"]);
-        const AMP_LOG_SET = new Set(["dns-amp","ntp-amp","mem-amp","ssdp-amp","icmp-flood"]);
-        const TLS_LOG_SET = new Set(["tls-renego","ssl-death","keepalive-exhaust","http-smuggling"]);
-        const CONN_LOG_SET= new Set(["conn-flood","ws-flood","rudy-v2"]);
-        const SLOW_LOG_SET= new Set(["slowloris","slow-read","rudy"]);
-        const HTTP_LOG_SET= new Set(["http-flood","http-bypass","graphql-dos","cache-poison","xml-bomb","range-flood","app-smart-flood","http2-flood"]);
-        const TCP_LOG_SET = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
-        const UDP_LOG_SET = new Set(["udp-flood","udp-bypass"]);
-        if (method === "geass-override")       msgs = LOG_MSGS_GEASS;
-        else if (H2_LOG_SET.has(method))       msgs = LOG_MSGS_H2;
-        else if (SLOW_LOG_SET.has(method))     msgs = LOG_MSGS_SLOW;
-        else if (CONN_LOG_SET.has(method))     msgs = LOG_MSGS_CONN;
-        else if (TLS_LOG_SET.has(method))      msgs = LOG_MSGS_TLS;
-        else if (AMP_LOG_SET.has(method))      msgs = LOG_MSGS_AMP;
-        else if (HTTP_LOG_SET.has(method))     msgs = LOG_MSGS_HTTP;
-        else if (TCP_LOG_SET.has(method))      msgs = LOG_MSGS_TCP;
-        else if (UDP_LOG_SET.has(method))      msgs = LOG_MSGS_UDP;
-        else                                   msgs = LOG_MSGS_HTTP;
-        addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
-        if (soundRef.current) playTone("tick");
-      }
-    }, 1000);
+        setPps(displayPps);
+        setBps(displayBps);
+        setPpsHistory(prev => [...prev.slice(-29), displayPps]);
+        if (displayPps > peakPpsRef.current) { peakPpsRef.current = displayPps; setPeakPps(displayPps); }
+        if (displayBps > peakBpsRef.current) { peakBpsRef.current = displayBps; setPeakBps(displayBps); }
+
+        // Log at most once per 2s
+        const now = Date.now();
+        if (displayPps > 0 && now - lastLogMs >= 2000) {
+          lastLogMs = now;
+          const n = fmtNum(displayPps);
+          const t = targetRef.current;
+          let msgs: ((t: string, n: string) => string)[];
+          const H2_LOG_SET  = new Set(["http2-flood","h2-settings-storm","hpack-bomb","http2-continuation","http-pipeline","http2-priority-storm","large-header-bomb","h2-ping-storm","waf-bypass","quic-flood"]);
+          const AMP_LOG_SET = new Set(["dns-amp","ntp-amp","mem-amp","ssdp-amp","icmp-flood"]);
+          const TLS_LOG_SET = new Set(["tls-renego","ssl-death","keepalive-exhaust","http-smuggling"]);
+          const CONN_LOG_SET= new Set(["conn-flood","ws-flood","rudy-v2"]);
+          const SLOW_LOG_SET= new Set(["slowloris","slow-read","rudy"]);
+          const HTTP_LOG_SET= new Set(["http-flood","http-bypass","graphql-dos","cache-poison","xml-bomb","range-flood","app-smart-flood","http2-flood"]);
+          const TCP_LOG_SET = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
+          const UDP_LOG_SET = new Set(["udp-flood","udp-bypass"]);
+          if (method === "geass-override")       msgs = LOG_MSGS_GEASS;
+          else if (H2_LOG_SET.has(method))       msgs = LOG_MSGS_H2;
+          else if (SLOW_LOG_SET.has(method))     msgs = LOG_MSGS_SLOW;
+          else if (CONN_LOG_SET.has(method))     msgs = LOG_MSGS_CONN;
+          else if (TLS_LOG_SET.has(method))      msgs = LOG_MSGS_TLS;
+          else if (AMP_LOG_SET.has(method))      msgs = LOG_MSGS_AMP;
+          else if (HTTP_LOG_SET.has(method))     msgs = LOG_MSGS_HTTP;
+          else if (TCP_LOG_SET.has(method))      msgs = LOG_MSGS_TCP;
+          else if (UDP_LOG_SET.has(method))      msgs = LOG_MSGS_UDP;
+          else                                   msgs = LOG_MSGS_HTTP;
+          addLog(msgs[Math.floor(Math.random() * msgs.length)](t, n), "info");
+          if (soundRef.current) playTone("tick");
+        }
+      } catch { /* ignore network blips */ }
+    }, 500);
     return () => clearInterval(iv);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, method, addLog, currentAttackId]);
@@ -862,12 +888,7 @@ function Panel() {
     };
   }, [isRunning, addLog]);
 
-  /* Refetch current attack while running */
-  useEffect(() => {
-    if (!isRunning || currentAttackId === null) return;
-    const iv = setInterval(() => { refetchAttack(); }, 600);
-    return () => clearInterval(iv);
-  }, [isRunning, currentAttackId, refetchAttack]);
+  /* currentAttack refetch is handled by refetchInterval — no manual setInterval needed */
 
   /* Live active-connection reset — conns are now fetched by the per-second metric effect above */
   const CONN_TRACKING_METHODS = new Set(["slowloris","conn-flood","geass-override","rudy","ws-flood","rudy-v2","tls-renego","ssl-death","http2-continuation","keepalive-exhaust","slow-read"]);
