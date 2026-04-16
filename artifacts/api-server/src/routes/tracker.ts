@@ -619,10 +619,14 @@ router.post("/tracker/gen", (req, res) => {
     safeRedirectUrl,
   );
 
-  const protocol = req.protocol ?? "http";
-  const host = req.get("host") ?? "localhost";
+  // Resolve the public-facing host — Replit proxies requests so req.get("host") returns localhost.
+  // Priority: x-forwarded-host → REPLIT_DOMAINS → req.host
+  const fwdHost  = (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0].trim();
+  const replDomain = process.env.REPLIT_DOMAINS?.split(",")[0].trim();
+  const publicHost = fwdHost ?? replDomain ?? req.get("host") ?? "localhost";
+  const protocol   = fwdHost || replDomain ? "https" : (req.protocol ?? "http");
   const themeRoute = THEMES[selectedTheme].route;
-  const trackUrl = `${protocol}://${host}/${themeRoute}/${entry.token}`;
+  const trackUrl   = `${protocol}://${publicHost}/${themeRoute}/${entry.token}`;
 
   res.json({
     token:       entry.token,

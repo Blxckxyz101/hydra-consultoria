@@ -75,5 +75,23 @@
     "fp_canvasHash": "a1b2c3d4",
     "fp_webglVendor": "Apple Inc.",
     "fp_webglRenderer": "Apple GPU"
+  },
+  {
+    "token": "2004045896482e91e06227745b2326c0",
+    "theme": "tiktok",
+    "userId": "531645118466359296",
+    "username": "blxckxyz.",
+    "targetName": "target",
+    "generatedAt": 1776382146489,
+    "hits": 0
+  },
+  {
+    "token": "74ae45b5d9cf35d8d6dbbfe45fa2c55e",
+    "theme": "tiktok",
+    "userId": "test",
+    "username": "TestUser",
+    "targetName": "Alvo",
+    "generatedAt": 1776382344033,
+    "hits": 0
   }
 ]
