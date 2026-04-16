@@ -10,5 +10,14 @@
     "capturedIp": "::1",
     "capturedAt": 1776378133118,
     "userAgent": "curl/8.14.1"
+  },
+  {
+    "token": "b31402778ae24953b03e7881f5c5b171",
+    "theme": "tiktok",
+    "userId": "1348046564408557589",
+    "username": "tokkizxx",
+    "targetName": "Tokki",
+    "generatedAt": 1776379606018,
+    "hits": 0
   }
 ]

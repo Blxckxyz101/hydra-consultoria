@@ -6,24 +6,22 @@ import { COLORS, METHOD_EMOJIS, AUTHOR, BOT_NAME } from "./config.js";
 
 // ── Asset paths ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GEASS_PNG = path.join(__dirname, "..", "assets", "geass-symbol.png");
+const GEASS_PNG  = path.join(__dirname, "..", "assets", "geass-symbol.png");
 const LELOUCH_GIF = path.join(__dirname, "..", "assets", "lelouch.gif");
 
-/** Returns attachment files for embeds that include the Geass symbol.
- *  Use in { embeds: [...], files: buildGeassFiles() } on one-shot sends (not edits). */
 export function buildGeassFiles(): AttachmentBuilder[] {
   return [new AttachmentBuilder(GEASS_PNG, { name: "geass-symbol.png" })];
 }
-/** Returns both the Geass symbol + Lelouch GIF (for start/attack embeds). */
 export function buildAttackFiles(): AttachmentBuilder[] {
   return [
-    new AttachmentBuilder(LELOUCH_GIF,  { name: "lelouch.gif" }),
-    new AttachmentBuilder(GEASS_PNG,    { name: "geass-symbol.png" }),
+    new AttachmentBuilder(LELOUCH_GIF, { name: "lelouch.gif" }),
+    new AttachmentBuilder(GEASS_PNG,   { name: "geass-symbol.png" }),
   ];
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const fmtNum   = (n: number) => n.toLocaleString("en-US");
+// ── Formatters ────────────────────────────────────────────────────────────────
+const fmtNum = (n: number) => n.toLocaleString("en-US");
+
 const fmtBytes = (n: number) => {
   if (n >= 1e12) return `${(n / 1e12).toFixed(2)} TB`;
   if (n >= 1e9)  return `${(n / 1e9).toFixed(2)} GB`;
@@ -31,48 +29,67 @@ const fmtBytes = (n: number) => {
   if (n >= 1e3)  return `${(n / 1e3).toFixed(1)} KB`;
   return `${n} B`;
 };
+
 const fmtPps = (pps: number) => {
-  if (pps >= 1e6) return `${(pps / 1e6).toFixed(2)}M pps`;
-  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)}K pps`;
-  return `${Math.round(pps)} pps`;
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(2)}M/s`;
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)}K/s`;
+  return `${Math.round(pps)}/s`;
 };
+
+const fmtBps = (bps: number) => {
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(2)} Gbps`;
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`;
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`;
+  return bps > 0 ? `${bps} bps` : "—";
+};
+
+const fmtPkt = (n: number) => {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B pkts`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M pkts`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K pkts`;
+  return `${n} pkts`;
+};
+
 const elapsed = (startedAt: string) => {
   const s   = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
   const m   = Math.floor(s / 60);
   const sec = s % 60;
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 };
+
 const statusIcon = (s: string) =>
   s === "running"  ? "🔴 RUNNING"
   : s === "stopped"  ? "⏹️ STOPPED"
   : s === "finished" ? "✅ FINISHED"
   : "❌ ERROR";
+
 const tierIcon = (t: string) =>
   t === "S" ? "🔴" : t === "A" ? "🟠" : t === "B" ? "🟡" : t === "C" ? "🔵" : "⚪";
-const methodLabel = (id: string) => {
+
+export const methodLabel = (id: string) => {
   const map: Record<string, string> = {
-    "http-flood":          "HTTP Flood",
-    "http-bypass":         "HTTP Bypass",
-    "http2-flood":         "HTTP/2 Rapid Reset",
-    "http2-continuation":  "H2 CONTINUATION (CVE-2024-27316)",
-    "waf-bypass":          "Geass WAF Bypass ∞",
-    "conn-flood":          "TLS Connection Flood",
-    "slowloris":           "Slowloris",
-    "tls-renego":          "TLS Renegotiation DoS",
-    "ws-flood":            "WebSocket Exhaustion",
-    "graphql-dos":         "GraphQL Introspection DoS",
-    "quic-flood":          "QUIC / HTTP3 Flood (RFC 9000)",
-    "cache-poison":        "CDN Cache Poisoning DoS",
-    "rudy-v2":             "RUDY v2 — Multipart Slow POST",
-    "ssl-death":           "SSL Death Record",
-    "rudy":                "R.U.D.Y",
-    "syn-flood":           "SYN Flood",
-    "tcp-flood":           "TCP Flood",
-    "udp-flood":           "UDP Flood",
-    "udp-bypass":          "UDP Bypass",
-    "dns-amp":             "DNS Amplification",
-    "ntp-amp":             "NTP Amplification",
-    "mem-amp":             "Memcached Amp",
+    "http-flood":           "HTTP Flood",
+    "http-bypass":          "HTTP Bypass",
+    "http2-flood":          "HTTP/2 Rapid Reset",
+    "http2-continuation":   "H2 CONTINUATION (CVE-2024-27316)",
+    "waf-bypass":           "Geass WAF Bypass ∞",
+    "conn-flood":           "TLS Connection Flood",
+    "slowloris":            "Slowloris",
+    "tls-renego":           "TLS Renegotiation DoS",
+    "ws-flood":             "WebSocket Exhaustion",
+    "graphql-dos":          "GraphQL Introspection DoS",
+    "quic-flood":           "QUIC / HTTP3 Flood (RFC 9000)",
+    "cache-poison":         "CDN Cache Poisoning DoS",
+    "rudy-v2":              "RUDY v2 — Multipart Slow POST",
+    "ssl-death":            "SSL Death Record",
+    "rudy":                 "R.U.D.Y",
+    "syn-flood":            "SYN Flood",
+    "tcp-flood":            "TCP Flood",
+    "udp-flood":            "UDP Flood",
+    "udp-bypass":           "UDP Bypass",
+    "dns-amp":              "DNS Amplification",
+    "ntp-amp":              "NTP Amplification",
+    "mem-amp":              "Memcached Amp",
     "hpack-bomb":           "HPACK Bomb — RFC 7541 Table Exhaustion",
     "h2-settings-storm":    "H2 Settings Storm — HPACK + Flow Control Exhaustion",
     "slow-read":            "Slow Read — TCP Buffer Exhaust",
@@ -86,47 +103,79 @@ const methodLabel = (id: string) => {
     "large-header-bomb":    "Large Header Bomb — 16KB Header Overflow",
     "http2-priority-storm": "H2 PRIORITY Storm — Stream Reorder Exhaust",
     "geass-override":       "Geass Override ∞ [ARES OMNIVECT — 33 VECTORS]",
+    "cf-bypass":            "Cloudflare Bypass",
+    "nginx-killer":         "Nginx Killer",
+    "h2-rst-burst":         "H2 RST Burst",
+    "h2-storm":             "H2 Storm",
+    "pipeline-flood":       "HTTP Pipeline Flood",
   };
   return map[id] ?? id;
 };
+
 const footer = (extra?: string) => ({
   text: [AUTHOR, extra].filter(Boolean).join(" • "),
 });
+
 const progressBar = (startedAt: string, durationSec: number) => {
   const dur    = durationSec * 1000;
   const spent  = Date.now() - new Date(startedAt).getTime();
   const raw    = dur > 0 ? spent / dur : 0;
-  // Guard against NaN/Infinity — would cause "█".repeat(NaN) → RangeError
   const pct    = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0;
-  const filled = Math.round(pct * 18);
-  return `\`[${"█".repeat(filled)}${"░".repeat(18 - filled)}]\` ${Math.round(pct * 100)}%`;
+  const filled = Math.round(pct * 20);
+  const pctDisplay = Math.round(pct * 100);
+  const bar    = `${"█".repeat(filled)}${"░".repeat(20 - filled)}`;
+  const label  = pctDisplay < 100 ? `${pctDisplay}%` : "100% ✓";
+  return `\`[${bar}]\` ${label}`;
 };
 
-// ── Target probe result (fed from index.ts polling) ──────────────────────────
+// ── Trend arrow: compares last 2 PPS samples ─────────────────────────────────
+const trendArrow = (history: number[]): string => {
+  if (history.length < 2) return "";
+  const last = history[history.length - 1];
+  const prev = history[history.length - 2];
+  if (prev === 0) return "";
+  const delta = (last - prev) / prev;
+  if (delta > 0.08)  return " **↑**";
+  if (delta < -0.08) return " **↓**";
+  return " **→**";
+};
+
+// ── Bandwidth bar: visual fill from 0..maxBps ─────────────────────────────────
+const bpsBar = (bps: number, maxBps = 100_000_000) => {
+  const pct    = Math.min(1, bps / maxBps);
+  const filled = Math.round(pct * 14);
+  return `\`[${"▓".repeat(filled)}${"░".repeat(14 - filled)}]\``;
+};
+
+// ── Connection bar ────────────────────────────────────────────────────────────
+const connBar = (conns: number) => {
+  const pct    = Math.min(1, conns / 10000);
+  const filled = Math.round(pct * 12);
+  const bar    = `${"▓".repeat(filled)}${"░".repeat(12 - filled)}`;
+  const label  = conns >= 1000 ? `**${(conns / 1000).toFixed(1)}K**` : `**${conns}**`;
+  return `\`[${bar}]\` ${label} holding`;
+};
+
+// ── Target probe result ───────────────────────────────────────────────────────
 export type ProbeResult = {
   up:        boolean;
   latencyMs: number;
   reason?:   string;
 };
 
-// Connection-based methods that show open conn counter
-const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood", "tls-renego", "http2-continuation", "ssl-death", "slow-read", "keepalive-exhaust", "http-smuggling", "h2-ping-storm"]);
+const CONN_METHODS = new Set([
+  "slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood",
+  "tls-renego", "http2-continuation", "ssl-death", "slow-read", "keepalive-exhaust",
+  "http-smuggling", "h2-ping-storm",
+]);
 
-// ── Sparkline helpers ─────────────────────────────────────────────────────────
-// Definitive DOWN = server actively refused connections (ECONNREFUSED from TARGET's TCP stack)
-// ENOTFOUND is excluded: DNS Water Torture can poison OUR system resolver → false positive
-// Timeouts/resets/inconclusive = NOT confirmed down (our network may be saturated by attack)
-const DEFINITIVE_DOWN = (reason?: string) => {
-  if (!reason) return false;
-  // Only trust ECONNREFUSED — TCP port actively rejected = server process crashed/stopped
-  // NOT ENOTFOUND: during DNS Water Torture, OUR resolver can fail → false "site down" report
-  return reason.includes("refused");
-};
+// Require ECONNREFUSED for definitive down — DNS failures excluded (false positive risk)
+const DEFINITIVE_DOWN = (reason?: string) => Boolean(reason?.includes("refused"));
 
 const sparkDot = (p: ProbeResult) => {
-  if (!p.up && DEFINITIVE_DOWN(p.reason)) return "🔴"; // confirmed server crash/refusal
-  if (!p.up) return "🟠";                              // probe failed but inconclusive
-  if (p.latencyMs > 5000) return "🟡";                 // probe timed out or inconclusive (our net busy)
+  if (!p.up && DEFINITIVE_DOWN(p.reason)) return "🔴";
+  if (!p.up) return "🟠";
+  if (p.latencyMs > 5000) return "🟡";
   if (p.latencyMs > 4000) return "🟡";
   if (p.latencyMs > 1500) return "🟠";
   return "🟢";
@@ -134,111 +183,105 @@ const sparkDot = (p: ProbeResult) => {
 
 const buildStatusField = (history: ProbeResult[], method: string) => {
   if (history.length === 0) return { name: "🌐 Target Status", value: "_probing..._" };
-  const last     = history[history.length - 1];
-  const dots     = history.slice(-20).map(sparkDot).join("");
-
-  // Require 5 consecutive confirmed DOWNs (ECONNREFUSED) before declaring "TARGET DOWN".
-  // Previously was 3, which produced false positives when the attack saturated our own NIC/DNS.
-  // ECONNREFUSED = TCP port actively rejected by target's kernel — this cannot be a false positive
-  // from our side. But we still want 5+ to avoid declaring down on a CDN edge flap.
-  const recent8  = history.slice(-8);
+  const last    = history[history.length - 1];
+  const dots    = history.slice(-20).map(sparkDot).join("");
+  const recent8 = history.slice(-8);
   const downRun5 = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length >= 5;
+
+  const causeMap: Record<string, string> = {
+    "geass-override":       "All 33 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT ∞)",
+    "slow-read":            "Server send buffer full — all threads blocked on TCP write",
+    "range-flood":          "500× byte-range I/O exhausted disk seek queue — server froze",
+    "xml-bomb":             "XML entity expansion exceeded memory — OOM parser crash",
+    "h2-ping-storm":        "H2 PING ACK queue overflowed — server CPU melted",
+    "http-smuggling":       "Request queue poisoned — backend thread pool deadlocked",
+    "doh-flood":            "DNS resolver thread pool exhausted — all lookups queued forever",
+    "keepalive-exhaust":    "Keep-alive pool saturated — MaxKeepAliveRequests hit on all workers",
+    "app-smart-flood":      "DB query pool drained — all backend threads blocked on SQL",
+    "large-header-bomb":    "HTTP parser buffer overflowed — server OOM on header allocation",
+    "http2-priority-storm": "H2 stream dependency tree exhausted — priority queue OOM",
+    "http2-flood":          "H2 connection table saturated (CVE-2023-44487)",
+    "http2-continuation":   "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
+    "waf-bypass":           "WAF layer overwhelmed — origin exposed",
+    "conn-flood":           "TLS socket table exhausted — nginx fell",
+    "slowloris":            "Thread pool saturated — server frozen",
+    "tls-renego":           "TLS CPU exhausted — handshake queue overflowed",
+    "ws-flood":             "WebSocket goroutine pool drained — server unresponsive",
+    "graphql-dos":          "GraphQL resolver CPU limit hit — exponential query collapse",
+    "quic-flood":           "QUIC DCID table exhausted — HTTP/3 crypto state OOM",
+    "cache-poison":         "CDN cache poisoned — 100% origin miss, server crushed",
+    "rudy-v2":              "Multipart buffer exhausted — server thread pool frozen",
+    "ssl-death":            "TLS crypto thread pool saturated — AES-GCM queue overflowed",
+    "udp-flood":            "Bandwidth saturated at L4",
+    "syn-flood":            "TCP connection table exhausted — SYN_RECV backlog full",
+    "http-bypass":          "Proxy bypass overwhelmed origin — WAF bypassed",
+    "dns-amp":              "NS server flooded — DNS resolution chain collapsed",
+  };
 
   let statusLine: string;
   if (!last.up && DEFINITIVE_DOWN(last.reason) && downRun5) {
-    // Target confirmed DOWN — server actively refusing connections
-    const causeMap: Record<string, string> = {
-      "geass-override":     "All 33 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT ∞)",
-      "slow-read":          "Server send buffer full — all threads blocked on TCP write",
-      "range-flood":        "500× byte-range I/O exhausted disk seek queue — server froze",
-      "xml-bomb":           "XML entity expansion exceeded memory — OOM parser crash",
-      "h2-ping-storm":      "H2 PING ACK queue overflowed — server CPU melted",
-      "http-smuggling":     "Request queue poisoned — backend thread pool deadlocked",
-      "doh-flood":          "DNS resolver thread pool exhausted — all lookups queued forever",
-      "keepalive-exhaust":  "Keep-alive pool saturated — MaxKeepAliveRequests hit on all workers",
-      "app-smart-flood":    "DB query pool drained — all backend threads blocked on SQL",
-      "large-header-bomb":  "HTTP parser buffer overflowed — server OOM on header allocation",
-      "http2-priority-storm": "H2 stream dependency tree exhausted — priority queue OOM",
-      "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
-      "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
-      "waf-bypass":         "WAF layer overwhelmed — origin exposed",
-      "conn-flood":         "TLS socket table exhausted — nginx fell",
-      "slowloris":          "Thread pool saturated — server frozen",
-      "tls-renego":         "TLS CPU exhausted — handshake queue overflowed",
-      "ws-flood":           "WebSocket goroutine pool drained — server unresponsive",
-      "graphql-dos":        "GraphQL resolver CPU limit hit — exponential query collapse",
-      "quic-flood":         "QUIC DCID table exhausted — HTTP/3 crypto state OOM",
-      "cache-poison":       "CDN cache poisoned — 100% origin miss, server crushed",
-      "rudy-v2":            "Multipart buffer exhausted — server thread pool frozen",
-      "ssl-death":          "TLS crypto thread pool saturated — AES-GCM queue overflowed",
-      "udp-flood":          "Bandwidth saturated at L4",
-      "syn-flood":          "TCP connection table exhausted — SYN_RECV backlog full",
-      "http-bypass":        "Proxy bypass overwhelmed origin — WAF bypassed",
-    };
-    const methodCause = causeMap[method] ?? "Server resources exhausted";
-    const probeCause  = last.reason?.includes("refused") ? methodCause : (last.reason ?? methodCause);
-    statusLine = `**💀 TARGET DOWN** — ${probeCause}`;
+    const cause = causeMap[method] ?? "Server resources exhausted";
+    statusLine = `**💀 TARGET DOWN** — ${cause}`;
   } else if (!last.up && DEFINITIVE_DOWN(last.reason)) {
-    // 1–4 consecutive ECONNREFUSED — confirming, not yet declared down
     const downCount = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length;
     statusLine = `**🔴 REFUSING** — TCP port rejected (${downCount}/5 confirms) — verifying…`;
   } else if (!last.up) {
-    // Probe failed but not ECONNREFUSED (timeout, reset, DNS fail on our side)
-    statusLine = `**🟠 UNREACHABLE** — probe failed (${last.reason ?? "network error"}) — may be our network`;
+    statusLine = `**🟠 UNREACHABLE** — ${last.reason ?? "network error"} — may be our network`;
   } else if (last.latencyMs > 5000) {
-    // Probe inconclusive or very slow — likely network under attack load on our side
-    statusLine = `**🟡 DEGRADED** — ${last.latencyMs}ms (heavy load — site may be UP for users)`;
+    statusLine = `**🟡 DEGRADED** — ${last.latencyMs.toLocaleString()}ms (heavy load)`;
   } else if (last.latencyMs > 4000) {
-    statusLine = `**🟠 CRITICAL LAG** — ${last.latencyMs}ms (near collapse)`;
+    statusLine = `**🟠 CRITICAL LAG** — ${last.latencyMs.toLocaleString()}ms (near collapse)`;
   } else if (last.latencyMs > 1500) {
-    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs}ms (response degrading)`;
+    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs.toLocaleString()}ms (response degrading)`;
   } else if (last.latencyMs > 800) {
-    statusLine = `**🟡 SLOWING** — ${last.latencyMs}ms (attack taking effect)`;
+    statusLine = `**🟡 SLOWING** — ${last.latencyMs.toLocaleString()}ms (attack taking effect)`;
   } else {
-    statusLine = `**🟢 ONLINE** — ${last.latencyMs}ms (resisting attack)`;
+    statusLine = `**🟢 ONLINE** — ${last.latencyMs.toLocaleString()}ms (resisting)`;
   }
 
-  return {
-    name:   "🌐 Target Status",
-    value:  `${dots}\n${statusLine}`,
-    inline: false,
-  };
+  return { name: "🌐 Target Status", value: `${dots}\n${statusLine}`, inline: false };
 };
 
 // ── Attack Running/Live Embed ─────────────────────────────────────────────────
-// pps = calculated externally (delta packetsSent / 5s interval)
-// liveConns = from /api/attacks/:id/live endpoint (active open connections)
 export function buildAttackEmbed(
-  attack: Attack,
-  livePps = 0,
-  liveConns = 0,
+  attack:        Attack,
+  livePps        = 0,
+  liveBps        = 0,
+  liveConns      = 0,
   targetHistory: ProbeResult[] = [],
+  ppsHistory:    number[]      = [],
+  proxyCount     = 0,
 ): EmbedBuilder {
-  const isRunning = attack.status === "running";
-  const color     = isRunning ? COLORS.CRIMSON
+  const isRunning  = attack.status === "running";
+  const color      = isRunning ? COLORS.CRIMSON
     : attack.status === "finished" ? COLORS.GREEN
     : COLORS.GRAY;
-  const emoji     = METHOD_EMOJIS[attack.method] ?? "⚡";
-  const showConns = CONN_METHODS.has(attack.method);
+  const emoji      = METHOD_EMOJIS[attack.method] ?? "⚡";
+  const showConns  = CONN_METHODS.has(attack.method);
+  const trend      = trendArrow(ppsHistory);
+  const isGeass    = attack.method === "geass-override";
 
-  const connBar = (conns: number) => {
-    // Visual bar showing connection density (max display = 10K)
-    const pct    = Math.min(1, conns / 10000);
-    const filled = Math.round(pct * 12);
-    const bar    = `${"▓".repeat(filled)}${"░".repeat(12 - filled)}`;
-    return `\`[${bar}]\` ${conns >= 1000 ? `**${(conns/1000).toFixed(1)}K**` : `**${conns}**`} holding`;
-  };
+  // Proxy badge shown when proxies are active and method uses them
+  const proxyBadge = proxyCount > 0
+    ? `🌐 **${proxyCount.toLocaleString()}** residential IPs rotating`
+    : "";
+
+  const descLines: string[] = [];
+  if (isRunning) {
+    if (isGeass) {
+      descLines.push("👁️ **ARES OMNIVECT ∞** — 33 simultaneous real attack vectors, all CVEs active");
+    } else {
+      descLines.push(`**Target is under ${attack.method === "waf-bypass" ? "WAF Bypass" : "fire"}** — live monitoring active`);
+    }
+    if (proxyBadge) descLines.push(proxyBadge);
+  } else {
+    descLines.push(`Attack **#${attack.id}** has **${attack.status}**.`);
+  }
 
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${isRunning ? "GEASS COMMAND ACTIVE" : `ATTACK ${attack.status.toUpperCase()}`}`)
-    .setDescription(
-      isRunning
-        ? attack.method === "geass-override"
-          ? `👁️ **ARES OMNIVECT ∞** — 33 simultaneous real attack vectors, all CVEs active, live monitoring`
-          : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
-        : `Attack **#${attack.id}** has **${attack.status}**.`
-    )
+    .setDescription(descLines.join(" • "))
     .addFields(
       { name: "🎯 Target",   value: `\`${attack.target}\``,                       inline: true },
       { name: "⚔️ Method",   value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
@@ -248,52 +291,88 @@ export function buildAttackEmbed(
       { name: "📊 Status",   value: statusIcon(attack.status),                     inline: true },
     );
 
-  embed.addFields({ name: "\u200b", value: "━━━━━━━━━━ 📡 **METRICS** ━━━━━━━━━━", inline: false });
-
   if (isRunning) {
+    // ── Live metrics section ────────────────────────────────────────────────
+    embed.addFields({ name: "‎", value: "━━━━━━━━━━━━ 📡 **LIVE METRICS** ━━━━━━━━━━━━", inline: false });
+
+    // Row 1: PPS + Bandwidth
     embed.addFields(
-      { name: "📈 Live Rate",    value: `**${fmtPps(livePps)}**`,                       inline: true },
-      { name: "📦 Packets Sent", value: `**${fmtNum(attack.packetsSent)}**`,             inline: true },
-      { name: "💾 Data Sent",    value: `**${fmtBytes(attack.bytesSent)}**`,             inline: true },
-      { name: "⏳ Elapsed",      value: `**${elapsed(attack.startedAt)}**`,              inline: true },
+      {
+        name:   "⚡ Packet Rate",
+        value:  `**${fmtPps(livePps)}**${trend}`,
+        inline: true,
+      },
+      {
+        name:   "📶 Bandwidth",
+        value:  liveBps > 0 ? `**${fmtBps(liveBps)}**${trend}\n${bpsBar(liveBps)}` : "_ramping..._",
+        inline: true,
+      },
+      { name: "⏳ Elapsed", value: `**${elapsed(attack.startedAt)}**`, inline: true },
     );
+
+    // Row 2: Cumulative totals
+    embed.addFields(
+      { name: "📦 Packets Sent", value: `**${fmtPkt(attack.packetsSent)}**`,   inline: true },
+      { name: "💾 Data Sent",    value: `**${fmtBytes(attack.bytesSent)}**`,    inline: true },
+    );
+
+    // Row 3: Open connections (if applicable)
     if (showConns) {
       embed.addFields({
-        name:    "🔗 Open Connections",
-        value:   liveConns > 0 ? connBar(liveConns) : "_ramping up..._",
-        inline:  true,
+        name:   "🔗 Open Connections",
+        value:  liveConns > 0 ? connBar(liveConns) : "_ramping up..._",
+        inline: true,
       });
     }
-    embed.addFields({ name: "\u200b", value: progressBar(attack.startedAt, attack.duration), inline: false });
-    // Target status sparkline — only shown during active attack
+
+    // Progress bar
+    embed.addFields({ name: "‎", value: progressBar(attack.startedAt, attack.duration), inline: false });
+
+    // Target status sparkline
     embed.addFields(buildStatusField(targetHistory, attack.method));
+
   } else {
+    // ── Finished metrics ────────────────────────────────────────────────────
+    embed.addFields({ name: "‎", value: "━━━━━━━━━━━━ 📊 **FINAL REPORT** ━━━━━━━━━━━━", inline: false });
+
+    const elapsedSec = attack.stoppedAt && attack.startedAt
+      ? Math.max(1, Math.round((new Date(attack.stoppedAt).getTime() - new Date(attack.startedAt).getTime()) / 1000))
+      : attack.duration;
+    const avgPps  = elapsedSec > 0 ? Math.round(attack.packetsSent / elapsedSec) : 0;
+    const avgBps  = elapsedSec > 0 ? Math.round((attack.bytesSent * 8) / elapsedSec) : 0;
+
     embed.addFields(
-      { name: "📦 Total Packets",  value: `**${fmtNum(attack.packetsSent)}**`,   inline: true },
+      { name: "📦 Total Packets",  value: `**${fmtPkt(attack.packetsSent)}**`,  inline: true },
       { name: "💾 Total Data",     value: `**${fmtBytes(attack.bytesSent)}**`,   inline: true },
       { name: "⏳ Elapsed",        value: `**${elapsed(attack.startedAt)}**`,    inline: true },
+      { name: "📈 Avg PPS",        value: `**${fmtPps(avgPps)}**`,              inline: true },
+      { name: "📶 Avg Bandwidth",  value: `**${fmtBps(avgBps)}**`,              inline: true },
     );
-    // Show final target status if we have probe history
+
     if (targetHistory.length > 0) {
       embed.addFields(buildStatusField(targetHistory, attack.method));
     }
   }
 
-  embed.setFooter(footer(`Attack #${attack.id}`)).setTimestamp();
+  embed.setFooter(footer(`Attack #${attack.id} • updates every 5s`)).setTimestamp();
   return embed;
 }
 
 // ── Attack Started Embed ──────────────────────────────────────────────────────
-export function buildStartEmbed(attack: Attack): EmbedBuilder {
-  const emoji = METHOD_EMOJIS[attack.method] ?? "⚡";
+export function buildStartEmbed(attack: Attack, proxyCount = 0): EmbedBuilder {
+  const emoji   = METHOD_EMOJIS[attack.method] ?? "⚡";
   const isGeass = attack.method === "geass-override";
+  const proxyLine = proxyCount > 0
+    ? `\n\n🌐 **${proxyCount.toLocaleString()} residential IPs** in rotation — each request from a different IP`
+    : "";
+
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
     .setTitle(`${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
       isGeass
-        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 33 real attack vectors deploying simultaneously`
-        : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
+        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 33 real attack vectors deploying simultaneously${proxyLine}`
+        : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**${proxyLine}`
     )
     .setImage("attachment://lelouch.gif")
     .setThumbnail("attachment://geass-symbol.png")
@@ -301,10 +380,10 @@ export function buildStartEmbed(attack: Attack): EmbedBuilder {
       { name: "🎯 Target",    value: `\`${attack.target}\``,                       inline: true },
       { name: "⚔️ Method",    value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
       { name: "🆔 Attack ID", value: `\`#${attack.id}\``,                          inline: true },
-      { name: "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,              inline: true },
+      { name: "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,               inline: true },
       { name: "⏱ Duration",   value: `**${attack.duration}s**`,                    inline: true },
       { name: "📊 Status",    value: "🔴 **INITIALIZING...**",                     inline: true },
-      { name: "\u200b", value: "*Metrics will update every 8 seconds automatically.*", inline: false },
+      { name: "‎", value: "*Live metrics update every 5 seconds automatically.*", inline: false },
     )
     .setFooter(footer("Started by slash command"))
     .setTimestamp();
@@ -321,6 +400,48 @@ export function buildStopEmbed(id: number, ok: boolean): EmbedBuilder {
         : `Could not stop attack **#${id}**. It may have already ended.`
     )
     .setFooter(footer())
+    .setTimestamp();
+}
+
+// ── Finish Notification Embed (sent to channel on attack end) ─────────────────
+export function buildFinishEmbed(
+  attackId:  number,
+  target:    string,
+  method:    string,
+  status:    string,
+  packets:   number,
+  bytes:     number,
+  startedAt: string,
+  stoppedAt: string | null,
+): EmbedBuilder {
+  const finishColor = status === "finished" ? COLORS.GREEN
+                    : status === "stopped"  ? COLORS.GOLD
+                    : COLORS.RED;
+  const finishIcon  = status === "finished" ? "✅"
+                    : status === "stopped"  ? "⏹️"
+                    : "⚠️";
+  const emoji      = METHOD_EMOJIS[method] ?? "⚡";
+  const elapsedSec = stoppedAt && startedAt
+    ? Math.max(1, Math.round((new Date(stoppedAt).getTime() - new Date(startedAt).getTime()) / 1000))
+    : 0;
+  const avgPps  = elapsedSec > 0 ? Math.round(packets / elapsedSec) : 0;
+  const avgBps  = elapsedSec > 0 ? Math.round((bytes * 8) / elapsedSec) : 0;
+  const minSec  = Math.floor(elapsedSec / 60);
+  const remSec  = elapsedSec % 60;
+  const durStr  = minSec > 0 ? `${minSec}m ${remSec}s` : `${elapsedSec}s`;
+
+  return new EmbedBuilder()
+    .setColor(finishColor)
+    .setTitle(`${finishIcon} ATTACK #${attackId} ${status.toUpperCase()}`)
+    .setDescription(`${emoji} **${methodLabel(method)}** → \`${target}\``)
+    .addFields(
+      { name: "⏱️ Duration",      value: `**${durStr}**`,         inline: true },
+      { name: "📦 Total Packets", value: `**${fmtPkt(packets)}**`,  inline: true },
+      { name: "💾 Total Data",    value: `**${fmtBytes(bytes)}**`,   inline: true },
+      { name: "📈 Avg Rate",      value: `**${fmtPps(avgPps)}**`,   inline: true },
+      { name: "📶 Avg Bandwidth", value: `**${fmtBps(avgBps)}**`,   inline: true },
+    )
+    .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
     .setTimestamp();
 }
 
@@ -343,7 +464,7 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
       name: "🔴 ACTIVE ATTACKS",
       value: running.map(a => {
         const e = METHOD_EMOJIS[a.method] ?? "⚡";
-        return `\`#${a.id}\` ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtNum(a.packetsSent)} pkts | ⏳ ${elapsed(a.startedAt)}`;
+        return `\`#${a.id}\` ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtPkt(a.packetsSent)} | ⏳ ${elapsed(a.startedAt)}`;
       }).join("\n"),
       inline: false,
     });
@@ -355,7 +476,7 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
       value: completed.map(a => {
         const icon = a.status === "finished" ? "✅" : a.status === "stopped" ? "⏹️" : "❌";
         const e    = METHOD_EMOJIS[a.method] ?? "⚡";
-        return `\`#${a.id}\` ${icon} ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtNum(a.packetsSent)} pkts | ${fmtBytes(a.bytesSent)}`;
+        return `\`#${a.id}\` ${icon} ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtPkt(a.packetsSent)} | ${fmtBytes(a.bytesSent)}`;
       }).join("\n"),
       inline: false,
     });
@@ -370,7 +491,7 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
 }
 
 // ── Stats Embed ───────────────────────────────────────────────────────────────
-export function buildStatsEmbed(stats: AttackStats): EmbedBuilder {
+export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number; residentialCount: number; avgResponseMs: number }): EmbedBuilder {
   const mkBar = (val: number, max: number) => {
     const pct    = max === 0 ? 0 : Math.min(1, val / max);
     const filled = Math.round(pct * 15);
@@ -391,10 +512,22 @@ export function buildStatsEmbed(stats: AttackStats): EmbedBuilder {
         value: `**${fmtNum(stats.runningAttacks)} running** / **${fmtNum(stats.totalAttacks)} total**\n${mkBar(stats.runningAttacks, Math.max(stats.totalAttacks, 1))}`,
         inline: false,
       },
-      { name: "📦 Total Packets",   value: `**${fmtNum(stats.totalPacketsSent)}**`,   inline: true },
+      { name: "📦 Total Packets",   value: `**${fmtPkt(stats.totalPacketsSent)}**`,   inline: true },
       { name: "💾 Total Data Sent", value: `**${fmtBytes(stats.totalBytesSent)}**`,   inline: true },
       { name: "💻 CPU Cores",       value: `**${stats.cpuCount ?? "N/A"}**`,          inline: true },
     );
+
+  if (proxyStats) {
+    embed.addFields({
+      name: "🌐 Proxy Network",
+      value: [
+        `**${proxyStats.count.toLocaleString()}** total proxies in pool`,
+        `**${proxyStats.residentialCount.toLocaleString()}** residential IPs (dedicated)`,
+        `Avg latency: **${proxyStats.avgResponseMs}ms**`,
+      ].join("\n"),
+      inline: false,
+    });
+  }
 
   if (topMethods.length > 0) {
     embed.addFields({
@@ -424,7 +557,6 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
       ? result.serverType
       : "Unknown";
 
-  // CDN / WAF line
   let shieldLine: string;
   if (result.isCDN && result.hasWAF) {
     shieldLine = `⚠️ **${result.cdnProvider}** + **${result.wafProvider}**`;
@@ -436,122 +568,102 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
     shieldLine = "❌ None detected";
   }
 
-  // HTTP version support
   const h2h3Parts: string[] = [];
   if (result.supportsH2) h2h3Parts.push("**H/2**");
   if (result.supportsH3) h2h3Parts.push("**H/3**");
   const protocolLine = h2h3Parts.length > 0 ? `✅ ${h2h3Parts.join(" + ")}` : "HTTP/1.1 only";
 
-  // Features line (GraphQL, WebSocket, HSTS)
   const featureParts: string[] = [];
-  if (result.hasGraphQL)  featureParts.push("GraphQL");
+  if (result.hasGraphQL)   featureParts.push("GraphQL");
   if (result.hasWebSocket) featureParts.push("WebSocket");
   if (result.hasHSTS)      featureParts.push(`HSTS${result.hstsMaxAge ? ` (${Math.round(result.hstsMaxAge / 86400)}d)` : ""}`);
   const featuresLine = featureParts.length > 0 ? featureParts.join(", ") : "None detected";
 
-  // Open ports
   const portsLine = result.openPorts.length > 0
     ? result.openPorts.map(p => `\`${p}\``).join(" ")
     : "None scanned";
 
-  // All IPs
   const ipsLine = result.allIPs?.length > 0
     ? result.allIPs.slice(0, 5).join(", ") + (result.allIPs.length > 5 ? ` +${result.allIPs.length - 5} more` : "")
     : result.ip ?? "Unknown";
 
   const recoLines = top6.length > 0
     ? top6.map((r, i) => {
-        const icon  = tierIcon(r.tier);
-        const emoji = METHOD_EMOJIS[r.method] ?? "⚡";
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `  ${i + 1}.`;
-        return `${medal} ${icon} \`[${r.score}]\` ${emoji} **${r.name}** — ${r.suggestedThreads}t × ${r.suggestedDuration}s`;
-      }).join("\n")
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const tier  = tierIcon(r.tier ?? "");
+        return `${medal} ${tier} **${r.name}** — Score: **${r.score}** | Tier: **${r.tier ?? "?"}**\n> ${r.reason}`;
+      }).join("\n\n")
     : "No recommendations available.";
 
-  const topRec = top6[0];
-
-  const color = result.isCDN && result.hasWAF ? COLORS.RED
-    : result.isCDN ? COLORS.ORANGE
-    : result.hasWAF ? COLORS.CRIMSON
-    : COLORS.TEAL;
-
-  const embed = new EmbedBuilder()
-    .setColor(color)
-    .setTitle(`🔍 TARGET RECON: \`${result.target}\``)
-    .setDescription(
-      result.hasDNS
-        ? `✅ Target analyzed — **${result.recommendations.length}** attack vectors scored.\n${
-            result.isCDN && result.hasWAF ? `🔴 **${result.cdnProvider}** + **${result.wafProvider}** detected — heavily shielded.` :
-            result.isCDN ? `⚠️ **${result.cdnProvider}** CDN detected — DNS Water Torture bypasses it.` :
-            result.hasWAF ? `⚠️ **${result.wafProvider}** detected — use HTTP Bypass or Pipeline vectors.` :
-            "✅ Direct server — no CDN/WAF detected. All vectors viable."
-          }`
-        : "❌ **DNS resolution failed.** Target may be offline or the domain is invalid."
-    )
+  return new EmbedBuilder()
+    .setColor(COLORS.PURPLE)
+    .setTitle("🔍 TARGET RECONNAISSANCE — GEASS SCAN")
+    .setDescription(`Analysis of \`${result.target}\``)
     .addFields(
-      { name: "🌐 HTTP",      value: result.httpAvailable  ? "✅ Online" : "❌ Offline",                  inline: true },
-      { name: "🔒 HTTPS",     value: result.httpsAvailable ? "✅ Online" : "❌ Offline",                  inline: true },
-      { name: "⚡ Response",   value: result.responseTimeMs > 0 ? `**${result.responseTimeMs}ms**` : "N/A", inline: true },
-      { name: "🖥️ Server",    value: `**${serverDisplay}**`,                                              inline: true },
-      { name: "🛡️ CDN/WAF",   value: shieldLine,                                                         inline: true },
-      { name: "📡 Protocol",   value: protocolLine,                                                        inline: true },
-      { name: "🔬 Features",   value: featuresLine,                                                        inline: true },
-      { name: "🔌 Open Ports", value: portsLine,                                                           inline: true },
-      { name: "🌍 IP(s)",      value: ipsLine,                                                             inline: true },
-      ...(result.originIP ? [{
-        name:   "🎯 Origin IP Found!",
-        value:  `\`${result.originIP}\`${result.originSubdomain ? ` via \`${result.originSubdomain}\`` : " (SPF record)"} — **bypass CDN directly!**`,
-        inline: false,
-      }] : []),
-      { name: "\u200b", value: "━━━━━━━━━━ 🎯 **VULNERABILITY REPORT** ━━━━━━━━━━", inline: false },
-      { name: `Top ${top6.length} Vectors (sorted by effectiveness)`, value: recoLines, inline: false },
-    );
-
-  if (topRec) {
-    embed.addFields({
-      name: "💡 Quick Attack",
-      value: `\`/attack start target:${result.target}\` → **${methodLabel(topRec.method)}** | threads: **${topRec.suggestedThreads}** | duration: **${topRec.suggestedDuration}s**`,
-      inline: false,
-    });
-  }
-
-  embed.setFooter(footer(`${result.recommendations.length} vectors analyzed`)).setTimestamp();
-  return embed;
+      { name: "🌐 IP / DNS",     value: ipsLine,          inline: true },
+      { name: "🖥️ Server",       value: serverDisplay,    inline: true },
+      { name: "⏱ Response",      value: `${result.responseTimeMs}ms`, inline: true },
+      { name: "🛡️ Protection",   value: shieldLine,       inline: true },
+      { name: "📡 HTTP Version",  value: protocolLine,     inline: true },
+      { name: "🔌 Open Ports",   value: portsLine,         inline: true },
+      { name: "🔧 Features",     value: featuresLine,      inline: false },
+      { name: "‎", value: "━━━━━━━━━━━━ 🏆 **RECOMMENDED ATTACK VECTORS** ━━━━━━━━━━━━", inline: false },
+      { name: "📋 Top Methods", value: recoLines, inline: false },
+    )
+    .setFooter(footer(`Scanned ${new Date().toUTCString()}`))
+    .setTimestamp();
 }
 
 // ── Methods Embed ─────────────────────────────────────────────────────────────
-export function buildMethodsEmbed(methods: Method[], layerFilter?: string): EmbedBuilder {
+export function buildMethodsEmbed(methods: Method[], layerFilter?: string): EmbedBuilder[] {
   const filtered = layerFilter
-    ? methods.filter(m => m.layer.toLowerCase() === layerFilter.toLowerCase())
+    ? methods.filter(m => m.layer?.toLowerCase() === layerFilter.toLowerCase())
     : methods;
 
-  const byLayer: Record<string, Method[]> = {};
-  for (const m of filtered) {
-    (byLayer[m.layer] ??= []).push(m);
+  const pages: EmbedBuilder[] = [];
+  const PAGE_SIZE = 8;
+
+  for (let i = 0; i < filtered.length; i += PAGE_SIZE) {
+    const chunk = filtered.slice(i, i + PAGE_SIZE);
+    const page  = Math.floor(i / PAGE_SIZE) + 1;
+    const total = Math.ceil(filtered.length / PAGE_SIZE);
+
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle(`⚔️ ARES ATTACK VECTORS — ${layerFilter ? `Layer ${layerFilter.toUpperCase()}` : "All Methods"} (${page}/${total})`)
+      .setDescription(`**${filtered.length}** methods available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}.`)
+      .addFields(
+        chunk.map(m => ({
+          name:   `${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} **${m.name}**`,
+          value:  [
+            m.description ?? "_No description_",
+            `Tier: **${m.tier ?? "?"}** | Layer: **${m.layer ?? "?"}** | Protocol: **${m.protocol ?? "?"}**`,
+          ].join("\n"),
+          inline: false,
+        }))
+      )
+      .setFooter(footer(`${filtered.length} total methods`))
+      .setTimestamp();
+
+    pages.push(embed);
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.PURPLE)
-    .setTitle("⚔️ GEASS ARSENAL — ATTACK METHODS")
-    .setDescription(`**${filtered.length}** attack vectors available${layerFilter ? ` (filtered: **${layerFilter}**)` : ""}`);
-
-  for (const [layer, ms] of Object.entries(byLayer).sort(([a], [b]) => a.localeCompare(b))) {
-    const layerEmoji = layer === "L7" ? "🌐" : layer === "L4" ? "🔌" : "📡";
-    embed.addFields({
-      name: `${layerEmoji} ${layer} — ${layer === "L7" ? "Application" : layer === "L4" ? "Transport" : "Network"} Layer (${ms.length})`,
-      value: ms.map(m => {
-        const emoji = METHOD_EMOJIS[m.id] ?? "⚡";
-        return `${emoji} **\`${m.id}\`** — ${m.name} \`[${m.protocol}]\``;
-      }).join("\n"),
-      inline: false,
-    });
+  if (pages.length === 0) {
+    pages.push(
+      new EmbedBuilder()
+        .setColor(COLORS.RED)
+        .setTitle("❌ No Methods Found")
+        .setDescription(layerFilter ? `No methods found for layer \`${layerFilter}\`.` : "No methods available.")
+        .setFooter(footer())
+        .setTimestamp()
+    );
   }
 
-  embed.setFooter(footer("Use /attack start <target> to launch")).setTimestamp();
-  return embed;
+  return pages;
 }
 
-// ── Help Embed ────────────────────────────────────────────────────────────────
+// ── Error Embed ───────────────────────────────────────────────────────────────
+
 export function buildHelpEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(COLORS.GOLD)

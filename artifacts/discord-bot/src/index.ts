@@ -50,6 +50,7 @@ import {
   buildAttackFiles,
   buildClusterEmbed,
   buildInfoEmbed,
+  buildFinishEmbed,
   type ProbeResult,
 } from "./embeds.js";
 
@@ -692,9 +693,16 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
     return;
   }
 
-  const INTERVAL_MS = 8_000; // 8s — was 5s, reduces Discord API call frequency by 37%
+  const INTERVAL_MS     = 5_000; // 5s — live metrics update frequency
   const MAX_LIFETIME_MS = 70 * 60 * 1000; // 70 min — force-kill monitor after max attack duration
-  const startedAt = Date.now();
+  const startedAt       = Date.now();
+
+  // PPS history for trend arrows (↑↓→) — last 6 samples = 30s of trend data
+  const ppsHistory: number[] = [];
+
+  // Proxy count fetched once at monitor start — used in embed badge
+  let proxyCount = 0;
+  void api.getProxyStats().then(s => { proxyCount = s?.count ?? 0; }).catch(() => {});
 
   targetHistories.set(attackId, []);
   downAlertSent.set(attackId, false);
@@ -756,12 +764,17 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
           })();
       if (live.pps > 0) prevPackets.set(attackId, attack.packetsSent);
 
+      // Track PPS history for trend arrows — keep last 6 samples (30s window)
+      ppsHistory.push(livePps);
+      if (ppsHistory.length > 6) ppsHistory.shift();
+
+      const liveBps   = live.bps ?? 0;
       const isRunning = attack.status === "running";
       const row       = buildAttackButtons(attackId, isRunning);
 
       try {
         await editFn({
-          embeds:     [buildAttackEmbed(attack, livePps, live?.conns ?? 0, history)],
+          embeds:     [buildAttackEmbed(attack, livePps, liveBps, live?.conns ?? 0, history, ppsHistory, proxyCount)],
           components: [row],
         });
       } catch (editErr) {
@@ -806,36 +819,9 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
           try {
             const ch = await botClient.channels.fetch(channelId);
             if (ch && ch.isTextBased() && "send" in ch) {
-              const finishColor = attack.status === "finished" ? COLORS.GREEN
-                                : attack.status === "stopped"  ? COLORS.GOLD
-                                : COLORS.RED;
-              const finishIcon  = attack.status === "finished" ? "✅"
-                                : attack.status === "stopped"  ? "⏹️"
-                                : "⚠️";
-              const fmtNum = (n: number) => n.toLocaleString("en-US");
-              const fmtMB  = (b: number) => (b / 1048576).toFixed(2) + " MB";
-              const elapsed = attack.stoppedAt && attack.startedAt
-                ? Math.round((new Date(attack.stoppedAt).getTime() - new Date(attack.startedAt).getTime()) / 1000)
-                : attack.duration;
-              const avgPps = elapsed > 0 ? Math.round(attack.packetsSent / elapsed) : 0;
               await ch.send({
                 content: userId ? `<@${userId}>` : undefined,
-                embeds: [
-                  new EmbedBuilder()
-                    .setColor(finishColor)
-                    .setTitle(`${finishIcon} ATTACK #${attackId} ${attack.status.toUpperCase()}`)
-                    .setDescription(`Attack against \`${target}\` has ended.`)
-                    .addFields(
-                      { name: "🎯 Target",     value: `\`${target}\``,            inline: true },
-                      { name: "⚔️ Method",     value: `\`${attack.method}\``,     inline: true },
-                      { name: "⏱️ Duration",   value: `${elapsed}s`,              inline: true },
-                      { name: "📦 Packets",    value: fmtNum(attack.packetsSent), inline: true },
-                      { name: "💾 Bytes",      value: fmtMB(attack.bytesSent),    inline: true },
-                      { name: "📊 Avg PPS",    value: fmtNum(avgPps),             inline: true },
-                    )
-                    .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
-                    .setTimestamp(),
-                ],
+                embeds: [buildFinishEmbed(attack, proxyCount)],
               });
             }
           } catch (notifyErr) {
@@ -1090,8 +1076,11 @@ async function handleStats(interaction: ChatInputCommandInteraction): Promise<vo
 async function handleAttackStats(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
   try {
-    const stats = await api.getStats();
-    await interaction.editReply({ embeds: [buildStatsEmbed(stats)] });
+    const [stats, proxyStats] = await Promise.all([
+      api.getStats(),
+      api.getProxyStats().catch(() => undefined),
+    ]);
+    await interaction.editReply({ embeds: [buildStatsEmbed(stats, proxyStats ?? undefined)] });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("STATS FAILED", message)] });
@@ -1305,10 +1294,13 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
   });
 
   try {
-    const attack  = await api.startAttack({ target, method: "geass-override", threads, duration, port });
+    const [attack, pStats] = await Promise.all([
+      api.startAttack({ target, method: "geass-override", threads, duration, port }),
+      api.getProxyStats().catch(() => undefined),
+    ]);
     console.log(`[GEASS #${attack.id}] 30 Vectors online — ARES OMNIVECT ∞ → ${target}`);
     const row     = buildAttackButtons(attack.id, true);
-    await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
+    await interaction.editReply({ embeds: [buildStartEmbed(attack, pStats?.count ?? 0)], components: [row], files: buildAttackFiles() });
     const userId  = interaction.user.id;
     startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId);
   } catch (err: unknown) {
@@ -1388,9 +1380,12 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     console.log(`[ATTACK START] ${interaction.user.tag} → ${target} | ${method} | ${threads}t | ${duration}s`);
 
     try {
-      const attack  = await api.startAttack({ target, method, threads, duration, port });
+      const [attack, pStats] = await Promise.all([
+        api.startAttack({ target, method, threads, duration, port }),
+        api.getProxyStats().catch(() => undefined),
+      ]);
       const row     = buildAttackButtons(attack.id, true);
-      await interaction.editReply({ embeds: [buildStartEmbed(attack)], components: [row], files: buildAttackFiles() });
+      await interaction.editReply({ embeds: [buildStartEmbed(attack, pStats?.count ?? 0)], components: [row], files: buildAttackFiles() });
       const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
       startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId, interaction.channelId);
