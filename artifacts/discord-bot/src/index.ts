@@ -28,7 +28,7 @@ type MonitorEditFn = (opts: {
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
 import { getLogChannelId, setLogChannelId } from "./bot-config.js";
-import { askLelouch, clearLelouchHistory, getLelouchMemoryStats } from "./lelouch-ai.js";
+import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
   buildStartEmbed,
@@ -277,6 +277,23 @@ const COMMANDS = [
     .addSubcommand(sub =>
       sub.setName("memory")
         .setDescription("🧠 Ver o que Lelouch aprendeu — base de conhecimento global")
+    )
+    .addSubcommand(sub =>
+      sub.setName("moderate")
+        .setDescription("⚖️ Tribunal do Geass — Lelouch julga um usuário com base nas evidências")
+        .addUserOption(opt =>
+          opt.setName("user").setDescription("O suspeito a ser julgado").setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("evidence").setDescription("Evidências / comportamento observado").setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("context").setDescription("Contexto adicional (histórico, reincidência, etc.)").setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("serverstats")
+        .setDescription("📊 Inteligência do Servidor — análise completa do reino")
     ),
 
   // ── /schedule ─────────────────────────────────────────────────────────────
@@ -1502,6 +1519,8 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
 
   if (sub === "memory") {
     const memStats = getLelouchMemoryStats();
+    const sessionRemaining = getSessionTimeRemaining(interaction.user.id);
+    const sessionMin = sessionRemaining !== null ? Math.ceil(sessionRemaining / 60_000) : null;
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -1516,10 +1535,204 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
                 : "*Nenhum tópico ainda — use /lelouch ask para começar*",
               inline: false,
             },
+            {
+              name: "📂 Por categoria",
+              value: Object.entries(memStats.byCategory).map(([k, v]) => `\`${k}\`: ${v}`).join(" | ") || "*vazio*",
+              inline: false,
+            },
+            {
+              name: "💬 Sessões ativas",
+              value: `\`${memStats.activeSessions}\` usuários com histórico na memória` +
+                (sessionMin !== null ? `\nSua sessão expira em \`${sessionMin}min\` (TTL 30min)` : "\n*Você não tem sessão ativa*"),
+              inline: false,
+            },
           )
           .setFooter({ text: `${AUTHOR} • Memória evolui automaticamente com cada conversa` })
           .setTimestamp(),
       ],
+    });
+    return;
+  }
+
+  // ── moderate — Geass Tribunal ─────────────────────────────────────────────
+  if (sub === "moderate") {
+    const suspect = interaction.options.getUser("user", true);
+    const evidence = interaction.options.getString("evidence", true);
+    const context  = interaction.options.getString("context") ?? undefined;
+    await interaction.deferReply();
+
+    const member = interaction.guild ? await interaction.guild.members.fetch(suspect.id).catch(() => null) : null;
+    const targetName = member ? `${suspect.username} (ID: ${suspect.id}, Nickname: ${member.nickname ?? "none"})` : `${suspect.username} (ID: ${suspect.id})`;
+
+    try {
+      const verdict = await askLelouchModerate(interaction.user.id, targetName, evidence, context);
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x8B0000) // dark red — tribunal
+            .setAuthor({ name: "Tribunal do Geass — Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
+            .setTitle("⚖️ JULGAMENTO REAL — VEREDITO DO GEASS")
+            .setThumbnail(suspect.displayAvatarURL({ size: 256 }))
+            .addFields(
+              { name: "🎯 Suspeito",         value: `${suspect.username} (<@${suspect.id}>)`, inline: true },
+              { name: "👮 Moderador",         value: `${interaction.user.username}`, inline: true },
+              { name: "📋 Evidências",        value: evidence.slice(0, 400), inline: false },
+              { name: "👑 VEREDICTO REAL",    value: verdict, inline: false },
+            )
+            .setFooter({ text: `${AUTHOR} • A palavra do rei é lei` })
+            .setTimestamp(),
+        ],
+        files: buildGeassFiles(),
+      });
+      if (interaction.guildId) {
+        const logEmbed = new EmbedBuilder()
+          .setColor(0x8B0000)
+          .setTitle("⚖️ [LOG] Tribunal do Geass usado")
+          .addFields(
+            { name: "Moderador", value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true },
+            { name: "Suspeito",  value: `${suspect.tag} (<@${suspect.id}>)`,                  inline: true },
+            { name: "Evidências", value: evidence.slice(0, 300), inline: false },
+          )
+          .setTimestamp();
+        void sendAdminLog(interaction.guildId, logEmbed);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await interaction.editReply({ embeds: [buildErrorEmbed("TRIBUNAL FALHOU", msg.slice(0, 300))] });
+    }
+    return;
+  }
+
+  // ── serverstats — Server Intelligence ────────────────────────────────────
+  if (sub === "serverstats") {
+    await interaction.deferReply();
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] });
+      return;
+    }
+
+    // Fetch all data in parallel
+    const [fetchedGuild, bans, invites, webhooks] = await Promise.all([
+      guild.fetch(),
+      guild.bans.fetch({ limit: 1000 }).catch(() => null),
+      guild.invites.fetch().catch(() => null),
+      guild.fetchWebhooks().catch(() => null),
+    ]);
+
+    const memberCount  = fetchedGuild.memberCount;
+    const approxBots   = guild.members.cache.filter(m => m.user.bot).size;
+    const approxHumans = guild.members.cache.filter(m => !m.user.bot).size;
+
+    const totalChannels  = guild.channels.cache.size;
+    const textChannels   = guild.channels.cache.filter(c => c.type === 0).size;
+    const voiceChannels  = guild.channels.cache.filter(c => c.type === 2).size;
+    const categories     = guild.channels.cache.filter(c => c.type === 4).size;
+    const forumChannels  = guild.channels.cache.filter(c => c.type === 15).size;
+    const threads        = guild.channels.cache.filter(c => c.isThread()).size;
+
+    const roleCount      = guild.roles.cache.size - 1; // exclude @everyone
+    const emojiCount     = guild.emojis.cache.size;
+    const stickerCount   = guild.stickers.cache.size;
+    const boostCount     = fetchedGuild.premiumSubscriptionCount ?? 0;
+    const boostTier      = fetchedGuild.premiumTier;
+    const verifyLevel    = ["Nenhuma", "Baixa", "Média", "Alta", "Altíssima"][fetchedGuild.verificationLevel] ?? "Desconhecida";
+
+    const guildCreated   = Math.floor(fetchedGuild.createdTimestamp / 1000);
+    const guildAgeDays   = Math.floor((Date.now() - fetchedGuild.createdTimestamp) / 86_400_000);
+
+    const features = fetchedGuild.features.slice(0, 8).map(f => `\`${f}\``).join(", ") || "*nenhuma*";
+
+    const topRoles = guild.roles.cache
+      .filter(r => r.id !== guild.id && r.members.size > 0)
+      .sort((a, b) => b.members.size - a.members.size)
+      .first(5);
+
+    const totalBans    = bans?.size ?? null;
+    const totalInvites = invites?.size ?? null;
+    const activeInviteUses = invites?.reduce((a, inv) => a + (inv.uses ?? 0), 0) ?? null;
+    const totalWebhooks = webhooks?.size ?? null;
+
+    const BOOST_TIER_LABEL = ["Sem boost", "Tier 1 (2 boosts)", "Tier 2 (15 boosts)", "Tier 3 (30 boosts)"];
+    const boostBar = boostCount > 0
+      ? "💎".repeat(Math.min(boostCount, 10)) + (boostCount > 10 ? ` +${boostCount - 10}` : "")
+      : "*Nenhum boost*";
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.PURPLE)
+          .setAuthor({ name: "Geass Intelligence — Server Dossier", iconURL: "attachment://geass-symbol.png" })
+          .setTitle(`👑 ${fetchedGuild.name.toUpperCase()} — INTELIGÊNCIA DO SERVIDOR`)
+          .setThumbnail(fetchedGuild.iconURL({ size: 256 }) ?? null)
+          .setDescription(`*"Conheço cada canto deste reino. A informação é o poder absoluto do Geass."*`)
+          .addFields(
+            {
+              name: "🪪 IDENTIFICAÇÃO",
+              value: [
+                `**ID:** \`${fetchedGuild.id}\``,
+                `**Owner:** <@${fetchedGuild.ownerId}> (\`${fetchedGuild.ownerId}\`)`,
+                `**Criado em:** <t:${guildCreated}:F> (<t:${guildCreated}:R>)`,
+                `**Idade:** \`${guildAgeDays}\` dias`,
+                `**Verificação:** ${verifyLevel}`,
+              ].join("\n"),
+              inline: false,
+            },
+            {
+              name: `👥 MEMBROS (${memberCount})`,
+              value: [
+                `**Total:** \`${memberCount}\``,
+                approxHumans > 0 ? `**Humanos:** \`${approxHumans}\`` : null,
+                approxBots  > 0 ? `**Bots:** \`${approxBots}\`` : null,
+                totalBans  !== null ? `**Banidos:** \`${totalBans}\`` : null,
+              ].filter(Boolean).join("\n"),
+              inline: true,
+            },
+            {
+              name: `📋 CANAIS (${totalChannels})`,
+              value: [
+                `💬 Texto: \`${textChannels}\``,
+                `🔊 Voz: \`${voiceChannels}\``,
+                `📁 Categorias: \`${categories}\``,
+                `💬 Fóruns: \`${forumChannels}\``,
+                `🧵 Threads: \`${threads}\``,
+              ].join("\n"),
+              inline: true,
+            },
+            {
+              name: "🎭 ESTRUTURA",
+              value: [
+                `**Cargos:** \`${roleCount}\``,
+                `**Emojis:** \`${emojiCount}\``,
+                `**Stickers:** \`${stickerCount}\``,
+                totalWebhooks !== null ? `**Webhooks:** \`${totalWebhooks}\`` : null,
+                totalInvites  !== null ? `**Convites ativos:** \`${totalInvites}\` (${activeInviteUses ?? 0} usos totais)` : null,
+              ].filter(Boolean).join("\n"),
+              inline: false,
+            },
+            {
+              name: `💎 BOOST — ${BOOST_TIER_LABEL[boostTier] ?? boostTier}`,
+              value: boostBar,
+              inline: false,
+            },
+            {
+              name: "🏆 TOP CARGOS POR MEMBROS",
+              value: topRoles.length > 0
+                ? topRoles.map(r => `<@&${r.id}> — \`${r.members.size}\` membros`).join("\n")
+                : "*Nenhum dado disponível*",
+              inline: false,
+            },
+            {
+              name: "⚙️ FEATURES DO SERVIDOR",
+              value: features,
+              inline: false,
+            },
+          )
+          .setImage(fetchedGuild.bannerURL({ size: 1024 }) ?? null)
+          .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Server Dossier` })
+          .setTimestamp(),
+      ],
+      files: buildGeassFiles(),
     });
     return;
   }
@@ -1613,8 +1826,13 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
   const message = interaction.options.getString("message", true);
   await interaction.deferReply();
 
+  // Build server context for adaptive personality
+  const serverCtx = interaction.guild
+    ? `${interaction.guild.name}|${interaction.guild.channels.cache.map(c => c.name).slice(0, 20).join(",")}`
+    : undefined;
+
   try {
-    const reply = await askLelouch(interaction.user.id, message);
+    const reply = await askLelouch(interaction.user.id, message, serverCtx);
 
     // Truncate if over Discord 4096 embed limit (use 1900 for description safety)
     const display = reply.length > 1900 ? reply.slice(0, 1897) + "..." : reply;
@@ -1683,6 +1901,42 @@ async function sendAdminLog(
   } catch (e) {
     console.warn("[LOG CHANNEL]", e instanceof Error ? e.message : e);
   }
+}
+
+// ── Universal command logger — logs ALL command usage to mod log channel ────────
+async function logCommandUsage(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.guildId) return;
+  const channelId = getLogChannelId(interaction.guildId);
+  if (!channelId) return; // no log channel configured — skip silently
+
+  const subcommand = (() => {
+    try { return interaction.options.getSubcommand(false); } catch { return null; }
+  })();
+
+  const fullCmd = [
+    `/${interaction.commandName}`,
+    subcommand ? subcommand : null,
+  ].filter(Boolean).join(" ");
+
+  const embed = new EmbedBuilder()
+    .setColor(0x2C2F33)
+    .setTitle("📋 [LOG] Comando usado")
+    .addFields(
+      { name: "⚡ Comando",  value: `\`${fullCmd}\``,                                           inline: true  },
+      { name: "👤 Usuário",  value: `${interaction.user.tag} (<@${interaction.user.id}>)`,        inline: true  },
+      { name: "📍 Canal",    value: `<#${interaction.channelId}>`,                                inline: true  },
+      { name: "🕒 Horário",  value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                    inline: false },
+    )
+    .setFooter({ text: `${AUTHOR} • Geass Intelligence Logs` })
+    .setTimestamp();
+
+  try {
+    if (!botClient) return;
+    const ch = await botClient.channels.fetch(channelId);
+    if (ch && ch.isTextBased() && "send" in ch) {
+      await (ch as import("discord.js").TextChannel).send({ embeds: [embed] });
+    }
+  } catch { /* non-fatal */ }
 }
 
 // ── /whois — GEASS INTELLIGENCE (full investigation) ──────────────────────────
@@ -2467,6 +2721,9 @@ async function main(): Promise<void> {
 
       if (!interaction.isChatInputCommand()) return;
 
+      // ── Universal command log (non-blocking) ──────────────────────────────
+      void logCommandUsage(interaction);
+
       const { commandName } = interaction;
 
       if (commandName === "attack") {
@@ -2510,6 +2767,74 @@ async function main(): Promise<void> {
           await interaction.reply({ embeds: [errEmbed], ephemeral: true });
         }
       } catch { /**/ }
+    }
+  });
+
+  // ── New member alert — scans risk and alerts mod log channel ─────────────
+  // Note: guildMemberAdd fires for all joins only when GuildMembers privileged
+  // intent is enabled in the Developer Portal + uncommented in the intents above.
+  // Without it, this still fires for the bot's own join events.
+  client.on(Events.GuildMemberAdd, async (member) => {
+    try {
+      const channelId = getLogChannelId(member.guild.id);
+      if (!channelId) return;
+
+      const fetched = await member.user.fetch(true).catch(() => member.user);
+      const sf = (() => {
+        const DISCORD_EPOCH = 1420070400000n;
+        const bigId = BigInt(fetched.id);
+        return { timestamp: Number((bigId >> 22n) + DISCORD_EPOCH) };
+      })();
+      const accountAgeDays = Math.floor((Date.now() - sf.timestamp) / 86_400_000);
+      const createdTs = Math.floor(sf.timestamp / 1000);
+
+      // Quick risk score
+      let riskScore = 0;
+      const riskFactors: string[] = [];
+      if (accountAgeDays < 3)   { riskScore += 50; riskFactors.push("⚠️ Conta com menos de 3 dias"); }
+      else if (accountAgeDays < 7)  { riskScore += 35; riskFactors.push("⚠️ Conta com menos de 7 dias"); }
+      else if (accountAgeDays < 30) { riskScore += 20; riskFactors.push("⚠️ Conta com menos de 30 dias"); }
+      if (!fetched.avatar)  { riskScore += 10; riskFactors.push("📷 Avatar padrão (nunca customizou)"); }
+      const digitRatio = (fetched.username.match(/\d/g)?.length ?? 0) / fetched.username.length;
+      if (digitRatio > 0.5) { riskScore += 15; riskFactors.push("🔢 Username com muitos números"); }
+      if (/^[a-z]{2,5}\d{4,}$/i.test(fetched.username)) { riskScore += 10; riskFactors.push("🤖 Padrão de username de bot/alt"); }
+
+      const riskLevel = riskScore >= 60 ? "🔴 CRÍTICO" : riskScore >= 40 ? "🟠 ALTO" : riskScore >= 20 ? "🟡 MÉDIO" : "🟢 BAIXO";
+      const embedColor = riskScore >= 60 ? 0xFF0000 : riskScore >= 40 ? 0xFF8800 : riskScore >= 20 ? 0xFFDD00 : 0x00CC00;
+
+      // Only alert if risk is medium or above
+      if (riskScore < 20) return;
+
+      const embed = new EmbedBuilder()
+        .setColor(embedColor)
+        .setTitle(`🚨 NOVO MEMBRO — ALERTA DE RISCO ${riskLevel}`)
+        .setThumbnail(fetched.displayAvatarURL({ size: 256 }))
+        .setDescription(
+          riskScore >= 60
+            ? `*"Meu Geass detectou uma ameaça potencial entrando no reino. Atenção máxima, soldados."*`
+            : `*"Um novo súdito chegou. O Geass identifica pontos de atenção a monitorar."*`
+        )
+        .addFields(
+          { name: "👤 Usuário",        value: `${fetched.username} (<@${fetched.id}>)`,              inline: true  },
+          { name: "🪪 ID",             value: `\`${fetched.id}\``,                                    inline: true  },
+          { name: "📅 Conta criada",   value: `<t:${createdTs}:R> (\`${accountAgeDays}d\` atrás)`,   inline: false },
+          {
+            name: `⚠️ FATORES DE RISCO (score: ${riskScore}/100)`,
+            value: riskFactors.join("\n") || "Nenhum fator detectado",
+            inline: false,
+          },
+        )
+        .setFooter({ text: `${AUTHOR} • Use /whois para dossier completo` })
+        .setTimestamp();
+
+      const ch = await botClient!.channels.fetch(channelId);
+      if (ch && ch.isTextBased() && "send" in ch) {
+        await (ch as import("discord.js").TextChannel).send({ embeds: [embed] });
+      }
+
+      console.log(`[NEW MEMBER] ${fetched.username} (${fetched.id}) joined ${member.guild.name} — risk score: ${riskScore} (${riskLevel})`);
+    } catch (e) {
+      console.warn("[MEMBER JOIN ALERT]", e instanceof Error ? e.message : e);
     }
   });
 
