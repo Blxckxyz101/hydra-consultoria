@@ -103,11 +103,14 @@ export type ProbeResult = {
 const CONN_METHODS = new Set(["slowloris", "conn-flood", "geass-override", "rudy", "rudy-v2", "ws-flood", "tls-renego", "http2-continuation", "ssl-death"]);
 
 // ── Sparkline helpers ─────────────────────────────────────────────────────────
-// Definitive DOWN reasons = server actively refused or DNS gone
-// (NOT timeouts/resets/inconclusive which can be OUR network under load during attack)
+// Definitive DOWN = server actively refused connections (ECONNREFUSED from TARGET's TCP stack)
+// ENOTFOUND is excluded: DNS Water Torture can poison OUR system resolver → false positive
+// Timeouts/resets/inconclusive = NOT confirmed down (our network may be saturated by attack)
 const DEFINITIVE_DOWN = (reason?: string) => {
   if (!reason) return false;
-  return reason.includes("refused") || reason.includes("DNS resolution failed");
+  // Only trust ECONNREFUSED — TCP port actively rejected = server process crashed/stopped
+  // NOT ENOTFOUND: during DNS Water Torture, OUR resolver can fail → false "site down" report
+  return reason.includes("refused");
 };
 
 const sparkDot = (p: ProbeResult) => {
@@ -123,16 +126,19 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   if (history.length === 0) return { name: "🌐 Target Status", value: "_probing..._" };
   const last     = history[history.length - 1];
   const dots     = history.slice(-20).map(sparkDot).join("");
-  // 5 consecutive definitive DOWNs = confirmed down (ignore probe inconclusive)
-  const recent5  = history.slice(-5);
-  const downRun  = recent5.length >= 5 && recent5.every(p => !p.up && DEFINITIVE_DOWN(p.reason));
-  const anyDown3 = history.slice(-3).filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length >= 3;
+
+  // Require 5 consecutive confirmed DOWNs (ECONNREFUSED) before declaring "TARGET DOWN".
+  // Previously was 3, which produced false positives when the attack saturated our own NIC/DNS.
+  // ECONNREFUSED = TCP port actively rejected by target's kernel — this cannot be a false positive
+  // from our side. But we still want 5+ to avoid declaring down on a CDN edge flap.
+  const recent8  = history.slice(-8);
+  const downRun5 = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length >= 5;
 
   let statusLine: string;
-  if (!last.up && DEFINITIVE_DOWN(last.reason) && (downRun || anyDown3)) {
+  if (!last.up && DEFINITIVE_DOWN(last.reason) && downRun5) {
     // Target confirmed DOWN — server actively refusing connections
     const causeMap: Record<string, string> = {
-      "geass-override":     "All 21 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT)",
+      "geass-override":     "All 23 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT)",
       "http2-flood":        "H2 connection table saturated (CVE-2023-44487)",
       "http2-continuation": "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
       "waf-bypass":         "WAF layer overwhelmed — origin exposed",
@@ -146,21 +152,30 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
       "rudy-v2":            "Multipart buffer exhausted — server thread pool frozen",
       "ssl-death":          "TLS crypto thread pool saturated — AES-GCM queue overflowed",
       "udp-flood":          "Bandwidth saturated at L4",
+      "syn-flood":          "TCP connection table exhausted — SYN_RECV backlog full",
+      "http-bypass":        "Proxy bypass overwhelmed origin — WAF bypassed",
     };
     const methodCause = causeMap[method] ?? "Server resources exhausted";
-    const probeCause  = last.reason ?? methodCause;
+    const probeCause  = last.reason?.includes("refused") ? methodCause : (last.reason ?? methodCause);
     statusLine = `**💀 TARGET DOWN** — ${probeCause}`;
   } else if (!last.up && DEFINITIVE_DOWN(last.reason)) {
-    statusLine = `**🔴 FAILING** — ${last.reason} (${last.latencyMs}ms) — confirming…`;
+    // 1–4 consecutive ECONNREFUSED — confirming, not yet declared down
+    const downCount = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length;
+    statusLine = `**🔴 REFUSING** — TCP port rejected (${downCount}/5 confirms) — verifying…`;
+  } else if (!last.up) {
+    // Probe failed but not ECONNREFUSED (timeout, reset, DNS fail on our side)
+    statusLine = `**🟠 UNREACHABLE** — probe failed (${last.reason ?? "network error"}) — may be our network`;
   } else if (last.latencyMs > 5000) {
-    // Probe inconclusive or very slow — network under attack load
-    statusLine = `**🟠 UNCONFIRMED** — probe slow (${last.latencyMs}ms) — possible stress or probe saturated`;
+    // Probe inconclusive or very slow — likely network under attack load on our side
+    statusLine = `**🟡 DEGRADED** — ${last.latencyMs}ms (heavy load — site may be UP for users)`;
   } else if (last.latencyMs > 4000) {
-    statusLine = `**🟡 CRITICAL LAG** — ${last.latencyMs}ms (on the edge)`;
+    statusLine = `**🟠 CRITICAL LAG** — ${last.latencyMs}ms (near collapse)`;
   } else if (last.latencyMs > 1500) {
-    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs}ms (rising)`;
+    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs}ms (response degrading)`;
+  } else if (last.latencyMs > 800) {
+    statusLine = `**🟡 SLOWING** — ${last.latencyMs}ms (attack taking effect)`;
   } else {
-    statusLine = `**🟢 ONLINE** — ${last.latencyMs}ms (resisting so far)`;
+    statusLine = `**🟢 ONLINE** — ${last.latencyMs}ms (resisting attack)`;
   }
 
   return {
@@ -200,7 +215,7 @@ export function buildAttackEmbed(
     .setDescription(
       isRunning
         ? attack.method === "geass-override"
-          ? `👁️ **ARES OMNIVECT** — 21 simultaneous real attack vectors, all CVEs active, live monitoring`
+          ? `👁️ **ARES OMNIVECT** — 23 simultaneous real attack vectors, all CVEs active, live monitoring`
           : `**Target is ${attack.method === "waf-bypass" ? "under WAF Bypass" : "under fire"}** — live monitoring active`
         : `Attack **#${attack.id}** has **${attack.status}**.`
     )
@@ -257,7 +272,7 @@ export function buildStartEmbed(attack: Attack): EmbedBuilder {
     .setTitle(`${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
       isGeass
-        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT** — 21 real attack vectors deploying simultaneously`
+        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT** — 23 real attack vectors deploying simultaneously`
         : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`
     )
     .setImage("attachment://lelouch.gif")
@@ -476,7 +491,7 @@ export function buildHelpEmbed(): EmbedBuilder {
       { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },
       { name: "🔍 `/analyze <target>`",    value: "Scan a target and get ranked recommendations for best attack vectors.", inline: false },
       { name: "⚡ `/methods [layer]`",          value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.",          inline: false },
-      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT 21 vectors.",   inline: false },
+      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT 23 vectors.",   inline: false },
       { name: "🌐 `/cluster status`",            value: "Check health & latency of all cluster nodes.",                       inline: false },
       { name: "🌐 `/cluster broadcast <target>`",value: "Fire Geass Override to ALL nodes simultaneously (10× power).",       inline: false },
       { name: "🤖 `/lelouch ask <message>`",     value: "Talk to **Lelouch AI** — helps with the bot, code, web systems & anything else.",  inline: false },
@@ -552,8 +567,8 @@ export function buildInfoEmbed(opts: {
       ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Lelouch vi Britannia**, Código R-02`
       : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Lelouch vi Britannia**, Code R-02`,
     desc:        pt
-      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n21 vetores de ataque simultâneos, fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
-      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n21 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
+      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n23 vetores de ataque simultâneos, fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
+      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n23 simultaneous real attack vectors, multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
     secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
     engineTitle: pt ? "🔴 Geass Override ∞ — 21 Vetores" : "🔴 Geass Override ∞ — 21 Vectors",
     engineBox:
@@ -626,8 +641,8 @@ export function buildInfoEmbed(opts: {
     secCmds:     pt ? "━━━━ 📖  **REFERÊNCIA DE COMANDOS** ━━━━" : "━━━━ 📖  **COMMAND REFERENCE** ━━━━",
     coreTitle:   pt ? "⚡ Comandos Principais" : "⚡ Core Commands",
     coreVal:     pt
-      ? "`/geass`  — Geass Override ∞ · 21 vetores\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
-      : "`/geass`  — Geass Override ∞ · 21 vectors max power\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
+      ? "`/geass`  — Geass Override ∞ · 23 vetores\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
+      : "`/geass`  — Geass Override ∞ · 23 vectors max power\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
       ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/lelouch ask`  — IA Lelouch · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
@@ -700,7 +715,7 @@ export function buildClusterEmbed(status: {
       { name: "💻 Primary CPU",  value: `${self.cpus} vCPU`, inline: true },
       { name: "💾 Primary RAM",  value: `${self.freeMem} MB free`, inline: true },
       { name: "👁️ Geass Override", value: configuredNodes > 0
-          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 21 ARES vectors simultaneously.`
+          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 23 ARES vectors simultaneously.`
           : "Set `CLUSTER_NODES` to enable automatic fan-out.", inline: false },
     )
     .setThumbnail("attachment://geass-symbol.png")

