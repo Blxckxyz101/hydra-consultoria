@@ -758,63 +758,122 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [logs]);
 
-  /* ── Proxy count polling + client-side auto-refresh every 10 min ── */
+  /* ── Proxy stats — SSE real-time + polling fallback ── */
   useEffect(() => {
+    let es: EventSource | null = null;
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
     let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let sseConnected = false;
 
-    async function pollProxyCount() {
+    // ── initial fetch of full proxy list (runs once) ──────────────────────
+    async function fetchProxyList() {
       try {
-        const [r, rs] = await Promise.all([
-          fetch(`${BASE}/api/proxies/count`),
-          fetch(`${BASE}/api/proxies/stats`),
-        ]);
-        const d  = await r.json() as { count: number; fetching: boolean; lastFetch: number };
-        const ds = await rs.json() as { count: number; residentialCount?: number; residential?: ResidentialInfo | null; fresh?: boolean };
+        const r = await fetch(`${BASE}/api/proxies`);
+        const d = await r.json() as {
+          count: number; publicCount?: number; residentialCount?: number;
+          proxies: ProxyEntry[]; residential?: ResidentialInfo | null;
+        };
+        if (d.proxies?.length > 0) setProxies(d.proxies);
         setProxyLiveCount(d.count);
+        if (d.residential)             setResidentialInfo(d.residential);
+        if ((d.residentialCount ?? 0) > 0) setResidentialCount(d.residentialCount ?? 0);
+      } catch { /* ignore — API may be starting */ }
+    }
+
+    // ── SSE handler — called for every event ──────────────────────────────
+    function applySnapshot(raw: string) {
+      try {
+        const d = JSON.parse(raw) as {
+          proxyCount: number; fetching: boolean;
+          residentialCount: number; residential: ResidentialInfo | null;
+          activeAttacks?: number; ts: number;
+        };
+        setProxyLiveCount(d.proxyCount);
         setProxyIsFetching(d.fetching);
-        if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
-        // Always sync residential info from stats
-        if ((ds.residentialCount ?? 0) > 0) {
-          setResidentialCount(ds.residentialCount ?? 0);
-          if (ds.residential) setResidentialInfo(prev => prev ?? ds.residential!);
-        } else if (ds.residentialCount === 0) {
+        if (d.residentialCount > 0) {
+          setResidentialCount(d.residentialCount);
+          if (d.residential) setResidentialInfo(d.residential);
+        } else {
           setResidentialInfo(null);
           setResidentialCount(0);
         }
-        // Sync displayed public proxy list if empty
-        if (d.count > 0 && proxies.length === 0 && !d.fetching) {
-          const r2  = await fetch(`${BASE}/api/proxies`);
-          const d2  = await r2.json() as {
-            count: number; publicCount?: number; residentialCount?: number;
-            proxies: ProxyEntry[];
-            residential?: ResidentialInfo | null;
-          };
-          setProxies(d2.proxies ?? []);
-          if (d2.residential) setResidentialInfo(d2.residential);
-          if ((d2.residentialCount ?? 0) > 0) setResidentialCount(d2.residentialCount ?? 0);
-        }
-      } catch { /* ignore */ }
+      } catch { /* malformed event */ }
     }
 
-    // Poll count every 10 seconds for fast recovery display after server restart
-    pollProxyCount();
-    const countInterval = setInterval(pollProxyCount, 10_000);
+    // ── Connect SSE ───────────────────────────────────────────────────────
+    function connectSSE() {
+      if (typeof EventSource === "undefined") { startFallbackPolling(); return; }
+      es = new EventSource(`${BASE}/api/events`);
 
-    // Client-side auto-refresh trigger every 10 minutes (backend also refreshes, this syncs state)
+      es.addEventListener("snapshot", (e: MessageEvent) => {
+        sseConnected = true;
+        applySnapshot((e as MessageEvent).data as string);
+        // If SSE is working, stop fallback polling
+        if (fallbackInterval) { clearInterval(fallbackInterval); fallbackInterval = null; }
+      });
+
+      es.addEventListener("update", (e: MessageEvent) => {
+        applySnapshot((e as MessageEvent).data as string);
+      });
+
+      es.addEventListener("connected", () => { sseConnected = true; });
+
+      es.onerror = () => {
+        // SSE failed — fall back to polling
+        if (!sseConnected) {
+          es?.close();
+          es = null;
+          startFallbackPolling();
+        }
+      };
+    }
+
+    // ── Fallback polling (10s) ────────────────────────────────────────────
+    function startFallbackPolling() {
+      if (fallbackInterval) return;
+      async function poll() {
+        try {
+          const [r, rs] = await Promise.all([
+            fetch(`${BASE}/api/proxies/count`),
+            fetch(`${BASE}/api/proxies/stats`),
+          ]);
+          const d  = await r.json() as { count: number; fetching: boolean; lastFetch: number };
+          const ds = await rs.json() as { count: number; residentialCount?: number; residential?: ResidentialInfo | null };
+          setProxyLiveCount(d.count);
+          setProxyIsFetching(d.fetching);
+          if (d.lastFetch) setProxyLastRefresh(d.lastFetch);
+          if ((ds.residentialCount ?? 0) > 0) {
+            setResidentialCount(ds.residentialCount ?? 0);
+            if (ds.residential) setResidentialInfo(prev => prev ?? ds.residential!);
+          } else if (ds.residentialCount === 0) {
+            setResidentialInfo(null); setResidentialCount(0);
+          }
+        } catch { /* ignore */ }
+      }
+      void poll();
+      fallbackInterval = setInterval(poll, 10_000);
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────────
+    void fetchProxyList();
+    connectSSE();
+
+    // If SSE doesn't connect within 5s, start fallback
+    const sseTimeout = setTimeout(() => {
+      if (!sseConnected) { es?.close(); es = null; startFallbackPolling(); }
+    }, 5_000);
+
+    // Re-fetch full proxy list every 10 minutes
     autoRefreshTimer = setTimeout(function triggerRefresh() {
-      fetch(`${BASE}/api/proxies`).then(async r => {
-        const d = await r.json() as { count: number; proxies: ProxyEntry[]; residential?: ResidentialInfo | null; residentialCount?: number };
-        if (d.count > 0) setProxies(d.proxies ?? []);
-        setProxyLiveCount(d.count);
-        if (d.residential) setResidentialInfo(d.residential);
-        if ((d.residentialCount ?? 0) > 0) setResidentialCount(d.residentialCount ?? 0);
-      }).catch(() => {});
+      void fetchProxyList();
       autoRefreshTimer = setTimeout(triggerRefresh, 10 * 60 * 1000);
     }, 10 * 60 * 1000);
 
     return () => {
-      clearInterval(countInterval);
+      es?.close();
+      if (fallbackInterval) clearInterval(fallbackInterval);
       if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+      clearTimeout(sseTimeout);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

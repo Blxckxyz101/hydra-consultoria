@@ -13,6 +13,7 @@
 import { Router, type IRouter } from "express";
 import { eq, sql, desc } from "drizzle-orm";
 import { db, attacksTable } from "@workspace/db";
+import { attackLimiter } from "../middlewares/rateLimit.js";
 import { Worker } from "worker_threads";
 import os   from "node:os";
 import path from "node:path";
@@ -623,7 +624,7 @@ router.get("/attacks", async (_req, res): Promise<void> => {
   res.json(attacks);
 });
 
-router.post("/attacks", async (req, res): Promise<void> => {
+router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   const p = CreateAttackBody.safeParse(req.body);
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const { target, port, method, duration, threads, webhookUrl } = p.data;
@@ -697,6 +698,9 @@ router.post("/attacks", async (req, res): Promise<void> => {
 
 // Map for abort controllers + stop timers (for Extend support)
 export const attackAborts  = new Map<number, AbortController>();
+
+// ── Exported getter for SSE events route ─────────────────────────────────
+export function getActiveAttackCount(): number { return attackAborts.size; }
 const attackTimers  = new Map<number, ReturnType<typeof setTimeout>>();
 
 // ── Scheduled attacks (GET must be BEFORE /attacks/:id to avoid conflict) ──
@@ -937,14 +941,18 @@ router.post("/notify", async (req, res): Promise<void> => {
       title: evt === "target_down" ? "🔴 TARGET DOWN — GEASS CONFIRMED" : "⚔️ LELOUCH BRITANNIA — ATTACK EVENT",
       description: desc,
       color: evt === "target_down" ? 0xFF0000 : 0xFF6600,
-      fields: attackData ? [
-        { name: "🎯 Target",       value: `\`${attackData.target}\``,  inline: true },
-        { name: "⚔️ Method",       value: `\`${attackData.method}\``,  inline: true },
-        { name: "⏱ Duration",      value: `${attackData.duration}s`,   inline: true },
-        { name: "📦 Packets Sent",  value: (livePackets.get(attackData.id) ?? attackData.packetsSent).toLocaleString(), inline: true },
-        { name: "📊 PPS at Kill",   value: (livePps.get(attackData.id) ?? 0).toLocaleString(),                          inline: true },
-        { name: "🔌 Status",        value: attackData.status,           inline: true },
-      ] : [{ name: "Event", value: evt, inline: true }],
+      fields: (() => {
+        if (!attackData) return [{ name: "Event", value: evt, inline: true }];
+        const ad = attackData;
+        return [
+          { name: "🎯 Target",       value: `\`${ad.target}\``,  inline: true },
+          { name: "⚔️ Method",       value: `\`${ad.method}\``,  inline: true },
+          { name: "⏱ Duration",      value: `${ad.duration}s`,   inline: true },
+          { name: "📦 Packets Sent",  value: (livePackets.get(ad.id) ?? ad.packetsSent ?? 0).toLocaleString(), inline: true },
+          { name: "📊 PPS at Kill",   value: (livePps.get(ad.id) ?? 0).toLocaleString(),                  inline: true },
+          { name: "🔌 Status",        value: ad.status,           inline: true },
+        ];
+      })(),
       timestamp: new Date().toISOString(),
       footer: { text: "Lelouch Britannia • ARES OMNIVECT ∞ v3" },
     }],

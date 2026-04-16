@@ -14,6 +14,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import fs from "node:fs";
 import path from "node:path";
+import { refreshLimiter } from "../middlewares/rateLimit.js";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,10 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 // ── Pinned proxies — custom/residential proxies that survive cache refresh ─
 let pinnedProxies: Proxy[] = [];
 let residentialCreds: { host: string; port: number; username: string; password: string; count: number } | null = null;
+
+// ── Exported getter functions for SSE events route ───────────────────────
+export function getResidentialCreds() { return residentialCreds; }
+export function isFetchingProxies()  { return isFetching; }
 
 // ── Persistence — save/load residential config across restarts ────────────
 const CONFIG_FILE = path.join(process.cwd(), "data", "proxy-config.json");
@@ -247,7 +252,7 @@ router.get("/proxies", (_req, res): void => {
 });
 
 // POST /api/proxies/refresh — trigger immediate harvest
-router.post("/proxies/refresh", (_req, res): void => {
+router.post("/proxies/refresh", refreshLimiter, (_req, res): void => {
   if (isFetching) {
     res.json({ status: "already_fetching", count: proxyCache.length, lastFetch });
     return;

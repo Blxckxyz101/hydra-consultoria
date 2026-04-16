@@ -4027,7 +4027,7 @@ async function runXMLBomb(
 // ─────────────────────────────────────────────────────────────────────────
 async function runH2PingStorm(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
-  signal: AbortSignal, onStats: (p: number, b: number) => void,
+  signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   // H2 PING frame: 9-byte header + 8-byte opaque data = 17 bytes
   // Prelude: client connection preface + SETTINGS frame
@@ -4119,7 +4119,7 @@ async function runH2PingStorm(
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPSmuggling(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
-  signal: AbortSignal, onStats: (p: number, b: number) => void,
+  signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   const isHttps = targetPort === 443;
 
@@ -4535,7 +4535,7 @@ async function runH2PriorityStorm(
   targetPort: number,
   threads: number,
   signal: AbortSignal,
-  onStats: (p: number, b: number) => void,
+  onStats: (p: number, b: number, c?: number) => void,
 ) {
   // PRIORITY frame: type=0x2, 5 bytes payload
   // Payload: [E][stream_dep 31bits][weight 8bits]

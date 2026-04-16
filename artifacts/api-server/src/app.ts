@@ -3,6 +3,8 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { apiKeyMiddleware } from "./middlewares/apiKey.js";
+import { generalLimiter } from "./middlewares/rateLimit.js";
 
 const app: Express = express();
 
@@ -25,9 +27,14 @@ app.use(
     },
   }),
 );
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ── Security middleware ────────────────────────────────────────────────────
+app.use(generalLimiter);
+app.use(apiKeyMiddleware);
 
 app.use("/api", router);
 

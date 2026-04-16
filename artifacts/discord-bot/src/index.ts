@@ -26,6 +26,7 @@ type MonitorEditFn = (opts: {
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
+import { getLogChannelId, setLogChannelId } from "./bot-config.js";
 import { askLelouch, clearLelouchHistory, getLelouchMemoryStats } from "./lelouch-ai.js";
 import {
   buildAttackEmbed,
@@ -115,6 +116,10 @@ const THREAD_OPTIONS = [
 interface LaunchSession { target: string; duration: number; threads: number; }
 const pendingSessions  = new Map<string, LaunchSession>();
 const sessionTimers    = new Map<string, NodeJS.Timeout>();
+
+// ── Attack cooldown — 30s between /attack start per user ──────────────────
+const ATTACK_COOLDOWN_MS = 30_000;
+const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimestamp
 
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -347,6 +352,34 @@ const COMMANDS = [
       sub.setName("unmute")
         .setDescription("🔊 Restore voice to a silenced subject")
         .addUserOption(opt => opt.setName("user").setDescription("Subject to restore voice").setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName("kick")
+        .setDescription("👢 Expel a subject — they may return unlike a ban")
+        .addUserOption(opt => opt.setName("user").setDescription("Subject to expel").setRequired(true))
+        .addStringOption(opt => opt.setName("reason").setDescription("Reason for expulsion").setRequired(false))
+    )
+    .addSubcommand(sub =>
+      sub.setName("slowmode")
+        .setDescription("🐢 Set slow mode delay on the current channel")
+        .addIntegerOption(opt =>
+          opt.setName("seconds").setDescription("Delay in seconds (0 = disable, max 21600)").setRequired(true).setMinValue(0).setMaxValue(21600)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("logchannel")
+        .setDescription("📋 Set the channel where all mod actions are logged")
+        .addChannelOption(opt =>
+          opt.setName("channel").setDescription("Channel to send mod logs to").setRequired(true)
+        )
+    ),
+
+  // ── /whois ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("whois")
+    .setDescription("🔍 Geass Intelligence — full dossier on a Discord user")
+    .addUserOption(opt =>
+      opt.setName("user").setDescription("The subject to investigate").setRequired(false)
     ),
 
 ].map(c => c.toJSON());
@@ -694,6 +727,31 @@ function buildLauncherEmbed(target: string, session: LaunchSession, selectedMeth
 async function handleAttackStart(interaction: ChatInputCommandInteraction): Promise<void> {
   const target  = interaction.options.getString("target", true);
   const userId  = interaction.user.id;
+
+  // ── Cooldown check — 30s between launches ─────────────────────────────
+  const lastLaunch = attackCooldowns.get(userId);
+  if (lastLaunch) {
+    const elapsed  = Date.now() - lastLaunch;
+    const remaining = Math.ceil((ATTACK_COOLDOWN_MS - elapsed) / 1000);
+    if (elapsed < ATTACK_COOLDOWN_MS) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GOLD)
+            .setTitle("⏳ GEASS RECHARGING")
+            .setDescription(
+              `*"Even the Geass requires a moment to focus. Patience is a weapon, not a weakness."*\n\n` +
+              `You must wait **${remaining}s** before launching another assault.`
+            )
+            .setFooter({ text: `${AUTHOR} • Cooldown: ${ATTACK_COOLDOWN_MS / 1000}s` })
+            .setTimestamp(),
+        ],
+        ephemeral: true,
+      });
+      return;
+    }
+  }
+  attackCooldowns.set(userId, Date.now());
 
   // Init session with defaults — auto-expires in 5 minutes if abandoned
   const session: LaunchSession = { target, duration: 60, threads: 200 };
@@ -1493,6 +1551,110 @@ function getRandQuote(arr: string[]): string {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// ── Log channel helper — sends embed to configured mod log channel ────────────
+async function sendAdminLog(
+  guildId: string,
+  embed: EmbedBuilder,
+): Promise<void> {
+  if (!botClient) return;
+  const channelId = getLogChannelId(guildId);
+  if (!channelId) return;
+  try {
+    const ch = await botClient.channels.fetch(channelId);
+    if (ch && ch.isTextBased() && "send" in ch) {
+      await (ch as import("discord.js").TextChannel).send({ embeds: [embed] });
+    }
+  } catch (e) {
+    console.warn("[LOG CHANNEL]", e instanceof Error ? e.message : e);
+  }
+}
+
+// ── /whois handler ────────────────────────────────────────────────────────────
+async function handleWhois(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+
+  const target = interaction.options.getUser("user") ?? interaction.user;
+
+  // Re-fetch with force to get banner + latest data
+  const fetched = await target.fetch(true).catch(() => target);
+
+  // Flag names → readable badges
+  const FLAG_MAP: Record<string, string> = {
+    Staff:                       "👑 Discord Staff",
+    Partner:                     "🤝 Partnered Server Owner",
+    Hypesquad:                   "🏠 HypeSquad Events",
+    BugHunterLevel1:             "🐛 Bug Hunter",
+    BugHunterLevel2:             "🐛 Bug Hunter Gold",
+    HypeSquadOnlineHouse1:       "🟠 HypeSquad Bravery",
+    HypeSquadOnlineHouse2:       "🟡 HypeSquad Brilliance",
+    HypeSquadOnlineHouse3:       "🔵 HypeSquad Balance",
+    PremiumEarlySupporter:       "💜 Early Supporter",
+    TeamPseudoUser:              "👥 Team User",
+    VerifiedBot:                 "✅ Verified Bot",
+    VerifiedDeveloper:           "🔧 Verified Bot Developer",
+    CertifiedModerator:          "🛡️ Certified Moderator",
+    ActiveDeveloper:             "🔨 Active Developer",
+    Quarantined:                 "🔒 Quarantined",
+    Collaborator:                "🤝 Collaborator",
+  };
+
+  const flags = fetched.flags?.toArray() ?? [];
+  const badgeStr = flags.length > 0
+    ? flags.map(f => FLAG_MAP[f as string] ?? `\`${String(f)}\``).join("\n")
+    : "*No special badges*";
+
+  // Creation date from snowflake
+  const createdAt = fetched.createdAt;
+  const createdTs = Math.floor(createdAt.getTime() / 1000);
+
+  // Avatar + banner
+  const avatarURL = fetched.displayAvatarURL({ size: 256 });
+  const bannerURL = fetched.bannerURL({ size: 512 });
+
+  const embed = new EmbedBuilder()
+    .setColor(fetched.bot ? COLORS.BLUE : COLORS.PURPLE)
+    .setTitle(`🔍 GEASS INTELLIGENCE DOSSIER`)
+    .setDescription(
+      `> *"My Geass sees all — every subject has a history, and I have read yours."*\n\n` +
+      `**${fetched.username}** ${fetched.bot ? "🤖" : "👤"}`
+    )
+    .setThumbnail(avatarURL)
+    .addFields(
+      { name: "🪪 ID",              value: `\`${fetched.id}\``,                        inline: true },
+      { name: "🏷️ Username",        value: fetched.username,                            inline: true },
+      { name: "📛 Display Name",    value: fetched.displayName || "*none*",             inline: true },
+      { name: "📅 Account Created", value: `<t:${createdTs}:F>\n<t:${createdTs}:R>`,   inline: false },
+      { name: "🤖 Bot Account",     value: fetched.bot ? "Yes" : "No",                 inline: true },
+      { name: "🎭 Badges",          value: badgeStr,                                   inline: false },
+    );
+
+  // Guild member info
+  if (interaction.guild) {
+    try {
+      const member = await interaction.guild.members.fetch(fetched.id);
+      const joinedTs = member.joinedAt ? Math.floor(member.joinedAt.getTime() / 1000) : null;
+      const roles = member.roles.cache
+        .filter(r => r.id !== interaction.guild!.id) // exclude @everyone
+        .sort((a, b) => b.position - a.position)
+        .map(r => `<@&${r.id}>`)
+        .slice(0, 10);
+
+      embed.addFields(
+        { name: "📅 Server Joined",  value: joinedTs ? `<t:${joinedTs}:F>\n<t:${joinedTs}:R>` : "*Unknown*", inline: false },
+        { name: `🎖️ Roles (${member.roles.cache.size - 1})`, value: roles.length > 0 ? roles.join(" ") : "*No roles*", inline: false },
+        { name: "📝 Nickname",       value: member.nickname ?? "*None*",                   inline: true },
+        { name: "⏳ Timeout",        value: member.isCommunicationDisabled() ? `Until <t:${Math.floor((member.communicationDisabledUntil?.getTime() ?? 0) / 1000)}:R>` : "None", inline: true },
+        { name: "🛡️ Boosting",      value: member.premiumSince ? `<t:${Math.floor(member.premiumSince.getTime() / 1000)}:R>` : "No", inline: true },
+      );
+    } catch { /* member not in this guild */ }
+  }
+
+  if (bannerURL) embed.setImage(bannerURL);
+  embed.setFooter({ text: `${AUTHOR} • Dossier compiled by Geass Intelligence` }).setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
 
@@ -1520,6 +1682,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
         .setFooter({ text: AUTHOR })
         .setTimestamp();
       await interaction.editReply({ embeds: [embed] });
+      if (interaction.guildId) void sendAdminLog(interaction.guildId, embed);
       console.log(`[ADMIN BAN] ${interaction.user.tag} banned ${target.tag} — ${reason}`);
     } catch (e: unknown) {
       await interaction.editReply({ embeds: [buildErrorEmbed("BANISHMENT FAILED", String(e))] });
@@ -1673,9 +1836,111 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
         .setFooter({ text: AUTHOR })
         .setTimestamp();
       await interaction.editReply({ embeds: [embed] });
+      if (interaction.guildId) void sendAdminLog(interaction.guildId, embed);
     } catch (e: unknown) {
       await interaction.editReply({ embeds: [buildErrorEmbed("UNMUTE FAILED", String(e))] });
     }
+    return;
+  }
+
+  // ── KICK ─────────────────────────────────────────────────────────────────
+  if (sub === "kick") {
+    const target = interaction.options.getUser("user", true);
+    const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+    if (target.id === interaction.user.id) { await interaction.editReply({ embeds: [buildErrorEmbed("GEASS NEGADO", "Até um rei não pode expulsar a si mesmo.")] }); return; }
+
+    try {
+      const member = await interaction.guild.members.fetch(target.id);
+      await member.kick(`[Lelouch] ${reason}`);
+      const embed = new EmbedBuilder()
+        .setColor(0xE67E22)
+        .setTitle("👢 EXPULSION DECREE — GEASS ORDER")
+        .setDescription(`*"You are banished from my presence — for now. Consider this a mercy compared to what awaits repeat offenders."*`)
+        .addFields(
+          { name: "👢 Expelled Subject", value: `${target.tag} (${target.id})`, inline: true },
+          { name: "👁️ Decreed By",      value: `${interaction.user.tag}`,        inline: true },
+          { name: "📜 Reason",           value: reason,                           inline: false },
+        )
+        .setThumbnail(target.displayAvatarURL())
+        .setFooter({ text: `${AUTHOR} • Unlike a ban, they may return` })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      if (interaction.guildId) void sendAdminLog(interaction.guildId, embed);
+      console.log(`[ADMIN KICK] ${interaction.user.tag} kicked ${target.tag} — ${reason}`);
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("KICK FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── SLOWMODE ─────────────────────────────────────────────────────────────
+  if (sub === "slowmode") {
+    const seconds = interaction.options.getInteger("seconds", true);
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.channel || !interaction.channel.isTextBased()) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Canal de texto não encontrado.")] }); return;
+    }
+
+    try {
+      const ch = interaction.channel as import("discord.js").TextChannel;
+      await ch.setRateLimitPerUser(seconds, `[Lelouch] Slowmode set by ${interaction.user.tag}`);
+      const embed = new EmbedBuilder()
+        .setColor(seconds === 0 ? 0x2ecc71 : 0x9b59b6)
+        .setTitle(seconds === 0 ? "🔓 SLOWMODE DISABLED" : "🐢 SLOWMODE ENGAGED — GEASS THROTTLE")
+        .setDescription(
+          seconds === 0
+            ? `*"Speed and efficiency — the kingdom flows unimpeded once more."*`
+            : `*"I control the pace of this battlefield. ${seconds}s between each advance — by my Geass."*`
+        )
+        .addFields(
+          { name: "⏱️ Delay",    value: seconds === 0 ? "Disabled" : `**${seconds}s** between messages`, inline: true },
+          { name: "📍 Channel",  value: `<#${ch.id}>`,                                                   inline: true },
+          { name: "👁️ Set By",  value: `${interaction.user.tag}`,                                        inline: true },
+        )
+        .setFooter({ text: AUTHOR })
+        .setTimestamp();
+      await interaction.editReply({ embeds: [embed] });
+      if (interaction.guildId) void sendAdminLog(interaction.guildId, embed);
+      console.log(`[ADMIN SLOWMODE] ${interaction.user.tag} set slowmode ${seconds}s in #${ch.name}`);
+    } catch (e: unknown) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("SLOWMODE FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── LOGCHANNEL ────────────────────────────────────────────────────────────
+  if (sub === "logchannel") {
+    const channel = interaction.options.getChannel("channel", true);
+    await interaction.deferReply({ ephemeral: true });
+
+    if (!interaction.guildId) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
+
+    setLogChannelId(interaction.guildId, channel.id);
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.GOLD)
+      .setTitle("📋 MOD LOG CHANNEL — CONFIGURED")
+      .setDescription(`*"All intelligence shall be recorded. The Geass sees everything, and now so shall this channel."*`)
+      .addFields(
+        { name: "📋 Log Channel", value: `<#${channel.id}>`, inline: true },
+        { name: "👁️ Set By",     value: `${interaction.user.tag}`, inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • All mod actions will be logged here` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+    // Send a confirmation to the new log channel too
+    void sendAdminLog(interaction.guildId, new EmbedBuilder()
+      .setColor(COLORS.GOLD)
+      .setTitle("📋 THIS IS NOW THE MOD LOG CHANNEL")
+      .setDescription(`*"The Geass Intelligence Network has chosen this channel. All future mod actions will appear here."*`)
+      .addFields({ name: "👁️ Configured By", value: `${interaction.user.tag}` })
+      .setFooter({ text: AUTHOR })
+      .setTimestamp()
+    );
+    console.log(`[ADMIN LOGCHANNEL] ${interaction.user.tag} set log channel to #${channel.id} in guild ${interaction.guildId}`);
     return;
   }
 }
@@ -1753,6 +2018,8 @@ async function main(): Promise<void> {
         await handleStats(interaction);
       } else if (commandName === "admin") {
         await handleAdmin(interaction);
+      } else if (commandName === "whois") {
+        await handleWhois(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

@@ -578,7 +578,7 @@ function scoreMethodsFor(opts: {
       method: "slow-read", name: "Slow Read [TCP buffer exhaust]",
       score, tier: tierFromScore(score),
       reason: `Pauses TCP reading after request — fills server send buffer, blocking server thread indefinitely. ${serverType === "apache" ? "Apache thread-per-request model makes this extremely effective." : "Effective against any threaded server."}`,
-      suggestedThreads: 500, suggestedDuration: 120, protocol: "TCP/HTTP",
+      suggestedThreads: 500, suggestedDuration: 120, protocol: "TCP/HTTP", amplification: 0,
     });
   }
 
@@ -591,7 +591,7 @@ function scoreMethodsFor(opts: {
       method: "range-flood", name: "HTTP Range Flood [500×1-byte ranges]",
       score, tier: tierFromScore(score),
       reason: "Range: bytes=0-0,...,499-499 forces server to validate all 500 ranges, build multipart response, perform 500× disk seeks per request. Multiplies I/O cost 500×.",
-      suggestedThreads: 600, suggestedDuration: 60, protocol: "HTTP",
+      suggestedThreads: 600, suggestedDuration: 60, protocol: "HTTP", amplification: 0,
     });
   }
 
@@ -603,7 +603,7 @@ function scoreMethodsFor(opts: {
       method: "xml-bomb", name: "XML Bomb [billion-laughs XXE]",
       score, tier: tierFromScore(score),
       reason: "Posts billion-laughs XML to SOAP/XMLRPC/XML-REST endpoints. If server parses XML without entity limits, entity expansion causes GB-level memory/CPU exhaustion.",
-      suggestedThreads: 80, suggestedDuration: 45, protocol: "HTTP/XML",
+      suggestedThreads: 80, suggestedDuration: 45, protocol: "HTTP/XML", amplification: 0,
     });
   }
 
@@ -616,7 +616,7 @@ function scoreMethodsFor(opts: {
       method: "h2-ping-storm", name: "H2 PING Storm [RFC 7540 §6.7]",
       score, tier: tierFromScore(score),
       reason: "Every HTTP/2 PING frame must be ACK'd by server (mandatory per RFC). Sends 10K PINGs/s per connection — forces context switch + ACK allocation for each. Massive CPU drain.",
-      suggestedThreads: 1000, suggestedDuration: 60, protocol: "HTTP/2",
+      suggestedThreads: 1000, suggestedDuration: 60, protocol: "HTTP/2", amplification: 0,
     });
   }
 
@@ -629,7 +629,7 @@ function scoreMethodsFor(opts: {
       method: "http-smuggling", name: "HTTP Smuggling [TE/CL desync]",
       score, tier: tierFromScore(score),
       reason: `TE/CL header desync exploits parsing inconsistencies between reverse proxy and backend. ${isCDN ? `${cdnProvider} as front-end: CL.TE variant poisons backend queue.` : "Can poison backend request queues."}`,
-      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP",
+      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP", amplification: 0,
     });
   }
 
@@ -641,14 +641,14 @@ function scoreMethodsFor(opts: {
       method: "doh-flood", name: "DoH Flood [/dns-query exhaustion]",
       score, tier: tierFromScore(score),
       reason: "Floods /dns-query with RFC 8484 wire-format DNS queries for random domains. Forces recursive DNS resolution, exhausting resolver thread pool and upstream DNS bandwidth.",
-      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP/DNS",
+      suggestedThreads: 200, suggestedDuration: 60, protocol: "HTTP/DNS", amplification: 0,
     });
   }
 
   // ── Keepalive Exhaust ─────────────────────────────────────────────────
   if (httpAvailable || httpsAvailable) {
     const apacheBonus = serverType === "apache" ? 20 : 0; // MaxKeepAliveRequests default=100
-    const nodeBonus   = serverType === "node"   ? 15 : 0;
+    const nodeBonus   = serverType === "nodejs"  ? 15 : 0;
     const nginxBonus  = serverType === "nginx"  ? 10 : 0;
     const base        = hasWAF ? 55 : (isIP ? 75 : 68);
     const score       = Math.min(99, base + apacheBonus + nodeBonus + nginxBonus);
@@ -656,7 +656,7 @@ function scoreMethodsFor(opts: {
       method: "keepalive-exhaust", name: "Keepalive Exhaust [128-req pipeline]",
       score, tier: tierFromScore(score),
       reason: `Pipelines 128 requests per keep-alive connection without waiting for responses. Saturates server's keep-alive thread pool. ${serverType === "apache" ? "Apache MaxKeepAliveRequests=100 by default — each connection maxes it out." : "Holds server worker threads until all requests processed."}`,
-      suggestedThreads: 500, suggestedDuration: 60, protocol: "HTTP",
+      suggestedThreads: 500, suggestedDuration: 60, protocol: "HTTP", amplification: 0,
     });
   }
 
@@ -673,7 +673,7 @@ function scoreMethodsFor(opts: {
       method: "app-smart-flood", name: "App Smart Flood [DB query exhaust]",
       score, tier: tierFromScore(score),
       reason: `POSTs randomized data to /login, /search, /checkout, /register — forces uncacheable DB query per request. Exhausts DB connection pool and backend thread pool simultaneously. Cache cannot protect against this vector.`,
-      suggestedThreads: 500, suggestedDuration: 90, protocol: "HTTP",
+      suggestedThreads: 500, suggestedDuration: 90, protocol: "HTTP", amplification: 0,
     });
   }
 
@@ -689,7 +689,7 @@ function scoreMethodsFor(opts: {
       method: "large-header-bomb", name: "Large Header Bomb [16KB header flood]",
       score, tier: tierFromScore(score),
       reason: `Sends 16KB+ of randomized X-* headers per request — forces HTTP parser to allocate a large heap buffer per connection. Bypasses WAFs that only inspect body. ${serverType === "nginx" ? "nginx default max_headers=8KB — forces 400 error allocation storm." : "Server must parse and reject each oversized request, wasting CPU+heap."}`,
-      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP",
+      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP", amplification: 0,
     });
   }
 
@@ -705,7 +705,7 @@ function scoreMethodsFor(opts: {
       method: "http2-priority-storm", name: "H2 PRIORITY Storm [stream dependency exhaust]",
       score, tier: tierFromScore(score),
       reason: `Each HTTP/2 PRIORITY frame (RFC 7540 §6.3) forces server to rebuild its stream dependency tree — no frame limit in spec. Sends 66K+ PRIORITY frames/sec per connection. Pure CPU+heap exhaustion that bypasses all connection-count limits and WAF inspection.`,
-      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP/2",
+      suggestedThreads: 600, suggestedDuration: 90, protocol: "HTTP/2", amplification: 0,
     });
   }
 
