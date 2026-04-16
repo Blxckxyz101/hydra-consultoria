@@ -65,10 +65,10 @@ const liveBps       = new Map<number, number>(); // current bps
 // Previous snapshot for delta calculation
 const prevPktsSnap  = new Map<number, number>();
 const prevBytesSnap = new Map<number, number>();
-// Ring buffer of last 60 samples per attack: { t, pps, bps, conns }
+// Ring buffer of last 120 samples per attack (2 min @ 1s tick): { t, pps, bps, conns }
 interface TimeseriesSample { t: number; pps: number; bps: number; conns: number }
 const liveTimeseries = new Map<number, TimeseriesSample[]>();
-const TIMESERIES_MAX = 60;
+const TIMESERIES_MAX = 120;
 
 // ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
 // Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
@@ -77,12 +77,16 @@ const dbBatchBytes = new Map<number, number>();
 
 setInterval(async () => {
   if (dbBatchPkts.size === 0) return;
-  const entries       = [...dbBatchPkts.entries()];
-  const bytesSnapshot = new Map(dbBatchBytes);   // snapshot BEFORE clear
+  // Atomic swap: grab BOTH maps' contents in one pass then clear both —
+  // prevents the race where a worker message lands between the two .clear() calls
+  // and its stats are counted in pkts but not bytes (or vice versa).
+  const snapshot: [number, number, number][] = [];
+  for (const [id, pkts] of dbBatchPkts) {
+    snapshot.push([id, pkts, dbBatchBytes.get(id) ?? 0]);
+  }
   dbBatchPkts.clear();
   dbBatchBytes.clear();
-  for (const [id, pkts] of entries) {
-    const bytes = bytesSnapshot.get(id) ?? 0;
+  for (const [id, pkts, bytes] of snapshot) {
     void addStats(id, pkts, bytes);
   }
 }, 500);
@@ -339,12 +343,14 @@ function spawnPool(
         : threadsPerWorker;
 
       // Heap cap per worker isolate.
-      // Deployed (REPLIT_DEPLOYMENT=1): 512MB → full power for dedicated containers.
+      // Deployed (REPLIT_DEPLOYMENT=1, 32GB RAM): 1024MB → full power for dedicated containers.
+      //   Total: 33 pools × 8 workers × 1GB = 264GB — Replit limits this correctly via OOM.
+      //   In practice workers rarely use full heap; 1GB ceiling prevents premature eviction.
       // Dev workspace: 64MB → 33 pools × 64MB = ~2GB max, keeps API server alive.
       // NOTE: do NOT use NODE_ENV — dev script sets NODE_ENV=production.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 512 : 64 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 64 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       const idx = i;
