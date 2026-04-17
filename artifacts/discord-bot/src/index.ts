@@ -4197,7 +4197,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     consultcenter: "📋", mind7: "🧠",
     serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
   }[target]!;
-  const concurrency   = 2;
+  const concurrency   = { iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3, serpro: 4, sisreg: 2, credilink: 4, serasa: 2 }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────
   const stopId  = `chk_stop_${Date.now()}`;
@@ -4740,7 +4740,7 @@ async function main(): Promise<void> {
       consultcenter: "📋", mind7: "🧠",
       serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
     }[target]!;
-    const concurrency = 2;
+    const concurrency = { iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3, serpro: 4, sisreg: 2, credilink: 4, serasa: 2 }[target] ?? 2;
 
     // ── Stop button setup ─────────────────────────────────────────────────────
     const fdStopId  = `chk_stop_${Date.now()}`;
