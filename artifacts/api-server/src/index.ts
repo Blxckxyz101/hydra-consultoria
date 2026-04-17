@@ -2,6 +2,10 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { db, attacksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const rawPort = process.env["PORT"];
 
@@ -42,4 +46,38 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // ── Discord bot auto-launch ─────────────────────────────────────────────
+  // In production (REPLIT_DEPLOYMENT=1) the Discord bot is NOT a separate
+  // workflow — it must be spawned here so it runs in the deployed container.
+  // In dev, the bot already runs as its own workflow, so we skip this.
+  if (process.env["REPLIT_DEPLOYMENT"] === "1") {
+    const botDist = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../discord-bot/dist/index.mjs",
+    );
+
+    if (existsSync(botDist)) {
+      let botProc: ChildProcess | null = null;
+
+      const launchBot = () => {
+        logger.info({ botDist }, "Launching Discord bot process...");
+        botProc = spawn(process.execPath, ["--enable-source-maps", botDist], {
+          env: process.env,
+          stdio: "inherit",
+        });
+        botProc.on("exit", (code, signal) => {
+          logger.warn({ code, signal }, "Discord bot process exited — restarting in 5s...");
+          setTimeout(launchBot, 5_000);
+        });
+        botProc.on("error", (spawnErr) => {
+          logger.error({ spawnErr }, "Discord bot spawn error");
+        });
+      };
+
+      launchBot();
+    } else {
+      logger.warn({ botDist }, "Discord bot dist not found — skipping bot launch (run build first)");
+    }
+  }
 });
