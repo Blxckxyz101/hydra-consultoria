@@ -3767,14 +3767,18 @@ interface LiveCheckerResult {
 }
 
 interface LiveCheckerState {
-  total:      number;
-  index:      number;
-  hits:       number;
-  fails:      number;
-  errors:     number;
-  recent:     LiveCheckerResult[]; // last 8 results (for display)
-  allResults: LiveCheckerResult[];
-  done:       boolean;
+  total:       number;
+  index:       number;
+  hits:        number;
+  fails:       number;
+  errors:      number;
+  retries:     number;
+  recent:      LiveCheckerResult[];
+  allResults:  LiveCheckerResult[];
+  done:        boolean;
+  stopped:     boolean;
+  startedAt:   number;
+  credsPerMin: number;
 }
 
 function buildProgressBar(done: number, total: number, width = 20): string {
@@ -3823,7 +3827,9 @@ function buildCheckerFinalEmbeds(
   }
 
   const color = finalState.hits > 0 ? COLORS.GREEN : finalState.errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
-  const footer = isSlash ? `${AUTHOR} • ${targetLabel}` : `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo`;
+  const speedStr  = finalState.credsPerMin > 0 ? ` • ⚡ ${finalState.credsPerMin} cr/min` : "";
+  const retryStr  = finalState.retries    > 0 ? ` • 🔄 ${finalState.retries} retry` : "";
+  const footer = `${AUTHOR} • ${targetLabel} • ${concurrency}x paralelo${speedStr}${retryStr}`;
 
   const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
     const isFirst = i === 0;
@@ -3870,66 +3876,119 @@ function buildLiveCheckerEmbed(
   targetIcon:  string,
   concurrency: number,
 ): EmbedBuilder {
-  const { total, index, hits, fails, errors, recent, done } = state;
+  const { total, index, hits, fails, errors, retries, recent, done, stopped, startedAt, credsPerMin } = state;
 
-  const title = done
-    ? `${targetIcon} CHECKER CONCLUÍDO — ${targetLabel}`
-    : `${targetIcon} CHECKER AO VIVO — ${targetLabel} — ${index}/${total}`;
+  // ── Title ─────────────────────────────────────────────────────────────────
+  const title = stopped
+    ? `🛑 CHECKER PARADO — ${targetLabel}`
+    : done
+      ? `${targetIcon} CHECKER CONCLUÍDO — ${targetLabel}`
+      : `${targetIcon} CHECKER AO VIVO — ${targetLabel}`;
 
-  const statsLine = `✅ **${hits}** HIT${hits !== 1 ? "s" : ""}  |  ❌ **${fails}** FAIL${fails !== 1 ? "s" : ""}  |  ⚠️ **${errors}** ERRO${errors !== 1 ? "s" : ""}`;
+  // ── Progress bar ──────────────────────────────────────────────────────────
+  const progressBar = buildProgressBar(done || stopped ? total : index, total);
 
-  const progressLine = done
-    ? buildProgressBar(total, total)
-    : buildProgressBar(index, total);
+  // ── Time / speed ──────────────────────────────────────────────────────────
+  const elapsed     = Math.round((Date.now() - startedAt) / 1000);
+  const elapsedStr  = elapsed >= 60
+    ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s`
+    : `${elapsed}s`;
 
-  const recentLines = recent.slice(-8).map(r => {
-    const icon  = r.status === "HIT" ? "✅" : r.status === "FAIL" ? "❌" : "⚠️";
-    const cred  = r.credential.length > 45 ? r.credential.slice(0, 42) + "…" : r.credential;
-    const det   = r.detail.length > 55 ? r.detail.slice(0, 52) + "…" : r.detail;
+  const remaining   = credsPerMin > 0 && !done && !stopped
+    ? Math.ceil(((total - index) / credsPerMin) * 60)
+    : 0;
+  const etaStr      = remaining > 0
+    ? remaining >= 60 ? `~${Math.floor(remaining / 60)}m${remaining % 60}s` : `~${remaining}s`
+    : "";
+
+  // ── Stats row ─────────────────────────────────────────────────────────────
+  const statsLine = [
+    `✅ **${hits}** HIT${hits !== 1 ? "s" : ""}`,
+    `❌ **${fails}** FAIL`,
+    `⚠️ **${errors}** ERRO`,
+    retries > 0 ? `🔄 **${retries}** retry` : null,
+  ].filter(Boolean).join("  |  ");
+
+  // ── Speed / ETA row ───────────────────────────────────────────────────────
+  const metaLine = [
+    `⏱ **${elapsedStr}**`,
+    credsPerMin > 0 ? `⚡ **${credsPerMin} cr/min**` : null,
+    etaStr         ? `🕐 ETA ${etaStr}` : null,
+    `🔀 **${concurrency}x paralelo**`,
+  ].filter(Boolean).join("  •  ");
+
+  // ── Recent results (last 6) ───────────────────────────────────────────────
+  const recentLines = recent.slice(-6).map(r => {
+    const icon = r.status === "HIT" ? "✅" : r.status === "FAIL" ? "❌" : "⚠️";
+    const cred = r.credential.length > 42 ? r.credential.slice(0, 39) + "…" : r.credential;
+    const det  = r.detail.length    > 52 ? r.detail.slice(0, 49)    + "…" : r.detail;
     return `${icon} \`${cred}\`\n> ${det}`;
   }).join("\n");
 
   const desc = [
-    progressLine,
+    progressBar,
+    `\`${done || stopped ? total : index}/${total}\` concluídas`,
     "",
     statsLine,
+    metaLine,
     "",
-    recentLines || "*Aguardando resultados...*",
+    "**Últimos resultados:**",
+    recentLines || "*Aguardando primeiros resultados...*",
   ].join("\n");
 
-  const color = done
-    ? (hits > 0 ? COLORS.GREEN : errors === total ? COLORS.ORANGE : COLORS.RED)
-    : 0xF1C40F;
+  const color = stopped
+    ? COLORS.ORANGE
+    : done
+      ? (hits > 0 ? COLORS.GREEN : errors === total ? COLORS.ORANGE : COLORS.RED)
+      : 0xF1C40F;
+
+  const footerStatus = stopped ? "🛑 Parado pelo usuário" : done ? "✔ Finalizado" : "● Processando...";
 
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
-    .setDescription(desc.slice(0, 4000))
-    .setFooter({ text: `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo${done ? " • ✔ Finalizado" : " • Processando..."}` })
-    .setTimestamp(done ? new Date() : null);
+    .setDescription(desc.slice(0, 2000))
+    .setFooter({ text: `${AUTHOR} • ${targetLabel} • ${footerStatus}` })
+    .setTimestamp(done || stopped ? new Date() : null);
 }
 
 /**
  * Connects to the SSE streaming endpoint and fires onUpdate for every result.
- * Resolves with final state when streaming is done.
+ * Resolves with final state when streaming is done or aborted.
+ * Pass an AbortController to support the Stop button.
  */
 async function runStreamingChecker(
-  credentials: string[],
-  target:      string,
-  onUpdate:    (state: LiveCheckerState) => void,
+  credentials:     string[],
+  target:          string,
+  onUpdate:        (state: LiveCheckerState) => void,
+  abortController: AbortController = new AbortController(),
 ): Promise<LiveCheckerState> {
   const state: LiveCheckerState = {
     total: credentials.length, index: 0, hits: 0, fails: 0, errors: 0,
-    recent: [], allResults: [], done: false,
+    retries: 0, recent: [], allResults: [], done: false, stopped: false,
+    startedAt: Date.now(), credsPerMin: 0,
   };
 
-  const timeoutMs = Math.min(credentials.length * 4_000 + 30_000, 14 * 60_000);
-  const resp = await fetch(`${API_BASE}/api/checker/stream`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ credentials, target }),
-    signal:  AbortSignal.timeout(timeoutMs),
-  });
+  // Combine user-abort with overall timeout
+  const timeoutMs  = Math.min(credentials.length * 5_000 + 30_000, 14 * 60_000);
+  const timeoutId  = setTimeout(() => abortController.abort("timeout"), timeoutMs);
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE}/api/checker/stream`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ credentials, target }),
+      signal:  abortController.signal,
+    });
+  } catch (err: unknown) {
+    clearTimeout(timeoutId);
+    const isAbort = (err as Error)?.name === "AbortError";
+    state.stopped = isAbort;
+    state.done    = true;
+    return state;
+  }
+  clearTimeout(timeoutId);
 
   if (!resp.ok || !resp.body) {
     throw new Error(`Stream HTTP ${resp.status}`);
@@ -3939,44 +3998,61 @@ async function runStreamingChecker(
   const decoder = new TextDecoder();
   let   buffer  = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split("\n\n");
-    buffer = events.pop() ?? "";   // last incomplete chunk stays in buffer
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
 
-    for (const block of events) {
-      const line = block.trim();
-      if (!line.startsWith("data:")) continue;
-      let data: Record<string, unknown>;
-      try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
+      for (const block of events) {
+        const line = block.trim();
+        if (!line.startsWith("data:")) continue;
+        let data: Record<string, unknown>;
+        try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
 
-      if (data.type === "start") {
-        state.total = (data.total as number) || state.total;
-      } else if (data.type === "result") {
-        const r: LiveCheckerResult = {
-          credential: data.credential as string,
-          login:      data.login as string,
-          status:     data.status as "HIT" | "FAIL" | "ERROR",
-          detail:     data.detail as string,
-        };
-        state.index  = data.index as number;
-        state.hits   = data.hits  as number;
-        state.fails  = data.fails as number;
-        state.errors = data.errors as number;
-        state.recent.push(r);
-        state.allResults.push(r);
-        onUpdate(state);
-      } else if (data.type === "done") {
-        state.done   = true;
-        state.total  = data.total  as number;
-        state.hits   = data.hits   as number;
-        state.fails  = data.fails  as number;
-        state.errors = data.errors as number;
-        onUpdate(state);
+        if (data.type === "start") {
+          state.total = (data.total as number) || state.total;
+
+        } else if (data.type === "result") {
+          const r: LiveCheckerResult = {
+            credential: data.credential as string,
+            login:      data.login      as string,
+            status:     data.status     as "HIT" | "FAIL" | "ERROR",
+            detail:     data.detail     as string,
+          };
+          state.index   = data.index   as number;
+          state.hits    = data.hits    as number;
+          state.fails   = data.fails   as number;
+          state.errors  = data.errors  as number;
+          state.retries = (data.retries as number) ?? 0;
+          state.recent.push(r);
+          if (state.recent.length > 8) state.recent.shift();
+          state.allResults.push(r);
+
+          // Live speed estimate from elapsed time
+          const elapsed = Date.now() - state.startedAt;
+          state.credsPerMin = elapsed > 0 ? Math.round((state.index / elapsed) * 60_000) : 0;
+
+          onUpdate(state);
+
+        } else if (data.type === "done") {
+          state.done        = true;
+          state.total       = data.total       as number;
+          state.hits        = data.hits        as number;
+          state.fails       = data.fails       as number;
+          state.errors      = data.errors      as number;
+          state.retries     = (data.retries    as number) ?? 0;
+          state.credsPerMin = (data.credsPerMin as number) ?? state.credsPerMin;
+          onUpdate(state);
+        }
       }
+    }
+  } catch (err: unknown) {
+    if ((err as Error)?.name === "AbortError") {
+      state.stopped = true;
     }
   }
 
@@ -4112,41 +4188,64 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   const targetLabel   = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
   const targetIcon    = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
   const concurrency   = 2;
-  const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
 
-  // ── Acknowledge button + show progress ────────────────────────────────────
+  // ── Stop button setup ─────────────────────────────────────────────────────
+  const stopId  = `chk_stop_${Date.now()}`;
+  const stopAC  = new AbortController();
+  const stopRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(stopId)
+      .setLabel("🛑 Parar")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  // ── Acknowledge button + show initial progress embed ──────────────────────
   await btnInteraction.update({
     embeds: [new EmbedBuilder()
       .setColor(0xF1C40F)
-      .setTitle(`⏳ CHECKER — VERIFICANDO... ${targetIcon}`)
+      .setTitle(`${targetIcon} CHECKER AO VIVO — ${targetLabel}`)
       .setDescription(
-        `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} em **${targetLabel}**\n\n` +
-        `⚡ **${concurrency}x paralelo** — tempo estimado: ~${estimateSecs}s`,
+        `${buildProgressBar(0, credentials.length)}\n\`0/${credentials.length}\` concluídas\n\n` +
+        `✅ **0** HIT  |  ❌ **0** FAIL  |  ⚠️ **0** ERRO\n` +
+        `⏱ **0s**  •  🔀 **${concurrency}x paralelo**\n\n` +
+        `**Últimos resultados:**\n*Aguardando primeiros resultados...*`,
       )
-      .setFooter({ text: AUTHOR })],
-    components: [],
+      .setFooter({ text: `${AUTHOR} • ${targetLabel} • ● Processando...` })],
+    components: [stopRow],
   });
 
-  // ── Live streaming check with animated embed ──────────────────────────────
-  // Update embed every 2s while checking; final embed on completion
+  // ── Register stop button collector ────────────────────────────────────────
+  const replyMsg = await interaction.fetchReply();
+  const stopCollector = replyMsg.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    filter: (b) => b.customId === stopId,
+    time: 15 * 60_000,
+    max: 1,
+  });
+
+  stopCollector.on("collect", async (btn) => {
+    stopAC.abort("user_stop");
+    await btn.deferUpdate().catch(() => void 0);
+  });
+
+  // ── Live streaming with animated embed ────────────────────────────────────
   let liveState: LiveCheckerState | null = null;
   let embedDirty = false;
 
-  // Interval: update the embed every 2s with latest state
   const updateInterval = setInterval(async () => {
     if (!liveState || !embedDirty) return;
     embedDirty = false;
     const liveEmbed = buildLiveCheckerEmbed(liveState, targetLabel, targetIcon, concurrency);
-    await interaction.editReply({ embeds: [liveEmbed], components: [] }).catch(() => void 0);
+    const components = liveState.done || liveState.stopped ? [] : [stopRow];
+    await interaction.editReply({ embeds: [liveEmbed], components }).catch(() => void 0);
   }, 2000);
 
   let finalState: LiveCheckerState;
   try {
     finalState = await runStreamingChecker(credentials, target, (state) => {
-      liveState   = state;
-      embedDirty  = true;
+      liveState  = state;
+      embedDirty = true;
 
-      // Immediate alert on active HIT (dashboard, non-expired)
       const lastResult = state.allResults[state.allResults.length - 1];
       if (
         lastResult?.status === "HIT" &&
@@ -4159,15 +4258,25 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
           allowedMentions: { parse: ["everyone"] },
         }).catch(() => void 0);
       }
-    });
+    }, stopAC);
   } catch (err) {
     clearInterval(updateInterval);
+    stopCollector.stop();
     await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] });
     return;
   }
 
   clearInterval(updateInterval);
+  stopCollector.stop();
 
+  // ── Stopped early by user ─────────────────────────────────────────────────
+  if (finalState.stopped) {
+    const stoppedEmbed = buildLiveCheckerEmbed(finalState, targetLabel, targetIcon, concurrency);
+    await interaction.editReply({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
+    return;
+  }
+
+  // ── Final results ─────────────────────────────────────────────────────────
   const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, targetLabel, targetIcon, concurrency, true);
   await interaction.editReply({ embeds: finalEmbeds, components: [] });
 }
@@ -4599,29 +4708,55 @@ async function main(): Promise<void> {
     const targetLabel = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
     const targetIcon  = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
     const concurrency = 2;
-    const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
 
+    // ── Stop button setup ─────────────────────────────────────────────────────
+    const fdStopId  = `chk_stop_${Date.now()}`;
+    const fdStopAC  = new AbortController();
+    const fdStopRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(fdStopId)
+        .setLabel("🛑 Parar")
+        .setStyle(ButtonStyle.Danger),
+    );
+
+    // ── Acknowledge + show initial progress embed ─────────────────────────────
     await btn.update({
       embeds: [new EmbedBuilder()
         .setColor(0xF1C40F)
-        .setTitle(`⏳ CHECKER — VERIFICANDO... ${targetIcon}`)
+        .setTitle(`${targetIcon} CHECKER AO VIVO — ${targetLabel}`)
         .setDescription(
-          `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} em **${targetLabel}**\n\n` +
-          `⚡ **${concurrency}x paralelo** — tempo estimado: ~${estimateSecs}s`,
+          `${buildProgressBar(0, credentials.length)}\n\`0/${credentials.length}\` concluídas\n\n` +
+          `✅ **0** HIT  |  ❌ **0** FAIL  |  ⚠️ **0** ERRO\n` +
+          `⏱ **0s**  •  🔀 **${concurrency}x paralelo**\n\n` +
+          `**Últimos resultados:**\n*Aguardando primeiros resultados...*`,
         )
-        .setFooter({ text: AUTHOR })],
-      components: [],
+        .setFooter({ text: `${AUTHOR} • ${targetLabel} • ● Processando...` })],
+      components: [fdStopRow],
     });
 
-    // ── Live streaming with animated embed ───────────────────────────────────
+    // ── Register stop button collector ────────────────────────────────────────
+    const fdStopCollector = reply.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      filter: (b) => b.customId === fdStopId,
+      time: 15 * 60_000,
+      max: 1,
+    });
+
+    fdStopCollector.on("collect", async (stopBtn) => {
+      fdStopAC.abort("user_stop");
+      await stopBtn.deferUpdate().catch(() => void 0);
+    });
+
+    // ── Live streaming with animated embed ────────────────────────────────────
     let fdLiveState: LiveCheckerState | null = null;
     let fdEmbedDirty = false;
 
     const fdUpdateInterval = setInterval(async () => {
       if (!fdLiveState || !fdEmbedDirty) return;
       fdEmbedDirty = false;
-      const liveEmbed = buildLiveCheckerEmbed(fdLiveState, targetLabel, targetIcon, concurrency);
-      await reply.edit({ embeds: [liveEmbed], components: [] }).catch(() => void 0);
+      const liveEmbed  = buildLiveCheckerEmbed(fdLiveState, targetLabel, targetIcon, concurrency);
+      const components = fdLiveState.done || fdLiveState.stopped ? [] : [fdStopRow];
+      await reply.edit({ embeds: [liveEmbed], components }).catch(() => void 0);
     }, 2000);
 
     let fdFinalState: LiveCheckerState;
@@ -4641,15 +4776,25 @@ async function main(): Promise<void> {
             allowedMentions: { parse: ["everyone"] },
           }).catch(() => void 0);
         }
-      });
+      }, fdStopAC);
     } catch (err) {
       clearInterval(fdUpdateInterval);
+      fdStopCollector.stop();
       await reply.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] }).catch(() => void 0);
       return;
     }
 
     clearInterval(fdUpdateInterval);
+    fdStopCollector.stop();
 
+    // ── Stopped early by user ─────────────────────────────────────────────────
+    if (fdFinalState.stopped) {
+      const stoppedEmbed = buildLiveCheckerEmbed(fdFinalState, targetLabel, targetIcon, concurrency);
+      await reply.edit({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
+      return;
+    }
+
+    // ── Final results ─────────────────────────────────────────────────────────
     const fdFinalEmbeds = buildCheckerFinalEmbeds(fdFinalState.allResults, fdFinalState, targetLabel, targetIcon, concurrency, false);
     await reply.edit({ embeds: fdFinalEmbeds, components: [] }).catch(() => void 0);
   });
