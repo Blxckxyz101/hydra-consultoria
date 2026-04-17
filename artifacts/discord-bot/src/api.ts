@@ -194,17 +194,10 @@ export const api = {
     req<QueryStats>("/api/query/stats", { signal: AbortSignal.timeout(5_000) }),
 
   // ── Checker ─────────────────────────────────────────────────────────────
-  checkerSingle: (email: string, password: string) =>
+  checkerBulk: (credentials: string[], target: "iseek" | "datasus") =>
     req<CheckerResponse>("/api/checker/check", {
       method: "POST",
-      body:   JSON.stringify({ email, password }),
-      signal: AbortSignal.timeout(35_000), // 2× TIMEOUT_MS + buffer
-    }),
-
-  checkerBulk: (credentials: string[]) =>
-    req<CheckerResponse>("/api/checker/check", {
-      method: "POST",
-      body:   JSON.stringify({ credentials }),
+      body:   JSON.stringify({ credentials, target }),
       signal: AbortSignal.timeout(credentials.length * 18_000 + 5_000),
     }),
 };
@@ -213,7 +206,7 @@ export type CheckStatus = "HIT" | "FAIL" | "ERROR";
 
 export interface CheckerItem {
   credential: string;
-  email:      string;
+  login:      string;
   status:     CheckStatus;
   detail:     string;
 }
