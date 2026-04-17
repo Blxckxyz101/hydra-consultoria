@@ -3986,6 +3986,7 @@ async function runStreamingChecker(
   target:          string,
   onUpdate:        (state: LiveCheckerState) => void,
   abortController: AbortController = new AbortController(),
+  maxTimeoutMs:    number = credentials.length * 5_000 + 60_000,
 ): Promise<LiveCheckerState> {
   const state: LiveCheckerState = {
     total: credentials.length, index: 0, hits: 0, fails: 0, errors: 0,
@@ -3993,8 +3994,8 @@ async function runStreamingChecker(
     startedAt: Date.now(), credsPerMin: 0,
   };
 
-  // Combine user-abort with overall timeout
-  const timeoutMs  = Math.min(credentials.length * 5_000 + 30_000, 14 * 60_000);
+  // Combine user-abort with overall timeout (no hard cap — proportional to list size)
+  const timeoutMs  = maxTimeoutMs;
   const timeoutId  = setTimeout(() => abortController.abort("timeout"), timeoutMs);
 
   let resp: Response;
@@ -4128,7 +4129,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     }
     try {
       const text = await fetch(att.url).then(r => r.text());
-      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 500);
+      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(s => s.includes(":"));
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Não foi possível baixar o arquivo. Tente novamente.")] });
       return;
@@ -4684,7 +4685,7 @@ async function main(): Promise<void> {
         .split(/\r?\n/)
         .map(s => s.trim())
         .filter(s => s.includes(":") && !s.startsWith("#"))
-        .slice(0, 500); // raised limit for file drops
+        ; // no credential limit for file drops — runs until all are tested
     } catch {
       await message.reply({ content: "❌ Não consegui baixar o arquivo. Tente novamente." }).catch(() => void 0);
       return;
