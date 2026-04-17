@@ -1903,6 +1903,11 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     if (!res.writableEnded && !clientGone) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  // ── SSE keep-alive heartbeat — prevents proxy/LB from closing idle connections ──
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded && !clientGone) res.write(": ping\n\n");
+  }, 20_000);
+
   let hits = 0, fails = 0, errors = 0, retries = 0;
   let consecutiveErrors = 0;
   const total     = pairs.length;
@@ -1960,6 +1965,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     },
   );
 
+  clearInterval(heartbeat);
   const elapsedMs   = Date.now() - startedAt;
   const credsPerMin = elapsedMs > 0 ? Math.round((total / elapsedMs) * 60_000) : 0;
   send({ type: "done", total, hits, fails, errors, retries, elapsedMs, credsPerMin });

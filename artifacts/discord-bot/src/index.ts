@@ -3901,10 +3901,11 @@ function buildLiveCheckerEmbed(
   concurrency: number,
 ): EmbedBuilder {
   const { total, index, hits, fails, errors, retries, recent, done, stopped, startedAt, credsPerMin } = state;
+  const connectionError = (state as LiveCheckerState & { connectionError?: string }).connectionError;
 
   // ── Title ─────────────────────────────────────────────────────────────────
   const title = stopped
-    ? `🛑 CHECKER PARADO — ${targetLabel}`
+    ? (connectionError ? `⚡ CONEXÃO PERDIDA — ${targetLabel}` : `🛑 CHECKER PARADO — ${targetLabel}`)
     : done
       ? `${targetIcon} CHECKER CONCLUÍDO — ${targetLabel}`
       : `${targetIcon} CHECKER AO VIVO — ${targetLabel}`;
@@ -3966,7 +3967,9 @@ function buildLiveCheckerEmbed(
       ? (hits > 0 ? COLORS.GREEN : errors === total ? COLORS.ORANGE : COLORS.RED)
       : 0xF1C40F;
 
-  const footerStatus = stopped ? "🛑 Parado pelo usuário" : done ? "✔ Finalizado" : "● Processando...";
+  const footerStatus = stopped
+    ? (connectionError ? `⚡ Queda de conexão — reinicie a checagem` : "🛑 Parado pelo usuário")
+    : done ? "✔ Finalizado" : "● Processando...";
 
   return new EmbedBuilder()
     .setColor(color)
@@ -4078,7 +4081,20 @@ async function runStreamingChecker(
   } catch (err: unknown) {
     if ((err as Error)?.name === "AbortError") {
       state.stopped = true;
+    } else {
+      // Unexpected stream error (server crash, network drop, etc.)
+      // Mark as done so the caller can show whatever results accumulated
+      state.stopped = true;
+      (state as LiveCheckerState & { connectionError?: string }).connectionError =
+        `Conexão perdida em ${state.index}/${state.total} — ${(err as Error)?.message ?? String(err)}`;
     }
+  }
+
+  // If stream ended without a "done" event, the connection was cut mid-run
+  if (!state.done && !state.stopped) {
+    state.stopped = true;
+    (state as LiveCheckerState & { connectionError?: string }).connectionError =
+      `Stream encerrado inesperadamente em ${state.index}/${state.total} credenciais`;
   }
 
   state.done = true;
