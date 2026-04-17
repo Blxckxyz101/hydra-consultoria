@@ -54,6 +54,11 @@ import {
   buildInfoEmbed,
   buildFinishEmbed,
   buildLangRow,
+  buildCheckEmbed,
+  buildHealthEmbed,
+  type CheckResult,
+  type HealthData,
+  type GlobalStats,
   type ProbeResult,
 } from "./embeds.js";
 
@@ -215,6 +220,13 @@ const COMMANDS = [
           { name: "L4 — Transport layer (TCP, UDP, SYN)",             value: "L4" },
           { name: "L3 — Network layer (ICMP, amplification)",         value: "L3" },
         )
+    ),
+
+  new SlashCommandBuilder()
+    .setName("check")
+    .setDescription("🌐 Verificar se um site/IP está respondendo — latência, status e cabeçalhos")
+    .addStringOption(opt =>
+      opt.setName("target").setDescription("URL ou IP para verificar (ex: https://example.com)").setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -1050,75 +1062,25 @@ async function handleAttackList(interaction: ChatInputCommandInteraction): Promi
   }
 }
 
-interface ServerHealth {
-  status: "healthy" | "warning" | "critical";
-  uptimeSec: number;
-  process:   { heapUsedMB: number; heapTotalMB: number; rssMB: number; pid: number };
-  system:    { cpus: number; load1: number; load5: number; load15: number; loadPct: number;
-               totalRamMB: number; usedRamMB: number; freeRamMB: number; ramPct: number;
-               hostname: string; platform: string };
-  attacks:   { active: number; totalConns: number };
-}
+const healthCache = new Map<string, { h: HealthData; stats: GlobalStats | null }>();
 
 async function handleStats(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
+  const lang: "en" | "pt" = "pt";
   try {
-    const r = await fetch(`${API_BASE}/api/health/live`, { signal: AbortSignal.timeout(2500) });
-    if (!r.ok) {
-      await interaction.editReply(`⚠ Health endpoint returned **HTTP ${r.status}** — server may be degraded.`);
+    const [healthRes, stats] = await Promise.all([
+      fetch(`${API_BASE}/api/health/live`, { signal: AbortSignal.timeout(3000) }),
+      api.getStats().catch(() => null),
+    ]);
+    if (!healthRes.ok) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("HEALTH FAILED", `HTTP ${healthRes.status}`)] });
       return;
     }
-    const h = (await r.json()) as ServerHealth;
-
-    const fmtUptime = (s: number): string => {
-      const d = Math.floor(s / 86400);
-      const hr = Math.floor((s % 86400) / 3600);
-      const m  = Math.floor((s % 3600) / 60);
-      const sec = s % 60;
-      if (d > 0)  return `${d}d ${hr}h ${m}m`;
-      if (hr > 0) return `${hr}h ${m}m ${sec}s`;
-      if (m > 0)  return `${m}m ${sec}s`;
-      return `${sec}s`;
-    };
-    const fmtBar = (pct: number): string => {
-      const n = Math.min(20, Math.max(0, Math.round(pct / 5)));
-      return "█".repeat(n) + "░".repeat(20 - n);
-    };
-
-    const color = h.status === "healthy"  ? COLORS.GREEN
-                : h.status === "warning"  ? COLORS.GOLD
-                : COLORS.RED;
-    const icon  = h.status === "healthy"  ? "🟢"
-                : h.status === "warning"  ? "🟡"
-                : "🔴";
-
-    const stats = await api.getStats().catch(() => null);
-
-    const embed = new EmbedBuilder()
-      .setColor(color)
-      .setTitle(`${icon} LELOUCH BRITANNIA — SERVER HEALTH`)
-      .setDescription(
-        `**Status:** \`${h.status.toUpperCase()}\` — node \`${h.system.hostname}\`\n` +
-        `**Uptime:** \`${fmtUptime(h.uptimeSec)}\``
-      )
-      .addFields(
-        { name: `🧠 RAM ${h.system.ramPct}%`,
-          value: `\`${fmtBar(h.system.ramPct)}\`\n${h.system.usedRamMB} / ${h.system.totalRamMB} MB used\nFree: \`${h.system.freeRamMB} MB\``,
-          inline: false },
-        { name: `⚡ CPU Load ${h.system.loadPct}%`,
-          value: `\`${fmtBar(h.system.loadPct)}\`\n${h.system.cpus} cores · 1m: \`${h.system.load1.toFixed(2)}\` · 5m: \`${h.system.load5.toFixed(2)}\` · 15m: \`${h.system.load15.toFixed(2)}\``,
-          inline: false },
-        { name: "🟣 Process",
-          value: `Heap: \`${h.process.heapUsedMB} / ${h.process.heapTotalMB} MB\`\nRSS: \`${h.process.rssMB} MB\` · PID: \`${h.process.pid}\``,
-          inline: true },
-        { name: "⚔️ Attacks",
-          value: `Active: \`${h.attacks.active}\`\nLive Conns: \`${h.attacks.totalConns.toLocaleString("en-US")}\`${stats ? `\nTotal: \`${stats.totalAttacks}\`` : ""}`,
-          inline: true },
-      )
-      .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
-      .setTimestamp();
-
-    await interaction.editReply({ embeds: [embed] });
+    const h = (await healthRes.json()) as HealthData;
+    const embed  = buildHealthEmbed(h, stats, lang);
+    const msg    = await interaction.editReply({ embeds: [embed], components: [buildLangRow(lang, "health")] });
+    healthCache.set(msg.id, { h, stats });
+    setTimeout(() => healthCache.delete(msg.id), 300_000);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("STATS FAILED", message)] });
@@ -1142,6 +1104,73 @@ async function handleAttackStats(interaction: ChatInputCommandInteraction): Prom
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("STATS FAILED", message)] });
   }
+}
+
+const checkCache = new Map<string, CheckResult>();
+
+async function handleCheck(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply();
+  let rawTarget = interaction.options.getString("target", true).trim();
+  if (!/^https?:\/\//i.test(rawTarget)) rawTarget = `https://${rawTarget}`;
+
+  console.log(`[CHECK] ${interaction.user.tag} → ${rawTarget}`);
+  const lang: "en" | "pt" = "pt";
+
+  await interaction.editReply({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(COLORS.GOLD)
+        .setTitle("🌐 VERIFICANDO SITE...")
+        .setDescription(`Conectando a \`${rawTarget}\`...`)
+        .setFooter({ text: AUTHOR }),
+    ],
+  });
+
+  const start = Date.now();
+  let result: CheckResult;
+  try {
+    const res = await fetch(rawTarget, {
+      method:   "GET",
+      redirect: "follow",
+      signal:   AbortSignal.timeout(8000),
+      headers:  { "User-Agent": "Mozilla/5.0 (LelouuchBot/2.0; CheckCmd)" },
+    });
+    const ms           = Date.now() - start;
+    const finalUrl     = res.url !== rawTarget ? res.url : null;
+    const serverHeader = res.headers.get("server") ?? res.headers.get("x-powered-by") ?? null;
+    const contentType  = res.headers.get("content-type") ?? null;
+    const httpVersion: string | null = null;
+    result = {
+      target:         rawTarget,
+      statusCode:     res.status,
+      responseTimeMs: ms,
+      serverHeader,
+      contentType,
+      redirected:     res.redirected,
+      finalUrl,
+      httpVersion,
+      error:          null,
+    };
+  } catch (err: unknown) {
+    const ms  = Date.now() - start;
+    const msg = err instanceof Error ? err.message : String(err);
+    result = {
+      target:         rawTarget,
+      statusCode:     null,
+      responseTimeMs: ms,
+      serverHeader:   null,
+      contentType:    null,
+      redirected:     false,
+      finalUrl:       null,
+      httpVersion:    null,
+      error:          msg,
+    };
+  }
+
+  const embed = buildCheckEmbed(result, lang);
+  const msg   = await interaction.editReply({ embeds: [embed], components: [buildLangRow(lang, "check")] });
+  checkCache.set(msg.id, result);
+  setTimeout(() => checkCache.delete(msg.id), 1_800_000);
 }
 
 async function handleAnalyze(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1636,6 +1665,32 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
         const descMatch = interaction.message.embeds[0]?.description?.match(/#(\d+)/);
         const id = descMatch ? parseInt(descMatch[1], 10) : 0;
         await interaction.editReply({ embeds: [buildStopEmbed(id, true, lang)], components: [buildLangRow(lang, "stop")] });
+        return;
+      }
+
+      // health (server stats)
+      if (prefix === "health") {
+        const cached = healthCache.get(msgId);
+        if (cached) {
+          await interaction.editReply({ embeds: [buildHealthEmbed(cached.h, cached.stats, lang)], components: [buildLangRow(lang, "health")] });
+        } else {
+          const [healthRes, stats] = await Promise.all([
+            fetch(`${API_BASE}/api/health/live`, { signal: AbortSignal.timeout(3000) }),
+            api.getStats().catch(() => null),
+          ]);
+          const h = (await healthRes.json()) as HealthData;
+          healthCache.set(msgId, { h, stats });
+          await interaction.editReply({ embeds: [buildHealthEmbed(h, stats, lang)], components: [buildLangRow(lang, "health")] });
+        }
+        return;
+      }
+
+      // check
+      if (prefix === "check") {
+        const cached = checkCache.get(msgId);
+        if (cached) {
+          await interaction.editReply({ embeds: [buildCheckEmbed(cached, lang)], components: [buildLangRow(lang, "check")] });
+        }
         return;
       }
 
@@ -3577,6 +3632,8 @@ async function main(): Promise<void> {
         await handleHelp(interaction);
       } else if (commandName === "cluster") {
         await handleCluster(interaction);
+      } else if (commandName === "check") {
+        await handleCheck(interaction);
       } else if (commandName === "geass") {
         await handleGeass(interaction);
       } else if (commandName === "lelouch") {

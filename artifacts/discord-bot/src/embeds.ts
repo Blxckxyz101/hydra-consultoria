@@ -116,6 +116,52 @@ export const methodLabel = (id: string) => {
   return map[id] ?? id;
 };
 
+// ── PT-BR description translations ───────────────────────────────────────────
+const METHOD_DESC_PT: Record<string, string> = {
+  "geass-override":       "PODER MÁXIMO — 35 vetores simultâneos: H2+TCP+UDP+TLS+Slowloris+WAF+WebSocket+GraphQL+RUDY+Cache+Pipeline+Smuggling+QUIC+ICMP+DNS+NTP+Memcached+SSDP+DoH+gRPC",
+  "waf-bypass":           "Fingerprint JA3+AKAMAI do Chrome — burla WAF Cloudflare/Akamai com 7 vetores simultâneos",
+  "http2-flood":          "CVE-2023-44487 — rajada de 512 RST_STREAMs por sessão, milhões de req/s",
+  "http2-continuation":   "CVE-2024-27316 — frames CONTINUATION infinitos, OOM no nginx/Apache — SEM patch para nginx ≤1.25.4",
+  "hpack-bomb":           "Headers com indexação incremental → tempestade de despejo da tabela HPACK",
+  "h2-settings-storm":    "Oscilação de SETTINGS + flood de WINDOW_UPDATE — drain triplo de CPU+memória H2",
+  "http-pipeline":        "Pipeline keep-alive HTTP/1.1 — 512 requisições por escrita TCP, 300K+ req/s por thread",
+  "ws-flood":             "Mantém milhares de conexões WebSocket abertas — uma goroutine/thread por conexão",
+  "cache-poison":         "Preenche o cache CDN com chaves únicas — 100% de cache miss, origin origin fica sobrecarregado",
+  "slowloris":            "25K conexões half-open — esgota o pool de threads do nginx/apache",
+  "conn-flood":           "Abre e mantém milhares de sockets TLS — exaustão pré-HTTP",
+  "tls-renego":           "Força renegociação TLS 1.2 — CPU cara de chave pública por conexão",
+  "rudy-v2":              "multipart/form-data + boundary de 70 chars — prende threads do servidor, difícil de detectar",
+  "http-flood":           "HTTP GET em alto volume — sobrecarrega os recursos do servidor web diretamente",
+  "http-bypass":          "3 camadas com fingerprint Chrome: fetch+headers+drain lento — burla WAF/CDN",
+  "quic-flood":           "Pacotes QUIC Initial — servidor aloca estado criptográfico por DCID → OOM",
+  "ssl-death":            "Registros TLS de 1 byte — 40K decriptações AES-GCM/seg na CPU do servidor",
+  "udp-flood":            "Flood de pacotes UDP brutos — satura a banda L4",
+  "syn-flood":            "Exaustão de SYN_RECV TCP — preenche a tabela de conexões antes do handshake",
+  "tcp-flood":            "Flood de pacotes TCP brutos contra portas abertas",
+  "icmp-flood":           "ICMP real: raw-socket (CAP_NET_RAW), hping3, rajada de saturação UDP",
+  "ntp-amp":              "Protocolo NTP binário real — mode7 monlist (CVE-2013-5211) + mode3 na porta 123",
+  "dns-amp":              "Inunda servidores NS com subdomínios aleatórios — burla Cloudflare/CDN completamente",
+  "mem-amp":              "Protocolo Memcached binário UDP real — get+stats na porta 11211",
+  "ssdp-amp":             "Protocolo SSDP real na porta 1900 — rotaciona targets ST, exaustão da pilha UPnP",
+  "slow-read":            "Pausa a janela TCP recv — buffer de envio do servidor enche, todas as threads bloqueiam na escrita",
+  "range-flood":          "500 sub-requisições byte-range por req — fila de seek de disco/IO do servidor exaurida",
+  "xml-bomb":             "Expansão de entidade XML aninhada — crash OOM do parser em qualquer endpoint SOAP/XMLRPC",
+  "h2-ping-storm":        "300 frames PING/rajada × 2ms por conexão — servidor deve ACK cada um; exaustão de CPU",
+  "http-smuggling":       "Dessincronização Transfer-Encoding/Content-Length — envenena a fila de requisições backend permanentemente",
+  "doh-flood":            "Consultas DNS em formato wire via HTTPS — esgota o pool de threads do resolver recursivo",
+  "keepalive-exhaust":    "Pipeline de 256 requisições por conexão mantida 10-20s — saturação de MaxKeepAliveRequests",
+  "app-smart-flood":      "POST em /login /search /checkout — força consultas no banco, impossível de cachear",
+  "large-header-bomb":    "32KB de headers aleatórios exaurem o alocador do parser HTTP, enche o buffer de headers do nginx",
+  "http2-priority-storm": "Frames PRIORITY forçam o servidor a reconstruir a árvore de dependências de streams — 150K frames/seg",
+  "h2-rst-burst":         "Pares HEADERS+RST_STREAM — sobrecarga pura na via de escrita, zero pressão no lado de leitura",
+  "grpc-flood":           "Content-type application/grpc — esgota o pool de threads do handler gRPC",
+};
+
+export function getMethodDesc(id: string, lang: "en" | "pt", fallback?: string): string {
+  if (lang === "pt") return METHOD_DESC_PT[id] ?? fallback ?? id;
+  return fallback ?? id;
+}
+
 const footer = (extra?: string) => ({
   text: [AUTHOR, extra].filter(Boolean).join(" • "),
 });
@@ -675,9 +721,10 @@ export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en
     .slice(0, 4);
   const recoLines = top4.length > 0
     ? top4.map((r, i) => {
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const tier  = tierIcon(r.tier ?? "");
-        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${r.reason ?? ""}`;
+        const medal  = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const tier   = tierIcon(r.tier ?? "");
+        const reason = getMethodDesc((r as { method?: string }).method ?? "", lang, r.reason ?? "");
+        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${reason}`;
       }).join("\n\n").slice(0, 1020)
     : T.noRec;
 
@@ -774,14 +821,14 @@ export function buildMethodsEmbed(
     .setDescription(desc)
     .addFields(
       chunk.map((m, idx) => {
-        const num     = start + idx + 1;
-        const rawDesc = m.description ?? (pt ? "Sem descrição" : "No description");
-        const meta    = pt
+        const num  = start + idx + 1;
+        const desc = getMethodDesc(m.id, lang, m.description ?? undefined);
+        const meta = pt
           ? `\`${m.tier ?? "?"}\` · Camada \`${m.layer ?? "?"}\` · \`${m.protocol ?? "?"}\``
           : `\`${m.tier ?? "?"}\` · Layer \`${m.layer ?? "?"}\` · \`${m.protocol ?? "?"}\``;
         return {
           name:   `${num}. ${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} ${m.name}`,
-          value:  `${rawDesc}\n${meta}`,
+          value:  `${desc}\n${meta}`,
           inline: false,
         };
       })
@@ -1138,6 +1185,175 @@ export function buildClusterEmbed(status: {
         inline: false },
     )
     .setThumbnail("attachment://geass-symbol.png")
+    .setFooter(footer())
+    .setTimestamp();
+}
+
+// ── Site Checker Embed ────────────────────────────────────────────────────────
+export interface CheckResult {
+  target:         string;
+  statusCode:     number | null;
+  responseTimeMs: number;
+  serverHeader:   string | null;
+  contentType:    string | null;
+  redirected:     boolean;
+  finalUrl:       string | null;
+  httpVersion:    string | null;
+  error:          string | null;
+}
+
+export function buildCheckEmbed(r: CheckResult, lang: "en" | "pt" = "pt"): EmbedBuilder {
+  const pt   = lang === "pt";
+  const up   = r.statusCode !== null && r.statusCode < 500 && !r.error;
+  const warn = r.statusCode !== null && r.statusCode >= 400 && r.statusCode < 500;
+
+  const color = r.error        ? COLORS.RED
+              : warn           ? COLORS.GOLD
+              : up             ? COLORS.GREEN
+              : COLORS.RED;
+
+  const statusIcon = r.error   ? "🔴"
+                   : warn      ? "🟡"
+                   : up        ? "🟢"
+                   : "🔴";
+
+  const pingBar = (ms: number): string => {
+    const n = Math.min(20, Math.max(1, Math.round(ms / 50)));
+    const clr = ms < 200 ? "🟩" : ms < 800 ? "🟨" : "🟥";
+    return clr.repeat(n);
+  };
+
+  const T = {
+    title:   pt ? `${statusIcon} CHECKER DE SITE — GEASS SCAN` : `${statusIcon} SITE CHECKER — GEASS SCAN`,
+    desc:    pt ? `Verificando resposta de \`${r.target}\`` : `Checking response of \`${r.target}\``,
+    status:  pt ? "📡 Status HTTP" : "📡 HTTP Status",
+    ping:    pt ? "⚡ Latência" : "⚡ Latency",
+    server:  pt ? "🖥️ Servidor" : "🖥️ Server",
+    ctype:   pt ? "📄 Conteúdo" : "📄 Content-Type",
+    redir:   pt ? "🔀 Redirecionamento" : "🔀 Redirect",
+    verdict: pt ? "🎯 Resultado" : "🎯 Verdict",
+    unknown: pt ? "Desconhecido" : "Unknown",
+    online:  pt ? "✅ **ONLINE** — respondendo normalmente" : "✅ **ONLINE** — responding normally",
+    warn400: pt ? "🟡 **PARCIAL** — respondeu com erro de cliente" : "🟡 **PARTIAL** — client error response",
+    offline: pt ? "🔴 **OFFLINE** — sem resposta ou erro de servidor" : "🔴 **OFFLINE** — no response or server error",
+    errLabel:pt ? "❌ Erro" : "❌ Error",
+  };
+
+  const statusLine = r.statusCode !== null
+    ? `\`${r.statusCode}\` ${r.httpVersion ? `· \`${r.httpVersion}\`` : ""}`
+    : (pt ? "`sem resposta`" : "`no response`");
+
+  const pingLine = r.error
+    ? (pt ? "n/a (sem resposta)" : "n/a (no response)")
+    : `\`${r.responseTimeMs}ms\`\n${pingBar(r.responseTimeMs)}`;
+
+  const verdict = r.error    ? T.offline
+                : warn       ? T.warn400
+                : up         ? T.online
+                : T.offline;
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(T.title)
+    .setDescription(T.desc)
+    .addFields(
+      { name: T.status,  value: statusLine,                                           inline: true },
+      { name: T.ping,    value: pingLine,                                              inline: true },
+      { name: T.server,  value: r.serverHeader  ? `\`${r.serverHeader}\``  : T.unknown, inline: true },
+      { name: T.ctype,   value: r.contentType   ? `\`${r.contentType.split(";")[0]}\`` : T.unknown, inline: true },
+      { name: T.redir,   value: r.redirected && r.finalUrl ? `✅ → \`${r.finalUrl}\`` : "❌", inline: true },
+      { name: T.verdict, value: verdict,                                               inline: false },
+    );
+
+  if (r.error) {
+    embed.addFields({ name: T.errLabel, value: `\`${r.error}\``, inline: false });
+  }
+
+  embed.setFooter(footer()).setTimestamp();
+  return embed;
+}
+
+// ── Server Health Embed ───────────────────────────────────────────────────────
+export interface HealthData {
+  status:    "healthy" | "warning" | "critical";
+  uptimeSec: number;
+  process:   { heapUsedMB: number; heapTotalMB: number; rssMB: number; pid: number };
+  system:    { cpus: number; load1: number; load5: number; load15: number; loadPct: number;
+               totalRamMB: number; usedRamMB: number; freeRamMB: number; ramPct: number;
+               hostname: string; platform: string };
+  attacks:   { active: number; totalConns: number };
+}
+
+export interface GlobalStats {
+  totalAttacks:   number;
+  runningAttacks: number;
+  totalPacketsSent: number;
+  totalBytesSent:   number;
+}
+
+export function buildHealthEmbed(h: HealthData, stats: GlobalStats | null, lang: "en" | "pt" = "pt"): EmbedBuilder {
+  const pt = lang === "pt";
+
+  const fmtUptime = (s: number): string => {
+    const d  = Math.floor(s / 86400);
+    const hr = Math.floor((s % 86400) / 3600);
+    const m  = Math.floor((s % 3600) / 60);
+    const sc = s % 60;
+    if (d  > 0) return `${d}d ${hr}h ${m}m`;
+    if (hr > 0) return `${hr}h ${m}m ${sc}s`;
+    if (m  > 0) return `${m}m ${sc}s`;
+    return `${sc}s`;
+  };
+
+  const bar = (pct: number, size = 16): string => {
+    const n   = Math.min(size, Math.max(0, Math.round(pct / 100 * size)));
+    const clr = pct < 60 ? "🟩" : pct < 85 ? "🟨" : "🟥";
+    return clr.repeat(n) + "⬛".repeat(size - n);
+  };
+
+  const color = h.status === "healthy" ? COLORS.GREEN
+              : h.status === "warning" ? COLORS.GOLD
+              : COLORS.RED;
+  const icon  = h.status === "healthy" ? "🟢" : h.status === "warning" ? "🟡" : "🔴";
+
+  const T = {
+    title:   pt ? `${icon} LELOUCH BRITANNIA — MÉTRICAS DO SERVIDOR` : `${icon} LELOUCH BRITANNIA — SERVER METRICS`,
+    status:  pt ? "📡 Status" : "📡 Status",
+    uptime:  pt ? "⏱ Uptime" : "⏱ Uptime",
+    ram:     pt ? `🧠 RAM  (${h.system.ramPct}%)` : `🧠 RAM  (${h.system.ramPct}%)`,
+    cpu:     pt ? `⚡ CPU  (${h.system.loadPct}%)` : `⚡ CPU  (${h.system.loadPct}%)`,
+    proc:    pt ? "🟣 Processo" : "🟣 Process",
+    atks:    pt ? "⚔️ Ataques" : "⚔️ Attacks",
+    pkts:    pt ? "📦 Pacotes" : "📦 Packets",
+    data:    pt ? "💾 Dados" : "💾 Data",
+  };
+
+  const statusVal = pt
+    ? `\`${h.status === "healthy" ? "SAUDÁVEL" : h.status === "warning" ? "ATENÇÃO" : "CRÍTICO"}\` · nó \`${h.system.hostname}\``
+    : `\`${h.status.toUpperCase()}\` · node \`${h.system.hostname}\``;
+
+  const ramVal  = `${bar(h.system.ramPct)}\n\`${h.system.usedRamMB} / ${h.system.totalRamMB} MB\`  ·  ${pt ? "livre" : "free"}: \`${h.system.freeRamMB} MB\``;
+  const cpuVal  = `${bar(h.system.loadPct)}\n\`${h.system.cpus}\` cores  ·  1m \`${h.system.load1.toFixed(2)}\`  5m \`${h.system.load5.toFixed(2)}\`  15m \`${h.system.load15.toFixed(2)}\``;
+  const procVal = `Heap: \`${h.process.heapUsedMB}/${h.process.heapTotalMB} MB\`  RSS: \`${h.process.rssMB} MB\``;
+  const atksVal = stats
+    ? `${pt ? "Ativos" : "Active"}: \`${h.attacks.active}\`  ${pt ? "Conns" : "Conns"}: \`${h.attacks.totalConns.toLocaleString()}\`\n${pt ? "Total histórico" : "All-time"}: \`${stats.totalAttacks.toLocaleString()}\``
+    : `${pt ? "Ativos" : "Active"}: \`${h.attacks.active}\`  Conns: \`${h.attacks.totalConns.toLocaleString()}\``;
+  const pktsVal = stats ? `\`${stats.totalPacketsSent.toLocaleString()}\`` : "`—`";
+  const dataVal = stats ? `\`${fmtBytes(stats.totalBytesSent)}\`` : "`—`";
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(T.title)
+    .addFields(
+      { name: T.status,  value: statusVal, inline: true  },
+      { name: T.uptime,  value: `\`${fmtUptime(h.uptimeSec)}\``, inline: true },
+      { name: T.ram,     value: ramVal,    inline: false },
+      { name: T.cpu,     value: cpuVal,    inline: false },
+      { name: T.proc,    value: procVal,   inline: true  },
+      { name: T.atks,    value: atksVal,   inline: true  },
+      { name: T.pkts,    value: pktsVal,   inline: true  },
+      { name: T.data,    value: dataVal,   inline: true  },
+    )
     .setFooter(footer())
     .setTimestamp();
 }
