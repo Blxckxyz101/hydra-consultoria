@@ -198,7 +198,7 @@ export const api = {
     req<CheckerResponse>("/api/checker/check", {
       method: "POST",
       body:   JSON.stringify({ credentials, target }),
-      signal: AbortSignal.timeout(credentials.length * 18_000 + 5_000),
+      signal: AbortSignal.timeout(Math.min(credentials.length * 4_000 + 30_000, 14 * 60_000)), // ~4s/cred, max 14min
     }),
 };
 

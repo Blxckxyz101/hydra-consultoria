@@ -93,7 +93,7 @@ function parseCookieJar(headers: Headers): string {
 }
 
 /** Parse credentials from any format — supports email:pass, user:pass, newline/comma/semicolon separated */
-const MAX_BULK = 50;
+const MAX_BULK = 500;
 export function parseCredentials(raw: string): Array<{ login: string; password: string }> {
   return raw
     .split(/[\n,;|]+/)
