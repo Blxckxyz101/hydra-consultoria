@@ -3817,11 +3817,19 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("chk_iseek")
-      .setLabel("🌐  iSeek.pro")
+      .setLabel("🌐 iSeek.pro")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId("chk_datasus")
-      .setLabel("🏥  DataSUS (SI-PNI)")
+      .setLabel("🏥 DataSUS")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("chk_consultcenter")
+      .setLabel("📋 ConsultCenter")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("chk_mind7")
+      .setLabel("🧠 Mind-7")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("chk_cancel")
@@ -3838,8 +3846,10 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
         `Escolha em qual sistema deseja verificar:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",        value: "Plataforma iSeek — verifica login por redirecionamento CSRF", inline: true },
-        { name: "🏥 DataSUS / SI-PNI", value: "Sistema Nacional de Imunizações — verifica via JSF + SHA-512",  inline: true },
+        { name: "🌐 iSeek.pro",        value: "Plataforma iSeek — verifica por redirecionamento CSRF",           inline: true },
+        { name: "🏥 DataSUS / SI-PNI", value: "Sistema Nacional de Imunizações — verifica via JSF + SHA-512",   inline: true },
+        { name: "📋 ConsultCenter",     value: "sistema.consultcenter.com.br — verifica via formulário CakePHP", inline: true },
+        { name: "🧠 Mind-7",           value: "mind-7.org — verifica acesso (requer bypass Cloudflare)",         inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expire em 60s` })],
     components: [selectRow],
@@ -3864,10 +3874,17 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  const target: "iseek" | "datasus" = btnInteraction.customId === "chk_iseek" ? "iseek" : "datasus";
-  const targetLabel  = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
-  const targetIcon   = target === "iseek" ? "🌐" : "🏥";
-  const concurrency  = 2;
+  type CheckerTargetBot = "iseek" | "datasus" | "consultcenter" | "mind7";
+  const targetMap: Record<string, CheckerTargetBot> = {
+    chk_iseek:         "iseek",
+    chk_datasus:       "datasus",
+    chk_consultcenter: "consultcenter",
+    chk_mind7:         "mind7",
+  };
+  const target        = targetMap[btnInteraction.customId] ?? "iseek";
+  const targetLabel   = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
+  const targetIcon    = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
+  const concurrency   = 2;
   const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
 
   // ── Acknowledge button + show progress ────────────────────────────────────
@@ -4339,8 +4356,10 @@ async function main(): Promise<void> {
 
     // Show target selector
     const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐  iSeek.pro").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥  DataSUS (SI-PNI)").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek.pro").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
     );
 
@@ -4352,8 +4371,10 @@ async function main(): Promise<void> {
         `Escolha em qual sistema deseja verificar:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",        value: "Login via CSRF + redirect", inline: true },
-        { name: "🏥 DataSUS / SI-PNI", value: "Login via JSF + SHA-512",   inline: true },
+        { name: "🌐 iSeek.pro",        value: "Login via CSRF + redirect",               inline: true },
+        { name: "🏥 DataSUS / SI-PNI", value: "Login via JSF + SHA-512",                inline: true },
+        { name: "📋 ConsultCenter",     value: "Login via formulário CakePHP",            inline: true },
+        { name: "🧠 Mind-7",           value: "mind-7.org (com bypass Cloudflare)",       inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` });
 
@@ -4382,9 +4403,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    const target: "iseek" | "datasus" = btn.customId === "chk_iseek" ? "iseek" : "datasus";
-    const targetLabel = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
-    const targetIcon  = target === "iseek" ? "🌐" : "🏥";
+    const fdTargetMap: Record<string, "iseek" | "datasus" | "consultcenter" | "mind7"> = {
+      chk_iseek: "iseek", chk_datasus: "datasus", chk_consultcenter: "consultcenter", chk_mind7: "mind7",
+    };
+    const target      = fdTargetMap[btn.customId] ?? "iseek";
+    const targetLabel = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
+    const targetIcon  = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
     const concurrency = 2;
     const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
 

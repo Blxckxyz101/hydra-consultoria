@@ -194,7 +194,7 @@ export const api = {
     req<QueryStats>("/api/query/stats", { signal: AbortSignal.timeout(5_000) }),
 
   // ── Checker ─────────────────────────────────────────────────────────────
-  checkerBulk: (credentials: string[], target: "iseek" | "datasus") =>
+  checkerBulk: (credentials: string[], target: "iseek" | "datasus" | "consultcenter" | "mind7") =>
     req<CheckerResponse>("/api/checker/check", {
       method: "POST",
       body:   JSON.stringify({ credentials, target }),
