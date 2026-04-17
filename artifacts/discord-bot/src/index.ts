@@ -3785,6 +3785,85 @@ function buildProgressBar(done: number, total: number, width = 20): string {
   return `\`${filled}${empty}\` **${percent}%**`;
 }
 
+/** Returns embeds whose combined character count stays within Discord's 6000-char limit. */
+function safeEmbeds(embeds: EmbedBuilder[], budget = 5800): EmbedBuilder[] {
+  const result: EmbedBuilder[] = [];
+  let total = 0;
+  for (const embed of embeds) {
+    const d    = embed.toJSON();
+    const size = (d.title?.length ?? 0) + (d.description?.length ?? 0) + (d.footer?.text?.length ?? 0) + (d.author?.name?.length ?? 0);
+    if (result.length > 0 && total + size > budget) break;
+    result.push(embed);
+    total += size;
+  }
+  return result;
+}
+
+/** Builds the final result embeds for a completed checker run. */
+function buildCheckerFinalEmbeds(
+  allResults: LiveCheckerResult[],
+  finalState: LiveCheckerState,
+  targetLabel: string,
+  targetIcon: string,
+  concurrency: number,
+  isSlash: boolean,
+): EmbedBuilder[] {
+  const icon = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+  const lines = allResults.map(r => {
+    const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
+    const detail = r.detail.length > 55    ? r.detail.slice(0, 52) + "..."    : r.detail;
+    return `${icon(r.status)} \`${cred}\`\n> ${detail}`;
+  });
+
+  const chunks: string[][] = [[]];
+  for (const line of lines) {
+    const cur = chunks[chunks.length - 1];
+    if (cur.join("\n\n").length + line.length + 2 > 1400) chunks.push([line]);
+    else cur.push(line);
+  }
+
+  const color = finalState.hits > 0 ? COLORS.GREEN : finalState.errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
+  const footer = isSlash ? `${AUTHOR} • ${targetLabel}` : `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo`;
+
+  const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
+    const isFirst = i === 0;
+    const header  = isFirst
+      ? `📊 **${finalState.total}** testada${finalState.total === 1 ? "" : "s"} — ✅ **${finalState.hits} HIT** | ❌ **${finalState.fails} FAIL** | ⚠️ **${finalState.errors} ERRO**\n\n`
+      : "";
+    return new EmbedBuilder()
+      .setColor(color)
+      .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} RESULTADOS (${i + 1})`)
+      .setDescription((header + chunk.join("\n\n")).slice(0, 2000))
+      .setTimestamp(isFirst ? new Date() : null)
+      .setFooter(isFirst ? { text: footer } : null);
+  });
+
+  const hits = allResults.filter(r => r.status === "HIT");
+  if (hits.length > 0) {
+    embeds.push(new EmbedBuilder()
+      .setColor(COLORS.GREEN)
+      .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
+      .setDescription(hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 1500))
+      .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
+    );
+  }
+
+  const activeHits = allResults.filter(
+    r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
+  );
+  if (activeHits.length > 0) {
+    const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
+    embeds.push(new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
+      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso confirmado!**\n\n${activeText}`.slice(0, 1200))
+      .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
+    );
+  }
+
+  return safeEmbeds(embeds).slice(0, 10);
+}
+
 function buildLiveCheckerEmbed(
   state:       LiveCheckerState,
   targetLabel: string,
@@ -4089,66 +4168,8 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
 
   clearInterval(updateInterval);
 
-  // ── Final results embed (same detailed format as before) ───────────────────
-  const allResults = finalState.allResults;
-  const statusEmoji = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
-
-  const lines = allResults.map(r => {
-    const icon   = statusEmoji(r.status);
-    const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
-    const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
-    return `${icon} \`${cred}\`\n> ${detail}`;
-  });
-
-  const chunks: string[][] = [[]];
-  for (const line of lines) {
-    const cur    = chunks[chunks.length - 1];
-    const curLen = cur.join("\n\n").length;
-    if (curLen + line.length + 2 > 3800) chunks.push([line]);
-    else cur.push(line);
-  }
-
-  const resultColor = finalState.hits > 0 ? COLORS.GREEN : finalState.errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
-
-  const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
-    const isFirst = i === 0;
-    return new EmbedBuilder()
-      .setColor(resultColor)
-      .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} CHECKER — RESULTADOS (${i + 1})`)
-      .setDescription(isFirst
-        ? `📊 **${finalState.total}** testada${finalState.total === 1 ? "" : "s"} — ✅ **${finalState.hits} HIT** | ❌ **${finalState.fails} FAIL** | ⚠️ **${finalState.errors} ERRO**\n\n` +
-          chunk.join("\n\n")
-        : chunk.join("\n\n"),
-      )
-      .setTimestamp(isFirst ? new Date() : null)
-      .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel}` } : null);
-  });
-
-  const hitResults = allResults.filter(r => r.status === "HIT");
-  if (hitResults.length > 0) {
-    const hitsText = hitResults.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n");
-    embeds.push(new EmbedBuilder()
-      .setColor(COLORS.GREEN)
-      .setTitle(`✅ HITS CONFIRMADOS (${hitResults.length}) — ${targetIcon} ${targetLabel}`)
-      .setDescription(hitsText.slice(0, 4000))
-      .setFooter({ text: `${AUTHOR} • ${hitResults.length} conta${hitResults.length === 1 ? "" : "s"} válida${hitResults.length === 1 ? "" : "s"}` }),
-    );
-  }
-
-  const activeHits = allResults.filter(
-    r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
-  );
-  if (activeHits.length > 0) {
-    const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
-    embeds.push(new EmbedBuilder()
-      .setColor(0xFF0000)
-      .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
-      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado!**\n\n${activeText}`.slice(0, 4000))
-      .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
-    );
-  }
-
-  await interaction.editReply({ embeds: embeds.slice(0, 10), components: [] });
+  const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, targetLabel, targetIcon, concurrency, true);
+  await interaction.editReply({ embeds: finalEmbeds, components: [] });
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
@@ -4629,60 +4650,8 @@ async function main(): Promise<void> {
 
     clearInterval(fdUpdateInterval);
 
-    // ── Final results embed ───────────────────────────────────────────────────
-    const fdResults   = fdFinalState.allResults;
-    const fdStatusEmoji = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
-    const fdLines = fdResults.map(r => {
-      const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
-      const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
-      return `${fdStatusEmoji(r.status)} \`${cred}\`\n> ${detail}`;
-    });
-
-    const fdChunks: string[][] = [[]];
-    for (const line of fdLines) {
-      const cur = fdChunks[fdChunks.length - 1];
-      if (cur.join("\n\n").length + line.length + 2 > 3800) fdChunks.push([line]);
-      else cur.push(line);
-    }
-
-    const fdResultColor = fdFinalState.hits > 0 ? COLORS.GREEN : fdFinalState.errors === fdFinalState.total ? COLORS.ORANGE : COLORS.RED;
-    const embeds: EmbedBuilder[] = fdChunks.map((chunk, i) => {
-      const isFirst = i === 0;
-      return new EmbedBuilder()
-        .setColor(fdResultColor)
-        .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} RESULTADOS (${i + 1})`)
-        .setDescription(isFirst
-          ? `📊 **${fdFinalState.total}** testada${fdFinalState.total === 1 ? "" : "s"} — ✅ **${fdFinalState.hits} HIT** | ❌ **${fdFinalState.fails} FAIL** | ⚠️ **${fdFinalState.errors} ERRO**\n\n` + chunk.join("\n\n")
-          : chunk.join("\n\n"),
-        )
-        .setTimestamp(isFirst ? new Date() : null)
-        .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo` } : null);
-    });
-
-    const fdHits = fdResults.filter(r => r.status === "HIT");
-    if (fdHits.length > 0) {
-      embeds.push(new EmbedBuilder()
-        .setColor(COLORS.GREEN)
-        .setTitle(`✅ HITS CONFIRMADOS (${fdHits.length}) — ${targetIcon} ${targetLabel}`)
-        .setDescription(fdHits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 4000))
-        .setFooter({ text: `${AUTHOR} • ${fdHits.length} conta${fdHits.length === 1 ? "" : "s"} válida${fdHits.length === 1 ? "" : "s"}` }),
-      );
-    }
-
-    const fdActiveHits = fdResults.filter(
-      r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
-    );
-    if (fdActiveHits.length > 0) {
-      const activeText = fdActiveHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
-      embeds.push(new EmbedBuilder()
-        .setColor(0xFF0000)
-        .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${fdActiveHits.length})`)
-        .setDescription(`**Conta${fdActiveHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado!**\n\n${activeText}`.slice(0, 4000))
-        .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
-      );
-    }
-
-    await reply.edit({ embeds: embeds.slice(0, 10), components: [] }).catch(() => void 0);
+    const fdFinalEmbeds = buildCheckerFinalEmbeds(fdFinalState.allResults, fdFinalState, targetLabel, targetIcon, concurrency, false);
+    await reply.edit({ embeds: fdFinalEmbeds, components: [] }).catch(() => void 0);
   });
 
   client.on(Events.Error, err => {
