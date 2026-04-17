@@ -44,6 +44,8 @@ import {
   buildStatsEmbed,
   buildAnalyzeEmbed,
   buildMethodsEmbed,
+  buildMethodsNavRow,
+  METHODS_PAGE_SIZE,
   buildHelpEmbed,
   buildErrorEmbed,
   buildGeassFiles,
@@ -58,7 +60,7 @@ import {
 // ── Per-interaction cache for language toggle re-render ───────────────────────
 import type { AnalyzeResult, Method } from "./api.js";
 const analyzeCache = new Map<string, AnalyzeResult>();
-const methodsCache = new Map<string, { methods: Method[]; layer?: string }>();
+const methodsCache = new Map<string, { methods: Method[]; layer?: string; page: number; lang: "en" | "pt" }>();
 type StatsCache = { stats: Parameters<typeof buildStatsEmbed>[0]; proxyStats?: Parameters<typeof buildStatsEmbed>[1] };
 const statsCache  = new Map<string, StatsCache>();
 const listCache   = new Map<string, Parameters<typeof buildListEmbed>[0]>();
@@ -1174,12 +1176,17 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
   await interaction.deferReply();
   const layerFilter = interaction.options.getString("layer") ?? undefined;
   try {
-    const methods = await api.getMethods();
-    const msg = await interaction.editReply({
-      embeds: buildMethodsEmbed(methods, layerFilter, "pt"),
-      components: [buildLangRow("pt", "methods")],
-    });
-    methodsCache.set(msg.id, { methods, layer: layerFilter });
+    const methods   = await api.getMethods();
+    const lang: "en" | "pt" = "pt";
+    const page      = 1;
+    const filtered  = layerFilter
+      ? methods.filter(m => m.layer?.toLowerCase() === layerFilter.toLowerCase())
+      : methods;
+    const total     = Math.ceil(filtered.length / METHODS_PAGE_SIZE);
+    const embed     = buildMethodsEmbed(methods, layerFilter, lang, page);
+    const navRow    = buildMethodsNavRow(page, total, lang);
+    const msg       = await interaction.editReply({ embeds: [embed], components: [navRow] });
+    methodsCache.set(msg.id, { methods, layer: layerFilter, page, lang });
     setTimeout(() => methodsCache.delete(msg.id), 3_600_000);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1523,6 +1530,27 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     return;
   }
 
+  // ── Methods pagination ────────────────────────────────────────────────────
+  if (customId === "methods_prev" || customId === "methods_next") {
+    await interaction.deferUpdate();
+    const msgId  = interaction.message.id;
+    const cached = methodsCache.get(msgId);
+    if (!cached) { await interaction.editReply({ components: [] }); return; }
+    const filtered = cached.layer
+      ? cached.methods.filter(m => m.layer?.toLowerCase() === cached.layer?.toLowerCase())
+      : cached.methods;
+    const total   = Math.ceil(filtered.length / METHODS_PAGE_SIZE);
+    const newPage = customId === "methods_next"
+      ? Math.min(cached.page + 1, total)
+      : Math.max(cached.page - 1, 1);
+    const lang    = cached.lang ?? "pt";
+    const embed   = buildMethodsEmbed(cached.methods, cached.layer, lang, newPage);
+    const navRow  = buildMethodsNavRow(newPage, total, lang);
+    methodsCache.set(msgId, { ...cached, page: newPage });
+    await interaction.editReply({ embeds: [embed], components: [navRow] });
+    return;
+  }
+
   // ── Language toggle handlers ──────────────────────────────────────────────
   const langMatch = customId.match(/^(\w+)_lang:(en|pt)$/);
   if (langMatch) {
@@ -1549,12 +1577,18 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
         return;
       }
 
-      // methods
+      // methods lang toggle
       if (prefix === "methods") {
         const cached = methodsCache.get(msgId);
-        if (!cached) { await interaction.editReply({ components: [buildLangRow(lang, "methods")] }); return; }
-        const embeds = buildMethodsEmbed(cached.methods, cached.layer, lang);
-        await interaction.editReply({ embeds, components: [buildLangRow(lang, "methods")] });
+        if (!cached) { await interaction.editReply({ components: [] }); return; }
+        const filtered = cached.layer
+          ? cached.methods.filter(m => m.layer?.toLowerCase() === cached.layer?.toLowerCase())
+          : cached.methods;
+        const total  = Math.ceil(filtered.length / METHODS_PAGE_SIZE);
+        const embed  = buildMethodsEmbed(cached.methods, cached.layer, lang, cached.page);
+        const navRow = buildMethodsNavRow(cached.page, total, lang);
+        methodsCache.set(msgId, { ...cached, lang });
+        await interaction.editReply({ embeds: [embed], components: [navRow] });
         return;
       }
 

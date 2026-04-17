@@ -675,10 +675,9 @@ export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en
     .slice(0, 4);
   const recoLines = top4.length > 0
     ? top4.map((r, i) => {
-        const medal  = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const tier   = tierIcon(r.tier ?? "");
-        const reason = (r.reason ?? "").length > 100 ? r.reason.slice(0, 97) + "…" : r.reason;
-        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${reason}`;
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const tier  = tierIcon(r.tier ?? "");
+        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${r.reason ?? ""}`;
       }).join("\n\n").slice(0, 1020)
     : T.noRec;
 
@@ -730,72 +729,97 @@ export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en
   return embed;
 }
 
-// ── Methods Embed ─────────────────────────────────────────────────────────────
-const METHODS_DESC_MAX = 90;
-const METHODS_NAME_MAX = 50;
+// ── Methods Embed (single page, button pagination) ────────────────────────────
+export const METHODS_PAGE_SIZE = 4;
 
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
-}
-
-export function buildMethodsEmbed(methods: Method[], layerFilter?: string, lang: "en" | "pt" = "en"): EmbedBuilder[] {
-  const pt = lang === "pt";
+export function buildMethodsEmbed(
+  methods: Method[],
+  layerFilter?: string,
+  lang: "en" | "pt" = "pt",
+  page = 1,
+): EmbedBuilder {
+  const pt       = lang === "pt";
   const filtered = layerFilter
     ? methods.filter(m => m.layer?.toLowerCase() === layerFilter.toLowerCase())
     : methods;
 
-  const pages: EmbedBuilder[] = [];
-  const PAGE_SIZE = 5;
-
-  for (let i = 0; i < filtered.length; i += PAGE_SIZE) {
-    const chunk = filtered.slice(i, i + PAGE_SIZE);
-    const page  = Math.floor(i / PAGE_SIZE) + 1;
-    const total = Math.ceil(filtered.length / PAGE_SIZE);
-
-    const titleSuffix = layerFilter ? `Layer ${layerFilter.toUpperCase()}` : (pt ? "Todos os Vetores" : "All Vectors");
-    const desc = pt
-      ? `**${filtered.length}** vetores disponíveis${layerFilter ? ` na Layer ${layerFilter.toUpperCase()}` : ""}. Página **${page}/${total}**.`
-      : `**${filtered.length}** vectors available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}. Page **${page}/${total}**.`;
-
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.PURPLE)
-      .setTitle(`⚔️ ARES ATTACK VECTORS — ${titleSuffix}`)
-      .setDescription(desc)
-      .addFields(
-        chunk.map((m, idx) => {
-          const rawDesc = m.description ?? (pt ? "Sem descrição" : "No description");
-          const info = pt
-            ? `Tier **${m.tier ?? "?"}** · Camada **${m.layer ?? "?"}** · Proto **${m.protocol ?? "?"}**`
-            : `Tier **${m.tier ?? "?"}** · Layer **${m.layer ?? "?"}** · Proto **${m.protocol ?? "?"}**`;
-          return {
-            name:   `${i + idx + 1}. ${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} ${truncate(m.name, METHODS_NAME_MAX)}`,
-            value:  `${truncate(rawDesc, METHODS_DESC_MAX)}\n${info}`,
-            inline: false,
-          };
-        })
+  if (filtered.length === 0) {
+    return new EmbedBuilder()
+      .setColor(COLORS.RED)
+      .setTitle(pt ? "❌ Nenhum Vetor Encontrado" : "❌ No Vectors Found")
+      .setDescription(
+        layerFilter
+          ? (pt ? `Nenhum vetor para a camada \`${layerFilter}\`.` : `No vectors for layer \`${layerFilter}\`.`)
+          : (pt ? "Nenhum vetor disponível." : "No vectors available.")
       )
-      .setFooter(footer(pt ? `${filtered.length} métodos no total` : `${filtered.length} total methods`))
+      .setFooter(footer())
       .setTimestamp();
-
-    pages.push(embed);
   }
 
-  if (pages.length === 0) {
-    pages.push(
-      new EmbedBuilder()
-        .setColor(COLORS.RED)
-        .setTitle(pt ? "❌ Nenhum Método Encontrado" : "❌ No Methods Found")
-        .setDescription(
-          layerFilter
-            ? (pt ? `Nenhum método encontrado para a camada \`${layerFilter}\`.` : `No methods found for layer \`${layerFilter}\`.`)
-            : (pt ? "Nenhum método disponível." : "No methods available.")
-        )
-        .setFooter(footer())
-        .setTimestamp()
-    );
-  }
+  const total     = Math.ceil(filtered.length / METHODS_PAGE_SIZE);
+  const safePage  = Math.min(Math.max(1, page), total);
+  const start     = (safePage - 1) * METHODS_PAGE_SIZE;
+  const chunk     = filtered.slice(start, start + METHODS_PAGE_SIZE);
 
-  return pages;
+  const layerLabel  = layerFilter ? ` — Layer ${layerFilter.toUpperCase()}` : "";
+  const titleSuffix = pt ? "VETORES DE ATAQUE" : "ATTACK VECTORS";
+
+  const desc = pt
+    ? `${tierIcon("S")} **${filtered.length}** vetores disponíveis${layerFilter ? ` na Layer \`${layerFilter.toUpperCase()}\`` : ""}.\n📄 Página **${safePage} / ${total}** — use os botões para navegar.`
+    : `${tierIcon("S")} **${filtered.length}** vectors available${layerFilter ? ` for Layer \`${layerFilter.toUpperCase()}\`` : ""}.\n📄 Page **${safePage} / ${total}** — use buttons to navigate.`;
+
+  return new EmbedBuilder()
+    .setColor(COLORS.PURPLE)
+    .setTitle(`⚔️ ARES ${titleSuffix}${layerLabel}`)
+    .setDescription(desc)
+    .addFields(
+      chunk.map((m, idx) => {
+        const num     = start + idx + 1;
+        const rawDesc = m.description ?? (pt ? "Sem descrição" : "No description");
+        const meta    = pt
+          ? `\`${m.tier ?? "?"}\` · Camada \`${m.layer ?? "?"}\` · \`${m.protocol ?? "?"}\``
+          : `\`${m.tier ?? "?"}\` · Layer \`${m.layer ?? "?"}\` · \`${m.protocol ?? "?"}\``;
+        return {
+          name:   `${num}. ${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} ${m.name}`,
+          value:  `${rawDesc}\n${meta}`,
+          inline: false,
+        };
+      })
+    )
+    .setFooter(footer(pt ? `${filtered.length} vetores no total` : `${filtered.length} total vectors`))
+    .setTimestamp();
+}
+
+export function buildMethodsNavRow(
+  page: number,
+  total: number,
+  lang: "en" | "pt",
+): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("methods_prev")
+      .setLabel("◀")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page <= 1),
+    new ButtonBuilder()
+      .setCustomId("methods_page_indicator")
+      .setLabel(`${page} / ${total}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+    new ButtonBuilder()
+      .setCustomId("methods_next")
+      .setLabel("▶")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page >= total),
+    new ButtonBuilder()
+      .setCustomId("methods_lang:en")
+      .setLabel("🇺🇸")
+      .setStyle(lang === "en" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("methods_lang:pt")
+      .setLabel("🇧🇷")
+      .setStyle(lang === "pt" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
 }
 
 // ── Error Embed ───────────────────────────────────────────────────────────────
