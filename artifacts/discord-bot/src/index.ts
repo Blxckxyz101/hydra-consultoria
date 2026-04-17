@@ -4154,6 +4154,16 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
+  );
+  const selectRow3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
+  );
+  const selectRow4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
   );
 
@@ -4168,16 +4178,22 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
       .addFields(
         { name: "🌐 iSeek.pro",        value: "iSeek — CSRF + redirect",                  inline: true },
         { name: "🏥 DataSUS",           value: "SI-PNI — JSF + SHA-512",                   inline: true },
-        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95% hit rate)",      inline: true },
+        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95%)",               inline: true },
         { name: "📋 ConsultCenter",     value: "CakePHP login form",                        inline: true },
         { name: "🧠 Mind-7",           value: "mind-7.org + Cloudflare bypass",             inline: true },
-        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API móvel Android",    inline: true },
+        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API Android",          inline: true },
         { name: "🏨 SISREG III",        value: "sisregiii.saude.gov.br — SHA-256",          inline: true },
         { name: "💳 CrediLink",         value: "Credicorp API Azure — JSON token",          inline: true },
         { name: "📊 Serasa",            value: "serasaempreendedor.com.br — curl",          inline: true },
+        { name: "🍥 Crunchyroll",       value: "auth.crunchyroll.com — OAuth2 Android",     inline: true },
+        { name: "🎬 Netflix",           value: "shakti API — BUILD_ID + login",             inline: true },
+        { name: "📦 Amazon Prime",      value: "amazon.com.br — form scrape",               inline: true },
+        { name: "👑 HBO Max",           value: "oauth.api.hbo.com — OAuth2",                inline: true },
+        { name: "🏰 Disney+",           value: "BAMTech device API — 2-step",               inline: true },
+        { name: "⭐ Paramount+",        value: "paramountplus.com — iOS REST API",          inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
-    components: [selectRow1, selectRow2],
+    components: [selectRow1, selectRow2, selectRow3, selectRow4],
   });
 
   // ── Await button click ────────────────────────────────────────────────────
@@ -4199,7 +4215,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
@@ -4210,19 +4226,33 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     chk_sisreg:        "sisreg",
     chk_credilink:     "credilink",
     chk_serasa:        "serasa",
+    chk_crunchyroll:   "crunchyroll",
+    chk_netflix:       "netflix",
+    chk_amazon:        "amazon",
+    chk_hbomax:        "hbomax",
+    chk_disney:        "disney",
+    chk_paramount:     "paramount",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
   const targetLabel   = {
     iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
     consultcenter: "ConsultCenter", mind7: "Mind-7",
     serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
+    crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
+    hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
   }[target]!;
   const targetIcon    = {
     iseek: "🌐", datasus: "🏥", sipni: "💉",
     consultcenter: "📋", mind7: "🧠",
     serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
+    crunchyroll: "🍥", netflix: "🎬", amazon: "📦",
+    hbomax: "👑", disney: "🏰", paramount: "⭐",
   }[target]!;
-  const concurrency   = { iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3, serpro: 4, sisreg: 2, credilink: 4, serasa: 2 }[target] ?? 2;
+  const concurrency   = {
+    iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
+    serpro: 4, sisreg: 2, credilink: 4, serasa: 2,
+    crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
+  }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────
   const stopId  = `chk_stop_${Date.now()}`;
@@ -4709,6 +4739,16 @@ async function main(): Promise<void> {
       new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
+    );
+    const fdRow3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
+    );
+    const fdRow4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
     );
 
@@ -4720,21 +4760,27 @@ async function main(): Promise<void> {
         `Escolha em qual sistema deseja verificar:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",    value: "iSeek — CSRF + redirect",               inline: true },
-        { name: "🏥 DataSUS",       value: "SI-PNI — JSF + SHA-512",                inline: true },
-        { name: "💉 SIPNI v2",      value: "SI-PNI — AJAX 4-step (95%)",            inline: true },
-        { name: "📋 ConsultCenter", value: "CakePHP login form",                     inline: true },
-        { name: "🧠 Mind-7",       value: "mind-7.org + Cloudflare bypass",          inline: true },
-        { name: "🛡️ SERPRO",      value: "radar.serpro.gov.br — API Android",       inline: true },
-        { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",       inline: true },
-        { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
-        { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",       inline: true },
+        { name: "🌐 iSeek.pro",        value: "iSeek — CSRF + redirect",              inline: true },
+        { name: "🏥 DataSUS",           value: "SI-PNI — JSF + SHA-512",               inline: true },
+        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95%)",           inline: true },
+        { name: "📋 ConsultCenter",     value: "CakePHP login form",                    inline: true },
+        { name: "🧠 Mind-7",           value: "mind-7.org + Cloudflare bypass",         inline: true },
+        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API Android",      inline: true },
+        { name: "🏨 SISREG III",        value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
+        { name: "💳 CrediLink",         value: "Credicorp Azure API — JSON token",      inline: true },
+        { name: "📊 Serasa",            value: "serasaempreendedor.com.br — curl",      inline: true },
+        { name: "🍥 Crunchyroll",       value: "auth.crunchyroll.com — OAuth2",         inline: true },
+        { name: "🎬 Netflix",           value: "shakti API — BUILD_ID + login",         inline: true },
+        { name: "📦 Amazon Prime",      value: "amazon.com.br — form scrape",           inline: true },
+        { name: "👑 HBO Max",           value: "oauth.api.hbo.com — OAuth2",            inline: true },
+        { name: "🏰 Disney+",           value: "BAMTech device API — 2-step",           inline: true },
+        { name: "⭐ Paramount+",        value: "paramountplus.com — iOS REST API",      inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` });
 
     let reply: import("discord.js").Message;
     try {
-      reply = await message.reply({ embeds: [selectEmbed], components: [fdRow1, fdRow2] });
+      reply = await message.reply({ embeds: [selectEmbed], components: [fdRow1, fdRow2, fdRow3, fdRow4] });
     } catch {
       return;
     }
@@ -4757,24 +4803,34 @@ async function main(): Promise<void> {
       return;
     }
 
-    type FdTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
+    type FdTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
     const fdTargetMap: Record<string, FdTarget> = {
       chk_iseek: "iseek", chk_datasus: "datasus", chk_sipni: "sipni",
       chk_consultcenter: "consultcenter", chk_mind7: "mind7",
       chk_serpro: "serpro", chk_sisreg: "sisreg", chk_credilink: "credilink", chk_serasa: "serasa",
+      chk_crunchyroll: "crunchyroll", chk_netflix: "netflix", chk_amazon: "amazon",
+      chk_hbomax: "hbomax", chk_disney: "disney", chk_paramount: "paramount",
     };
     const target      = fdTargetMap[btn.customId] ?? "iseek";
     const targetLabel = {
       iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
       consultcenter: "ConsultCenter", mind7: "Mind-7",
       serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
+      crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
+      hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
     }[target]!;
     const targetIcon  = {
       iseek: "🌐", datasus: "🏥", sipni: "💉",
       consultcenter: "📋", mind7: "🧠",
       serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
+      crunchyroll: "🍥", netflix: "🎬", amazon: "📦",
+      hbomax: "👑", disney: "🏰", paramount: "⭐",
     }[target]!;
-    const concurrency = { iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3, serpro: 4, sisreg: 2, credilink: 4, serasa: 2 }[target] ?? 2;
+    const concurrency = {
+      iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
+      serpro: 4, sisreg: 2, credilink: 4, serasa: 2,
+      crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
+    }[target] ?? 2;
 
     // ── Stop button setup ─────────────────────────────────────────────────────
     const fdStopId  = `chk_stop_${Date.now()}`;

