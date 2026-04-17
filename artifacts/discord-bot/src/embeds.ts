@@ -731,6 +731,13 @@ export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en
 }
 
 // ── Methods Embed ─────────────────────────────────────────────────────────────
+const METHODS_DESC_MAX = 90;
+const METHODS_NAME_MAX = 50;
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+}
+
 export function buildMethodsEmbed(methods: Method[], layerFilter?: string, lang: "en" | "pt" = "en"): EmbedBuilder[] {
   const pt = lang === "pt";
   const filtered = layerFilter
@@ -738,33 +745,34 @@ export function buildMethodsEmbed(methods: Method[], layerFilter?: string, lang:
     : methods;
 
   const pages: EmbedBuilder[] = [];
-  const PAGE_SIZE = 8;
+  const PAGE_SIZE = 5;
 
   for (let i = 0; i < filtered.length; i += PAGE_SIZE) {
     const chunk = filtered.slice(i, i + PAGE_SIZE);
     const page  = Math.floor(i / PAGE_SIZE) + 1;
     const total = Math.ceil(filtered.length / PAGE_SIZE);
 
-    const titleSuffix = layerFilter ? `Layer ${layerFilter.toUpperCase()}` : (pt ? "Todos os Métodos" : "All Methods");
+    const titleSuffix = layerFilter ? `Layer ${layerFilter.toUpperCase()}` : (pt ? "Todos os Vetores" : "All Vectors");
     const desc = pt
-      ? `**${filtered.length}** métodos disponíveis${layerFilter ? ` para Layer ${layerFilter.toUpperCase()}` : ""}.`
-      : `**${filtered.length}** methods available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}.`;
+      ? `**${filtered.length}** vetores disponíveis${layerFilter ? ` na Layer ${layerFilter.toUpperCase()}` : ""}. Página **${page}/${total}**.`
+      : `**${filtered.length}** vectors available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}. Page **${page}/${total}**.`;
 
     const embed = new EmbedBuilder()
       .setColor(COLORS.PURPLE)
-      .setTitle(`⚔️ ARES ATTACK VECTORS — ${titleSuffix} (${page}/${total})`)
+      .setTitle(`⚔️ ARES ATTACK VECTORS — ${titleSuffix}`)
       .setDescription(desc)
       .addFields(
-        chunk.map(m => ({
-          name:   `${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} **${m.name}**`,
-          value:  [
-            m.description ?? (pt ? "_Sem descrição_" : "_No description_"),
-            pt
-              ? `Tier: **${m.tier ?? "?"}** | Camada: **${m.layer ?? "?"}** | Protocolo: **${m.protocol ?? "?"}**`
-              : `Tier: **${m.tier ?? "?"}** | Layer: **${m.layer ?? "?"}** | Protocol: **${m.protocol ?? "?"}**`,
-          ].join("\n"),
-          inline: false,
-        }))
+        chunk.map((m, idx) => {
+          const rawDesc = m.description ?? (pt ? "Sem descrição" : "No description");
+          const info = pt
+            ? `Tier **${m.tier ?? "?"}** · Camada **${m.layer ?? "?"}** · Proto **${m.protocol ?? "?"}**`
+            : `Tier **${m.tier ?? "?"}** · Layer **${m.layer ?? "?"}** · Proto **${m.protocol ?? "?"}**`;
+          return {
+            name:   `${i + idx + 1}. ${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} ${truncate(m.name, METHODS_NAME_MAX)}`,
+            value:  `${truncate(rawDesc, METHODS_DESC_MAX)}\n${info}`,
+            inline: false,
+          };
+        })
       )
       .setFooter(footer(pt ? `${filtered.length} métodos no total` : `${filtered.length} total methods`))
       .setTimestamp();
