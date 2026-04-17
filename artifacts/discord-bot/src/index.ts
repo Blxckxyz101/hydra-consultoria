@@ -551,7 +551,7 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("multi")
-        .setDescription("📋 Verificar múltiplas credenciais — máx 100 (separadas por vírgula, ponto-e-vírgula ou linha)")
+        .setDescription("📋 Verificar múltiplas credenciais (separadas por vírgula, ponto-e-vírgula ou linha)")
         .addStringOption(opt =>
           opt.setName("lista")
             .setDescription("Ex: user1@gmail.com:123,user2@gmail.com:456 — aceita qualquer separador")
@@ -561,7 +561,7 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("arquivo")
-        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: login:senha) — máx 500")
+        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: login:senha) — sem limite de linhas")
         .addAttachmentOption(opt =>
           opt.setName("arquivo")
             .setDescription("Arquivo .txt com login:senha por linha")
@@ -4116,7 +4116,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   } else if (sub === "multi") {
     const lista = interaction.options.getString("lista", true);
     // Accept newline, comma, semicolon, pipe as separators
-    credentials = lista.split(/[\n,;|]+/).map(s => s.trim()).filter(s => s.includes(":")).slice(0, 100);
+    credentials = lista.split(/[\n,;|]+/).map(s => s.trim()).filter(s => s.includes(":"));
   } else if (sub === "arquivo") {
     const att = interaction.options.getAttachment("arquivo", true);
     if (!att.contentType?.includes("text") && !att.name.endsWith(".txt")) {
