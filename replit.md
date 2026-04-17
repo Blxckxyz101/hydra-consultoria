@@ -148,4 +148,13 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Cluster**: `/cluster status` shows node health grid; `/cluster broadcast` fires Geass Override to all nodes
 - **Invite URL**: `https://discord.com/api/oauth2/authorize?client_id=1493775313749151754&permissions=84992&scope=bot%20applications.commands`
 
+#### v4.0 — Major Overhaul (current)
+
+- **IP Bait / IP Tracker REMOVIDO**: `/ipbait` command, `/panel ipcheck` subcommand, `tracker.ts`, `routes/tracker.ts`, and all related code fully deleted. No references remain.
+- **T003 — Response Code Telemetry**: `runHTTPFlood` now tracks per-request HTTP response codes + latency via `workerTrackCode(status, latMs)`. Worker flushes accumulated codes every 1s via a separate postMessage `{ codes, latAvgMs }`. `attacks.ts` accumulates them per attack via `_codeDispatchers` registry (keyed by AbortSignal — avoids threading params through 30+ geass-override spawnPool calls). `/api/attacks/:id/live` now returns `codes: { ok, redir, client, server, timeout }` and `latAvgMs`.
+- **T005 — AI Tool Calling**: `lelouch-ai.ts` now includes 3 Groq tool definitions: `get_active_attacks` (list running attacks), `get_attack_live` (real-time metrics for a specific attack), `get_proxy_status` (proxy pool status). `callGroq()` uses `tool_choice: "auto"` — if the model decides to call a tool, it executes the HTTP call to the API server and feeds the result back in a second LLM call. Lelouch can now answer "what attacks are running?" or "how is attack #5 doing?" autonomously.
+- **T006 — Proactive Health Check**: Bot starts a 5-minute interval (in `ClientReady`) that pings `/api/health`. If it fails 2 consecutive checks, broadcasts a red alert embed to all configured log channels. On recovery, broadcasts a green "API server recovered" embed. Prevents silent outages during attacks.
+- **T007 — Deploy-Safe Residential Proxy Config**: `proxies.ts` now bootstraps residential proxy credentials from environment variables (`RESIDENTIAL_HOST`, `RESIDENTIAL_PORT`, `RESIDENTIAL_USER`, `RESIDENTIAL_PASS`, `RESIDENTIAL_COUNT`) on startup, overriding any file-based saved config. This means proxy config survives deploys without depending on `data/proxy-config.json`.
+- **TypeScript cleanup**: Fixed 4 pre-existing TS errors — `Method.tier` missing from interface, `buildFinishEmbed` called with 2 args (expanded to 8), `ProxyStats` missing `residentialCount` (made optional), `buildMethodsEmbed` return wrapped in extra array (removed extra `[]`).
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

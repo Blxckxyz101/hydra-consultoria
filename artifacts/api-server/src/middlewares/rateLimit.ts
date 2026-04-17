@@ -45,17 +45,6 @@ export const refreshLimiter = rateLimit({
   message:         { error: "Proxy refresh rate limit — maximum 5 times per minute." },
 });
 
-// Separate limiter for bait/tracker public routes — prevents exhausting the global limit
-// when a bait link goes viral or is hit by automation.
-export const baitLimiter = rateLimit({
-  windowMs:        60_000,
-  max:             120, // 2 req/sec sustained — enough for human clicks, blocks bots
-  standardHeaders: true,
-  legacyHeaders:   false,
-  keyGenerator:    ip,
-  skip: () => false, // always apply
-});
-
 export const imageLimiter = rateLimit({
   windowMs:        60_000,
   max:             10,

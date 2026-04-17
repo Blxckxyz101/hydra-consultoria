@@ -254,6 +254,78 @@ function extractAndLearnTopic(userMsg: string, assistantReply: string): void {
 
 type HistoryEntry = { role: "user" | "assistant"; content: string };
 
+// ── T005: AI Tool Definitions — Lelouch can query the API server in real time ─
+const AI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "get_active_attacks",
+      description: "Lista todos os ataques atualmente em execução no sistema. Retorna id, alvo, método, threads e tempo restante de cada ataque.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_attack_live",
+      description: "Obtém métricas em tempo real de um ataque específico: pps, bps, conexões, pacotes totais, bytes totais, breakdown de códigos HTTP e latência média.",
+      parameters: {
+        type: "object",
+        properties: {
+          attack_id: { type: "number", description: "ID numérico do ataque (obtido via get_active_attacks)" },
+        },
+        required: ["attack_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_proxy_status",
+      description: "Verifica o status do pool de proxies residenciais/HTTP: quantidade disponível, se há creds residenciais configurados, e provedor ativo.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+];
+
+// ── T005: Tool executor — runs the tool call and returns a result string ──────
+const API_BASE_URL = process.env.API_BASE ?? "http://localhost:3001";
+
+async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+  try {
+    if (name === "get_active_attacks") {
+      const r = await fetch(`${API_BASE_URL}/api/attacks?status=running`, { signal: AbortSignal.timeout(4000) });
+      const attacks = await r.json() as Array<{ id: number; target: string; method: string; threads: number; createdAt: string; duration: number }>;
+      if (!Array.isArray(attacks) || attacks.length === 0) return "Nenhum ataque em execução no momento.";
+      return attacks.map(a => {
+        const elapsed = Math.floor((Date.now() - new Date(a.createdAt).getTime()) / 1000);
+        const remaining = Math.max(0, a.duration - elapsed);
+        return `ID:${a.id} | alvo:${a.target} | método:${a.method} | threads:${a.threads} | restante:${remaining}s`;
+      }).join("\n");
+    }
+
+    if (name === "get_attack_live") {
+      const id = args["attack_id"] as number;
+      const r = await fetch(`${API_BASE_URL}/api/attacks/${id}/live`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return `Ataque ${id} não encontrado ou já encerrado.`;
+      const d = await r.json() as { pps: number; bps: number; conns: number; totalPackets: number; totalBytes: number; codes?: Record<string, number>; latAvgMs?: number; running: boolean };
+      const mbps = (d.bps / 1_000_000).toFixed(2);
+      const codesStr = d.codes ? Object.entries(d.codes).filter(([,v])=>v>0).map(([k,v])=>`${k}:${v}`).join(" ") : "n/a";
+      return `Ataque ${id} — ${d.running ? "ATIVO" : "ENCERRADO"} | PPS:${d.pps.toLocaleString()} | BPS:${mbps}Mbps | Conns:${d.conns} | Total pkts:${d.totalPackets.toLocaleString()} | Latência:${d.latAvgMs ?? 0}ms | Códigos:{${codesStr}}`;
+    }
+
+    if (name === "get_proxy_status") {
+      const r = await fetch(`${API_BASE_URL}/api/proxies/status`, { signal: AbortSignal.timeout(4000) });
+      const d = await r.json() as { total?: number; healthy?: number; residential?: { host: string; count: number } | null };
+      return `Pool: ${d.total ?? "?"} proxies (${d.healthy ?? "?"} saudáveis) | Residencial: ${d.residential ? `${d.residential.host} (${d.residential.count} slots)` : "não configurado"}`;
+    }
+
+    return `Ferramenta desconhecida: ${name}`;
+  } catch (err) {
+    return `Erro ao executar ferramenta ${name}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 async function callGroq(model: string, history: HistoryEntry[], systemPrompt: string): Promise<string> {
   const response = await client.chat.completions.create({
     model,
@@ -262,12 +334,49 @@ async function callGroq(model: string, history: HistoryEntry[], systemPrompt: st
     top_p: 0.92,
     frequency_penalty: 0.15,
     presence_penalty:  0.10,
+    tools: AI_TOOLS,
+    tool_choice: "auto",
     messages: [
       { role: "system", content: systemPrompt },
       ...history,
     ],
   });
-  return response.choices[0]?.message?.content?.trim() ?? "...silêncio estratégico.";
+
+  const msg = response.choices[0]?.message;
+  if (!msg) return "...silêncio estratégico.";
+
+  // ── T005: Handle tool calls — execute and feed results back ───────────────
+  if (msg.tool_calls && msg.tool_calls.length > 0) {
+    const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
+      ...history,
+      msg as OpenAI.Chat.Completions.ChatCompletionMessageParam,
+    ];
+
+    for (const tc of msg.tool_calls) {
+      if (tc.type !== "function") continue;
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(tc.function.arguments) as Record<string, unknown>; } catch { /* keep empty */ }
+      const result = await executeTool(tc.function.name, args);
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: result,
+      });
+    }
+
+    // Second call with tool results — Lelouch summarizes findings
+    const followUp = await client.chat.completions.create({
+      model,
+      max_tokens: 800,
+      temperature: 0.78,
+      top_p: 0.92,
+      messages: toolMessages,
+    });
+    return followUp.choices[0]?.message?.content?.trim() ?? "...silêncio estratégico.";
+  }
+
+  return msg.content?.trim() ?? "...silêncio estratégico.";
 }
 
 export async function askLelouch(

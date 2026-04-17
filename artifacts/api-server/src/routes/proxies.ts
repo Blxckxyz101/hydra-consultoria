@@ -65,6 +65,25 @@ function loadConfig(): void {
 // Load persisted config immediately on startup
 loadConfig();
 
+// ── T007: Env var bootstrap — auto-configure residential proxy from env on deploy ─
+// Set RESIDENTIAL_HOST, RESIDENTIAL_PORT, RESIDENTIAL_USER, RESIDENTIAL_PASS, RESIDENTIAL_COUNT
+// These override the saved config on every restart (deploy-safe — no file persistence needed).
+(function bootstrapFromEnv() {
+  const host  = process.env.RESIDENTIAL_HOST?.trim();
+  const port  = parseInt(process.env.RESIDENTIAL_PORT ?? "", 10);
+  const user  = process.env.RESIDENTIAL_USER?.trim();
+  const pass  = process.env.RESIDENTIAL_PASS?.trim();
+  const count = parseInt(process.env.RESIDENTIAL_COUNT ?? "0", 10);
+  if (!host || !port || !user || !pass || count < 1) return;
+  residentialCreds = { host, port, username: user, password: pass, count };
+  pinnedProxies = Array.from({ length: count }, (_, i) => ({
+    host, port, responseMs: i + 1, type: "http" as const, username: user, password: pass,
+  }));
+  proxyCache = [...pinnedProxies];
+  lastFetch  = Date.now();
+  console.log(`[PROXIES] Bootstrapped ${count} residential slots from env vars (${host})`);
+})();
+
 // ── Proxy sources — expanded v3 (14 HTTP + 8 SOCKS5) ────────────────────
 const HTTP_SOURCES = [
   // Primary bulk sources

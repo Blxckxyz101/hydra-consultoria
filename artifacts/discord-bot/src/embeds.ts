@@ -491,7 +491,7 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
 }
 
 // ── Stats Embed ───────────────────────────────────────────────────────────────
-export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number; residentialCount: number; avgResponseMs: number }): EmbedBuilder {
+export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number; residentialCount?: number; httpCount?: number; socks5Count?: number; avgResponseMs: number }): EmbedBuilder {
   const mkBar = (val: number, max: number) => {
     const pct    = max === 0 ? 0 : Math.min(1, val / max);
     const filled = Math.round(pct * 15);
@@ -522,7 +522,7 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
       name: "🌐 Proxy Network",
       value: [
         `**${proxyStats.count.toLocaleString()}** total proxies in pool`,
-        `**${proxyStats.residentialCount.toLocaleString()}** residential IPs (dedicated)`,
+        proxyStats.residentialCount != null ? `**${proxyStats.residentialCount.toLocaleString()}** residential IPs (dedicated)` : `HTTP: ${proxyStats.httpCount ?? 0} / SOCKS5: ${proxyStats.socks5Count ?? 0}`,
         `Avg latency: **${proxyStats.avgResponseMs}ms**`,
       ].join("\n"),
       inline: false,

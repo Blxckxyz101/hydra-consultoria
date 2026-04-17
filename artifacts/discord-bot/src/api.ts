@@ -32,6 +32,7 @@ export interface Method {
   layer:       string;
   protocol:    string;
   description: string;
+  tier?:       string;
 }
 
 export interface AnalyzeResult {

