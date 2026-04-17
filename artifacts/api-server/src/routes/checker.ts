@@ -1236,7 +1236,12 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
       return { credential, login, status: "ERROR", detail: "NO_BUILD_ID" };
     }
     const buildId = buildMatch[1];
-    const authURL = (html.match(/"authURL"\s*:\s*"([^"]+)"/) ?? [])[1]?.replace(/\\\//g, "/") ?? "";
+    // Decode JSON string escapes: \/ → / , \xNN → char, \uNNNN → char
+    const rawAuth = (html.match(/"authURL"\s*:\s*"([^"]+)"/) ?? [])[1] ?? "";
+    const authURL = rawAuth
+      .replace(/\\\//g, "/")
+      .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
     // Step 2 — POST credentials to Shakti API
     let postResult: CurlResult;
