@@ -3803,6 +3803,30 @@ function safeEmbeds(embeds: EmbedBuilder[], budget = 5800): EmbedBuilder[] {
   return result;
 }
 
+/** Builds a public hits-only embed to be sent in the channel after a checker run. */
+function buildHitsEmbed(
+  hits:        LiveCheckerResult[],
+  targetLabel: string,
+  targetIcon:  string,
+  total:       number,
+): EmbedBuilder {
+  const lines = hits.map(r => {
+    const cred   = r.credential.length > 60 ? r.credential.slice(0, 57) + "..." : r.credential;
+    const detail = r.detail?.length > 80     ? r.detail.slice(0, 77) + "..."    : (r.detail ?? "—");
+    return `> \`${cred}\`\n> 📋 ${detail}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(COLORS.GREEN)
+    .setTitle(`✅ HITS ENCONTRADOS — ${targetIcon} ${targetLabel}`)
+    .setDescription(
+      `**${hits.length}** hit${hits.length === 1 ? "" : "s"} de **${total}** testada${total === 1 ? "" : "s"}\n\n` +
+      lines.join("\n\n"),
+    )
+    .setTimestamp()
+    .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` });
+}
+
 /** Builds the final result embeds for a completed checker run. */
 function buildCheckerFinalEmbeds(
   allResults: LiveCheckerResult[],
@@ -4289,6 +4313,15 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   // ── Final results ─────────────────────────────────────────────────────────
   const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, targetLabel, targetIcon, concurrency, true);
   await interaction.editReply({ embeds: finalEmbeds, components: [] });
+
+  // ── Send hits to channel (public) ─────────────────────────────────────────
+  const finalHits = finalState.allResults.filter(r => r.status === "HIT");
+  if (finalHits.length > 0 && interaction.channel && "send" in interaction.channel) {
+    const hitsEmbed = buildHitsEmbed(finalHits, targetLabel, targetIcon, finalState.total);
+    await (interaction.channel as import("discord.js").TextChannel)
+      .send({ embeds: [hitsEmbed] })
+      .catch(() => void 0);
+  }
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
@@ -4830,6 +4863,13 @@ async function main(): Promise<void> {
     // ── Final results ─────────────────────────────────────────────────────────
     const fdFinalEmbeds = buildCheckerFinalEmbeds(fdFinalState.allResults, fdFinalState, targetLabel, targetIcon, concurrency, false);
     await reply.edit({ embeds: fdFinalEmbeds, components: [] }).catch(() => void 0);
+
+    // ── Send hits to channel (public) ─────────────────────────────────────────
+    const fdHits = fdFinalState.allResults.filter(r => r.status === "HIT");
+    if (fdHits.length > 0) {
+      const hitsEmbed = buildHitsEmbed(fdHits, targetLabel, targetIcon, fdFinalState.total);
+      await message.channel.send({ embeds: [hitsEmbed] }).catch(() => void 0);
+    }
   });
 
   client.on(Events.Error, err => {
