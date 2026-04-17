@@ -176,6 +176,22 @@ export const api = {
     req<{ ok: boolean }>("/api/proxies/refresh", {
       method: "POST", signal: AbortSignal.timeout(5_000),
     }),
+
+  // ── Query / DB ──────────────────────────────────────────────────────────
+  query: (params: { q?: string; nome?: string; prontuario?: string; situacao?: string; page?: number }) => {
+    const qs = new URLSearchParams();
+    if (params.q)          qs.set("q",          params.q);
+    if (params.nome)       qs.set("nome",       params.nome);
+    if (params.prontuario) qs.set("prontuario", params.prontuario);
+    if (params.situacao)   qs.set("situacao",   params.situacao);
+    if (params.page)       qs.set("page",       String(params.page));
+    return req<QueryResult>(`/api/query?${qs.toString()}`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+  },
+
+  queryStats: () =>
+    req<QueryStats>("/api/query/stats", { signal: AbortSignal.timeout(5_000) }),
 };
 
 export interface ScheduledAttack {
@@ -233,4 +249,27 @@ export interface ClusterStatus {
   nodes:            ClusterNodeResult[];
   totalOnline:      number;
   configuredNodes:  number;
+}
+
+// ── Query / DB ───────────────────────────────────────────────────────────────
+export interface DbRecord {
+  prontuario: string;
+  nome:       string;
+  cpf:        string;
+  emissao:    string;
+  validade:   string;
+  situacao:   string;
+  local:      string;
+}
+
+export interface QueryResult {
+  total:   number;
+  page:    number;
+  results: DbRecord[];
+}
+
+export interface QueryStats {
+  total:    number;
+  situacao: Record<string, number>;
+  topLocais: { local: string; count: number }[];
 }

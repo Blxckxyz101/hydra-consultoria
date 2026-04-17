@@ -27,7 +27,7 @@ type MonitorEditFn = (opts: {
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
-import { api, type ScheduledAttack, type AiAdvice, type ProxyStats } from "./api.js";
+import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
   isOwner, isMod,
@@ -534,6 +534,41 @@ const COMMANDS = [
       sub.setName("remove")
         .setDescription("➖ Remover owner ou admin — owner only")
         .addUserOption(opt => opt.setName("user").setDescription("Usuário a remover").setRequired(true))
+    ),
+
+  new SlashCommandBuilder()
+    .setName("consulta")
+    .setDescription("🔍 Consultar registros do banco de dados por nome, prontuário ou CPF")
+    .addSubcommand(sub =>
+      sub.setName("buscar")
+        .setDescription("🔎 Busca inteligente — nome, prontuário ou CPF")
+        .addStringOption(opt =>
+          opt.setName("query")
+            .setDescription("Nome, número de prontuário ou CPF para buscar")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("nome")
+        .setDescription("👤 Buscar por nome (parcial)")
+        .addStringOption(opt =>
+          opt.setName("nome")
+            .setDescription("Nome ou parte do nome")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("prontuario")
+        .setDescription("🆔 Buscar por número de prontuário (exato)")
+        .addStringOption(opt =>
+          opt.setName("id")
+            .setDescription("Número do prontuário")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("stats")
+        .setDescription("📊 Estatísticas gerais do banco de dados")
     ),
 
 ].map(c => c.toJSON());
@@ -3689,6 +3724,118 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   }
 }
 
+// ── Consulta ─────────────────────────────────────────────────────────────────
+async function handleConsulta(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const sub = interaction.options.getSubcommand();
+
+  // ── STATS ──────────────────────────────────────────────────────────────────
+  if (sub === "stats") {
+    let stats: QueryStats;
+    try {
+      stats = await api.queryStats();
+    } catch (err) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", `Falha ao buscar estatísticas: ${String(err)}`)] });
+      return;
+    }
+
+    const situacaoLines = Object.entries(stats.situacao)
+      .sort((a, b) => b[1] - a[1])
+      .map(([s, n]) => `\`${s}\` — **${n.toLocaleString("pt-BR")}**`)
+      .join("\n");
+
+    const locaisLines = stats.topLocais
+      .map((l, i) => `**${i + 1}.** ${l.local} — \`${l.count.toLocaleString("pt-BR")}\``)
+      .join("\n");
+
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle("📊 BANCO DE DADOS — ESTATÍSTICAS")
+      .setDescription(`*Total de registros:* **${stats.total.toLocaleString("pt-BR")}**`)
+      .addFields(
+        { name: "📋 Por Situação", value: situacaoLines || "—", inline: false },
+        { name: "🏢 Top 10 Locais", value: locaisLines || "—", inline: false },
+      )
+      .setTimestamp()
+      .setFooter({ text: AUTHOR });
+
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── Resolve query params ────────────────────────────────────────────────────
+  let params: Parameters<typeof api.query>[0] = {};
+  if (sub === "buscar")     params = { q:          interaction.options.getString("query", true) };
+  if (sub === "nome")       params = { nome:       interaction.options.getString("nome",  true) };
+  if (sub === "prontuario") params = { prontuario: interaction.options.getString("id",    true) };
+
+  let result: QueryResult;
+  try {
+    result = await api.query(params);
+  } catch (err) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DE CONSULTA", `Falha ao consultar o banco: ${String(err)}`)] });
+    return;
+  }
+
+  if (result.total === 0) {
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.ORANGE)
+      .setTitle("🔍 CONSULTA — NENHUM RESULTADO")
+      .setDescription(`Nenhum registro encontrado para a busca:\n\`\`\`${JSON.stringify(params)}\`\`\`\n*Verifique o termo e tente novamente.*`)
+      .setTimestamp()
+      .setFooter({ text: AUTHOR });
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── Format results ──────────────────────────────────────────────────────────
+  const formatSituacao = (s: string): string => {
+    if (!s) return "❓ Desconhecida";
+    if (s.toLowerCase().startsWith("ativo")) return `🟢 ${s}`;
+    if (s.toLowerCase().startsWith("vencida")) return `🔴 ${s}`;
+    return `🟡 ${s}`;
+  };
+
+  const formatRecord = (r: DbRecord, idx: number): string => {
+    const lines = [
+      `**${idx + 1}. ${r.nome || "—"}**`,
+      `> 🆔 Prontuário: \`${r.prontuario || "—"}\``,
+    ];
+    if (r.cpf && r.cpf !== r.prontuario) lines.push(`> 📄 CPF: \`${r.cpf}\``);
+    if (r.emissao)  lines.push(`> 📅 Emissão: \`${r.emissao}\``);
+    if (r.validade) lines.push(`> ⏳ Validade: \`${r.validade}\``);
+    lines.push(`> ${formatSituacao(r.situacao)}`);
+    if (r.local)    lines.push(`> 📍 \`${r.local}\``);
+    return lines.join("\n");
+  };
+
+  // Split into pages of up to 5 records per embed field (Discord 4096 char limit)
+  const PAGE_SIZE = 5;
+  const pages     = Math.ceil(result.results.length / PAGE_SIZE);
+  const embeds: EmbedBuilder[] = [];
+
+  for (let p = 0; p < pages; p++) {
+    const slice = result.results.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
+    const description = p === 0
+      ? `🔍 **${result.total}** resultado${result.total === 1 ? "" : "s"} encontrado${result.total === 1 ? "" : "s"}` +
+        (result.total > 25 ? ` (exibindo os primeiros 25)` : "") +
+        `\n\n` + slice.map((r, i) => formatRecord(r, p * PAGE_SIZE + i)).join("\n\n")
+      : slice.map((r, i) => formatRecord(r, p * PAGE_SIZE + i)).join("\n\n");
+
+    const embed = new EmbedBuilder()
+      .setColor(result.total === 1 ? COLORS.GREEN : COLORS.PURPLE)
+      .setTitle(p === 0 ? "🔍 CONSULTA — RESULTADOS" : `🔍 CONSULTA — PÁGINA ${p + 1}`)
+      .setDescription(description.slice(0, 4096))
+      .setTimestamp()
+      .setFooter({ text: `${AUTHOR} • ${result.total} registro${result.total === 1 ? "" : "s"}` });
+
+    embeds.push(embed);
+  }
+
+  // Discord allows up to 10 embeds per message
+  await interaction.editReply({ embeds: embeds.slice(0, 10) });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   await deployCommands();
@@ -3827,6 +3974,8 @@ async function main(): Promise<void> {
         await handlePanel(interaction);
       } else if (commandName === "admins") {
         await handleAdmins(interaction);
+      } else if (commandName === "consulta") {
+        await handleConsulta(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
