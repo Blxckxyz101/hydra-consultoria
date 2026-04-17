@@ -4141,62 +4141,113 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // ── Show target selection (buttons) ───────────────────────────────────────
-  const selectRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
-  );
-  const selectRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
-  );
-  const selectRow3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
-  );
-  const selectRow4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  // ── Step 1: Categoria (Streaming vs Logins) ───────────────────────────────
+  const catRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("chk_cat_streaming").setLabel("🎬 Streaming").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("chk_cat_logins").setLabel("🔑 Logins").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
   );
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()
       .setColor(0xF1C40F)
-      .setTitle("🔑 CHECKER — SELECIONE O ALVO")
+      .setTitle("🎯 CHECKER — SELECIONE A CATEGORIA")
       .setDescription(
-        `**${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} pronta${credentials.length === 1 ? "" : "s"} para checar.\n\n` +
-        `Escolha em qual sistema deseja verificar:`,
+        `**${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} pronta${credentials.length === 1 ? "" : "s"} para checar.\n\n` +
+        `Escolha o tipo de sistema:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",        value: "iSeek — CSRF + redirect",                  inline: true },
-        { name: "🏥 DataSUS",           value: "SI-PNI — JSF + SHA-512",                   inline: true },
-        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95%)",               inline: true },
-        { name: "📋 ConsultCenter",     value: "CakePHP login form",                        inline: true },
-        { name: "🧠 Mind-7",           value: "mind-7.org + Cloudflare bypass",             inline: true },
-        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API Android",          inline: true },
-        { name: "🏨 SISREG III",        value: "sisregiii.saude.gov.br — SHA-256",          inline: true },
-        { name: "💳 CrediLink",         value: "Credicorp API Azure — JSON token",          inline: true },
-        { name: "📊 Serasa",            value: "serasaempreendedor.com.br — curl",          inline: true },
-        { name: "🍥 Crunchyroll",       value: "auth.crunchyroll.com — OAuth2 Android",     inline: true },
-        { name: "🎬 Netflix",           value: "shakti API — BUILD_ID + login",             inline: true },
-        { name: "📦 Amazon Prime",      value: "amazon.com.br — form scrape",               inline: true },
-        { name: "👑 HBO Max",           value: "oauth.api.hbo.com — OAuth2",                inline: true },
-        { name: "🏰 Disney+",           value: "BAMTech device API — 2-step",               inline: true },
-        { name: "⭐ Paramount+",        value: "paramountplus.com — iOS REST API",          inline: true },
+        { name: "🎬 Streaming", value: "Crunchyroll · Netflix · Amazon Prime\nHBO Max · Disney+ · Paramount+", inline: true },
+        { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI\nConsultCenter · Mind-7 · SERPRO\nSISREG · CrediLink · Serasa", inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
-    components: [selectRow1, selectRow2, selectRow3, selectRow4],
+    components: [catRow],
   });
 
-  // ── Await button click ────────────────────────────────────────────────────
+  // ── Await categoria ────────────────────────────────────────────────────────
+  let catInteraction: import("discord.js").ButtonInteraction | null = null;
+  try {
+    const catReply = await interaction.fetchReply();
+    catInteraction = await catReply.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (b) => b.user.id === callerId && b.customId.startsWith("chk_"),
+      time: 60_000,
+    });
+  } catch {
+    await interaction.editReply({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhuma categoria selecionada em 60s. Operação cancelada.")], components: [] });
+    return;
+  }
+
+  if (catInteraction.customId === "chk_cancel") {
+    await catInteraction.update({ embeds: [buildErrorEmbed("CANCELADO", "Checker cancelado.")], components: [] });
+    return;
+  }
+
+  // ── Step 2: Alvos da categoria escolhida ──────────────────────────────────
+  const isStreaming = catInteraction.customId === "chk_cat_streaming";
+  const subRows: ActionRowBuilder<ButtonBuilder>[] = isStreaming
+    ? [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
+        ),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
+        ),
+      ]
+    : [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
+        ),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
+        ),
+      ];
+
+  const subFields: { name: string; value: string; inline: boolean }[] = isStreaming
+    ? [
+        { name: "🍥 Crunchyroll",  value: "auth.crunchyroll.com — OAuth2 Android", inline: true },
+        { name: "🎬 Netflix",      value: "shakti API — BUILD_ID + login",           inline: true },
+        { name: "📦 Amazon Prime", value: "amazon.com.br — form scrape",             inline: true },
+        { name: "👑 HBO Max",      value: "api.max.com — OAuth2 (Max)",              inline: true },
+        { name: "🏰 Disney+",      value: "BAMTech device API — 3-step JWT",         inline: true },
+        { name: "⭐ Paramount+",   value: "paramountplus.com — Android REST",        inline: true },
+      ]
+    : [
+        { name: "🌐 iSeek.pro",     value: "iSeek — CSRF + redirect",               inline: true },
+        { name: "🏥 DataSUS",       value: "SI-PNI — JSF + SHA-512",                inline: true },
+        { name: "💉 SIPNI v2",      value: "SI-PNI — AJAX 4-step (95%)",            inline: true },
+        { name: "📋 ConsultCenter", value: "CakePHP login form",                    inline: true },
+        { name: "🧠 Mind-7",        value: "mind-7.org + Cloudflare bypass",         inline: true },
+        { name: "🛡️ SERPRO",       value: "radar.serpro.gov.br — API Android",      inline: true },
+        { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
+        { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
+        { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",      inline: true },
+      ];
+
+  await catInteraction.update({
+    embeds: [new EmbedBuilder()
+      .setColor(isStreaming ? 0x9B59B6 : 0x3498DB)
+      .setTitle(isStreaming ? "🎬 STREAMING — SELECIONE O ALVO" : "🔑 LOGINS — SELECIONE O ALVO")
+      .setDescription(`**${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} — escolha o alvo:`)
+      .addFields(subFields)
+      .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
+    components: subRows,
+  });
+
+  // ── Await alvo específico ─────────────────────────────────────────────────
   const reply = await interaction.fetchReply();
   let btnInteraction: import("discord.js").ButtonInteraction | null = null;
   try {
@@ -4726,66 +4777,117 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Show target selector
-    const fdRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
-    );
-    const fdRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
-    );
-    const fdRow3 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
-    );
-    const fdRow4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    // ── Step 1: Categoria (Streaming vs Logins) ───────────────────────────────
+    const fdCatRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("chk_cat_streaming").setLabel("🎬 Streaming").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("chk_cat_logins").setLabel("🔑 Logins").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
     );
 
-    const selectEmbed = new EmbedBuilder()
-      .setColor(0xF1C40F)
-      .setTitle("🔑 CHECKER — SELECIONE O ALVO")
-      .setDescription(
-        `📄 **${txtAtt.name}** — **${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} detectada${credentials.length === 1 ? "" : "s"}.\n\n` +
-        `Escolha em qual sistema deseja verificar:`,
-      )
-      .addFields(
-        { name: "🌐 iSeek.pro",        value: "iSeek — CSRF + redirect",              inline: true },
-        { name: "🏥 DataSUS",           value: "SI-PNI — JSF + SHA-512",               inline: true },
-        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95%)",           inline: true },
-        { name: "📋 ConsultCenter",     value: "CakePHP login form",                    inline: true },
-        { name: "🧠 Mind-7",           value: "mind-7.org + Cloudflare bypass",         inline: true },
-        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API Android",      inline: true },
-        { name: "🏨 SISREG III",        value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
-        { name: "💳 CrediLink",         value: "Credicorp Azure API — JSON token",      inline: true },
-        { name: "📊 Serasa",            value: "serasaempreendedor.com.br — curl",      inline: true },
-        { name: "🍥 Crunchyroll",       value: "auth.crunchyroll.com — OAuth2",         inline: true },
-        { name: "🎬 Netflix",           value: "shakti API — BUILD_ID + login",         inline: true },
-        { name: "📦 Amazon Prime",      value: "amazon.com.br — form scrape",           inline: true },
-        { name: "👑 HBO Max",           value: "oauth.api.hbo.com — OAuth2",            inline: true },
-        { name: "🏰 Disney+",           value: "BAMTech device API — 2-step",           inline: true },
-        { name: "⭐ Paramount+",        value: "paramountplus.com — iOS REST API",      inline: true },
-      )
-      .setFooter({ text: `${AUTHOR} • Expira em 60s` });
-
     let reply: import("discord.js").Message;
     try {
-      reply = await message.reply({ embeds: [selectEmbed], components: [fdRow1, fdRow2, fdRow3, fdRow4] });
+      reply = await message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xF1C40F)
+          .setTitle("🎯 CHECKER — SELECIONE A CATEGORIA")
+          .setDescription(
+            `📄 **${txtAtt.name}** — **${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} detectada${credentials.length === 1 ? "" : "s"}.\n\n` +
+            `Escolha o tipo de sistema:`,
+          )
+          .addFields(
+            { name: "🎬 Streaming", value: "Crunchyroll · Netflix · Amazon Prime\nHBO Max · Disney+ · Paramount+", inline: true },
+            { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI\nConsultCenter · Mind-7 · SERPRO\nSISREG · CrediLink · Serasa", inline: true },
+          )
+          .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
+        components: [fdCatRow],
+      });
     } catch {
       return;
     }
 
-    // Await button click
+    // ── Await categoria ────────────────────────────────────────────────────────
+    let fdCatInteraction: import("discord.js").ButtonInteraction;
+    try {
+      fdCatInteraction = await reply.awaitMessageComponent({
+        componentType: ComponentType.Button,
+        filter: (b) => b.user.id === message.author.id && b.customId.startsWith("chk_"),
+        time: 60_000,
+      });
+    } catch {
+      await reply.edit({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhuma categoria selecionada em 60s.")], components: [] }).catch(() => void 0);
+      return;
+    }
+
+    if (fdCatInteraction.customId === "chk_cancel") {
+      await fdCatInteraction.update({ embeds: [buildErrorEmbed("CANCELADO", "Checker cancelado.")], components: [] });
+      return;
+    }
+
+    // ── Step 2: Alvos da categoria escolhida ──────────────────────────────────
+    const fdIsStreaming = fdCatInteraction.customId === "chk_cat_streaming";
+    const fdSubRows: ActionRowBuilder<ButtonBuilder>[] = fdIsStreaming
+      ? [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("chk_crunchyroll").setLabel("🍥 Crunchyroll").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_netflix").setLabel("🎬 Netflix").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_amazon").setLabel("📦 Amazon Prime").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_hbomax").setLabel("👑 HBO Max").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_disney").setLabel("🏰 Disney+").setStyle(ButtonStyle.Secondary),
+          ),
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("chk_paramount").setLabel("⭐ Paramount+").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
+          ),
+        ]
+      : [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
+          ),
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
+          ),
+        ];
+
+    const fdSubFields: { name: string; value: string; inline: boolean }[] = fdIsStreaming
+      ? [
+          { name: "🍥 Crunchyroll",  value: "auth.crunchyroll.com — OAuth2 Android", inline: true },
+          { name: "🎬 Netflix",      value: "shakti API — BUILD_ID + login",           inline: true },
+          { name: "📦 Amazon Prime", value: "amazon.com.br — form scrape",             inline: true },
+          { name: "👑 HBO Max",      value: "api.max.com — OAuth2 (Max)",              inline: true },
+          { name: "🏰 Disney+",      value: "BAMTech device API — 3-step JWT",         inline: true },
+          { name: "⭐ Paramount+",   value: "paramountplus.com — Android REST",        inline: true },
+        ]
+      : [
+          { name: "🌐 iSeek.pro",     value: "iSeek — CSRF + redirect",               inline: true },
+          { name: "🏥 DataSUS",       value: "SI-PNI — JSF + SHA-512",                inline: true },
+          { name: "💉 SIPNI v2",      value: "SI-PNI — AJAX 4-step (95%)",            inline: true },
+          { name: "📋 ConsultCenter", value: "CakePHP login form",                    inline: true },
+          { name: "🧠 Mind-7",        value: "mind-7.org + Cloudflare bypass",         inline: true },
+          { name: "🛡️ SERPRO",       value: "radar.serpro.gov.br — API Android",      inline: true },
+          { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
+          { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
+          { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",      inline: true },
+        ];
+
+    await fdCatInteraction.update({
+      embeds: [new EmbedBuilder()
+        .setColor(fdIsStreaming ? 0x9B59B6 : 0x3498DB)
+        .setTitle(fdIsStreaming ? "🎬 STREAMING — SELECIONE O ALVO" : "🔑 LOGINS — SELECIONE O ALVO")
+        .setDescription(`**${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} — escolha o alvo:`)
+        .addFields(fdSubFields)
+        .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
+      components: fdSubRows,
+    });
+
+    // ── Await alvo específico ─────────────────────────────────────────────────
     let btn: import("discord.js").ButtonInteraction;
     try {
       btn = await reply.awaitMessageComponent({
