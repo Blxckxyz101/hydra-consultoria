@@ -4097,8 +4097,8 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // Defer for file download (may take >3s)
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  // Defer publicly — message is visible to everyone in the channel
+  await interaction.deferReply();
   const sub = interaction.options.getSubcommand();
 
   // ── Resolve credentials ────────────────────────────────────────────────────
@@ -4332,10 +4332,11 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
 
   // ── Register stop button collector ────────────────────────────────────────
   const replyMsg = await interaction.fetchReply();
+  // No time limit on collector — message edits via replyMsg.edit() never expire
   const stopCollector = replyMsg.createMessageComponentCollector({
     componentType: ComponentType.Button,
     filter: (b) => b.customId === stopId,
-    time: 15 * 60_000,
+    time: 24 * 60 * 60_000, // 24h — effectively unlimited
     max: 1,
   });
 
@@ -4353,7 +4354,8 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     embedDirty = false;
     const liveEmbed = buildLiveCheckerEmbed(liveState, targetLabel, targetIcon, concurrency);
     const components = liveState.done || liveState.stopped ? [] : [stopRow];
-    await interaction.editReply({ embeds: [liveEmbed], components }).catch(() => void 0);
+    // Use replyMsg.edit() — no 15-min interaction token expiry
+    await replyMsg.edit({ embeds: [liveEmbed], components }).catch(() => void 0);
   }, 2000);
 
   let finalState: LiveCheckerState;
@@ -4378,7 +4380,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   } catch (err) {
     clearInterval(updateInterval);
     stopCollector.stop();
-    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] });
+    await replyMsg.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] });
     return;
   }
 
@@ -4388,13 +4390,13 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   // ── Stopped early by user ─────────────────────────────────────────────────
   if (finalState.stopped) {
     const stoppedEmbed = buildLiveCheckerEmbed(finalState, targetLabel, targetIcon, concurrency);
-    await interaction.editReply({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
+    await replyMsg.edit({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
     return;
   }
 
   // ── Final results ─────────────────────────────────────────────────────────
   const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, targetLabel, targetIcon, concurrency, true);
-  await interaction.editReply({ embeds: finalEmbeds, components: [] });
+  await replyMsg.edit({ embeds: finalEmbeds, components: [] });
 
   // ── Send hits to channel (public) ─────────────────────────────────────────
   const finalHits = finalState.allResults.filter(r => r.status === "HIT");
@@ -4960,10 +4962,11 @@ async function main(): Promise<void> {
     });
 
     // ── Register stop button collector ────────────────────────────────────────
+    // 24h collector — message.edit() never expires, checker can run as long as needed
     const fdStopCollector = reply.createMessageComponentCollector({
       componentType: ComponentType.Button,
       filter: (b) => b.customId === fdStopId,
-      time: 15 * 60_000,
+      time: 24 * 60 * 60_000,
       max: 1,
     });
 
