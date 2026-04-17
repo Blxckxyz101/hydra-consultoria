@@ -1,4 +1,7 @@
-import { EmbedBuilder, AttachmentBuilder } from "discord.js";
+import {
+  EmbedBuilder, AttachmentBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+} from "discord.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { Attack, AttackStats, AnalyzeResult, Method } from "./api.js";
@@ -116,6 +119,20 @@ export const methodLabel = (id: string) => {
 const footer = (extra?: string) => ({
   text: [AUTHOR, extra].filter(Boolean).join(" • "),
 });
+
+// ── Generic Language Toggle Row ───────────────────────────────────────────────
+export function buildLangRow(active: "en" | "pt", prefix: string): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${prefix}_lang:en`)
+      .setLabel("🇺🇸  English")
+      .setStyle(active === "en" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`${prefix}_lang:pt`)
+      .setLabel("🇧🇷  Português")
+      .setStyle(active === "pt" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
+}
 
 const progressBar = (startedAt: string, durationSec: number) => {
   const dur    = durationSec * 1000;
@@ -360,45 +377,56 @@ export function buildAttackEmbed(
 }
 
 // ── Attack Started Embed ──────────────────────────────────────────────────────
-export function buildStartEmbed(attack: Attack, proxyCount = 0): EmbedBuilder {
-  const emoji   = METHOD_EMOJIS[attack.method] ?? "⚡";
+export function buildStartEmbed(attack: Attack, proxyCount = 0, lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt    = lang === "pt";
+  const emoji = METHOD_EMOJIS[attack.method] ?? "⚡";
   const isGeass = attack.method === "geass-override";
+
   const proxyLine = proxyCount > 0
-    ? `\n\n🌐 **${proxyCount.toLocaleString()} residential IPs** in rotation — each request from a different IP`
+    ? pt
+      ? `\n\n🌐 **${proxyCount.toLocaleString()} IPs residenciais** em rotação — cada requisição de um IP diferente`
+      : `\n\n🌐 **${proxyCount.toLocaleString()} residential IPs** in rotation — each request from a different IP`
     : "";
+
+  const quote = pt
+    ? `> *"Os homens NÃO nascem iguais. Alguns nascem mais rápidos, outros com mais beleza, alguns nascem na pobreza — e outros nascem doentes. Por causa disso... NÃO. POR CAUSA DISSO… nós lutamos."*\n> — **Lelouch vi Britannia**`
+    : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`;
 
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
-    .setTitle(`${emoji} GEASS COMMAND ISSUED`)
+    .setTitle(pt ? `${emoji} COMANDO GEASS EMITIDO` : `${emoji} GEASS COMMAND ISSUED`)
     .setDescription(
       isGeass
-        ? `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**\n\n👁️ **ARES OMNIVECT ∞** — 33 real attack vectors deploying simultaneously${proxyLine}`
-        : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**${proxyLine}`
+        ? `${quote}\n\n👁️ **ARES OMNIVECT ∞** — ${pt ? "35 vetores de ataque reais disparando simultaneamente" : "35 real attack vectors deploying simultaneously"}${proxyLine}`
+        : `${quote}${proxyLine}`
     )
     .setImage("attachment://lelouch.gif")
     .setThumbnail("attachment://geass-symbol.png")
     .addFields(
-      { name: "🎯 Target",    value: `\`${attack.target}\``,                       inline: true },
-      { name: "⚔️ Method",    value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
-      { name: "🆔 Attack ID", value: `\`#${attack.id}\``,                          inline: true },
-      { name: "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,               inline: true },
-      { name: "⏱ Duration",   value: `**${attack.duration}s**`,                    inline: true },
-      { name: "📊 Status",    value: "🔴 **INITIALIZING...**",                     inline: true },
-      { name: "‎", value: "*Live metrics update every 5 seconds automatically.*", inline: false },
+      { name: pt ? "🎯 Alvo"       : "🎯 Target",    value: `\`${attack.target}\``,                       inline: true },
+      { name: pt ? "⚔️ Método"     : "⚔️ Method",    value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
+      { name: pt ? "🆔 ID do Ataque" : "🆔 Attack ID", value: `\`#${attack.id}\``,                        inline: true },
+      { name: pt ? "🧵 Threads"    : "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,               inline: true },
+      { name: pt ? "⏱ Duração"    : "⏱ Duration",   value: `**${attack.duration}s**`,                    inline: true },
+      { name: pt ? "📊 Status"     : "📊 Status",    value: pt ? "🔴 **INICIALIZANDO...**" : "🔴 **INITIALIZING...**", inline: true },
+      { name: "‎", value: pt ? "*Métricas ao vivo atualizam a cada 5 segundos.*" : "*Live metrics update every 5 seconds automatically.*", inline: false },
     )
-    .setFooter(footer("Started by slash command"))
+    .setFooter(footer(pt ? "Iniciado por slash command" : "Started by slash command"))
     .setTimestamp();
 }
 
 // ── Stop Embed ────────────────────────────────────────────────────────────────
-export function buildStopEmbed(id: number, ok: boolean): EmbedBuilder {
+export function buildStopEmbed(id: number, ok: boolean, lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt = lang === "pt";
   return new EmbedBuilder()
     .setColor(ok ? COLORS.GREEN : COLORS.RED)
-    .setTitle(ok ? "⏹️ ATTACK TERMINATED" : "❌ STOP FAILED")
+    .setTitle(ok
+      ? (pt ? "⏹️ ATAQUE ENCERRADO" : "⏹️ ATTACK TERMINATED")
+      : (pt ? "❌ FALHA AO PARAR" : "❌ STOP FAILED"))
     .setDescription(
       ok
-        ? `Attack **#${id}** has been stopped by Geass command.`
-        : `Could not stop attack **#${id}**. It may have already ended.`
+        ? (pt ? `Ataque **#${id}** foi encerrado pelo Comando Geass.` : `Attack **#${id}** has been stopped by Geass command.`)
+        : (pt ? `Não foi possível parar o ataque **#${id}**. Ele pode já ter terminado.` : `Could not stop attack **#${id}**. It may have already ended.`)
     )
     .setFooter(footer())
     .setTimestamp();
@@ -447,22 +475,23 @@ export function buildFinishEmbed(
 }
 
 // ── Attack List Embed ─────────────────────────────────────────────────────────
-export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
+export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt       = lang === "pt";
   const running   = attacks.filter(a => a.status === "running");
   const completed = attacks.filter(a => a.status !== "running").slice(0, 8);
 
   const embed = new EmbedBuilder()
     .setColor(running.length > 0 ? COLORS.CRIMSON : COLORS.GOLD)
-    .setTitle("👁️ GEASS ATTACK REGISTRY")
+    .setTitle(pt ? "👁️ REGISTRO DE ATAQUES GEASS" : "👁️ GEASS ATTACK REGISTRY")
     .setDescription(
       running.length > 0
-        ? `**${running.length} attack${running.length > 1 ? "s" : ""} currently active**`
-        : "No active attacks at this time."
+        ? `**${running.length} ataque${running.length > 1 ? "s" : ""}${pt ? " ativos no momento" : " currently active"}**`
+        : (pt ? "Nenhum ataque ativo no momento." : "No active attacks at this time.")
     );
 
   if (running.length > 0) {
     embed.addFields({
-      name: "🔴 ACTIVE ATTACKS",
+      name: pt ? "🔴 ATAQUES ATIVOS" : "🔴 ACTIVE ATTACKS",
       value: running.map(a => {
         const e = METHOD_EMOJIS[a.method] ?? "⚡";
         return `\`#${a.id}\` ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtPkt(a.packetsSent)} | ⏳ ${elapsed(a.startedAt)}`;
@@ -473,7 +502,7 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
 
   if (completed.length > 0) {
     embed.addFields({
-      name: "📋 RECENT HISTORY",
+      name: pt ? "📋 HISTÓRICO RECENTE" : "📋 RECENT HISTORY",
       value: completed.map(a => {
         const icon = a.status === "finished" ? "✅" : a.status === "stopped" ? "⏹️" : "❌";
         const e    = METHOD_EMOJIS[a.method] ?? "⚡";
@@ -484,15 +513,20 @@ export function buildListEmbed(attacks: Attack[]): EmbedBuilder {
   }
 
   if (attacks.length === 0) {
-    embed.addFields({ name: "No attacks found", value: "Use `/attack start` to launch a Geass command.", inline: false });
+    embed.addFields({
+      name: pt ? "Nenhum ataque encontrado" : "No attacks found",
+      value: pt ? "Use `/attack start` para iniciar um Comando Geass." : "Use `/attack start` to launch a Geass command.",
+      inline: false,
+    });
   }
 
-  embed.setFooter(footer(`${attacks.length} total entries`)).setTimestamp();
+  embed.setFooter(footer(pt ? `${attacks.length} entradas no total` : `${attacks.length} total entries`)).setTimestamp();
   return embed;
 }
 
 // ── Stats Embed ───────────────────────────────────────────────────────────────
-export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number; residentialCount?: number; httpCount?: number; socks5Count?: number; avgResponseMs: number }): EmbedBuilder {
+export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number; residentialCount?: number; httpCount?: number; socks5Count?: number; avgResponseMs: number }, lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt = lang === "pt";
   const mkBar = (val: number, max: number) => {
     const pct    = max === 0 ? 0 : Math.min(1, val / max);
     const filled = Math.round(pct * 15);
@@ -505,26 +539,32 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
 
   const embed = new EmbedBuilder()
     .setColor(COLORS.GOLD)
-    .setTitle("📊 GEASS COMMAND CENTER — GLOBAL STATISTICS")
-    .setDescription("Aggregate metrics across all attacks recorded in this session.")
+    .setTitle(pt ? "📊 CENTRAL DE COMANDO GEASS — ESTATÍSTICAS GLOBAIS" : "📊 GEASS COMMAND CENTER — GLOBAL STATISTICS")
+    .setDescription(pt ? "Métricas agregadas de todos os ataques registrados nesta sessão." : "Aggregate metrics across all attacks recorded in this session.")
     .addFields(
       {
-        name: "🔴 Active / Total",
-        value: `**${fmtNum(stats.runningAttacks)} running** / **${fmtNum(stats.totalAttacks)} total**\n${mkBar(stats.runningAttacks, Math.max(stats.totalAttacks, 1))}`,
+        name: pt ? "🔴 Ativos / Total" : "🔴 Active / Total",
+        value: `**${fmtNum(stats.runningAttacks)} ${pt ? "rodando" : "running"}** / **${fmtNum(stats.totalAttacks)} ${pt ? "total" : "total"}**\n${mkBar(stats.runningAttacks, Math.max(stats.totalAttacks, 1))}`,
         inline: false,
       },
-      { name: "📦 Total Packets",   value: `**${fmtPkt(stats.totalPacketsSent)}**`,   inline: true },
-      { name: "💾 Total Data Sent", value: `**${fmtBytes(stats.totalBytesSent)}**`,   inline: true },
-      { name: "💻 CPU Cores",       value: `**${stats.cpuCount ?? "N/A"}**`,          inline: true },
+      { name: pt ? "📦 Total de Pacotes"  : "📦 Total Packets",   value: `**${fmtPkt(stats.totalPacketsSent)}**`,   inline: true },
+      { name: pt ? "💾 Dados Enviados"    : "💾 Total Data Sent", value: `**${fmtBytes(stats.totalBytesSent)}**`,   inline: true },
+      { name: pt ? "💻 Núcleos CPU"       : "💻 CPU Cores",       value: `**${stats.cpuCount ?? "N/A"}**`,         inline: true },
     );
 
   if (proxyStats) {
     embed.addFields({
-      name: "🌐 Proxy Network",
+      name: pt ? "🌐 Rede de Proxies" : "🌐 Proxy Network",
       value: [
-        `**${proxyStats.count.toLocaleString()}** total proxies in pool`,
-        proxyStats.residentialCount != null ? `**${proxyStats.residentialCount.toLocaleString()}** residential IPs (dedicated)` : `HTTP: ${proxyStats.httpCount ?? 0} / SOCKS5: ${proxyStats.socks5Count ?? 0}`,
-        `Avg latency: **${proxyStats.avgResponseMs}ms**`,
+        pt
+          ? `**${proxyStats.count.toLocaleString()}** proxies no pool`
+          : `**${proxyStats.count.toLocaleString()}** total proxies in pool`,
+        proxyStats.residentialCount != null
+          ? (pt
+            ? `**${proxyStats.residentialCount.toLocaleString()}** IPs residenciais (dedicados)`
+            : `**${proxyStats.residentialCount.toLocaleString()}** residential IPs (dedicated)`)
+          : `HTTP: ${proxyStats.httpCount ?? 0} / SOCKS5: ${proxyStats.socks5Count ?? 0}`,
+        pt ? `Latência média: **${proxyStats.avgResponseMs}ms**` : `Avg latency: **${proxyStats.avgResponseMs}ms**`,
       ].join("\n"),
       inline: false,
     });
@@ -532,11 +572,11 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
 
   if (topMethods.length > 0) {
     embed.addFields({
-      name: "🏆 Top Methods",
+      name: pt ? "🏆 Métodos Mais Usados" : "🏆 Top Methods",
       value: topMethods.map((m, i) => {
         const emoji = METHOD_EMOJIS[m.method] ?? "⚡";
         const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        return `${medal} ${emoji} **${methodLabel(m.method)}** — ${m.count} attacks`;
+        return `${medal} ${emoji} **${methodLabel(m.method)}** — ${m.count} ${pt ? "ataques" : "attacks"}`;
       }).join("\n"),
       inline: false,
     });
@@ -547,80 +587,152 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
 }
 
 // ── Analyze Embed ─────────────────────────────────────────────────────────────
-export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
-  const top6 = [...result.recommendations]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
+export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt = lang === "pt";
 
+  // ── Strings ──
+  const T = {
+    title:      pt ? "🔍 RECONHECIMENTO DE ALVO — GEASS SCAN" : "🔍 TARGET RECONNAISSANCE — GEASS SCAN",
+    desc:       pt ? `Análise completa de \`${result.target}\`` : `Full intelligence scan of \`${result.target}\``,
+    secDns:     pt ? "━━━━ 🌐  **DNS & REDE** ━━━━" : "━━━━ 🌐  **DNS & NETWORK** ━━━━",
+    primaryIp:  pt ? "🎯 IP Principal" : "🎯 Primary IP",
+    allIps:     pt ? "📡 Todos IPs" : "📡 All IPs",
+    secServer:  pt ? "━━━━ 🖥️  **SERVIDOR** ━━━━" : "━━━━ 🖥️  **SERVER FINGERPRINT** ━━━━",
+    server:     pt ? "🖥️ Servidor" : "🖥️ Server",
+    response:   pt ? "⏱ Resposta" : "⏱ Response Time",
+    http:       pt ? "🌍 HTTP/HTTPS" : "🌍 HTTP/HTTPS",
+    secProt:    pt ? "━━━━ 🛡️  **PROTEÇÃO** ━━━━" : "━━━━ 🛡️  **PROTECTION LAYER** ━━━━",
+    cdn:        pt ? "☁️ CDN" : "☁️ CDN",
+    waf:        pt ? "🛡️ WAF" : "🛡️ WAF",
+    hsts:       pt ? "🔒 HSTS" : "🔒 HSTS",
+    secProto:   pt ? "━━━━ 📡  **PROTOCOLOS** ━━━━" : "━━━━ 📡  **PROTOCOLS & FEATURES** ━━━━",
+    httpVer:    pt ? "📡 Versão HTTP" : "📡 HTTP Version",
+    ports:      pt ? "🔌 Portas Abertas" : "🔌 Open Ports",
+    features:   pt ? "🔧 Recursos" : "🔧 Features",
+    secOrigin:  pt ? "━━━━ 🔓  **IP DE ORIGEM DESCOBERTO** ━━━━" : "━━━━ 🔓  **ORIGIN IP DISCOVERED** ━━━━",
+    originIp:   pt ? "🎯 IP Real (Bypass CDN)" : "🎯 Real IP (CDN Bypass)",
+    originSub:  pt ? "🔗 Subdomínio Exposto" : "🔗 Exposed Subdomain",
+    secRec:     pt ? "━━━━ 🏆  **VETORES RECOMENDADOS** ━━━━" : "━━━━ 🏆  **RECOMMENDED ATTACK VECTORS** ━━━━",
+    recTitle:   pt ? "📋 Melhores Métodos" : "📋 Top Methods",
+    noRec:      pt ? "Nenhuma recomendação disponível." : "No recommendations available.",
+    noneDetect: pt ? "Nenhum detectado" : "None detected",
+    none:       pt ? "Nenhuma" : "None",
+    footerTxt:  pt ? `Escaneado em ${new Date().toUTCString()}` : `Scanned ${new Date().toUTCString()}`,
+  };
+
+  // ── Server display ──
   const serverDisplay = result.serverLabel && result.serverLabel !== "Unknown"
     ? result.serverLabel
     : result.serverType && result.serverType !== "unknown"
       ? result.serverType
-      : "Unknown";
+      : T.noneDetect;
 
-  let shieldLine: string;
-  if (result.isCDN && result.hasWAF) {
-    shieldLine = `⚠️ **${result.cdnProvider}** + **${result.wafProvider}**`;
-  } else if (result.isCDN) {
-    shieldLine = `✅ CDN: **${result.cdnProvider}**`;
-  } else if (result.hasWAF) {
-    shieldLine = `🛡️ WAF: **${result.wafProvider}**`;
-  } else {
-    shieldLine = "❌ None detected";
-  }
+  // ── IP lines ──
+  const primaryIpLine = result.ip ?? T.noneDetect;
+  const allIpsLine = result.allIPs?.length > 1
+    ? result.allIPs.slice(0, 6).map(ip => `\`${ip}\``).join("\n") +
+      (result.allIPs.length > 6 ? `\n_+${result.allIPs.length - 6} more_` : "")
+    : `\`${result.ip ?? "Unknown"}\``;
 
+  // ── HTTP availability ──
+  const httpParts: string[] = [];
+  if (result.httpAvailable)  httpParts.push("**HTTP** ✅");
+  if (result.httpsAvailable) httpParts.push("**HTTPS** ✅");
+  if (!result.httpAvailable && !result.httpsAvailable) httpParts.push(pt ? "Indisponível" : "Unavailable");
+  const httpLine = httpParts.join("  /  ");
+
+  // ── Protection ──
+  const cdnLine  = result.isCDN
+    ? `✅ **${result.cdnProvider}**`
+    : pt ? "❌ Não detectado" : "❌ Not detected";
+  const wafLine  = result.hasWAF
+    ? `🛡️ **${result.wafProvider}**`
+    : pt ? "❌ Não detectado" : "❌ Not detected";
+  const hstsLine = result.hasHSTS
+    ? `✅ ${result.hstsMaxAge ? `max-age **${Math.round(result.hstsMaxAge / 86400)}d**` : "enabled"}`
+    : pt ? "❌ Não ativo" : "❌ Not set";
+
+  // ── Protocols ──
   const h2h3Parts: string[] = [];
   if (result.supportsH2) h2h3Parts.push("**H/2**");
   if (result.supportsH3) h2h3Parts.push("**H/3**");
   const protocolLine = h2h3Parts.length > 0 ? `✅ ${h2h3Parts.join(" + ")}` : "HTTP/1.1 only";
 
+  // ── Features ──
   const featureParts: string[] = [];
   if (result.hasGraphQL)   featureParts.push("GraphQL");
   if (result.hasWebSocket) featureParts.push("WebSocket");
-  if (result.hasHSTS)      featureParts.push(`HSTS${result.hstsMaxAge ? ` (${Math.round(result.hstsMaxAge / 86400)}d)` : ""}`);
-  const featuresLine = featureParts.length > 0 ? featureParts.join(", ") : "None detected";
+  const featuresLine = featureParts.length > 0 ? featureParts.join(", ") : T.noneDetect;
 
+  // ── Ports ──
   const portsLine = result.openPorts.length > 0
-    ? result.openPorts.map(p => `\`${p}\``).join(" ")
-    : "None scanned";
+    ? result.openPorts.map(p => `\`${p}\``).join("  ")
+    : T.none;
 
-  const ipsLine = result.allIPs?.length > 0
-    ? result.allIPs.slice(0, 5).join(", ") + (result.allIPs.length > 5 ? ` +${result.allIPs.length - 5} more` : "")
-    : result.ip ?? "Unknown";
-
-  // Discord field value hard-limit: 1024 chars.
-  // Show top 4 recs with reason capped at 110 chars each to stay safely under 1024.
-  const top4 = top6.slice(0, 4);
+  // ── Recommendations ──
+  const top4 = [...result.recommendations]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4);
   const recoLines = top4.length > 0
     ? top4.map((r, i) => {
         const medal  = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
         const tier   = tierIcon(r.tier ?? "");
-        const reason = (r.reason ?? "").length > 110 ? r.reason.slice(0, 107) + "…" : r.reason;
-        return `${medal} ${tier} **${r.name}** — Score: **${r.score}** | Tier: **${r.tier ?? "?"}**\n> ${reason}`;
+        const reason = (r.reason ?? "").length > 100 ? r.reason.slice(0, 97) + "…" : r.reason;
+        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${reason}`;
       }).join("\n\n").slice(0, 1020)
-    : "No recommendations available.";
+    : T.noRec;
 
-  return new EmbedBuilder()
-    .setColor(COLORS.PURPLE)
-    .setTitle("🔍 TARGET RECONNAISSANCE — GEASS SCAN")
-    .setDescription(`Analysis of \`${result.target}\``)
+  const embed = new EmbedBuilder()
+    .setColor(result.isCDN || result.hasWAF ? COLORS.GOLD : COLORS.PURPLE)
+    .setTitle(T.title)
+    .setDescription(T.desc)
+    .setThumbnail("attachment://geass-symbol.png")
     .addFields(
-      { name: "🌐 IP / DNS",     value: ipsLine,          inline: true },
-      { name: "🖥️ Server",       value: serverDisplay,    inline: true },
-      { name: "⏱ Response",      value: `${result.responseTimeMs}ms`, inline: true },
-      { name: "🛡️ Protection",   value: shieldLine,       inline: true },
-      { name: "📡 HTTP Version",  value: protocolLine,     inline: true },
-      { name: "🔌 Open Ports",   value: portsLine,         inline: true },
-      { name: "🔧 Features",     value: featuresLine,      inline: false },
-      { name: "‎", value: "━━━━━━━━━━━━ 🏆 **RECOMMENDED ATTACK VECTORS** ━━━━━━━━━━━━", inline: false },
-      { name: "📋 Top Methods", value: recoLines, inline: false },
-    )
-    .setFooter(footer(`Scanned ${new Date().toUTCString()}`))
-    .setTimestamp();
+      // ── DNS / IP ──
+      { name: "\u200b", value: T.secDns, inline: false },
+      { name: T.primaryIp, value: `\`${primaryIpLine}\``, inline: true },
+      { name: T.allIps,    value: allIpsLine,               inline: true },
+      // ── Server ──
+      { name: "\u200b",     value: T.secServer, inline: false },
+      { name: T.server,     value: `**${serverDisplay}**`,    inline: true },
+      { name: T.response,   value: `**${result.responseTimeMs}ms**`, inline: true },
+      { name: T.http,       value: httpLine,                  inline: true },
+      // ── Protection ──
+      { name: "\u200b", value: T.secProt, inline: false },
+      { name: T.cdn,    value: cdnLine,   inline: true },
+      { name: T.waf,    value: wafLine,   inline: true },
+      { name: T.hsts,   value: hstsLine,  inline: true },
+      // ── Protocols & Features ──
+      { name: "\u200b",   value: T.secProto,  inline: false },
+      { name: T.httpVer,  value: protocolLine, inline: true },
+      { name: T.features, value: featuresLine, inline: true },
+      { name: T.ports,    value: portsLine,    inline: true },
+    );
+
+  // ── Origin IP bypass section (only if found) ──
+  if (result.originIP) {
+    embed.addFields(
+      { name: "\u200b",     value: T.secOrigin, inline: false },
+      { name: T.originIp,   value: `\`${result.originIP}\``,            inline: true },
+      { name: T.originSub,  value: result.originSubdomain
+          ? `\`${result.originSubdomain}\``
+          : (pt ? "_não identificado_" : "_not identified_"),            inline: true },
+    );
+  }
+
+  // ── Attack recommendations ──
+  embed.addFields(
+    { name: "\u200b",   value: T.secRec,  inline: false },
+    { name: T.recTitle, value: recoLines, inline: false },
+  );
+
+  embed.setFooter(footer(T.footerTxt)).setTimestamp();
+  return embed;
 }
 
 // ── Methods Embed ─────────────────────────────────────────────────────────────
-export function buildMethodsEmbed(methods: Method[], layerFilter?: string): EmbedBuilder[] {
+export function buildMethodsEmbed(methods: Method[], layerFilter?: string, lang: "en" | "pt" = "en"): EmbedBuilder[] {
+  const pt = lang === "pt";
   const filtered = layerFilter
     ? methods.filter(m => m.layer?.toLowerCase() === layerFilter.toLowerCase())
     : methods;
@@ -633,21 +745,28 @@ export function buildMethodsEmbed(methods: Method[], layerFilter?: string): Embe
     const page  = Math.floor(i / PAGE_SIZE) + 1;
     const total = Math.ceil(filtered.length / PAGE_SIZE);
 
+    const titleSuffix = layerFilter ? `Layer ${layerFilter.toUpperCase()}` : (pt ? "Todos os Métodos" : "All Methods");
+    const desc = pt
+      ? `**${filtered.length}** métodos disponíveis${layerFilter ? ` para Layer ${layerFilter.toUpperCase()}` : ""}.`
+      : `**${filtered.length}** methods available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}.`;
+
     const embed = new EmbedBuilder()
       .setColor(COLORS.PURPLE)
-      .setTitle(`⚔️ ARES ATTACK VECTORS — ${layerFilter ? `Layer ${layerFilter.toUpperCase()}` : "All Methods"} (${page}/${total})`)
-      .setDescription(`**${filtered.length}** methods available${layerFilter ? ` for Layer ${layerFilter.toUpperCase()}` : ""}.`)
+      .setTitle(`⚔️ ARES ATTACK VECTORS — ${titleSuffix} (${page}/${total})`)
+      .setDescription(desc)
       .addFields(
         chunk.map(m => ({
           name:   `${tierIcon(m.tier ?? "")} ${METHOD_EMOJIS[m.id] ?? "⚡"} **${m.name}**`,
           value:  [
-            m.description ?? "_No description_",
-            `Tier: **${m.tier ?? "?"}** | Layer: **${m.layer ?? "?"}** | Protocol: **${m.protocol ?? "?"}**`,
+            m.description ?? (pt ? "_Sem descrição_" : "_No description_"),
+            pt
+              ? `Tier: **${m.tier ?? "?"}** | Camada: **${m.layer ?? "?"}** | Protocolo: **${m.protocol ?? "?"}**`
+              : `Tier: **${m.tier ?? "?"}** | Layer: **${m.layer ?? "?"}** | Protocol: **${m.protocol ?? "?"}**`,
           ].join("\n"),
           inline: false,
         }))
       )
-      .setFooter(footer(`${filtered.length} total methods`))
+      .setFooter(footer(pt ? `${filtered.length} métodos no total` : `${filtered.length} total methods`))
       .setTimestamp();
 
     pages.push(embed);
@@ -657,8 +776,12 @@ export function buildMethodsEmbed(methods: Method[], layerFilter?: string): Embe
     pages.push(
       new EmbedBuilder()
         .setColor(COLORS.RED)
-        .setTitle("❌ No Methods Found")
-        .setDescription(layerFilter ? `No methods found for layer \`${layerFilter}\`.` : "No methods available.")
+        .setTitle(pt ? "❌ Nenhum Método Encontrado" : "❌ No Methods Found")
+        .setDescription(
+          layerFilter
+            ? (pt ? `Nenhum método encontrado para a camada \`${layerFilter}\`.` : `No methods found for layer \`${layerFilter}\`.`)
+            : (pt ? "Nenhum método disponível." : "No methods available.")
+        )
         .setFooter(footer())
         .setTimestamp()
     );
@@ -669,38 +792,98 @@ export function buildMethodsEmbed(methods: Method[], layerFilter?: string): Embe
 
 // ── Error Embed ───────────────────────────────────────────────────────────────
 
-export function buildHelpEmbed(): EmbedBuilder {
+export function buildHelpEmbed(lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt = lang === "pt";
   return new EmbedBuilder()
     .setColor(COLORS.GOLD)
-    .setTitle("👁️ LELOUCH BRITANNIA — COMMAND CENTER")
+    .setTitle(pt ? "👁️ LELOUCH BRITANNIA — CENTRAL DE COMANDO" : "👁️ LELOUCH BRITANNIA — COMMAND CENTER")
     .setDescription(
-      `> *"I am Zero — the man who will obliterate the world."*\n\nWelcome to the **${BOT_NAME}** network control interface.\nAll commands are slash commands — type \`/\` to browse them.`
+      pt
+        ? `> *"Eu sou Zero — o homem que irá obliterar o mundo."*\n\nBem-vindo à interface de controle de rede do **${BOT_NAME}**.\nTodos os comandos são slash commands — pressione \`/\` para navegar.`
+        : `> *"I am Zero — the man who will obliterate the world."*\n\nWelcome to the **${BOT_NAME}** network control interface.\nAll commands are slash commands — type \`/\` to browse them.`
     )
     .setThumbnail("attachment://geass-symbol.png")
     .addFields(
-      { name: "⚔️ `/attack start <target>`", value: "Launch attack — opens a **dropdown menu** to pick method, duration & threads.", inline: false },
-      { name: "⏹️ `/attack stop <id>`",  value: "Stop a running attack by its ID number.",    inline: false },
-      { name: "📋 `/attack list`",         value: "View all active and recent attacks.",         inline: false },
-      { name: "📊 `/attack stats`",        value: "Show global aggregate statistics.",           inline: false },
-      { name: "🔍 `/analyze <target>`",    value: "Scan a target and get ranked recommendations for best attack vectors.", inline: false },
-      { name: "⚡ `/methods [layer]`",          value: "List all attack vectors. Filter by `L7`, `L4`, or `L3`.",          inline: false },
-      { name: "👁️ `/geass <target>`",            value: "Launch **Geass Override ∞** directly — ARES OMNIVECT ∞ 33 vectors.", inline: false },
-      { name: "🌐 `/cluster status`",            value: "Check health & latency of all cluster nodes.",                       inline: false },
-      { name: "🌐 `/cluster broadcast <target>`",value: "Fire Geass Override to ALL nodes simultaneously (10× power).",       inline: false },
-      { name: "🤖 `/lelouch ask <message>`",     value: "Talk to **Lelouch AI** — helps with the bot, code, web systems & anything else.",  inline: false },
-      { name: "🔄 `/lelouch reset`",             value: "Clear your Lelouch AI conversation history.",                        inline: false },
-      { name: "ℹ️ `/info`",                      value: "Full platform info — cluster infrastructure & live stats (EN/PT).",  inline: false },
-      { name: "❓ `/help`",                      value: "Show this help message.",                                            inline: false },
-      { name: "\u200b",                          value: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",                         inline: false },
       {
-        name: "💡 Tips",
-        value: [
-          "• Run `/analyze <target>` first to find the best attack vector",
-          "• Use `waf-bypass` for Cloudflare/Akamai protected targets",
-          "• The ⏹️ **Stop** button appears on every attack embed",
-          "• Active attacks auto-update every 5 seconds",
-          "• Ask `/lelouch ask` anything — it knows the entire platform",
-        ].join("\n"),
+        name: pt ? "⚔️ Ataques" : "⚔️ Attacks",
+        value: pt
+          ? [
+              "`/attack start <alvo>` — Iniciar ataque — menu para escolher método, duração & threads",
+              "`/attack stop <id>` — Parar ataque por ID",
+              "`/attack list` — Ver todos os ataques ativos e recentes",
+              "`/attack stats` — Estatísticas globais da sessão",
+              "`/geass <alvo>` — Disparar **Geass Override ∞** — ARES OMNIVECT ∞ 35 vetores",
+            ].join("\n")
+          : [
+              "`/attack start <target>` — Launch attack — dropdown for method, duration & threads",
+              "`/attack stop <id>` — Stop a running attack by ID",
+              "`/attack list` — View all active and recent attacks",
+              "`/attack stats` — Show global aggregate statistics",
+              "`/geass <target>` — Launch **Geass Override ∞** directly — ARES OMNIVECT ∞ 35 vectors",
+            ].join("\n"),
+        inline: false,
+      },
+      {
+        name: pt ? "🔍 Reconhecimento" : "🔍 Reconnaissance",
+        value: pt
+          ? [
+              "`/analyze <alvo>` — Scan completo: IP, subdomínios, CDN/WAF, vetores ranqueados",
+              "`/methods [layer]` — Lista todos os vetores. Filtrar por `L7`, `L4` ou `L3`",
+            ].join("\n")
+          : [
+              "`/analyze <target>` — Full scan: IP, subdomains, CDN/WAF, ranked attack vectors",
+              "`/methods [layer]` — List all attack vectors. Filter by `L7`, `L4`, or `L3`",
+            ].join("\n"),
+        inline: false,
+      },
+      {
+        name: pt ? "🌐 Cluster" : "🌐 Cluster",
+        value: pt
+          ? [
+              "`/cluster status` — Saúde & latência de todos os nós do cluster",
+              "`/cluster broadcast <alvo>` — Disparar Geass Override para TODOS os nós (10× potência)",
+            ].join("\n")
+          : [
+              "`/cluster status` — Health & latency of all cluster nodes",
+              "`/cluster broadcast <target>` — Fire Geass Override to ALL nodes (10× power)",
+            ].join("\n"),
+        inline: false,
+      },
+      {
+        name: pt ? "🤖 IA & Info" : "🤖 AI & Info",
+        value: pt
+          ? [
+              "`/lelouch ask <mensagem>` — Falar com **Lelouch IA** — ajuda com bot, código, sistemas web",
+              "`/lelouch reset` — Limpar histórico da conversa",
+              "`/info` — Info completa da plataforma — infraestrutura & stats ao vivo",
+              "`/help` — Mostrar esta mensagem de ajuda",
+            ].join("\n")
+          : [
+              "`/lelouch ask <message>` — Talk to **Lelouch AI** — helps with bot, code, web systems",
+              "`/lelouch reset` — Clear conversation history",
+              "`/info` — Full platform info — cluster infrastructure & live stats",
+              "`/help` — Show this help message",
+            ].join("\n"),
+        inline: false,
+      },
+      { name: "\u200b", value: "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline: false },
+      {
+        name: pt ? "💡 Dicas" : "💡 Tips",
+        value: pt
+          ? [
+              "• Use `/analyze <alvo>` primeiro para descobrir o melhor vetor",
+              "• Use `waf-bypass` para alvos protegidos por Cloudflare/Akamai",
+              "• O botão ⏹️ **Stop** aparece em todo embed de ataque",
+              "• Ataques ativos atualizam automaticamente a cada 5 segundos",
+              "• Pergunte `/lelouch ask` qualquer coisa — ele conhece toda a plataforma",
+            ].join("\n")
+          : [
+              "• Run `/analyze <target>` first to find the best attack vector",
+              "• Use `waf-bypass` for Cloudflare/Akamai protected targets",
+              "• The ⏹️ **Stop** button appears on every attack embed",
+              "• Active attacks auto-update every 5 seconds",
+              "• Ask `/lelouch ask` anything — it knows the entire platform",
+            ].join("\n"),
         inline: false,
       },
     )
@@ -881,38 +1064,46 @@ export function buildClusterEmbed(status: {
   nodes:           { url: string; online: boolean; latencyMs: number; cpus?: number; freeMem?: number }[];
   totalOnline:     number;
   configuredNodes: number;
-}): EmbedBuilder {
+}, lang: "en" | "pt" = "en"): EmbedBuilder {
+  const pt = lang === "pt";
   const { self, nodes, totalOnline, configuredNodes } = status;
-  const allNodes = [{ ...self, url: "📍 This node (primary)" }, ...nodes];
+  const allNodes = [{ ...self, url: pt ? "📍 Este nó (primário)" : "📍 This node (primary)" }, ...nodes];
   const onlineCount = nodes.filter(n => n.online).length;
 
   const nodeLines = allNodes.map((n, i) => {
     const dot     = i === 0 ? "🟢" : n.online ? "🟢" : "🔴";
-    const lat     = n.latencyMs >= 0 ? `${n.latencyMs}ms` : "timeout";
+    const lat     = n.latencyMs >= 0 ? `${n.latencyMs}ms` : (pt ? "timeout" : "timeout");
     const cpuStr  = n.cpus ? ` | ${n.cpus}vCPU` : "";
-    const memStr  = n.freeMem ? ` | ${n.freeMem}MB free` : "";
+    const memStr  = n.freeMem ? ` | ${n.freeMem}MB ${pt ? "livre" : "free"}` : "";
     const label   = i === 0 ? n.url : `Node ${i}: \`${n.url}\``;
     return `${dot} ${label} — **${lat}**${cpuStr}${memStr}`;
   });
 
   return new EmbedBuilder()
     .setColor(totalOnline >= configuredNodes + 1 ? COLORS.GREEN : totalOnline > 1 ? COLORS.GOLD : COLORS.RED)
-    .setTitle(`🌐 CLUSTER STATUS — ${totalOnline} / ${configuredNodes + 1} NODES ONLINE`)
+    .setTitle(`🌐 ${pt ? "STATUS DO CLUSTER" : "CLUSTER STATUS"} — ${totalOnline} / ${configuredNodes + 1} ${pt ? "NÓS ONLINE" : "NODES ONLINE"}`)
     .setDescription(
       configuredNodes === 0
-        ? `> No peer nodes configured. Set \`CLUSTER_NODES\` environment variable.\n> e.g. \`CLUSTER_NODES=https://node2.replit.app,https://node3.replit.app\``
-        : `> *"The king's command reaches all corners of the realm."*\n\n` +
+        ? (pt
+          ? `> Nenhum nó peer configurado. Defina a variável de ambiente \`CLUSTER_NODES\`.\n> Ex.: \`CLUSTER_NODES=https://node2.replit.app,https://node3.replit.app\``
+          : `> No peer nodes configured. Set \`CLUSTER_NODES\` environment variable.\n> e.g. \`CLUSTER_NODES=https://node2.replit.app,https://node3.replit.app\``)
+        : (pt
+          ? `> *"O comando do rei alcança todos os cantos do reino."*\n\n`
+          : `> *"The king's command reaches all corners of the realm."*\n\n`) +
           nodeLines.join("\n")
     )
     .addFields(
-      { name: "🟢 Online",      value: `**${totalOnline}** node${totalOnline !== 1 ? "s" : ""}`, inline: true },
-      { name: "🔴 Offline",     value: `**${configuredNodes - onlineCount}** node${(configuredNodes - onlineCount) !== 1 ? "s" : ""}`, inline: true },
-      { name: "⚡ Geass Power", value: `**${totalOnline}×** multiplier`, inline: true },
-      { name: "💻 Primary CPU",  value: `${self.cpus} vCPU`, inline: true },
-      { name: "💾 Primary RAM",  value: `${self.freeMem} MB free`, inline: true },
+      { name: pt ? "🟢 Online"      : "🟢 Online",      value: `**${totalOnline}** nó${totalOnline !== 1 ? "s" : ""}`, inline: true },
+      { name: pt ? "🔴 Offline"     : "🔴 Offline",     value: `**${configuredNodes - onlineCount}** nó${(configuredNodes - onlineCount) !== 1 ? "s" : ""}`, inline: true },
+      { name: pt ? "⚡ Poder Geass" : "⚡ Geass Power", value: `**${totalOnline}×** ${pt ? "multiplicador" : "multiplier"}`, inline: true },
+      { name: pt ? "💻 CPU Primário" : "💻 Primary CPU", value: `${self.cpus} vCPU`, inline: true },
+      { name: pt ? "💾 RAM Primário" : "💾 Primary RAM", value: `${self.freeMem} MB ${pt ? "livre" : "free"}`, inline: true },
       { name: "👁️ Geass Override", value: configuredNodes > 0
-          ? `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 33 ARES vectors simultaneously.`
-          : "Set `CLUSTER_NODES` to enable automatic fan-out.", inline: false },
+          ? (pt
+            ? `Quando Geass Override dispara, ele **propaga automaticamente** para todos os ${configuredNodes} nós peer configurados. Cada nó roda todos os 35 vetores ARES simultaneamente.`
+            : `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 35 ARES vectors simultaneously.`)
+          : (pt ? "Defina `CLUSTER_NODES` para ativar o fan-out automático." : "Set `CLUSTER_NODES` to enable automatic fan-out."),
+        inline: false },
     )
     .setThumbnail("attachment://geass-symbol.png")
     .setFooter(footer())

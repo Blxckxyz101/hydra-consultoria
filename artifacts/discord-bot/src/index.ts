@@ -51,8 +51,17 @@ import {
   buildClusterEmbed,
   buildInfoEmbed,
   buildFinishEmbed,
+  buildLangRow,
   type ProbeResult,
 } from "./embeds.js";
+
+// ── Per-interaction cache for language toggle re-render ───────────────────────
+import type { AnalyzeResult, Method } from "./api.js";
+const analyzeCache = new Map<string, AnalyzeResult>();
+const methodsCache = new Map<string, { methods: Method[]; layer?: string }>();
+type StatsCache = { stats: Parameters<typeof buildStatsEmbed>[0]; proxyStats?: Parameters<typeof buildStatsEmbed>[1] };
+const statsCache  = new Map<string, StatsCache>();
+const listCache   = new Map<string, Parameters<typeof buildListEmbed>[0]>();
 
 if (!BOT_TOKEN) {
   console.error("❌ DISCORD_BOT_TOKEN is not set. Set it in the environment variables.");
@@ -1013,10 +1022,13 @@ async function handleAttackStop(interaction: ChatInputCommandInteraction): Promi
     const result = await api.stopAttack(id);
     const ok     = result?.ok ?? false;
     cleanupMonitor(id);
-    await interaction.editReply({ embeds: [buildStopEmbed(id, ok)] });
+    await interaction.editReply({
+      embeds: [buildStopEmbed(id, ok, "pt")],
+      components: [buildLangRow("pt", "stop")],
+    });
     console.log(`[ATTACK #${id}] ${ok ? "Stopped" : "Stop failed"}`);
   } catch {
-    await interaction.editReply({ embeds: [buildStopEmbed(id, false)] });
+    await interaction.editReply({ embeds: [buildStopEmbed(id, false, "pt")], components: [buildLangRow("pt", "stop")] });
   }
 }
 
@@ -1024,7 +1036,12 @@ async function handleAttackList(interaction: ChatInputCommandInteraction): Promi
   await interaction.deferReply();
   try {
     const attacks = await api.getAttacks();
-    await interaction.editReply({ embeds: [buildListEmbed(attacks)] });
+    const msg = await interaction.editReply({
+      embeds: [buildListEmbed(attacks, "pt")],
+      components: [buildLangRow("pt", "list")],
+    });
+    listCache.set(msg.id, attacks);
+    setTimeout(() => listCache.delete(msg.id), 1_800_000);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("FETCH FAILED", message)] });
@@ -1113,7 +1130,12 @@ async function handleAttackStats(interaction: ChatInputCommandInteraction): Prom
       api.getStats(),
       api.getProxyStats().catch(() => undefined),
     ]);
-    await interaction.editReply({ embeds: [buildStatsEmbed(stats, proxyStats ?? undefined)] });
+    const msg = await interaction.editReply({
+      embeds: [buildStatsEmbed(stats, proxyStats ?? undefined, "pt")],
+      components: [buildLangRow("pt", "stats")],
+    });
+    statsCache.set(msg.id, { stats, proxyStats: proxyStats ?? undefined });
+    setTimeout(() => statsCache.delete(msg.id), 1_800_000);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("STATS FAILED", message)] });
@@ -1129,13 +1151,19 @@ async function handleAnalyze(interaction: ChatInputCommandInteraction): Promise<
       new EmbedBuilder()
         .setColor(COLORS.GOLD)
         .setTitle("🔍 SCANNING TARGET...")
-        .setDescription(`Analyzing \`${target}\`\nRunning DNS probes, HTTP fingerprinting, CDN detection...`)
+        .setDescription(`Analisando \`${target}\`\nDNS probes, HTTP fingerprinting, CDN/WAF, Origin IP discovery...`)
         .setFooter({ text: AUTHOR })
     ],
   });
   try {
     const result = await api.analyze(target);
-    await interaction.editReply({ embeds: [buildAnalyzeEmbed(result)] });
+    const msg = await interaction.editReply({
+      embeds: [buildAnalyzeEmbed(result, "pt")],
+      files: buildGeassFiles(),
+      components: [buildLangRow("pt", "analyze")],
+    });
+    analyzeCache.set(msg.id, result);
+    setTimeout(() => analyzeCache.delete(msg.id), 3_600_000); // 1h TTL
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("ANALYSIS FAILED", message)] });
@@ -1147,25 +1175,19 @@ async function handleMethods(interaction: ChatInputCommandInteraction): Promise<
   const layerFilter = interaction.options.getString("layer") ?? undefined;
   try {
     const methods = await api.getMethods();
-    await interaction.editReply({ embeds: buildMethodsEmbed(methods, layerFilter) });
+    const msg = await interaction.editReply({
+      embeds: buildMethodsEmbed(methods, layerFilter, "pt"),
+      components: [buildLangRow("pt", "methods")],
+    });
+    methodsCache.set(msg.id, { methods, layer: layerFilter });
+    setTimeout(() => methodsCache.delete(msg.id), 3_600_000);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     await interaction.editReply({ embeds: [buildErrorEmbed("METHODS FAILED", message)] });
   }
 }
 
-function buildInfoLangRow(active: "en" | "pt"): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("info_lang:en")
-      .setLabel("🇺🇸  English")
-      .setStyle(active === "en" ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("info_lang:pt")
-      .setLabel("🇧🇷  Português")
-      .setStyle(active === "pt" ? ButtonStyle.Primary : ButtonStyle.Secondary),
-  );
-}
+// buildInfoLangRow replaced by buildLangRow("en"|"pt", "info") from embeds.ts
 
 async function fetchInfoData() {
   const [stats, clusterStatus] = await Promise.allSettled([
@@ -1191,7 +1213,7 @@ async function handleInfo(interaction: ChatInputCommandInteraction): Promise<voi
   try {
     const data  = await fetchInfoData();
     const embed = buildInfoEmbed({ ...data, lang: "en" });
-    const row   = buildInfoLangRow("en");
+    const row   = buildLangRow("en", "info");
     await interaction.editReply({ embeds: [embed], files: buildAttackFiles(), components: [row] });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1200,7 +1222,11 @@ async function handleInfo(interaction: ChatInputCommandInteraction): Promise<voi
 }
 
 async function handleHelp(interaction: ChatInputCommandInteraction): Promise<void> {
-  await interaction.reply({ embeds: [buildHelpEmbed()], files: buildGeassFiles() });
+  await interaction.reply({
+    embeds: [buildHelpEmbed("en")],
+    files: buildGeassFiles(),
+    components: [buildLangRow("en", "help")],
+  });
 }
 
 async function handleCluster(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1210,7 +1236,14 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
     await interaction.deferReply();
     try {
       const status = await api.getClusterStatus();
-      await interaction.editReply({ embeds: [buildClusterEmbed(status)], files: buildGeassFiles() });
+      await interaction.editReply({
+        embeds: [buildClusterEmbed(status, "en")],
+        files: buildGeassFiles(),
+        components: [buildLangRow("en", "cluster")],
+      });
+      // Store status for lang toggle re-render
+      const msgId = (await interaction.fetchReply()).id;
+      (interaction.client as unknown as Record<string, unknown>)[`cluster_status_${msgId}`] = status;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("CLUSTER STATUS FAILED", message)] });
@@ -1490,15 +1523,88 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     return;
   }
 
-  // ── Info language toggle ──────────────────────────────────────────────────
-  if (customId === "info_lang:en" || customId === "info_lang:pt") {
-    const lang = customId.endsWith(":pt") ? "pt" as const : "en" as const;
+  // ── Language toggle handlers ──────────────────────────────────────────────
+  const langMatch = customId.match(/^(\w+)_lang:(en|pt)$/);
+  if (langMatch) {
+    const prefix = langMatch[1];
+    const lang   = langMatch[2] as "en" | "pt";
     await interaction.deferUpdate();
     try {
-      const data  = await fetchInfoData();
-      const embed = buildInfoEmbed({ ...data, lang });
-      const row   = buildInfoLangRow(lang);
-      await interaction.editReply({ embeds: [embed], components: [row] });
+      const msgId = interaction.message.id;
+
+      // info
+      if (prefix === "info") {
+        const data  = await fetchInfoData();
+        const embed = buildInfoEmbed({ ...data, lang });
+        await interaction.editReply({ embeds: [embed], components: [buildLangRow(lang, "info")] });
+        return;
+      }
+
+      // analyze
+      if (prefix === "analyze") {
+        const result = analyzeCache.get(msgId);
+        if (!result) { await interaction.editReply({ components: [buildLangRow(lang, "analyze")] }); return; }
+        const embed  = buildAnalyzeEmbed(result, lang);
+        await interaction.editReply({ embeds: [embed], files: buildGeassFiles(), components: [buildLangRow(lang, "analyze")] });
+        return;
+      }
+
+      // methods
+      if (prefix === "methods") {
+        const cached = methodsCache.get(msgId);
+        if (!cached) { await interaction.editReply({ components: [buildLangRow(lang, "methods")] }); return; }
+        const embeds = buildMethodsEmbed(cached.methods, cached.layer, lang);
+        await interaction.editReply({ embeds, components: [buildLangRow(lang, "methods")] });
+        return;
+      }
+
+      // help
+      if (prefix === "help") {
+        await interaction.editReply({ embeds: [buildHelpEmbed(lang)], files: buildGeassFiles(), components: [buildLangRow(lang, "help")] });
+        return;
+      }
+
+      // list
+      if (prefix === "list") {
+        const cached = listCache.get(msgId);
+        if (cached) {
+          await interaction.editReply({ embeds: [buildListEmbed(cached, lang)], components: [buildLangRow(lang, "list")] });
+        } else {
+          const attacks = await api.getAttacks();
+          listCache.set(msgId, attacks);
+          await interaction.editReply({ embeds: [buildListEmbed(attacks, lang)], components: [buildLangRow(lang, "list")] });
+        }
+        return;
+      }
+
+      // stats
+      if (prefix === "stats") {
+        const cached = statsCache.get(msgId);
+        if (cached) {
+          await interaction.editReply({ embeds: [buildStatsEmbed(cached.stats, cached.proxyStats, lang)], components: [buildLangRow(lang, "stats")] });
+        } else {
+          const [stats, proxyStats] = await Promise.all([api.getStats(), api.getProxyStats().catch(() => undefined)]);
+          statsCache.set(msgId, { stats, proxyStats: proxyStats ?? undefined });
+          await interaction.editReply({ embeds: [buildStatsEmbed(stats, proxyStats ?? undefined, lang)], components: [buildLangRow(lang, "stats")] });
+        }
+        return;
+      }
+
+      // cluster
+      if (prefix === "cluster") {
+        const status = await api.getClusterStatus();
+        await interaction.editReply({ embeds: [buildClusterEmbed(status, lang)], files: buildGeassFiles(), components: [buildLangRow(lang, "cluster")] });
+        return;
+      }
+
+      // stop (stateless — just re-build with lang)
+      if (prefix === "stop") {
+        const descMatch = interaction.message.embeds[0]?.description?.match(/#(\d+)/);
+        const id = descMatch ? parseInt(descMatch[1], 10) : 0;
+        await interaction.editReply({ embeds: [buildStopEmbed(id, true, lang)], components: [buildLangRow(lang, "stop")] });
+        return;
+      }
+
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("LANG SWITCH FAILED", message)], components: [] });
