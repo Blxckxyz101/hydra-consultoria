@@ -318,4 +318,18 @@ export const ATTACK_METHODS = [
     protocol: "HTTP/2" as const,
     description: "HTTP/2 PRIORITY frames (RFC 7540 §6.3) define stream dependency trees. Sends thousands of PRIORITY frames referencing random stream IDs with random weights, forcing the server to rebuild its entire stream priority tree on every frame. This is a pure CPU + heap exhaustion attack that bypasses connection limits.",
   },
+  {
+    id: "h2-rst-burst",
+    name: "H2 RST Burst (CVE-2023-44487 Pure RST Engine)",
+    layer: "L7" as const,
+    protocol: "HTTP/2" as const,
+    description: "Dedicated CVE-2023-44487 (HTTP/2 Rapid Reset) exploit engine — sends HEADERS frames immediately followed by RST_STREAM frames in a tight loop. Each pair forces the server to (1) allocate stream state, (2) dispatch to handler thread, (3) accept RST → discard. At 1000+ RST pairs/sec the server's H2 state machine allocation/deallocation cycle causes extreme CPU pressure on nginx (event loop stall), Apache, and Envoy. Uses JA4 fingerprint rotation to evade CDN RST rate limiters.",
+  },
+  {
+    id: "grpc-flood",
+    name: "gRPC Flood (Handler Thread Pool Exhaustion)",
+    layer: "L7" as const,
+    protocol: "HTTP/2" as const,
+    description: "Sends properly framed gRPC requests (content-type: application/grpc) over HTTP/2 to exhaust server-side gRPC handler threads. gRPC uses a SEPARATE quota and rate-limiter from HTTP — most WAFs (Cloudflare, Akamai, Imperva) have more lenient limits for gRPC. Each request sends a 5-byte length-prefixed gRPC frame with a valid protobuf payload, targeting health/reflection/custom gRPC endpoints. Forces the server to (1) decode gRPC frame, (2) invoke handler, (3) encode response — exhausting the gRPC goroutine/thread pool independently of the HTTP handler pool.",
+  },
 ];

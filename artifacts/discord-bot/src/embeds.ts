@@ -102,10 +102,11 @@ export const methodLabel = (id: string) => {
     "app-smart-flood":      "App Smart Flood — DB Query Exhaust",
     "large-header-bomb":    "Large Header Bomb — 16KB Header Overflow",
     "http2-priority-storm": "H2 PRIORITY Storm — Stream Reorder Exhaust",
-    "geass-override":       "Geass Override ∞ [ARES OMNIVECT — 33 VECTORS]",
+    "geass-override":       "Geass Override ∞ [ARES OMNIVECT — 35 VECTORS]",
     "cf-bypass":            "Cloudflare Bypass",
     "nginx-killer":         "Nginx Killer",
-    "h2-rst-burst":         "H2 RST Burst",
+    "h2-rst-burst":         "H2 RST Burst — CVE-2023-44487 Pure RST Engine",
+    "grpc-flood":           "gRPC Flood — Handler Pool Exhaustion",
     "h2-storm":             "H2 Storm",
     "pipeline-flood":       "HTTP Pipeline Flood",
   };

