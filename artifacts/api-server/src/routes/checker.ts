@@ -93,10 +93,8 @@ const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 function getResidentialProxyArgs(): string[] {
   const c = getResidentialCreds();
   if (!c) return [];
-  // Randomise session-id per call for IP rotation
-  const sid = Math.random().toString(36).slice(2, 10);
-  const user = c.username.includes("-session-") ? c.username : `${c.username}-session-${sid}`;
-  return ["-x", `http://${user}:${c.password}@${c.host}:${c.port}`];
+  // Use credentials exactly as configured — the proxy provider handles IP rotation
+  return ["-x", `http://${c.username}:${c.password}@${c.host}:${c.port}`];
 }
 const OPERA_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0";
 
