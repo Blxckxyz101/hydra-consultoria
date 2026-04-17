@@ -704,7 +704,7 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
     return;
   }
 
-  const INTERVAL_MS     = 5_000; // 5s — live metrics update frequency
+  const INTERVAL_MS     = 8_000; // 8s — live metrics update frequency (reduced to prevent Discord REST queue saturation)
   const MAX_LIFETIME_MS = 70 * 60 * 1000; // 70 min — force-kill monitor after max attack duration
   const startedAt       = Date.now();
 
@@ -719,7 +719,6 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
   downAlertSent.set(attackId, false);
   let busy = false;
   let nullConsecutive = 0; // consecutive null responses
-  let nullTotal       = 0; // total null responses (catches flapping APIs)
 
   const stopMonitor = () => {
     clearInterval(tick);
@@ -746,17 +745,16 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
         probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
       ]);
 
-      // Stop if: 3 consecutive nulls OR 10 total nulls (catches flapping API)
+      // Stop if: 5 consecutive nulls (API truly unavailable — transient timeouts are normal under load)
       if (!attack) {
         nullConsecutive++;
-        nullTotal++;
-        if (nullConsecutive >= 3 || nullTotal >= 10) {
-          console.log(`[MONITOR #${attackId}] Stopping — nullConsec=${nullConsecutive} nullTotal=${nullTotal}`);
+        if (nullConsecutive >= 5) {
+          console.log(`[MONITOR #${attackId}] Stopping — nullConsec=${nullConsecutive}`);
           stopMonitor();
         }
         return;
       }
-      nullConsecutive = 0; // reset consecutive on success, but keep total
+      nullConsecutive = 0; // reset on success
 
       const history = targetHistories.get(attackId) ?? [];
       history.push(probe);

