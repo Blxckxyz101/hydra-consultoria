@@ -55,31 +55,45 @@ const L7_PROXY_OK = new Set([
   "graphql-dos","cache-poison","rudy-v2",
   "http2-flood","http2-continuation","hpack-bomb","ssl-death","tls-renego",
   "conn-flood","ws-flood","h2-settings-storm",
+  "h2-rst-burst","grpc-flood","http-pipeline","http-smuggling",
+  "geass-override","cf-bypass","nginx-killer","slowloris",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")      return { badge: "ARES ∞ [33V]",  cls: "geass",     color: "#C0392B" };
-  if (m === "waf-bypass")          return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
-  if (m === "http2-flood")         return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
-  if (m === "http2-continuation")  return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
-  if (m === "h2-settings-storm")   return { badge: "H2 STORM",      cls: "real-http", color: "#00bcd4" };
-  if (m === "hpack-bomb")          return { badge: "HPACK BOMB",    cls: "real-http", color: "#e91e8c" };
-  if (m === "slowloris")           return { badge: "SLOWLORIS",     cls: "real-http", color: "#9b59b6" };
-  if (m === "rudy-v2")             return { badge: "RUDY v2",       cls: "real-http", color: "#c0392b" };
-  if (m === "ws-flood")            return { badge: "WS EXHAUST",    cls: "real-http", color: "#f39c12" };
-  if (m === "graphql-dos")         return { badge: "GRAPHQL",       cls: "real-http", color: "#8e44ad" };
-  if (m === "cache-poison")        return { badge: "CDN POISON",    cls: "real-http", color: "#16a085" };
-  if (m === "tls-renego")          return { badge: "TLS RENEGO",    cls: "real-tcp",  color: "#d35400" };
-  if (m === "ssl-death")           return { badge: "SSL DEATH",     cls: "real-tcp",  color: "#7f8c8d" };
-  if (m === "quic-flood")          return { badge: "QUIC/H3",       cls: "real-udp",  color: "#2980b9" };
-  if (m === "conn-flood")          return { badge: "CONN FLOOD",    cls: "real-tcp",  color: "#e74c3c" };
-  if (m === "icmp-flood")          return { badge: "ICMP FLOOD",    cls: "real-udp",  color: "#ff6b35" };
-  if (m === "ntp-amp")             return { badge: "NTP FLOOD",     cls: "real-udp",  color: "#00d4aa" };
-  if (m === "mem-amp")             return { badge: "MEMCACHED",     cls: "real-udp",  color: "#a855f7" };
-  if (m === "ssdp-amp")            return { badge: "SSDP/UPnP",    cls: "real-udp",  color: "#06b6d4" };
-  if (m === "http-pipeline")       return { badge: "PIPELINE",      cls: "real-http", color: "#f97316" };
-  if (L7_HTTP_FE.has(m))          return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
-  if (L4_TCP_FE.has(m))           return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
-  if (L4_UDP_FE.has(m))           return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
+  if (m === "geass-override")       return { badge: "ARES ∞ [35V]",  cls: "geass",     color: "#C0392B" };
+  if (m === "waf-bypass")           return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
+  if (m === "http2-flood")          return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
+  if (m === "http2-continuation")   return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
+  if (m === "h2-settings-storm")    return { badge: "H2 STORM",      cls: "real-http", color: "#00bcd4" };
+  if (m === "hpack-bomb")           return { badge: "HPACK BOMB",    cls: "real-http", color: "#e91e8c" };
+  if (m === "slowloris")            return { badge: "SLOWLORIS",     cls: "real-http", color: "#9b59b6" };
+  if (m === "rudy-v2")              return { badge: "RUDY v2",       cls: "real-http", color: "#c0392b" };
+  if (m === "ws-flood")             return { badge: "WS EXHAUST",    cls: "real-http", color: "#f39c12" };
+  if (m === "graphql-dos")          return { badge: "GRAPHQL",       cls: "real-http", color: "#8e44ad" };
+  if (m === "cache-poison")         return { badge: "CDN POISON",    cls: "real-http", color: "#16a085" };
+  if (m === "tls-renego")           return { badge: "TLS RENEGO",    cls: "real-tcp",  color: "#d35400" };
+  if (m === "ssl-death")            return { badge: "SSL DEATH",     cls: "real-tcp",  color: "#7f8c8d" };
+  if (m === "quic-flood")           return { badge: "QUIC/H3",       cls: "real-udp",  color: "#2980b9" };
+  if (m === "conn-flood")           return { badge: "CONN FLOOD",    cls: "real-tcp",  color: "#e74c3c" };
+  if (m === "icmp-flood")           return { badge: "ICMP FLOOD",    cls: "real-udp",  color: "#ff6b35" };
+  if (m === "ntp-amp")              return { badge: "NTP FLOOD",     cls: "real-udp",  color: "#00d4aa" };
+  if (m === "mem-amp")              return { badge: "MEMCACHED",     cls: "real-udp",  color: "#a855f7" };
+  if (m === "ssdp-amp")             return { badge: "SSDP/UPnP",    cls: "real-udp",  color: "#06b6d4" };
+  if (m === "http-pipeline")        return { badge: "PIPELINE",      cls: "real-http", color: "#f97316" };
+  if (m === "h2-rst-burst")         return { badge: "CVE-44487",     cls: "real-http", color: "#ef4444" };
+  if (m === "grpc-flood")           return { badge: "gRPC FLOOD",    cls: "real-http", color: "#a78bfa" };
+  if (m === "http-smuggling")       return { badge: "SMUGGLING",     cls: "real-http", color: "#fbbf24" };
+  if (m === "slow-read")            return { badge: "SLOW READ",     cls: "real-http", color: "#818cf8" };
+  if (m === "xml-bomb")             return { badge: "XML BOMB",      cls: "real-http", color: "#fb923c" };
+  if (m === "range-flood")          return { badge: "RANGE FLOOD",   cls: "real-http", color: "#34d399" };
+  if (m === "app-smart-flood")      return { badge: "APP SMART",     cls: "real-http", color: "#f472b6" };
+  if (m === "large-header-bomb")    return { badge: "LHB 16KB",      cls: "real-http", color: "#60a5fa" };
+  if (m === "h2-ping-storm")        return { badge: "H2 PING",       cls: "real-http", color: "#4ade80" };
+  if (m === "http2-priority-storm") return { badge: "H2 PRIORITY",   cls: "real-http", color: "#e879f9" };
+  if (m === "doh-flood")            return { badge: "DoH FLOOD",     cls: "real-udp",  color: "#38bdf8" };
+  if (m === "keepalive-exhaust")    return { badge: "KA EXHAUST",    cls: "real-http", color: "#a3e635" };
+  if (L7_HTTP_FE.has(m))           return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
+  if (L4_TCP_FE.has(m))            return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
+  if (L4_UDP_FE.has(m))            return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
   return { badge: "REAL ATTACK", cls: "real-tcp", color: "#64748b" };
 };
 
@@ -97,7 +111,7 @@ const PRESETS: Preset[] = [
   { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
   { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
   { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 128,  icon: "📛"  },
-  { label: "H2 RST Burst",   method: "http2-flood",         packetSize: 512, duration: 120, delay: 0, threads: 500,  icon: "⚡"  },
+  { label: "H2 RST Burst",   method: "h2-rst-burst",        packetSize: 512, duration: 120, delay: 0, threads: 500,  icon: "⚡"  },
   { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 120, delay: 0, threads: 1000, icon: "🚇"  },
   { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "🌊"  },
   { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 180, delay: 0, threads: 500,  icon: "🧨"  },
@@ -118,7 +132,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
@@ -315,16 +329,16 @@ const LOG_MSGS_CONN = [
   (t: string) => `👁 Direct TLS pressure on ${t} — bypassing all application-layer defenses`,
 ];
 const LOG_MSGS_GEASS = [
-  (t: string, n: string) => `👁 Geass Override ARES OMNIVECT ∞: ${n} strikes obliterating ${t} on 33 vectors`,
-  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Pipeline+Storm+ICMP+DNS+NTP+Memc+SSDP on ${t}`,
-  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 33-way siege, target has no defensive surface`,
-  (t: string) => `👁 ${t} overwhelmed — 33 concurrent attack vectors, absolute protocol annihilation`,
+  (t: string, n: string) => `👁 Geass Override ARES OMNIVECT ∞: ${n} strikes obliterating ${t} on 35 vectors`,
+  (t: string) => `👁 ARES assault active — ConnFlood+Slowloris+H2RST+gRPC+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+Pipeline+Storm+ICMP+DNS+NTP+Memc+SSDP on ${t}`,
+  (_t: string, n: string) => `👁 ${n} simultaneous vectors — 35-way siege, target has no defensive surface`,
+  (t: string) => `👁 ${t} overwhelmed — 35 concurrent attack vectors, absolute protocol annihilation`,
   (_t: string, n: string) => `👁 ${n} req/s ARES-vector — L3+L4+L7 fully saturated, WAF bypassed, CDN poisoned`,
   (t: string) => `👁 The king's Geass has been cast upon ${t} — OMNIVECT ABSOLUTE SUBJUGATION`,
-  (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+HPACK+CONT+AppSmartFlood+LargeHeaderBomb+H2Priority flooding into eviction loop`,
-  (t: string) => `👁 33-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC+Pipeline+H2Storm+AppSmart+LargeHeader+H2Priority flood`,
+  (_t: string, n: string) => `👁 ${n} strikes/sec — H2RST+gRPC+HPACK+CONT+AppSmartFlood+LargeHeaderBomb+H2Priority flooding into eviction loop`,
+  (t: string) => `👁 35-vector storm on ${t}: ICMP+DNS-Torture+NTP+Memc+SSDP+RUDY v2+TLS renego+QUIC+H2RST+gRPC+Pipeline+H2Storm+AppSmart+LargeHeader+H2Priority flood`,
   (_t: string, n: string) => `👁 ${n} operations/sec — GraphQL fragment bombs + cache eviction + SSL death records + Pipeline 300K req/s`,
-  (t: string) => `👁 ABSOLUTE GEASS — 33 real attack vectors firing simultaneously on ${t}, zero mercy`,
+  (t: string) => `👁 ABSOLUTE GEASS — 35 real attack vectors firing simultaneously on ${t}, zero mercy`,
 ];
 
 /* ── Sparkline chart ── */
@@ -1206,7 +1220,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     const port = method.includes("dns") ? 53 : portFromTarget;
     if (method === "geass-override") {
       addLog(`👁 ABSOLUTE GEASS COMMAND — ARES OMNIVECT — target: ${target}`, "info");
-      addLog(`  33-vector: H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris+Pipeline+H2Storm+ICMP+DNS+NTP+Memc+SSDP+UDP+AppSmart+LargeHeader+H2Prio | ${threads} threads | ${duration}s`, "info");
+      addLog(`  35-vector: H2RST+gRPC+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+TLS+QUIC+SSL+ConnFlood+Slowloris+Pipeline+H2Storm+ICMP+DNS+NTP+Memc+SSDP+UDP+AppSmart+LargeHeader+H2Prio+DoH | ${threads} threads | ${duration}s`, "info");
     } else {
       addLog(`👁 Geass granted — target: ${target}`, "info");
       addLog(`  Vector: ${method.toUpperCase()} | Threads: ${threads} | Duration: ${duration}s`, "info");
@@ -2642,7 +2656,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 200, 100000) * 6)}` :
                      method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 150, 80000) * 6)}` :
                      method === "ws-flood" ? `cap ${fmtNum(Math.min(threads * 200, 40000))}` :
-                     method === "geass-override" ? "33-vector conn hold" :
+                     method === "geass-override" ? "35-vector conn hold" :
                      "conn hold"}
                   </div>
                 </div>
