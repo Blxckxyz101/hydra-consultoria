@@ -192,7 +192,39 @@ export const api = {
 
   queryStats: () =>
     req<QueryStats>("/api/query/stats", { signal: AbortSignal.timeout(5_000) }),
+
+  // ── Checker ─────────────────────────────────────────────────────────────
+  checkerSingle: (email: string, password: string) =>
+    req<CheckerResponse>("/api/checker/check", {
+      method: "POST",
+      body:   JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(35_000), // 2× TIMEOUT_MS + buffer
+    }),
+
+  checkerBulk: (credentials: string[]) =>
+    req<CheckerResponse>("/api/checker/check", {
+      method: "POST",
+      body:   JSON.stringify({ credentials }),
+      signal: AbortSignal.timeout(credentials.length * 18_000 + 5_000),
+    }),
 };
+
+export type CheckStatus = "HIT" | "FAIL" | "ERROR";
+
+export interface CheckerItem {
+  credential: string;
+  email:      string;
+  status:     CheckStatus;
+  detail:     string;
+}
+
+export interface CheckerResponse {
+  total:   number;
+  hits:    number;
+  fails:   number;
+  errors:  number;
+  results: CheckerItem[];
+}
 
 export interface ScheduledAttack {
   id:          string;

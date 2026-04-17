@@ -10,6 +10,7 @@ import clusterRouter from "./cluster";
 import eventsRouter from "./events";
 import imageRouter from "./image";
 import queryRouter from "./query";
+import checkerRouter from "./checker";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(originFinderRouter);
 router.use(clusterRouter);
 router.use(imageRouter);
 router.use(queryRouter);
+router.use(checkerRouter);
 
 export default router;

