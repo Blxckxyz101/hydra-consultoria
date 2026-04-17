@@ -4117,27 +4117,19 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // ── Show target selection (buttons) ───────────────────────────────────────
-  const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("chk_iseek")
-      .setLabel("🌐 iSeek.pro")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId("chk_datasus")
-      .setLabel("🏥 DataSUS")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("chk_consultcenter")
-      .setLabel("📋 ConsultCenter")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("chk_mind7")
-      .setLabel("🧠 Mind-7")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId("chk_cancel")
-      .setLabel("✖ Cancelar")
-      .setStyle(ButtonStyle.Danger),
+  const selectRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
+  );
+  const selectRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
   );
 
   await interaction.editReply({
@@ -4149,13 +4141,18 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
         `Escolha em qual sistema deseja verificar:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",        value: "Plataforma iSeek — verifica por redirecionamento CSRF",           inline: true },
-        { name: "🏥 DataSUS / SI-PNI", value: "Sistema Nacional de Imunizações — verifica via JSF + SHA-512",   inline: true },
-        { name: "📋 ConsultCenter",     value: "sistema.consultcenter.com.br — verifica via formulário CakePHP", inline: true },
-        { name: "🧠 Mind-7",           value: "mind-7.org — verifica acesso (requer bypass Cloudflare)",         inline: true },
+        { name: "🌐 iSeek.pro",        value: "iSeek — CSRF + redirect",                  inline: true },
+        { name: "🏥 DataSUS",           value: "SI-PNI — JSF + SHA-512",                   inline: true },
+        { name: "💉 SIPNI v2",          value: "SI-PNI — AJAX 4-step (95% hit rate)",      inline: true },
+        { name: "📋 ConsultCenter",     value: "CakePHP login form",                        inline: true },
+        { name: "🧠 Mind-7",           value: "mind-7.org + Cloudflare bypass",             inline: true },
+        { name: "🛡️ SERPRO",          value: "radar.serpro.gov.br — API móvel Android",    inline: true },
+        { name: "🏨 SISREG III",        value: "sisregiii.saude.gov.br — SHA-256",          inline: true },
+        { name: "💳 CrediLink",         value: "Credicorp API Azure — JSON token",          inline: true },
+        { name: "📊 Serasa",            value: "serasaempreendedor.com.br — curl",          inline: true },
       )
-      .setFooter({ text: `${AUTHOR} • Expire em 60s` })],
-    components: [selectRow],
+      .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
+    components: [selectRow1, selectRow2],
   });
 
   // ── Await button click ────────────────────────────────────────────────────
@@ -4177,16 +4174,29 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "consultcenter" | "mind7";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
+    chk_sipni:         "sipni",
     chk_consultcenter: "consultcenter",
     chk_mind7:         "mind7",
+    chk_serpro:        "serpro",
+    chk_sisreg:        "sisreg",
+    chk_credilink:     "credilink",
+    chk_serasa:        "serasa",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
-  const targetLabel   = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
-  const targetIcon    = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
+  const targetLabel   = {
+    iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
+    consultcenter: "ConsultCenter", mind7: "Mind-7",
+    serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
+  }[target]!;
+  const targetIcon    = {
+    iseek: "🌐", datasus: "🏥", sipni: "💉",
+    consultcenter: "📋", mind7: "🧠",
+    serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
+  }[target]!;
   const concurrency   = 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────
@@ -4653,11 +4663,18 @@ async function main(): Promise<void> {
     }
 
     // Show target selector
-    const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek.pro").setStyle(ButtonStyle.Primary),
+    const fdRow1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐 iSeek").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥 DataSUS").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_sipni").setLabel("💉 SIPNI v2").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_consultcenter").setLabel("📋 ConsultCenter").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_mind7").setLabel("🧠 Mind-7").setStyle(ButtonStyle.Secondary),
+    );
+    const fdRow2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("chk_serpro").setLabel("🛡️ SERPRO").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
     );
 
@@ -4669,16 +4686,21 @@ async function main(): Promise<void> {
         `Escolha em qual sistema deseja verificar:`,
       )
       .addFields(
-        { name: "🌐 iSeek.pro",        value: "Login via CSRF + redirect",               inline: true },
-        { name: "🏥 DataSUS / SI-PNI", value: "Login via JSF + SHA-512",                inline: true },
-        { name: "📋 ConsultCenter",     value: "Login via formulário CakePHP",            inline: true },
-        { name: "🧠 Mind-7",           value: "mind-7.org (com bypass Cloudflare)",       inline: true },
+        { name: "🌐 iSeek.pro",    value: "iSeek — CSRF + redirect",               inline: true },
+        { name: "🏥 DataSUS",       value: "SI-PNI — JSF + SHA-512",                inline: true },
+        { name: "💉 SIPNI v2",      value: "SI-PNI — AJAX 4-step (95%)",            inline: true },
+        { name: "📋 ConsultCenter", value: "CakePHP login form",                     inline: true },
+        { name: "🧠 Mind-7",       value: "mind-7.org + Cloudflare bypass",          inline: true },
+        { name: "🛡️ SERPRO",      value: "radar.serpro.gov.br — API Android",       inline: true },
+        { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",       inline: true },
+        { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
+        { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",       inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` });
 
     let reply: import("discord.js").Message;
     try {
-      reply = await message.reply({ embeds: [selectEmbed], components: [selectRow] });
+      reply = await message.reply({ embeds: [selectEmbed], components: [fdRow1, fdRow2] });
     } catch {
       return;
     }
@@ -4701,12 +4723,23 @@ async function main(): Promise<void> {
       return;
     }
 
-    const fdTargetMap: Record<string, "iseek" | "datasus" | "consultcenter" | "mind7"> = {
-      chk_iseek: "iseek", chk_datasus: "datasus", chk_consultcenter: "consultcenter", chk_mind7: "mind7",
+    type FdTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa";
+    const fdTargetMap: Record<string, FdTarget> = {
+      chk_iseek: "iseek", chk_datasus: "datasus", chk_sipni: "sipni",
+      chk_consultcenter: "consultcenter", chk_mind7: "mind7",
+      chk_serpro: "serpro", chk_sisreg: "sisreg", chk_credilink: "credilink", chk_serasa: "serasa",
     };
     const target      = fdTargetMap[btn.customId] ?? "iseek";
-    const targetLabel = { iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", consultcenter: "ConsultCenter", mind7: "Mind-7" }[target]!;
-    const targetIcon  = { iseek: "🌐", datasus: "🏥", consultcenter: "📋", mind7: "🧠" }[target]!;
+    const targetLabel = {
+      iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
+      consultcenter: "ConsultCenter", mind7: "Mind-7",
+      serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
+    }[target]!;
+    const targetIcon  = {
+      iseek: "🌐", datasus: "🏥", sipni: "💉",
+      consultcenter: "📋", mind7: "🧠",
+      serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
+    }[target]!;
     const concurrency = 2;
 
     // ── Stop button setup ─────────────────────────────────────────────────────
