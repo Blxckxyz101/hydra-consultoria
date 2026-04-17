@@ -562,60 +562,99 @@ async function deployCommands(): Promise<void> {
 }
 
 // ── Target probe helper ───────────────────────────────────────────────────────
-async function probeTarget(rawUrl: string): Promise<ProbeResult> {
-  let url = rawUrl.trim();
-  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-  const t0 = Date.now();
+// Single HTTP probe: HEAD first, falls back to GET if HEAD is refused/blocked.
+// Returns statusCode so the UI can display it.
+async function singleProbe(url: string, timeoutMs = 5000): Promise<ProbeResult> {
+  const t0   = Date.now();
+  const ctrl = new AbortController();
+  const tid  = setTimeout(() => ctrl.abort(), timeoutMs);
+  const hdrs = {
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control":   "no-cache, no-store",
+    "Pragma":          "no-cache",
+  };
   try {
-    // 5s timeout — must be less than INTERVAL_SEC to prevent stacking
-    const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 5000);
-    const res   = await fetch(url, {
-      method:   "GET",
-      redirect: "follow",
-      signal:   ctrl.signal,
-      headers:  {
-        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control":   "no-cache",
-      },
-    });
-    clearTimeout(timer);
-    const latencyMs = Date.now() - t0;
-    if (res.status >= 500) {
-      return { up: false, latencyMs, reason: `HTTP ${res.status} — origin server error` };
+    // Use HEAD to avoid downloading the response body — much faster under attack load
+    let res = await fetch(url, { method: "HEAD", redirect: "follow", signal: ctrl.signal, headers: hdrs });
+
+    // Some servers return 405 (Method Not Allowed) for HEAD — fall back to GET
+    if (res.status === 405) {
+      const ctrl2 = new AbortController();
+      const tid2  = setTimeout(() => ctrl2.abort(), timeoutMs);
+      res = await fetch(url, { method: "GET", redirect: "follow", signal: ctrl2.signal, headers: hdrs });
+      clearTimeout(tid2);
     }
-    if (res.status === 429) {
-      // 429 = server is alive but ratelimiting — count as UP (degraded)
-      return { up: true, latencyMs: latencyMs + 5000, reason: `HTTP 429 — rate limiter hit (server alive, fighting back)` };
+
+    clearTimeout(tid);
+    const latencyMs  = Date.now() - t0;
+    const statusCode = res.status;
+
+    if (statusCode >= 500) {
+      return { up: false, latencyMs, statusCode, reason: `HTTP ${statusCode} — origin server error / crash` };
     }
-    return { up: true, latencyMs };
+    if (statusCode === 429) {
+      return { up: true, latencyMs: latencyMs + 5000, statusCode, reason: `HTTP 429 — rate limiter hit (server alive, fighting back)` };
+    }
+    if (statusCode === 503) {
+      return { up: false, latencyMs, statusCode, reason: `HTTP 503 — service unavailable (overloaded or crashed)` };
+    }
+    if (statusCode === 502 || statusCode === 504) {
+      return { up: false, latencyMs, statusCode, reason: `HTTP ${statusCode} — gateway/proxy error (backend down)` };
+    }
+    // 4xx are "alive but rejecting" — site is UP
+    return { up: true, latencyMs, statusCode };
   } catch (err: unknown) {
+    clearTimeout(tid);
     const latencyMs = Date.now() - t0;
     const msg = err instanceof Error ? err.message : String(err);
 
-    // ECONNREFUSED = server actively rejected → definitely crashed
     if (msg.includes("ECONNREFUSED") || msg.includes("refused")) {
-      return { up: false, latencyMs, reason: "Connection refused — server process crashed" };
+      return { up: false, latencyMs, statusCode: null, reason: "Connection refused — server process crashed" };
     }
-    // ENOTFOUND/NXDOMAIN = DNS gone → target unreachable
     if (msg.includes("ENOTFOUND") || msg.includes("NXDOMAIN")) {
-      return { up: false, latencyMs, reason: "DNS resolution failed — target unreachable" };
+      return { up: false, latencyMs, statusCode: null, reason: "DNS resolution failed — target unreachable" };
     }
-    // AbortError = our probe timed out (may be our network saturated or target slow)
-    if (msg.includes("abort") || msg.includes("AbortError") || msg.includes("The operation was aborted")) {
-      // Treat as degraded but NOT confirmed down — attack traffic may saturate our own outbound
-      return { up: true, latencyMs: 5001, reason: "Probe timed out — target slow or our network saturated" };
-    }
-    // ECONNRESET = TCP RST received (can be our side too under load)
     if (msg.includes("ECONNRESET") || msg.includes("reset")) {
-      return { up: true, latencyMs: 4500, reason: "Connection reset — possible overflow (check site)" };
+      return { up: true, latencyMs: 4500, statusCode: null, reason: "Connection reset — possible TCP overflow" };
     }
-    // Generic "fetch failed" / "TypeError" = our network stack is overwhelmed by attack traffic
-    // Do NOT count as target DOWN — this is a probe false positive during heavy attacks
-    return { up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" };
+    if (msg.includes("abort") || msg.includes("AbortError") || msg.includes("The operation was aborted")) {
+      return { up: true, latencyMs: 5100, statusCode: null, reason: "Probe timed out — target slow or pipes saturated" };
+    }
+    return { up: true, latencyMs: 5500, statusCode: null, reason: "Probe inconclusive — outbound network under load" };
   }
+}
+
+// Multi-probe: fire 2 quick independent probes and pick the WORST result.
+// This dramatically reduces false positives from transient network blips.
+// "Worst" = most informative: prefer confirmed-down over timeout, timeout over UP.
+async function probeTarget(rawUrl: string): Promise<ProbeResult> {
+  let url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+
+  // Two parallel probes with staggered timeouts (4.5s + 5s)
+  const [p1, p2] = await Promise.all([
+    singleProbe(url, 4500).catch(() => ({ up: true, latencyMs: 5500, statusCode: null, reason: "Probe inconclusive" } as ProbeResult)),
+    singleProbe(url, 5000).catch(() => ({ up: true, latencyMs: 5500, statusCode: null, reason: "Probe inconclusive" } as ProbeResult)),
+  ]);
+
+  // If either probe is definitively DOWN (5xx / refused), use that result
+  const def1 = !p1.up && (p1.reason?.includes("refused") || p1.reason?.includes("HTTP 5") || p1.reason?.includes("crash") || p1.reason?.includes("503") || p1.reason?.includes("502") || p1.reason?.includes("504"));
+  const def2 = !p2.up && (p2.reason?.includes("refused") || p2.reason?.includes("HTTP 5") || p2.reason?.includes("crash") || p2.reason?.includes("503") || p2.reason?.includes("502") || p2.reason?.includes("504"));
+
+  if (def1) return p1;
+  if (def2) return p2;
+
+  // Both timed out / inconclusive — return worst latency (highest) to show degradation
+  if (!p1.up && !p2.up) {
+    return p1.latencyMs >= p2.latencyMs ? p1 : p2;
+  }
+  if (!p1.up) return p2; // p2 is UP — use it (p1 was a blip)
+  if (!p2.up) return p1; // p1 is UP — use it (p2 was a blip)
+
+  // Both UP — return worst (highest) latency to not mask real degradation
+  return p1.latencyMs >= p2.latencyMs ? p1 : p2;
 }
 
 // ── Live attack monitor ───────────────────────────────────────────────────────
@@ -741,7 +780,8 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
   targetHistories.set(attackId, []);
   downAlertSent.set(attackId, false);
   let busy = false;
-  let nullConsecutive = 0; // consecutive null responses
+  let nullConsecutive   = 0; // consecutive null API responses
+  let discordFailCount  = 0; // consecutive Discord edit failures
 
   const stopMonitor = () => {
     clearInterval(tick);
@@ -809,18 +849,30 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
           embeds:     [buildAttackEmbed(attack, livePps, liveBps, live?.conns ?? 0, history, ppsHistory, proxyCount)],
           components: [row],
         });
+        discordFailCount = 0; // reset on success
       } catch (editErr) {
-        console.warn(`[MONITOR #${attackId}] embed edit failed:`, (editErr instanceof Error) ? editErr.message : editErr);
+        discordFailCount++;
+        const errMsg = (editErr instanceof Error) ? editErr.message : String(editErr);
+        console.warn(`[MONITOR #${attackId}] embed edit failed (${discordFailCount}x):`, errMsg);
+        // Stop monitor if Discord token expired (Unknown Interaction / Unknown Message errors)
+        // 10+ consecutive failures = message deleted or interaction token expired (15min)
+        if (discordFailCount >= 10) {
+          console.log(`[MONITOR #${attackId}] Stopping — Discord edit failed ${discordFailCount} times consecutively.`);
+          stopMonitor();
+          return;
+        }
       }
 
       // ── DM alert when target goes definitively DOWN ─────────────────────
-      if (
-        userId &&
-        botClient &&
-        !downAlertSent.get(attackId) &&
-        !probe.up &&
-        (probe.reason?.includes("refused") || probe.reason?.includes("ECONNREFUSED"))
-      ) {
+      const isDefinitivelyDown = !probe.up && (
+        probe.reason?.includes("refused") ||
+        probe.reason?.includes("HTTP 5") ||
+        probe.reason?.includes("crash") ||
+        probe.reason?.includes("503") ||
+        probe.reason?.includes("502") ||
+        probe.reason?.includes("504")
+      );
+      if (userId && botClient && !downAlertSent.get(attackId) && isDefinitivelyDown) {
         downAlertSent.set(attackId, true);
         try {
           const user = await botClient.users.fetch(userId);
@@ -1108,6 +1160,43 @@ async function handleAttackStats(interaction: ChatInputCommandInteraction): Prom
 
 const checkCache = new Map<string, CheckResult>();
 
+// Detect CDN/WAF from response headers
+function detectCdnAndProtection(headers: Headers): { cdn: string | null; protection: string | null; cfRay: string | null; xCache: string | null } {
+  const server    = (headers.get("server") ?? "").toLowerCase();
+  const via       = (headers.get("via") ?? "").toLowerCase();
+  const xPowered  = (headers.get("x-powered-by") ?? "").toLowerCase();
+  const cfRay     = headers.get("cf-ray") ?? null;
+  const xCache    = headers.get("x-cache") ?? headers.get("x-cache-status") ?? null;
+  const xAmz      = headers.get("x-amz-cf-id") ?? headers.get("x-amz-request-id");
+  const xSucuri   = headers.get("x-sucuri-id") ?? headers.get("x-sucuri-cache");
+  const xAkamai   = headers.get("x-akamai-request-id") ?? headers.get("x-check-cacheable");
+  const xFastly   = headers.get("x-fastly-request-id") ?? headers.get("fastly-debug-digest");
+  const xVarnish  = headers.get("x-varnish");
+
+  let cdn: string | null = null;
+  let protection: string | null = null;
+
+  if (cfRay || server.includes("cloudflare") || via.includes("cloudflare"))   cdn = "Cloudflare";
+  else if (xAmz || server.includes("amazons3") || server.includes("cloudfront")) cdn = "AWS CloudFront";
+  else if (xAkamai || via.includes("akamai"))                                  cdn = "Akamai";
+  else if (xFastly || via.includes("fastly"))                                  cdn = "Fastly";
+  else if (xVarnish || server.includes("varnish"))                             cdn = "Varnish Cache";
+  else if (via.includes("squid"))                                               cdn = "Squid Proxy";
+  else if (server.includes("bunny") || headers.get("bunny-request-id"))        cdn = "BunnyCDN";
+  else if (headers.get("x-vercel-id") || server.includes("vercel"))            cdn = "Vercel Edge";
+  else if (headers.get("x-netlify-id") || server.includes("netlify"))          cdn = "Netlify Edge";
+
+  if (xSucuri)                                                                  protection = "Sucuri WAF";
+  else if (headers.get("x-waf-event-info") || headers.get("x-fw-type"))        protection = "Fortinet WAF";
+  else if (headers.get("x-distil-cs"))                                          protection = "Distil Networks";
+  else if (headers.get("x-datadome-cid"))                                       protection = "DataDome Bot Mgmt";
+  else if (headers.get("x-px-authorization") || headers.get("x-perimeterx"))   protection = "PerimeterX";
+  else if (cfRay)                                                                protection = "Cloudflare";
+  else if (xPowered.includes("imperva") || server.includes("incapsula"))        protection = "Imperva WAF";
+
+  return { cdn, protection, cfRay, xCache };
+}
+
 async function handleCheck(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
   let rawTarget = interaction.options.getString("target", true).trim();
@@ -1121,51 +1210,135 @@ async function handleCheck(interaction: ChatInputCommandInteraction): Promise<vo
       new EmbedBuilder()
         .setColor(COLORS.GOLD)
         .setTitle("🌐 VERIFICANDO SITE...")
-        .setDescription(`Conectando a \`${rawTarget}\`...`)
+        .setDescription(`Enviando **3 probes paralelas** para \`${rawTarget}\`...`)
         .setFooter({ text: AUTHOR }),
     ],
   });
 
-  const start = Date.now();
-  let result: CheckResult;
-  try {
-    const res = await fetch(rawTarget, {
-      method:   "GET",
-      redirect: "follow",
-      signal:   AbortSignal.timeout(8000),
-      headers:  { "User-Agent": "Mozilla/5.0 (LelouuchBot/2.0; CheckCmd)" },
+  // Fire 3 independent probes simultaneously for reliability
+  const PROBES = 3;
+  const PROBE_TIMEOUT = 7000;
+  const hdrs = {
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Cache-Control":   "no-cache, no-store",
+    "Pragma":          "no-cache",
+  };
+
+  type SingleCheckResult = {
+    ok:           boolean;
+    statusCode:   number | null;
+    latencyMs:    number;
+    serverHeader: string | null;
+    contentType:  string | null;
+    redirected:   boolean;
+    finalUrl:     string | null;
+    headers?:     Headers;
+    error:        string | null;
+  };
+
+  const runProbe = async (): Promise<SingleCheckResult> => {
+    const t0   = Date.now();
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT);
+    try {
+      const res = await fetch(rawTarget, { method: "HEAD", redirect: "follow", signal: ctrl.signal, headers: hdrs });
+      clearTimeout(tid);
+      const latencyMs = Date.now() - t0;
+      return {
+        ok:           res.status < 500,
+        statusCode:   res.status,
+        latencyMs,
+        serverHeader: res.headers.get("server") ?? res.headers.get("x-powered-by") ?? null,
+        contentType:  null, // HEAD won't have it; will use GET fallback below
+        redirected:   res.redirected,
+        finalUrl:     res.redirected ? res.url : null,
+        headers:      res.headers,
+        error:        null,
+      };
+    } catch (err: unknown) {
+      clearTimeout(tid);
+      const latencyMs = Date.now() - t0;
+      return {
+        ok: false, statusCode: null, latencyMs,
+        serverHeader: null, contentType: null, redirected: false, finalUrl: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
+
+  // Fire all probes in parallel
+  const probeResults = await Promise.all(Array.from({ length: PROBES }, runProbe));
+
+  const successfulProbes = probeResults.filter(p => p.ok && p.statusCode !== null);
+  const anySuccess       = successfulProbes.length > 0;
+
+  // One GET probe for content-type and CDN headers (only if at least one HEAD succeeded)
+  let getResult: SingleCheckResult | null = null;
+  if (anySuccess) {
+    getResult = await runProbe().then(async () => {
+      const t0   = Date.now();
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT);
+      try {
+        const res = await fetch(rawTarget, { method: "GET", redirect: "follow", signal: ctrl.signal, headers: hdrs });
+        clearTimeout(tid);
+        return {
+          ok:           res.status < 500,
+          statusCode:   res.status,
+          latencyMs:    Date.now() - t0,
+          serverHeader: res.headers.get("server") ?? res.headers.get("x-powered-by") ?? null,
+          contentType:  res.headers.get("content-type"),
+          redirected:   res.redirected,
+          finalUrl:     res.redirected ? res.url : null,
+          headers:      res.headers,
+          error:        null,
+        } satisfies SingleCheckResult;
+      } catch (err: unknown) {
+        clearTimeout(tid);
+        return { ok: false, statusCode: null, latencyMs: Date.now() - t0, serverHeader: null, contentType: null, redirected: false, finalUrl: null, error: err instanceof Error ? err.message : String(err) } satisfies SingleCheckResult;
+      }
     });
-    const ms           = Date.now() - start;
-    const finalUrl     = res.url !== rawTarget ? res.url : null;
-    const serverHeader = res.headers.get("server") ?? res.headers.get("x-powered-by") ?? null;
-    const contentType  = res.headers.get("content-type") ?? null;
-    const httpVersion: string | null = null;
-    result = {
-      target:         rawTarget,
-      statusCode:     res.status,
-      responseTimeMs: ms,
-      serverHeader,
-      contentType,
-      redirected:     res.redirected,
-      finalUrl,
-      httpVersion,
-      error:          null,
-    };
-  } catch (err: unknown) {
-    const ms  = Date.now() - start;
-    const msg = err instanceof Error ? err.message : String(err);
-    result = {
-      target:         rawTarget,
-      statusCode:     null,
-      responseTimeMs: ms,
-      serverHeader:   null,
-      contentType:    null,
-      redirected:     false,
-      finalUrl:       null,
-      httpVersion:    null,
-      error:          msg,
-    };
   }
+
+  // Aggregate results
+  const allTimes   = probeResults.map(p => p.latencyMs);
+  const bestMs     = Math.min(...allTimes);
+  const worstMs    = Math.max(...allTimes);
+  const avgMs      = Math.round(allTimes.reduce((a, b) => a + b, 0) / allTimes.length);
+
+  // Representative probe: prefer a successful one, else first
+  const rep = successfulProbes[0] ?? probeResults[0];
+
+  // CDN/protection detection from headers
+  const refHeaders = getResult?.headers ?? rep.headers;
+  const { cdn, protection, cfRay, xCache } = refHeaders ? detectCdnAndProtection(refHeaders) : { cdn: null, protection: null, cfRay: null, xCache: null };
+
+  // Main error message from probe failures
+  const errorMsg = !anySuccess
+    ? (rep.error ?? probeResults.map(p => p.error).find(Boolean) ?? "All probes failed — target unreachable")
+    : null;
+
+  const result: CheckResult = {
+    target:         rawTarget,
+    statusCode:     rep.statusCode,
+    responseTimeMs: rep.latencyMs,
+    serverHeader:   getResult?.serverHeader ?? rep.serverHeader,
+    contentType:    getResult?.contentType ?? null,
+    redirected:     rep.redirected,
+    finalUrl:       rep.finalUrl,
+    httpVersion:    null,
+    error:          errorMsg,
+    probeCount:     PROBES,
+    bestMs,
+    worstMs,
+    avgMs,
+    successCount:   successfulProbes.length,
+    cdn,
+    protection,
+    cfRay,
+    xCacheHeader:   xCache,
+  };
 
   const embed = buildCheckEmbed(result, lang);
   const msg   = await interaction.editReply({ embeds: [embed], components: [buildLangRow(lang, "check")] });

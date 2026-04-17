@@ -222,9 +222,10 @@ const connBar = (conns: number) => {
 
 // ── Target probe result ───────────────────────────────────────────────────────
 export type ProbeResult = {
-  up:        boolean;
-  latencyMs: number;
-  reason?:   string;
+  up:          boolean;
+  latencyMs:   number;
+  statusCode?: number | null;
+  reason?:     string;
 };
 
 const CONN_METHODS = new Set([
@@ -233,13 +234,14 @@ const CONN_METHODS = new Set([
   "http-smuggling", "h2-ping-storm",
 ]);
 
-// Require ECONNREFUSED for definitive down — DNS failures excluded (false positive risk)
-const DEFINITIVE_DOWN = (reason?: string) => Boolean(reason?.includes("refused"));
+// Definitive down: ECONNREFUSED or HTTP 5xx (server-side crash/error)
+const DEFINITIVE_DOWN = (reason?: string) =>
+  Boolean(reason?.includes("refused") || reason?.includes("HTTP 5") || reason?.includes("crash"));
 
 const sparkDot = (p: ProbeResult) => {
   if (!p.up && DEFINITIVE_DOWN(p.reason)) return "🔴";
   if (!p.up) return "🟠";
-  if (p.latencyMs > 5000) return "🟡";
+  if (p.latencyMs > 5000) return "⬛";
   if (p.latencyMs > 4000) return "🟡";
   if (p.latencyMs > 1500) return "🟠";
   return "🟢";
@@ -253,57 +255,76 @@ const buildStatusField = (history: ProbeResult[], method: string) => {
   const downRun5 = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length >= 5;
 
   const causeMap: Record<string, string> = {
-    "geass-override":       "All 33 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT ∞)",
-    "slow-read":            "Server send buffer full — all threads blocked on TCP write",
-    "range-flood":          "500× byte-range I/O exhausted disk seek queue — server froze",
-    "xml-bomb":             "XML entity expansion exceeded memory — OOM parser crash",
-    "h2-ping-storm":        "H2 PING ACK queue overflowed — server CPU melted",
-    "http-smuggling":       "Request queue poisoned — backend thread pool deadlocked",
-    "doh-flood":            "DNS resolver thread pool exhausted — all lookups queued forever",
-    "keepalive-exhaust":    "Keep-alive pool saturated — MaxKeepAliveRequests hit on all workers",
-    "app-smart-flood":      "DB query pool drained — all backend threads blocked on SQL",
-    "large-header-bomb":    "HTTP parser buffer overflowed — server OOM on header allocation",
-    "http2-priority-storm": "H2 stream dependency tree exhausted — priority queue OOM",
-    "http2-flood":          "H2 connection table saturated (CVE-2023-44487)",
-    "http2-continuation":   "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
-    "waf-bypass":           "WAF layer overwhelmed — origin exposed",
-    "conn-flood":           "TLS socket table exhausted — nginx fell",
-    "slowloris":            "Thread pool saturated — server frozen",
-    "tls-renego":           "TLS CPU exhausted — handshake queue overflowed",
-    "ws-flood":             "WebSocket goroutine pool drained — server unresponsive",
-    "graphql-dos":          "GraphQL resolver CPU limit hit — exponential query collapse",
-    "quic-flood":           "QUIC DCID table exhausted — HTTP/3 crypto state OOM",
-    "cache-poison":         "CDN cache poisoned — 100% origin miss, server crushed",
-    "rudy-v2":              "Multipart buffer exhausted — server thread pool frozen",
-    "ssl-death":            "TLS crypto thread pool saturated — AES-GCM queue overflowed",
-    "udp-flood":            "Bandwidth saturated at L4",
-    "syn-flood":            "TCP connection table exhausted — SYN_RECV backlog full",
-    "http-bypass":          "Proxy bypass overwhelmed origin — WAF bypassed",
-    "dns-amp":              "NS server flooded — DNS resolution chain collapsed",
+    "geass-override":        "All 37 ARES vectors converged — ABSOLUTE ANNIHILATION (OMNIVECT ∞)",
+    "slow-read":             "Server send buffer full — all threads blocked on TCP write",
+    "range-flood":           "500× byte-range I/O exhausted disk seek queue — server froze",
+    "xml-bomb":              "XML entity expansion exceeded memory — OOM parser crash",
+    "h2-ping-storm":         "H2 PING ACK queue overflowed — server CPU melted",
+    "http-smuggling":        "Request queue poisoned — backend thread pool deadlocked",
+    "doh-flood":             "DNS resolver thread pool exhausted — all lookups queued forever",
+    "keepalive-exhaust":     "Keep-alive pool saturated — MaxKeepAliveRequests hit on all workers",
+    "app-smart-flood":       "DB query pool drained — all backend threads blocked on SQL",
+    "large-header-bomb":     "HTTP parser buffer overflowed — server OOM on header allocation",
+    "http2-priority-storm":  "H2 stream dependency tree exhausted — priority queue OOM",
+    "http2-flood":           "H2 connection table saturated (CVE-2023-44487)",
+    "http2-continuation":    "Header reassembly buffer exhausted (CVE-2024-27316) — OOM",
+    "waf-bypass":            "WAF layer overwhelmed — origin exposed, all requests hitting backend raw",
+    "conn-flood":            "TLS socket table exhausted — nginx/Apache fell",
+    "slowloris":             "Thread pool saturated — server frozen on partial connections",
+    "tls-renego":            "TLS CPU exhausted — handshake queue overflowed",
+    "ws-flood":              "WebSocket goroutine pool drained — server unresponsive",
+    "graphql-dos":           "GraphQL resolver CPU limit hit — exponential query collapse",
+    "quic-flood":            "QUIC DCID table exhausted — HTTP/3 crypto state OOM",
+    "cache-poison":          "CDN cache poisoned — 100% origin miss, server crushed",
+    "rudy-v2":               "Multipart upload buffer exhausted — server thread pool frozen",
+    "ssl-death":             "TLS crypto thread pool saturated — AES-GCM queue overflowed",
+    "udp-flood":             "UDP bandwidth saturated at L4 — pipes full",
+    "syn-flood":             "TCP connection table exhausted — SYN_RECV backlog full",
+    "http-bypass":           "WAF bypassed via proxy rotation — origin flooded directly",
+    "dns-amp":               "NS server flooded — DNS resolution chain collapsed",
+    "h2-rst-burst":          "RST_STREAM storm exhausted H2 session state — CVE-2023-44487 variant",
+    "grpc-flood":            "gRPC channel pool exhausted — server goroutines saturated",
+    "icmp-flood":            "ICMP echo queue overflowed — kernel packet buffer full",
+    "ntp-amp":               "NTP amplification overloaded inbound — bandwidth ceiling hit",
+    "mem-amp":               "Memcached amplification collapsed inbound bandwidth",
+    "ssdp-amp":              "SSDP reflection packets saturated UDP socket queue",
+    "tcp-flood":             "TCP segment queue exhausted — kernel connection table full",
+    "hpack-bomb":            "HPACK huffman expansion OOM — header compression table exploded",
+    "h2-settings-storm":     "H2 SETTINGS flood exhausted ACK buffer — connection deadlocked",
+    "http-pipeline":         "HTTP pipelining queue filled — worker threads all blocked on I/O",
+    "rudy":                  "Slow POST body exhausted backend upload thread pool",
   };
 
   let statusLine: string;
   if (!last.up && DEFINITIVE_DOWN(last.reason) && downRun5) {
     const cause = causeMap[method] ?? "Server resources exhausted";
-    statusLine = `**💀 TARGET DOWN** — ${cause}`;
+    const codeTag = last.statusCode ? ` [HTTP ${last.statusCode}]` : "";
+    statusLine = `**💀 TARGET DOWN**${codeTag} — ${cause}`;
   } else if (!last.up && DEFINITIVE_DOWN(last.reason)) {
     const downCount = recent8.filter(p => !p.up && DEFINITIVE_DOWN(p.reason)).length;
-    statusLine = `**🔴 REFUSING** — TCP port rejected (${downCount}/5 confirms) — verifying…`;
+    const codeTag   = last.statusCode ? ` HTTP ${last.statusCode}` : "";
+    statusLine = `**🔴 DOWN${codeTag}** — (${downCount}/5 confirms) — ${last.reason?.replace(/^HTTP \d+ — /, "") ?? "server error"}`;
   } else if (!last.up) {
-    statusLine = `**🟠 UNREACHABLE** — ${last.reason ?? "network error"} — may be our network`;
+    statusLine = `**🟠 UNREACHABLE** — ${last.reason ?? "network error"} — may be our outbound`;
   } else if (last.latencyMs > 5000) {
-    statusLine = `**🟡 DEGRADED** — ${last.latencyMs.toLocaleString()}ms (heavy load)`;
+    const codeTag = last.statusCode ? ` [${last.statusCode}]` : "";
+    statusLine = `**⬛ TIMEOUT${codeTag}** — probe timed out (>5s) — target slow or our pipes saturated`;
   } else if (last.latencyMs > 4000) {
-    statusLine = `**🟠 CRITICAL LAG** — ${last.latencyMs.toLocaleString()}ms (near collapse)`;
+    const codeTag = last.statusCode ? ` [${last.statusCode}]` : "";
+    statusLine = `**🟡 CRITICAL LAG${codeTag}** — ${last.latencyMs.toLocaleString()}ms (near collapse)`;
   } else if (last.latencyMs > 1500) {
-    statusLine = `**🟠 UNDER STRESS** — ${last.latencyMs.toLocaleString()}ms (response degrading)`;
+    const codeTag = last.statusCode ? ` [${last.statusCode}]` : "";
+    statusLine = `**🟠 UNDER STRESS${codeTag}** — ${last.latencyMs.toLocaleString()}ms (response degrading)`;
   } else if (last.latencyMs > 800) {
-    statusLine = `**🟡 SLOWING** — ${last.latencyMs.toLocaleString()}ms (attack taking effect)`;
+    const codeTag = last.statusCode ? ` [${last.statusCode}]` : "";
+    statusLine = `**🟡 SLOWING${codeTag}** — ${last.latencyMs.toLocaleString()}ms (attack taking effect)`;
   } else {
-    statusLine = `**🟢 ONLINE** — ${last.latencyMs.toLocaleString()}ms (resisting)`;
+    const codeTag = last.statusCode ? ` [${last.statusCode}]` : "";
+    statusLine = `**🟢 ONLINE${codeTag}** — ${last.latencyMs.toLocaleString()}ms (resisting)`;
   }
 
-  return { name: "🌐 Target Status", value: `${dots}\n${statusLine}`, inline: false };
+  const legend = "🟢 OK  🟠 Stress  🟡 Slow  ⬛ Timeout  🔴 Down";
+  return { name: "🌐 Target Status", value: `${dots}\n${statusLine}\n-# ${legend}`, inline: false };
 };
 
 // ── Attack Running/Live Embed ─────────────────────────────────────────────────
@@ -418,7 +439,7 @@ export function buildAttackEmbed(
     }
   }
 
-  embed.setFooter(footer(`Attack #${attack.id} • updates every 5s`)).setTimestamp();
+  embed.setFooter(footer(`Attack #${attack.id} • updates every 8s`)).setTimestamp();
   return embed;
 }
 
@@ -1200,6 +1221,16 @@ export interface CheckResult {
   finalUrl:       string | null;
   httpVersion:    string | null;
   error:          string | null;
+  // Multi-probe extras
+  probeCount?:    number;
+  bestMs?:        number;
+  worstMs?:       number;
+  avgMs?:         number;
+  successCount?:  number;
+  cdn?:           string | null;
+  protection?:    string | null;
+  cfRay?:         string | null;
+  xCacheHeader?:  string | null;
 }
 
 export function buildCheckEmbed(r: CheckResult, lang: "en" | "pt" = "pt"): EmbedBuilder {
@@ -1243,9 +1274,22 @@ export function buildCheckEmbed(r: CheckResult, lang: "en" | "pt" = "pt"): Embed
     ? `\`${r.statusCode}\` ${r.httpVersion ? `· \`${r.httpVersion}\`` : ""}`
     : (pt ? "`sem resposta`" : "`no response`");
 
+  // Build latency display from multi-probe data if available, else single probe
+  const hasMulti = typeof r.bestMs === "number" && typeof r.worstMs === "number";
   const pingLine = r.error
     ? (pt ? "n/a (sem resposta)" : "n/a (no response)")
-    : `\`${r.responseTimeMs}ms\`\n${pingBar(r.responseTimeMs)}`;
+    : hasMulti
+      ? [
+          `⚡ Melhor: \`${r.bestMs}ms\``,
+          `🟡 Pior:  \`${r.worstMs}ms\``,
+          `📊 Média: \`${r.avgMs}ms\``,
+          pingBar(r.avgMs ?? r.responseTimeMs),
+        ].join("\n")
+      : `\`${r.responseTimeMs}ms\`\n${pingBar(r.responseTimeMs)}`;
+
+  const probeSuccessLine = hasMulti && typeof r.probeCount === "number"
+    ? `${r.successCount ?? 0}/${r.probeCount} probes OK`
+    : null;
 
   const verdict = r.error    ? T.offline
                 : warn       ? T.warn400
@@ -1255,21 +1299,40 @@ export function buildCheckEmbed(r: CheckResult, lang: "en" | "pt" = "pt"): Embed
   const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(T.title)
-    .setDescription(T.desc)
+    .setDescription(r.error
+      ? (pt ? `❌ Falha ao conectar em \`${r.target}\`` : `❌ Could not connect to \`${r.target}\``)
+      : T.desc
+    )
     .addFields(
-      { name: T.status,  value: statusLine,                                           inline: true },
-      { name: T.ping,    value: pingLine,                                              inline: true },
+      { name: T.status,  value: statusLine + (probeSuccessLine ? `\n-# ${probeSuccessLine}` : ""), inline: true },
+      { name: T.ping,    value: pingLine, inline: true },
       { name: T.server,  value: r.serverHeader  ? `\`${r.serverHeader}\``  : T.unknown, inline: true },
-      { name: T.ctype,   value: r.contentType   ? `\`${r.contentType.split(";")[0]}\`` : T.unknown, inline: true },
-      { name: T.redir,   value: r.redirected && r.finalUrl ? `✅ → \`${r.finalUrl}\`` : "❌", inline: true },
-      { name: T.verdict, value: verdict,                                               inline: false },
     );
 
-  if (r.error) {
-    embed.addFields({ name: T.errLabel, value: `\`${r.error}\``, inline: false });
+  // CDN / Protection row
+  const cdnLine = r.cdn ? `🛡️ CDN: \`${r.cdn}\`` : null;
+  const protLine = r.protection ? `🔒 WAF: \`${r.protection}\`` : null;
+  const cfRayLine = r.cfRay ? `-# CF-Ray: \`${r.cfRay}\`` : null;
+
+  if (cdnLine || protLine) {
+    embed.addFields({
+      name:   pt ? "🌐 Infra" : "🌐 Infra",
+      value:  [cdnLine, protLine, cfRayLine].filter(Boolean).join("\n") || T.unknown,
+      inline: true,
+    });
   }
 
-  embed.setFooter(footer()).setTimestamp();
+  embed.addFields(
+    { name: T.ctype,   value: r.contentType   ? `\`${r.contentType.split(";")[0]}\`` : T.unknown, inline: true },
+    { name: T.redir,   value: r.redirected && r.finalUrl ? `✅ → \`${r.finalUrl.slice(0, 60)}\`` : "❌", inline: true },
+    { name: T.verdict, value: verdict, inline: false },
+  );
+
+  if (r.error) {
+    embed.addFields({ name: T.errLabel, value: `\`${r.error.slice(0, 200)}\``, inline: false });
+  }
+
+  embed.setFooter(footer(pt ? "3 probes paralelas enviadas" : "3 parallel probes sent")).setTimestamp();
   return embed;
 }
 
