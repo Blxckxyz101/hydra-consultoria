@@ -588,12 +588,16 @@ export function buildAnalyzeEmbed(result: AnalyzeResult): EmbedBuilder {
     ? result.allIPs.slice(0, 5).join(", ") + (result.allIPs.length > 5 ? ` +${result.allIPs.length - 5} more` : "")
     : result.ip ?? "Unknown";
 
-  const recoLines = top6.length > 0
-    ? top6.map((r, i) => {
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const tier  = tierIcon(r.tier ?? "");
-        return `${medal} ${tier} **${r.name}** — Score: **${r.score}** | Tier: **${r.tier ?? "?"}**\n> ${r.reason}`;
-      }).join("\n\n")
+  // Discord field value hard-limit: 1024 chars.
+  // Show top 4 recs with reason capped at 110 chars each to stay safely under 1024.
+  const top4 = top6.slice(0, 4);
+  const recoLines = top4.length > 0
+    ? top4.map((r, i) => {
+        const medal  = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const tier   = tierIcon(r.tier ?? "");
+        const reason = (r.reason ?? "").length > 110 ? r.reason.slice(0, 107) + "…" : r.reason;
+        return `${medal} ${tier} **${r.name}** — Score: **${r.score}** | Tier: **${r.tier ?? "?"}**\n> ${reason}`;
+      }).join("\n\n").slice(0, 1020)
     : "No recommendations available.";
 
   return new EmbedBuilder()
