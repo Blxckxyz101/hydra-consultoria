@@ -939,6 +939,10 @@ function buildLauncherEmbed(target: string, session: LaunchSession, selectedMeth
 
 // ── Command Handlers ──────────────────────────────────────────────────────────
 async function handleAttackStart(interaction: ChatInputCommandInteraction): Promise<void> {
+  // Guard: Discord occasionally delivers the same interaction twice during reconnects.
+  // Replying to an already-acknowledged interaction throws DiscordAPIError[40060].
+  if (interaction.replied || interaction.deferred) return;
+
   const target  = interaction.options.getString("target", true);
   const userId  = interaction.user.id;
 
@@ -1338,45 +1342,73 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
   }
 }
 
+// Per-user select-menu lock — prevents race when user selects two menus in rapid succession
+const selectMenuLock = new Set<string>();
+
 // ── Select Menu Handler ───────────────────────────────────────────────────────
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
+  // ★ Acknowledge IMMEDIATELY — Discord invalidates the token after 3 seconds.
+  // Using deferUpdate() here means we have up to 15 minutes for editReply().
+  // NOT deferring is the root cause of DiscordAPIError[10062] (Unknown interaction).
+  await interaction.deferUpdate();
+
   const userId  = interaction.user.id;
   const session = pendingSessions.get(userId);
-  if (!session) { await interaction.deferUpdate(); return; }
+  if (!session) return; // already deferred above — safe to return without editReply
 
-  const value = interaction.values[0];
-
-  if (interaction.customId === "select_method" || interaction.customId === "select_method_2") {
-    // Update selected method — both rows feed into the same pendingMethodMap
-    pendingMethodMap.set(userId, value);
-  } else if (interaction.customId === "select_duration") {
-    session.duration = parseInt(value, 10);
-    pendingSessions.set(userId, session);
-  } else if (interaction.customId === "select_threads") {
-    session.threads = parseInt(value, 10);
-    pendingSessions.set(userId, session);
+  // Per-user lock: if a previous select menu update is still in-flight for this user,
+  // just update state and skip the editReply — the in-flight one will use fresh state.
+  if (selectMenuLock.has(userId)) {
+    // Still update state even if we skip the visual update
+    const value = interaction.values[0];
+    if (interaction.customId === "select_method" || interaction.customId === "select_method_2") {
+      pendingMethodMap.set(userId, value);
+    } else if (interaction.customId === "select_duration") {
+      session.duration = parseInt(value, 10);
+      pendingSessions.set(userId, session);
+    } else if (interaction.customId === "select_threads") {
+      session.threads = parseInt(value, 10);
+      pendingSessions.set(userId, session);
+    }
+    return;
   }
 
-  const currentMethod = pendingMethodMap.get(userId);
+  selectMenuLock.add(userId);
+  try {
+    const value = interaction.values[0];
 
-  // Rebuild components with Launch button enabled if method is selected
-  const components = buildLauncherComponents(session.target);
-  const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId("launch_attack")
-      .setLabel("🚀 LAUNCH")
-      .setStyle(ButtonStyle.Danger)
-      .setDisabled(!currentMethod), // enabled once method is chosen
-    new ButtonBuilder()
-      .setCustomId("cancel_launch")
-      .setLabel("✖ Cancel")
-      .setStyle(ButtonStyle.Secondary),
-  );
+    if (interaction.customId === "select_method" || interaction.customId === "select_method_2") {
+      pendingMethodMap.set(userId, value);
+    } else if (interaction.customId === "select_duration") {
+      session.duration = parseInt(value, 10);
+      pendingSessions.set(userId, session);
+    } else if (interaction.customId === "select_threads") {
+      session.threads = parseInt(value, 10);
+      pendingSessions.set(userId, session);
+    }
 
-  await interaction.update({
-    embeds: [buildLauncherEmbed(session.target, session, currentMethod)],
-    components: [...components, buttonRow],
-  });
+    const currentMethod = pendingMethodMap.get(userId);
+
+    const components = buildLauncherComponents(session.target);
+    const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("launch_attack")
+        .setLabel("🚀 LAUNCH")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!currentMethod),
+      new ButtonBuilder()
+        .setCustomId("cancel_launch")
+        .setLabel("✖ Cancel")
+        .setStyle(ButtonStyle.Secondary),
+    );
+
+    await interaction.editReply({
+      embeds: [buildLauncherEmbed(session.target, session, currentMethod)],
+      components: [...components, buttonRow],
+    });
+  } finally {
+    selectMenuLock.delete(userId);
+  }
 }
 
 // Track selected method separately (not in LaunchSession to keep it clean)

