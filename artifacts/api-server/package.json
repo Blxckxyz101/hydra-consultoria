@@ -20,7 +20,8 @@
     "openai": "^6",
     "pino": "^9",
     "pino-http": "^10",
-    "raw-socket": "^1.8.1"
+    "raw-socket": "^1.8.1",
+    "undici": "^8.1.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

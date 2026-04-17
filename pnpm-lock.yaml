@@ -199,6 +199,9 @@ importers:
       raw-socket:
         specifier: ^1.8.1
         version: 1.8.1
+      undici:
+        specifier: ^8.1.0
+        version: 8.1.0
     devDependencies:
       '@types/cookie-parser':
         specifier: ^1.4.10
@@ -3161,6 +3164,10 @@ packages:
     resolution: {integrity: sha512-sC+b0tB1whOCzbtlx20fx3WgCXwkW627p4EA9uM+/tNNPkSS+eSEld6pAs9nDv7WbY1UUljBMYPtu9BCOrCWKA==}
     engines: {node: '>=18.17'}
 
+  undici@8.1.0:
+    resolution: {integrity: sha512-E9MkTS4xXLnRPYqxH2e6Hr2/49e7WFDKczKcCaFH4VaZs2iNvHMqeIkyUAD9vM8kujy9TjVrRlQ5KkdEJxB2pw==}
+    engines: {node: '>=22.19.0'}
+
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
@@ -5853,6 +5860,8 @@ snapshots:
   undici-types@7.18.2: {}
 
   undici@6.24.1: {}
+
+  undici@8.1.0: {}
 
   unicorn-magic@0.3.0: {}
 

