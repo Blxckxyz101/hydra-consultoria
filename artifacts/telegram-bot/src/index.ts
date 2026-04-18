@@ -1,7 +1,6 @@
 import { Telegraf, Markup, type Context } from "telegraf";
 import { BOT_TOKEN, API_BASE, BOT_NAME, CHECKER_TARGETS } from "./config.js";
 import { message } from "telegraf/filters";
-import EventSource from "eventsource";
 
 if (!BOT_TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN is not set. Set it in environment variables.");
@@ -20,7 +19,7 @@ interface Session {
   running:      boolean;
   msgId?:       number;
   chatId?:      number;
-  es?:          EventSource;
+  abortCtrl?:   AbortController;
 }
 const sessions = new Map<number, Session>();
 
@@ -153,10 +152,10 @@ bot.command("errors", async ctx => {
 bot.command("stop", async ctx => {
   const s = getSession(ctx.from!.id);
   if (!s.running) { await ctx.reply("Nenhum checker ativo."); return; }
-  s.es?.close();
+  s.abortCtrl?.abort("user_stop");
   s.running = false;
   if (s.activeJobId) {
-    await fetch(`${API_BASE}/api/checker/stop/${s.activeJobId}`, { method: "POST" }).catch(() => {});
+    await fetch(`${API_BASE}/api/checker/${s.activeJobId}`, { method: "DELETE" }).catch(() => {});
   }
   await ctx.replyWithHTML(
     `<b>🛑 Checker parado</b>\n\n` +
@@ -350,50 +349,68 @@ async function startChecker(ctx: Context, target: string, label: string, s: Sess
     return;
   }
 
-  // SSE stream
-  const es = new EventSource(`${API_BASE}/api/checker/stream/${jobId}`);
-  s.es = es;
+  // SSE stream via fetch + ReadableStream
+  const abortCtrl = new AbortController();
+  s.abortCtrl = abortCtrl;
 
-  let done      = 0;
-  let lastEdit  = Date.now();
+  let done         = 0;
+  let lastEdit     = Date.now();
   const EDIT_INTERVAL = 3000;
 
-  es.onmessage = async (ev) => {
+  // Run async — don't await here so the command handler returns immediately
+  void (async () => {
     try {
-      const data = JSON.parse(ev.data as string) as {
-        type: string;
-        status?: string;
-        credential?: string;
-        detail?: string;
-        total?: number;
-        done?: number;
-      };
-      if (data.type === "result") {
-        done++;
-        const cred = `${data.credential ?? "?"} | ${data.detail ?? ""}`;
-        if (data.status === "HIT")        s.hits.push(cred);
-        else if (data.status === "FAIL")  s.fails.push(cred);
-        else                              s.errors.push(cred);
+      const resp = await fetch(`${API_BASE}/api/checker/${jobId}/stream`, {
+        signal: abortCtrl.signal,
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
-        const now = Date.now();
-        if (now - lastEdit > EDIT_INTERVAL) {
-          lastEdit = now;
-          await editProgress(ctx, chatId, s.msgId!, buildProgressMsg(label, creds.length, done, s.hits, s.fails, s.errors));
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let   buf     = "";
+
+      while (true) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+
+        buf += decoder.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+
+        for (const block of blocks) {
+          const line = block.trim();
+          if (!line.startsWith("data:")) continue;
+          let data: Record<string, unknown>;
+          try { data = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+          if (data["type"] === "result") {
+            done++;
+            const cred = `${String(data["credential"] ?? "?")} | ${String(data["detail"] ?? "")}`;
+            if      (data["status"] === "HIT")   s.hits.push(cred);
+            else if (data["status"] === "FAIL")  s.fails.push(cred);
+            else                                 s.errors.push(cred);
+
+            const now = Date.now();
+            if (now - lastEdit > EDIT_INTERVAL) {
+              lastEdit = now;
+              await editProgress(ctx, chatId, s.msgId!, buildProgressMsg(label, creds.length, done, s.hits, s.fails, s.errors));
+            }
+          } else if (data["type"] === "done" || data["type"] === "end") {
+            s.running = false;
+            await sendFinalReport(ctx, chatId, s.msgId!, label, creds.length, s.hits, s.fails, s.errors, userId);
+            return;
+          }
         }
-      } else if (data.type === "done" || data.type === "end") {
-        es.close();
+      }
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return; // user stopped
+    } finally {
+      if (s.running) {
         s.running = false;
         await sendFinalReport(ctx, chatId, s.msgId!, label, creds.length, s.hits, s.fails, s.errors, userId);
       }
-    } catch { /**/ }
-  };
-
-  es.onerror = async () => {
-    if (!s.running) return;
-    es.close();
-    s.running = false;
-    await sendFinalReport(ctx, chatId, s.msgId!, label, creds.length, s.hits, s.fails, s.errors, userId);
-  };
+    }
+  })();
 }
 
 async function sendFinalReport(
