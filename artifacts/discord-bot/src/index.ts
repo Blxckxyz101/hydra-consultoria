@@ -4174,7 +4174,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
       )
       .addFields(
         { name: "🎬 Streaming", value: "Crunchyroll · Netflix · Amazon Prime\nHBO Max · Disney+ · Paramount+", inline: true },
-        { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI\nConsultCenter · Mind-7 · SERPRO\nSISREG · CrediLink · Serasa", inline: true },
+        { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI · ConsultCenter\nMind-7 · SERPRO · SISREG · CrediLink\nSerasa · SINESP · Serasa Exp. · Instagram\nSISP-ES · SIGMA", inline: true },
       )
       .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
     components: [catRow],
@@ -4228,6 +4228,13 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
           new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_sinesp").setLabel("🚔 SINESP").setStyle(ButtonStyle.Secondary),
+        ),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_serasa_exp").setLabel("💼 Serasa Exp.").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_instagram").setLabel("📸 Instagram").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_sispes").setLabel("🏛️ SISP-ES").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_sigma").setLabel("🔵 SIGMA").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
         ),
       ];
@@ -4251,6 +4258,11 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
         { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
         { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
         { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",      inline: true },
+        { name: "🚔 SINESP",        value: "Segurança Pública — OAuth2 Android",    inline: true },
+        { name: "💼 Serasa Exp.",   value: "Experience — curl login API",            inline: true },
+        { name: "📸 Instagram",     value: "Meta Basic Display API",                 inline: true },
+        { name: "🏛️ SISP-ES",      value: "Portal ES — JSF + curl",                inline: true },
+        { name: "🔵 SIGMA",         value: "PC-MA — curl form login",               inline: true },
       ];
 
   await catInteraction.update({
@@ -4282,7 +4294,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
@@ -4301,6 +4313,9 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     chk_paramount:     "paramount",
     chk_sinesp:        "sinesp",
     chk_serasa_exp:    "serasa_exp",
+    chk_instagram:     "instagram",
+    chk_sispes:        "sispes",
+    chk_sigma:         "sigma",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
   const targetLabel   = {
@@ -4310,6 +4325,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
     hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
     sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
+    instagram: "Instagram", sispes: "SISP-ES", sigma: "SIGMA (PC-MA)",
   }[target]!;
   const targetIcon    = {
     iseek: "🌐", datasus: "🏥", sipni: "💉",
@@ -4318,12 +4334,14 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     crunchyroll: "🍥", netflix: "🎬", amazon: "📦",
     hbomax: "👑", disney: "🏰", paramount: "⭐",
     sinesp: "🚔", serasa_exp: "💼",
+    instagram: "📸", sispes: "🏛️", sigma: "🔵",
   }[target]!;
   const concurrency   = {
     iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
     serpro: 4, sisreg: 2, credilink: 4, serasa: 2,
     crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
-    sinesp: 2, serasa_exp: 3,
+    sinesp: 3, serasa_exp: 3,
+    instagram: 2, sispes: 2, sigma: 3,
   }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────
@@ -4819,7 +4837,7 @@ async function main(): Promise<void> {
           )
           .addFields(
             { name: "🎬 Streaming", value: "Crunchyroll · Netflix · Amazon Prime\nHBO Max · Disney+ · Paramount+", inline: true },
-            { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI\nConsultCenter · Mind-7 · SERPRO\nSISREG · CrediLink · Serasa", inline: true },
+            { name: "🔑 Logins",    value: "iSeek · DataSUS · SIPNI · ConsultCenter\nMind-7 · SERPRO · SISREG · CrediLink\nSerasa · SINESP · Serasa Exp. · Instagram\nSISP-ES · SIGMA", inline: true },
           )
           .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
         components: [fdCatRow],
@@ -4875,6 +4893,13 @@ async function main(): Promise<void> {
             new ButtonBuilder().setCustomId("chk_sisreg").setLabel("🏨 SISREG III").setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId("chk_credilink").setLabel("💳 CrediLink").setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId("chk_serasa").setLabel("📊 Serasa").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_sinesp").setLabel("🚔 SINESP").setStyle(ButtonStyle.Secondary),
+          ),
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("chk_serasa_exp").setLabel("💼 Serasa Exp.").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_instagram").setLabel("📸 Instagram").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_sispes").setLabel("🏛️ SISP-ES").setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId("chk_sigma").setLabel("🔵 SIGMA").setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
           ),
         ];
@@ -4898,6 +4923,11 @@ async function main(): Promise<void> {
           { name: "🏨 SISREG III",    value: "sisregiii.saude.gov.br — SHA-256",      inline: true },
           { name: "💳 CrediLink",     value: "Credicorp Azure API — JSON token",       inline: true },
           { name: "📊 Serasa",        value: "serasaempreendedor.com.br — curl",      inline: true },
+          { name: "🚔 SINESP",        value: "Segurança Pública — OAuth2 Android",    inline: true },
+          { name: "💼 Serasa Exp.",   value: "Experience — curl login API",            inline: true },
+          { name: "📸 Instagram",     value: "Meta Basic Display API",                 inline: true },
+          { name: "🏛️ SISP-ES",      value: "Portal ES — JSF + curl",                inline: true },
+          { name: "🔵 SIGMA",         value: "PC-MA — curl form login",               inline: true },
         ];
 
     await fdCatInteraction.update({
@@ -4928,13 +4958,15 @@ async function main(): Promise<void> {
       return;
     }
 
-    type FdTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
+    type FdTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
     const fdTargetMap: Record<string, FdTarget> = {
       chk_iseek: "iseek", chk_datasus: "datasus", chk_sipni: "sipni",
       chk_consultcenter: "consultcenter", chk_mind7: "mind7",
       chk_serpro: "serpro", chk_sisreg: "sisreg", chk_credilink: "credilink", chk_serasa: "serasa",
       chk_crunchyroll: "crunchyroll", chk_netflix: "netflix", chk_amazon: "amazon",
       chk_hbomax: "hbomax", chk_disney: "disney", chk_paramount: "paramount",
+      chk_sinesp: "sinesp", chk_serasa_exp: "serasa_exp", chk_instagram: "instagram",
+      chk_sispes: "sispes", chk_sigma: "sigma",
     };
     const target      = fdTargetMap[btn.customId] ?? "iseek";
     const targetLabel = {
@@ -4943,6 +4975,8 @@ async function main(): Promise<void> {
       serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
       crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
       hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
+      sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
+      instagram: "Instagram", sispes: "SISP-ES", sigma: "SIGMA (PC-MA)",
     }[target]!;
     const targetIcon  = {
       iseek: "🌐", datasus: "🏥", sipni: "💉",
@@ -4950,11 +4984,13 @@ async function main(): Promise<void> {
       serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
       crunchyroll: "🍥", netflix: "🎬", amazon: "📦",
       hbomax: "👑", disney: "🏰", paramount: "⭐",
+      sinesp: "🚔", serasa_exp: "💼", instagram: "📸", sispes: "🏛️", sigma: "🔵",
     }[target]!;
     const concurrency = {
       iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
       serpro: 4, sisreg: 2, credilink: 4, serasa: 2,
       crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
+      sinesp: 3, serasa_exp: 3, instagram: 2, sispes: 2, sigma: 3,
     }[target] ?? 2;
 
     // ── Stop button setup ─────────────────────────────────────────────────────

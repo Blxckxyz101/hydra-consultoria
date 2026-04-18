@@ -627,7 +627,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>("consultcenter");
   const [credText, setCredText]             = useState("");
@@ -1462,14 +1462,34 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   }
 
   /* ── Credential Bulk Checker helpers ── */
-  const CRED_TARGET_LABELS: Record<string, string> = {
-    iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
-    consultcenter: "ConsultCenter", mind7: "Mind-7", serpro: "SERPRO",
-    sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa Empreendedor",
-    crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
-    hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
-    sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
+  interface CredTargetMeta { label: string; icon: string; category: string; }
+  const CRED_TARGETS: Record<string, CredTargetMeta> = {
+    // Gov / Saúde
+    datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo" },
+    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo" },
+    consultcenter:{ label: "ConsultCenter",  icon: "📋", category: "Governo" },
+    mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo" },
+    serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo" },
+    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo" },
+    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo" },
+    sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo" },
+    sigma:        { label: "SIGMA (PC-MA)",  icon: "🔵", category: "Governo" },
+    // Finanças / Crédito
+    credilink:    { label: "CrediLink",      icon: "💳", category: "Finanças" },
+    serasa:       { label: "Serasa Empr.",   icon: "📊", category: "Finanças" },
+    serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças" },
+    iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças" },
+    // Social / Redes
+    instagram:    { label: "Instagram",      icon: "📸", category: "Social" },
+    // Streaming
+    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming" },
+    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming" },
+    amazon:       { label: "Amazon Prime",   icon: "📦", category: "Streaming" },
+    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming" },
+    disney:       { label: "Disney+",        icon: "🏰", category: "Streaming" },
+    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming" },
   };
+  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming"];
 
   function handleCredStop() {
     credAbortRef.current?.abort();
@@ -1559,8 +1579,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   }
 
   function exportCredHits() {
-    const text = credHits.map(h => `${h.credential}|${h.detail ?? ""}`).join("\n");
-    const blob = new Blob([text], { type: "text/plain" });
+    const label = CRED_TARGETS[credTarget]?.label ?? credTarget;
+    const header = `# HITs — ${label} — ${new Date().toLocaleString("pt-BR")}\n# Formato: credencial | detalhes\n\n`;
+    const text = credHits.map(h => `${h.credential}${h.detail ? ` | ${h.detail}` : ""}`).join("\n");
+    const blob = new Blob([header + text], { type: "text/plain" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
@@ -1957,144 +1979,175 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         ══════════════════════════════════════════════ */}
         {activePage === "checker" && (
           <div className="lb-cred-page">
-            {/* Target selector */}
-            <section className="lb-cred-section">
-              <h3 className="lb-section-title">🎯 Alvo</h3>
-              <div className="lb-cred-target-grid">
-                {(Object.keys(CRED_TARGET_LABELS) as (keyof typeof CRED_TARGET_LABELS)[]).map(k => (
-                  <button
-                    key={k}
-                    className={`lb-cred-target-btn ${credTarget === k ? "lb-cred-target-btn--active" : ""}`}
-                    onClick={() => setCredTarget(k as typeof credTarget)}
-                    disabled={credRunning}
-                  >
-                    {CRED_TARGET_LABELS[k]}
-                  </button>
-                ))}
-              </div>
-            </section>
 
-            {/* Credential input */}
-            <section className="lb-cred-section">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 className="lb-section-title">📋 Credenciais (login:senha por linha)</h3>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    className="lb-cred-mini-btn"
-                    onClick={() => setCredText("")}
-                    disabled={credRunning}
-                    title="Limpar"
-                  >✕ Limpar</button>
-                  <button
-                    className="lb-cred-mini-btn"
-                    onClick={() => credFileRef.current?.click()}
-                    disabled={credRunning}
-                    title="Carregar arquivo .txt"
-                  >📂 Arquivo</button>
-                  <input ref={credFileRef} type="file" accept=".txt,.csv" style={{ display: "none" }} onChange={handleCredFileUpload} />
-                </div>
-              </div>
-              <textarea
-                className="lb-cred-textarea"
-                placeholder={"user@email.com:senha123\noutro@email.com:outrasenha\n..."}
-                value={credText}
-                onChange={e => setCredText(e.target.value)}
-                disabled={credRunning}
-                spellCheck={false}
-              />
-              <div className="lb-cred-count-row">
-                <span className="lb-cred-count">
-                  {credText ? credText.split("\n").filter(l => l.trim()).length : 0} credenciais
-                </span>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {!credRunning ? (
-                    <button
-                      className="lb-cred-start-btn"
-                      onClick={handleCredStart}
-                      disabled={!credText.trim()}
-                    >
-                      ▶ Iniciar Checker
-                    </button>
-                  ) : (
-                    <button className="lb-cred-stop-btn" onClick={handleCredStop}>
-                      ⏹ Parar
-                    </button>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            {/* Progress bar */}
+            {/* ── Live stats banner (when running or done) ── */}
             {(credRunning || credDone > 0) && (
-              <section className="lb-cred-section">
-                <div className="lb-cred-progress-header">
-                  <span className="lb-section-title">
-                    {credRunning ? "⚡ Rodando..." : "✅ Concluído"}
-                    &nbsp;— {CRED_TARGET_LABELS[credTarget]}
+              <div className="lb-cred-live-banner">
+                <div className="lb-cred-live-left">
+                  <span className={`lb-cred-live-dot ${credRunning ? "lb-cred-live-dot--pulse" : ""}`} />
+                  <span className="lb-cred-live-label">
+                    {credRunning ? "CHECKER ATIVO" : "CONCLUÍDO"}
                   </span>
-                  <span className="lb-cred-progress-nums">
-                    {credDone}/{credTotal}
+                  <span className="lb-cred-live-target">
+                    {CRED_TARGETS[credTarget]?.icon} {CRED_TARGETS[credTarget]?.label}
                   </span>
                 </div>
-                <div className="lb-cred-bar-outer">
-                  <div
-                    className="lb-cred-bar-inner"
-                    style={{ width: credTotal > 0 ? `${Math.round(credDone / credTotal * 100)}%` : "0%" }}
+                <div className="lb-cred-live-counters">
+                  <span className="lb-cred-live-counter lb-cred-live-counter--hit">
+                    <span className="lb-cred-live-num">{credHits.length}</span>
+                    <span className="lb-cred-live-key">HITs</span>
+                  </span>
+                  <span className="lb-cred-live-counter lb-cred-live-counter--fail">
+                    <span className="lb-cred-live-num">{credFails}</span>
+                    <span className="lb-cred-live-key">FAILs</span>
+                  </span>
+                  <span className="lb-cred-live-counter lb-cred-live-counter--err">
+                    <span className="lb-cred-live-num">{credErrors}</span>
+                    <span className="lb-cred-live-key">ERROs</span>
+                  </span>
+                  <span className="lb-cred-live-counter">
+                    <span className="lb-cred-live-num">{credDone}/{credTotal}</span>
+                    <span className="lb-cred-live-key">{credTotal > 0 ? Math.round(credDone / credTotal * 100) : 0}%</span>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* ── Progress bar ── */}
+            {(credRunning || credDone > 0) && (
+              <div className="lb-cred-bar-outer">
+                <div
+                  className={`lb-cred-bar-inner ${credRunning ? "lb-cred-bar-inner--animated" : ""}`}
+                  style={{ width: credTotal > 0 ? `${Math.round(credDone / credTotal * 100)}%` : "0%" }}
+                />
+              </div>
+            )}
+
+            {/* ── Two-column layout: target selector + input ── */}
+            <div className="lb-cred-main-grid">
+
+              {/* Left: target selector by category */}
+              <section className="lb-cred-section lb-cred-targets-section">
+                <div className="lb-cred-section-header">
+                  <span className="lb-cred-section-icon">🎯</span>
+                  <h3 className="lb-cred-section-title">Alvo</h3>
+                </div>
+                {CRED_CATEGORIES.map(cat => (
+                  <div key={cat} className="lb-cred-category">
+                    <span className="lb-cred-category-label">{cat}</span>
+                    <div className="lb-cred-target-grid">
+                      {Object.entries(CRED_TARGETS)
+                        .filter(([, m]) => m.category === cat)
+                        .map(([k, m]) => (
+                          <button
+                            key={k}
+                            className={`lb-cred-target-btn ${credTarget === k ? "lb-cred-target-btn--active" : ""}`}
+                            onClick={() => setCredTarget(k as typeof credTarget)}
+                            disabled={credRunning}
+                            title={m.label}
+                          >
+                            <span className="lb-cred-target-icon">{m.icon}</span>
+                            <span className="lb-cred-target-name">{m.label}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              {/* Right: credential input + controls */}
+              <div className="lb-cred-input-col">
+                <section className="lb-cred-section lb-cred-input-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">📋</span>
+                    <h3 className="lb-cred-section-title">Credenciais</h3>
+                    <span className="lb-cred-count">
+                      {credText ? credText.split("\n").filter(l => l.trim()).length : 0} linhas
+                    </span>
+                  </div>
+                  <textarea
+                    className="lb-cred-textarea"
+                    placeholder={"user@email.com:senha123\noutro:outrasenha\ncpf:senha\n..."}
+                    value={credText}
+                    onChange={e => setCredText(e.target.value)}
+                    disabled={credRunning}
+                    spellCheck={false}
                   />
-                </div>
-                <div className="lb-cred-stats-row">
-                  <span className="lb-cred-stat lb-cred-stat--hit">
-                    ✅ HITs: {credHits.length}
-                  </span>
-                  <span className="lb-cred-stat lb-cred-stat--fail">
-                    ❌ FAILs: {credFails}
-                  </span>
-                  <span className="lb-cred-stat lb-cred-stat--err">
-                    ⚠ Erros: {credErrors}
-                  </span>
-                  <span className="lb-cred-stat" style={{ marginLeft: "auto" }}>
-                    {credTotal > 0 ? Math.round(credDone / credTotal * 100) : 0}%
-                  </span>
-                </div>
-              </section>
-            )}
+                  <div className="lb-cred-btn-row">
+                    <button
+                      className="lb-cred-mini-btn"
+                      onClick={() => credFileRef.current?.click()}
+                      disabled={credRunning}
+                    >📂 Arquivo</button>
+                    <button
+                      className="lb-cred-mini-btn"
+                      onClick={() => setCredText("")}
+                      disabled={credRunning || !credText}
+                    >✕ Limpar</button>
+                    <input ref={credFileRef} type="file" accept=".txt,.csv" style={{ display: "none" }} onChange={handleCredFileUpload} />
+                    <div style={{ flex: 1 }} />
+                    {!credRunning ? (
+                      <button
+                        className="lb-cred-start-btn"
+                        onClick={handleCredStart}
+                        disabled={!credText.trim()}
+                      >
+                        ▶ Iniciar
+                      </button>
+                    ) : (
+                      <button className="lb-cred-stop-btn" onClick={handleCredStop}>
+                        ⏹ Parar
+                      </button>
+                    )}
+                  </div>
+                </section>
 
-            {/* HITs panel */}
-            {credHits.length > 0 && (
-              <section className="lb-cred-section lb-cred-hits-section">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <h3 className="lb-section-title">✅ HITs ({credHits.length})</h3>
-                  <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits}>
-                    ⬇ Exportar HITs
-                  </button>
-                </div>
-                <div className="lb-cred-results-list">
-                  {credHits.map((r, i) => (
-                    <div key={i} className="lb-cred-row lb-cred-row--hit">
-                      <span className="lb-cred-row-badge">HIT</span>
-                      <span className="lb-cred-row-cred">{r.credential}</span>
-                      {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                {/* HITs panel */}
+                {credHits.length > 0 && (
+                  <section className="lb-cred-section lb-cred-hits-section">
+                    <div className="lb-cred-section-header">
+                      <span className="lb-cred-section-icon">✅</span>
+                      <h3 className="lb-cred-section-title">HITs <span className="lb-cred-hit-count">{credHits.length}</span></h3>
+                      <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits}>
+                        ⬇ Exportar
+                      </button>
                     </div>
-                  ))}
-                </div>
-              </section>
-            )}
+                    <div className="lb-cred-results-list">
+                      {credHits.map((r, i) => (
+                        <div key={i} className="lb-cred-row lb-cred-row--hit">
+                          <span className="lb-cred-row-badge">HIT</span>
+                          <div className="lb-cred-row-content">
+                            <span className="lb-cred-row-cred">{r.credential}</span>
+                            {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-            {/* Recent results */}
-            {credRecent.length > 0 && (
-              <section className="lb-cred-section">
-                <h3 className="lb-section-title">🕒 Resultados Recentes</h3>
-                <div className="lb-cred-results-list">
-                  {credRecent.map((r, i) => (
-                    <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
-                      <span className="lb-cred-row-badge">{r.status}</span>
-                      <span className="lb-cred-row-cred">{r.credential}</span>
-                      {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                {/* Recent activity */}
+                {credRecent.length > 0 && (
+                  <section className="lb-cred-section">
+                    <div className="lb-cred-section-header">
+                      <span className="lb-cred-section-icon">🕒</span>
+                      <h3 className="lb-cred-section-title">Feed em Tempo Real</h3>
                     </div>
-                  ))}
-                </div>
-              </section>
-            )}
+                    <div className="lb-cred-results-list">
+                      {credRecent.map((r, i) => (
+                        <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
+                          <span className="lb-cred-row-badge">{r.status}</span>
+                          <div className="lb-cred-row-content">
+                            <span className="lb-cred-row-cred">{r.credential}</span>
+                            {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
