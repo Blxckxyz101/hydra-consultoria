@@ -517,19 +517,22 @@ function GeassParticles() {
 
 /* ── Panel ── */
 function Panel() {
-  /* Config state */
-  const [target, setTarget]       = useState("");
-  const [method, setMethod]       = useState("http-flood");
-  const [packetSize, setPacketSize] = useState(64);
-  const [duration, setDuration]   = useState(60);
-  const [delay, setDelay]         = useState(100);
-  const [threads, setThreads]     = useState(16);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [showWebhook, setShowWebhook] = useState(false);
+  /* Config state — all persisted to localStorage */
+  const [target, setTarget]       = useState(() => localStorage.getItem("lb-target") ?? "");
+  const [method, setMethod]       = useState(() => localStorage.getItem("lb-method") ?? "http-flood");
+  const [packetSize, setPacketSize] = useState(() => Number(localStorage.getItem("lb-packet-size")) || 64);
+  const [duration, setDuration]   = useState(() => Number(localStorage.getItem("lb-duration"))     || 60);
+  const [delay, setDelay]         = useState(() => Number(localStorage.getItem("lb-delay"))        || 100);
+  const [threads, setThreads]     = useState(() => Number(localStorage.getItem("lb-threads"))      || 16);
+  const [webhookUrl, setWebhookUrl] = useState(() => localStorage.getItem("lb-webhook-url") ?? "");
+  const [showWebhook, setShowWebhook] = useState(() => localStorage.getItem("lb-show-webhook") === "1");
 
   /* Multi-target */
-  const [extraTargets, setExtraTargets] = useState<[string, string]>(["", ""]);
-  const [showMultiTarget, setShowMultiTarget] = useState(false);
+  const [extraTargets, setExtraTargets] = useState<[string, string]>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-extra-targets") || "[\"\",\"\"]") as [string, string]; }
+    catch { return ["", ""]; }
+  });
+  const [showMultiTarget, setShowMultiTarget] = useState(() => localStorage.getItem("lb-show-multi") === "1");
   const [extraAttackIds, setExtraAttackIds] = useState<(number | null)[]>([]);
 
   /* Attack state */
@@ -568,7 +571,7 @@ function Panel() {
 
   /* UI state */
   const [logs, setLogs]             = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem("lb-sound") !== "0");
   const soundRef = useRef(true);
 
   /* Favorites (plain URLs) */
@@ -619,7 +622,9 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker">("attack");
+  const [activePage, setActivePage] = useState<"attack" | "checker">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker") ?? "attack"
+  );
 
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
@@ -629,8 +634,10 @@ function Panel() {
   /* ── Credential Bulk Checker ── */
   type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
-  const [credTarget, setCredTarget]         = useState<CredCheckerTarget>("consultcenter");
-  const [credText, setCredText]             = useState("");
+  const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
+    () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
+  );
+  const [credText, setCredText]             = useState(() => localStorage.getItem("lb-cred-text") ?? "");
   const [credRunning, setCredRunning]       = useState(false);
   const [credTotal, setCredTotal]           = useState(0);
   const [credDone, setCredDone]             = useState(0);
@@ -766,6 +773,27 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       return updated;
     });
   }, []);
+
+  /* ── Persist config to localStorage whenever anything changes ── */
+  useEffect(() => {
+    const s = (k: string, v: unknown) => { try { localStorage.setItem(k, String(v)); } catch {} };
+    const j = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+    s("lb-target",       target);
+    s("lb-method",       method);
+    s("lb-packet-size",  packetSize);
+    s("lb-duration",     duration);
+    s("lb-delay",        delay);
+    s("lb-threads",      threads);
+    s("lb-webhook-url",  webhookUrl);
+    s("lb-show-webhook", showWebhook ? "1" : "0");
+    j("lb-extra-targets", extraTargets);
+    s("lb-show-multi",   showMultiTarget ? "1" : "0");
+    s("lb-active-page",  activePage);
+    s("lb-cred-target",  credTarget);
+    s("lb-cred-text",    credText);
+    s("lb-sound",        soundEnabled ? "1" : "0");
+  }, [target, method, packetSize, duration, delay, threads, webhookUrl, showWebhook,
+      extraTargets, showMultiTarget, activePage, credTarget, credText, soundEnabled]);
 
   /* ── Theme class on body ── */
   useEffect(() => {
