@@ -662,6 +662,7 @@ function Panel() {
   const credAbortRef                         = useRef<AbortController | null>(null);
   const credJobIdRef                         = useRef<string | null>(null);
   const credFileRef                          = useRef<HTMLInputElement>(null);
+  const wakeLockRef                          = useRef<WakeLockSentinel | null>(null);
 
   function getCheckedCredsKey(t: string) { return `lb-checked-creds-${t}`; }
   function loadCheckedCreds(t: string): Set<string> {
@@ -673,6 +674,19 @@ function Panel() {
   }
   function clearCheckedCreds(t: string) {
     try { localStorage.removeItem(getCheckedCredsKey(t)); } catch {}
+  }
+
+  async function acquireWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLockRef.current = await (navigator as unknown as { wakeLock: { request(type: string): Promise<WakeLockSentinel> } }).wakeLock.request("screen");
+      wakeLockRef.current.addEventListener("release", () => { wakeLockRef.current = null; });
+    } catch { /* device/browser doesn't support it */ }
+  }
+
+  function releaseWakeLock() {
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
   }
 
   /* Analyzer */
@@ -1587,6 +1601,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   function handleCredStop() {
     credAbortRef.current?.abort();
+    releaseWakeLock();
     // Tell the server to stop the background job (it won't stop on its own when we abort the reader)
     const jid = credJobIdRef.current ?? credJobId;
     if (jid) {
@@ -1623,6 +1638,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setCredErrors(0);
     setCredRecent([]);
     setCredTab("hit");
+
+    await acquireWakeLock();
 
     const sessionChecked = new Set<string>();
 
@@ -1717,6 +1734,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               credJobIdRef.current = null;
               setCredJobId(null);
               localStorage.removeItem("lb-checker-job-id");
+              releaseWakeLock();
               setCredRunning(false);
             }
           } catch { /**/ }
@@ -1728,8 +1746,17 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         const finalChecked = loadCheckedCreds(credTarget);
         sessionChecked.forEach(c => finalChecked.add(c));
         if (sessionChecked.size > 0) saveCheckedCreds(credTarget, finalChecked);
+        releaseWakeLock();
       } else {
+        // Network drop (screen off, connection lost) — if job exists, reconnect
+        const jid = credJobIdRef.current;
+        if (jid && !ac.signal.aborted) {
+          addLog("⚠️ Conexão perdida. Reconectando ao job...", "warn");
+          await reconnectToCheckerJob(jid);
+          return;
+        }
         addLog(`✕ Checker erro: ${String(e)}`, "error");
+        releaseWakeLock();
       }
     }
     setCredRunning(false);
@@ -1795,6 +1822,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 credJobIdRef.current = null;
                 setCredJobId(null);
                 localStorage.removeItem("lb-checker-job-id");
+                releaseWakeLock();
                 setCredRunning(false);
               }
             } catch { /**/ }
@@ -1813,6 +1841,24 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
     setCredRunning(false);
   }
+
+  // Re-acquire wake lock and reconnect SSE stream when user returns to the tab/app
+  useEffect(() => {
+    const onVisibilityChange = async () => {
+      if (document.visibilityState !== "visible") return;
+      const jid = credJobIdRef.current;
+      if (!jid) return;
+      // Re-acquire wake lock (it's automatically released when screen turns off)
+      await acquireWakeLock();
+      // If the abort controller is already aborted or missing, the stream is dead — reconnect
+      if (!credAbortRef.current || credAbortRef.current.signal.aborted) {
+        addLog("🔄 Tela reativada — reconectando ao job...", "info");
+        reconnectToCheckerJob(jid);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleCredFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
