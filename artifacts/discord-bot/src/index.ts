@@ -36,7 +36,7 @@ import {
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
-import { DARKFLOW_MODULES, handleDarkflow } from "./darkflow.js";
+import { DARKFLOW_MODULES, handleZeroIntel } from "./darkflow.js";
 import {
   buildAttackEmbed,
   buildStartEmbed,
@@ -605,11 +605,11 @@ const COMMANDS = [
         .setDescription("📊 Estatísticas gerais do banco de dados")
     ),
 
-  // ── /darkflow — DarkFlow APIs (21 módulos) ──────────────────────────────
+  // ── /zero — Rede de Inteligência de Zero (21 subcomandos) ───────────────
   (() => {
     const cmd = new SlashCommandBuilder()
-      .setName("darkflow")
-      .setDescription("🔍 DarkFlow APIs — placa, CPF, CNH, processos, bancos e mais (21 módulos)");
+      .setName("zero")
+      .setDescription("👁️ Rede de Inteligência de Zero — consultas sigilosas por CPF, placa, nome e mais");
     for (const [key, cfg] of Object.entries(DARKFLOW_MODULES)) {
       cmd.addSubcommand(sub =>
         sub.setName(key)
@@ -4737,8 +4737,8 @@ async function main(): Promise<void> {
         await handleChecker(interaction);
       } else if (commandName === "consulta") {
         await handleConsulta(interaction);
-      } else if (commandName === "darkflow") {
-        await handleDarkflow(interaction);
+      } else if (commandName === "zero") {
+        await handleZeroIntel(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
