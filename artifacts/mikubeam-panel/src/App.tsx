@@ -641,7 +641,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -1659,8 +1659,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting" },
     digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting" },
     linode:       { label: "Linode / Akamai",icon: "🟩", category: "VPS / Hosting" },
+    // Dev / Cloud
+    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud" },
+    aws:          { label: "AWS (IAM Key)",  icon: "☁️", category: "Dev / Cloud" },
+    // Financeiro BR
+    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR" },
+    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR" },
   };
-  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting"];
+  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR"];
 
   function handleCredStop() {
     credAbortRef.current?.abort();
