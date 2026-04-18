@@ -73,8 +73,18 @@ export async function callDarkflow(apiModule: string, consulta: string): Promise
   url.searchParams.set("modulo",   apiModule);
   url.searchParams.set("consulta", consulta);
   const res = await fetch(url.toString(), { signal: AbortSignal.timeout(25_000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status} — ${res.statusText}`);
-  return res.json() as Promise<unknown>;
+
+  // Sempre tenta ler o body JSON, mesmo em respostas 4xx/5xx —
+  // a API retorna { error: "CPF invalido" } com HTTP 400, por exemplo.
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`HTTP ${res.status} — ${res.statusText} (body não é JSON)`);
+  }
+
+  // Repassa o body para o caller tratar; a checagem de hasError cobre os 4xx/5xx
+  return body;
 }
 
 // ── Formatters ──────────────────────────────────────────────────────────────
