@@ -563,6 +563,13 @@ function Panel() {
   const emaPpsRef         = useRef(0);
   const emaBpsRef         = useRef(0);
 
+  /* Target input shake feedback */
+  const [targetShake, setTargetShake] = useState(false);
+  function shakeTarget() {
+    setTargetShake(true);
+    setTimeout(() => setTargetShake(false), 600);
+  }
+
   /* Target monitoring */
   const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const targetStatusRef   = useRef<"unknown" | "online" | "offline">("unknown");
@@ -1218,7 +1225,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   /* ── Actions ── */
   async function handleLaunch() {
-    if (!target.trim()) { addLog("✕ No target — enter a URL or IP address.", "error"); return; }
+    if (!target.trim()) {
+      addLog("✕ No target — enter a URL or IP address.", "error");
+      addToast("stop", "Target Vazio", "Digite uma URL ou IP antes de iniciar.");
+      shakeTarget();
+      return;
+    }
 
     if (isRunning) {
       addLog("👁 Revoking Geass — halting strike...", "warn");
@@ -2224,7 +2236,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             <div className="lb-target-row">
               <div className="lb-input-wrap">
                 <input
-                  className="lb-input"
+                  className={`lb-input${targetShake ? " lb-input--shake" : ""}`}
                   type="text"
                   placeholder="Enter target URL or IP address"
                   value={target}
@@ -3409,15 +3421,17 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
       </div>
 
-      {/* Mobile FAB */}
-      <button
-        className={`lb-fab ${isRunning ? "lb-fab--stop" : ""}`}
-        onClick={handleLaunch}
-        aria-label={isRunning ? "Abort Geass" : "Command Geass"}
-      >
-        <img src={GEASS_SYMBOL} className="lb-fab-glyph-img" alt=""/>
-        <span className="lb-fab-label">{isRunning ? "ABORT" : "GEASS"}</span>
-      </button>
+      {/* Mobile FAB — only visible on attack tab */}
+      {activePage === "attack" && (
+        <button
+          className={`lb-fab ${isRunning ? "lb-fab--stop" : ""}`}
+          onClick={handleLaunch}
+          aria-label={isRunning ? "Abort Geass" : "Command Geass"}
+        >
+          <img src={GEASS_SYMBOL} className="lb-fab-glyph-img" alt=""/>
+          <span className="lb-fab-label">{isRunning ? "ABORT" : "GEASS"}</span>
+        </button>
+      )}
     </div>
   );
 }
