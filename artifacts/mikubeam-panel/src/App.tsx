@@ -641,7 +641,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -1653,8 +1653,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming" },
     // Consultas (CPF/dados públicos)
     receita:      { label: "Receita Federal", icon: "🧾", category: "Consultas" },
+    // VPS / Hosting
+    tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting" },
+    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting" },
+    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting" },
+    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting" },
+    linode:       { label: "Linode / Akamai",icon: "🟩", category: "VPS / Hosting" },
   };
-  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas"];
+  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting"];
 
   function handleCredStop() {
     credAbortRef.current?.abort();

