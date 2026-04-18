@@ -846,6 +846,36 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [logs]);
 
+  // ── Auto-reconnect checker job on page load ───────────────────────────────
+  // If the user closed the browser mid-check, the job is still running on the
+  // server. On the next page load we verify the job is still alive and
+  // subscribe to its SSE stream automatically — no button click required.
+  useEffect(() => {
+    const savedId = localStorage.getItem("lb-checker-job-id");
+    if (!savedId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${BASE}/api/checker/jobs`);
+        if (!r.ok || cancelled) return;
+        const jobs = await r.json() as Array<{ id: string; status: string }>;
+        const job  = jobs.find(j => j.id === savedId);
+        if (!job || cancelled) return;
+        if (job.status === "running") {
+          // Auto-reconnect — fires the same function the user would click manually
+          setCredJobId(savedId);
+          void reconnectToCheckerJob(savedId);
+        } else {
+          // Job finished while we were away — just clean up the stale key
+          localStorage.removeItem("lb-checker-job-id");
+          setCredJobId(null);
+        }
+      } catch { /* ignore — server may still be starting */ }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ── Proxy stats — SSE real-time + polling fallback ── */
   useEffect(() => {
     let es: EventSource | null = null;
@@ -1710,49 +1740,77 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     credAbortRef.current = ac;
     credJobIdRef.current = jobId;
     setCredRunning(true);
-    try {
-      const res = await fetch(`${BASE}/api/checker/${jobId}/stream`, { signal: ac.signal });
-      if (!res.ok || !res.body) {
-        addLog(`✕ Job ${jobId} não encontrado ou expirou`, "error");
-        localStorage.removeItem("lb-checker-job-id");
-        setCredJobId(null);
-        setCredRunning(false);
-        return;
+
+    const MAX_RETRIES = 20;
+    let attempt      = 0;
+
+    while (attempt < MAX_RETRIES) {
+      if (ac.signal.aborted) break;
+
+      // Backoff: 2s, 4s, 8s … capped at 30s
+      if (attempt > 0) {
+        const delay = Math.min(2_000 * 2 ** (attempt - 1), 30_000);
+        addLog(`🔄 Reconectando ao job em ${delay / 1000}s… (tentativa ${attempt}/${MAX_RETRIES})`, "info");
+        await new Promise<void>(r => setTimeout(r, delay));
+        if (ac.signal.aborted) break;
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const parts = buf.split("\n\n");
-        buf = parts.pop() ?? "";
-        for (const chunk of parts) {
-          const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
-          if (!dataLine) continue;
-          try {
-            const ev = JSON.parse(dataLine.slice(5).trim()) as { type: string; total?: number; credential?: string; login?: string; status?: "HIT" | "FAIL" | "ERROR"; detail?: string };
-            if (ev.type === "start" && ev.total) setCredTotal(ev.total);
-            else if (ev.type === "result" && ev.credential) {
-              const r: CredResult = { credential: ev.credential, login: ev.login ?? "", status: ev.status ?? "ERROR", detail: ev.detail };
-              setCredDone(d => d + 1);
-              if (r.status === "HIT") { setCredHits(prev => [r, ...prev]); setCredTab("hit"); }
-              else if (r.status === "FAIL") { setCredFails(f => f + 1); setCredFailList(prev => [r, ...prev]); }
-              else { setCredErrors(e => e + 1); setCredFailList(prev => [r, ...prev]); }
-              setCredRecent(prev => [r, ...prev].slice(0, 50));
-            } else if (ev.type === "done") {
-              credJobIdRef.current = null;
-              setCredJobId(null);
-              localStorage.removeItem("lb-checker-job-id");
-              setCredRunning(false);
-            }
-          } catch { /**/ }
+
+      let jobDone = false;
+      try {
+        const res = await fetch(`${BASE}/api/checker/${jobId}/stream`, { signal: ac.signal });
+        if (!res.ok || !res.body) {
+          // 404 = job expired or not found
+          addLog(`✕ Job ${jobId} não encontrado ou expirou`, "error");
+          localStorage.removeItem("lb-checker-job-id");
+          setCredJobId(null);
+          setCredRunning(false);
+          return;
         }
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split("\n\n");
+          buf = parts.pop() ?? "";
+          for (const chunk of parts) {
+            const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+            if (!dataLine) continue;
+            try {
+              const ev = JSON.parse(dataLine.slice(5).trim()) as { type: string; total?: number; credential?: string; login?: string; status?: "HIT" | "FAIL" | "ERROR"; detail?: string };
+              if (ev.type === "start" && ev.total) setCredTotal(ev.total);
+              else if (ev.type === "result" && ev.credential) {
+                const r: CredResult = { credential: ev.credential, login: ev.login ?? "", status: ev.status ?? "ERROR", detail: ev.detail };
+                setCredDone(d => d + 1);
+                if (r.status === "HIT") { setCredHits(prev => [r, ...prev]); setCredTab("hit"); }
+                else if (r.status === "FAIL") { setCredFails(f => f + 1); setCredFailList(prev => [r, ...prev]); }
+                else { setCredErrors(e => e + 1); setCredFailList(prev => [r, ...prev]); }
+                setCredRecent(prev => [r, ...prev].slice(0, 50));
+              } else if (ev.type === "done") {
+                jobDone = true;
+                credJobIdRef.current = null;
+                setCredJobId(null);
+                localStorage.removeItem("lb-checker-job-id");
+                setCredRunning(false);
+              }
+            } catch { /**/ }
+          }
+        }
+      } catch (e) {
+        if ((e as Error).name === "AbortError") break;
+        // Network error — will retry in next iteration
       }
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") addLog(`✕ Reconexão erro: ${String(e)}`, "error");
+
+      if (jobDone || ac.signal.aborted) break;
+
+      // Stream ended without "done" event — job is still running on server, retry
+      attempt++;
     }
+
     setCredRunning(false);
   }
 
@@ -2157,6 +2215,23 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               onClick={() => setActivePage("checker")}
             >
               🔑 Credential Checker
+              {(credRunning || credJobId) && activePage !== "checker" && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  marginLeft: 6, padding: "1px 7px", borderRadius: 10,
+                  background: credRunning ? "rgba(46,204,113,0.2)" : "rgba(212,175,55,0.15)",
+                  border: `1px solid ${credRunning ? "rgba(46,204,113,0.5)" : "rgba(212,175,55,0.4)"}`,
+                  fontSize: 10, fontWeight: 600, color: credRunning ? "#2ecc71" : "#d4af37",
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: credRunning ? "#2ecc71" : "#d4af37",
+                    animation: credRunning ? "lb-pulse 1.4s ease-in-out infinite" : "none",
+                    flexShrink: 0,
+                  }} />
+                  {credRunning ? "RODANDO" : "BG"}
+                </span>
+              )}
             </button>
           </div>
         </header>
