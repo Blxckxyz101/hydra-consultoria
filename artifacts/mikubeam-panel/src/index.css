@@ -2626,6 +2626,36 @@ input[type="datetime-local"].lb-num {
 }
 .lb-cred-target-btn--active .lb-cred-target-name { color: var(--gold); }
 
+/* ── Result tabs (HIT / FAIL) ── */
+.lb-cred-tabs-section { border-color: rgba(212,175,55,.15); padding-top: 8px; }
+.lb-cred-tab-bar {
+  display: flex; align-items: center; gap: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  padding-bottom: 8px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.lb-cred-tab-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 14px; border-radius: 6px; font-size: .78rem;
+  font-family: var(--f-display); letter-spacing: .05em; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04);
+  color: var(--text-dim); transition: all .15s;
+}
+.lb-cred-tab-btn:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.lb-cred-tab-btn--active { border-color: currentColor; }
+.lb-cred-tab-btn--hit.lb-cred-tab-btn--active  { color: #2ecc71; background: rgba(46,204,113,.1); }
+.lb-cred-tab-btn--fail.lb-cred-tab-btn--active { color: #e74c3c; background: rgba(231,76,60,.08); }
+.lb-cred-tab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; padding: 0 5px; height: 16px; border-radius: 99px;
+  font-size: .6rem; font-weight: bold;
+}
+.lb-cred-tab-badge--hit  { background: rgba(46,204,113,.2);  color: #2ecc71; }
+.lb-cred-tab-badge--fail { background: rgba(231,76,60,.2);   color: #e74c3c; }
+.lb-cred-tab-empty {
+  text-align: center; padding: 24px 0; font-size: .8rem;
+  color: var(--text-dim); font-family: var(--f-display); letter-spacing: .05em;
+}
+
 /* ── HITs panel ── */
 .lb-cred-hits-section { border-color: rgba(46,204,113,.2); }
 .lb-cred-hit-count {

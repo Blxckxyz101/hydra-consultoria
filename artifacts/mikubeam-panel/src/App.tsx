@@ -649,8 +649,10 @@ function Panel() {
   const [credTotal, setCredTotal]           = useState(0);
   const [credDone, setCredDone]             = useState(0);
   const [credHits, setCredHits]             = useState<CredResult[]>([]);
+  const [credFailList, setCredFailList]     = useState<CredResult[]>([]);
   const [credFails, setCredFails]           = useState(0);
   const [credErrors, setCredErrors]         = useState(0);
+  const [credTab, setCredTab]               = useState<"hit" | "fail">("hit");
   const [credRecent, setCredRecent]         = useState<CredResult[]>([]);
   const credAbortRef                         = useRef<AbortController | null>(null);
   const credFileRef                          = useRef<HTMLInputElement>(null);
@@ -1544,18 +1546,23 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setCredTotal(lines.length);
     setCredDone(0);
     setCredHits([]);
+    setCredFailList([]);
     setCredFails(0);
     setCredErrors(0);
     setCredRecent([]);
+    setCredTab("hit");
 
     const ac = new AbortController();
     credAbortRef.current = ac;
 
     try {
+      const body: Record<string, unknown> = { credentials: lines, target: credTarget };
+      if (webhookUrl.trim()) body.webhookUrl = webhookUrl.trim();
+
       const res = await fetch(`${BASE}/api/checker/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credentials: lines, target: credTarget }),
+        body: JSON.stringify(body),
         signal: ac.signal,
       });
 
@@ -1579,22 +1586,34 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
           if (!dataLine) continue;
           try {
+            // SSE sends FLAT events: { type, credential, login, status, detail, ... }
             const ev = JSON.parse(dataLine.slice(5).trim()) as {
               type: string;
               total?: number;
-              result?: { credential: string; login: string; status: string; detail?: string };
+              credential?: string;
+              login?: string;
+              status?: "HIT" | "FAIL" | "ERROR";
+              detail?: string;
             };
             if (ev.type === "start" && ev.total) {
               setCredTotal(ev.total);
-            } else if (ev.type === "result" && ev.result) {
-              const r = ev.result as { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string };
+            } else if (ev.type === "result" && ev.credential) {
+              const r: CredResult = {
+                credential: ev.credential,
+                login:      ev.login ?? "",
+                status:     ev.status ?? "ERROR",
+                detail:     ev.detail,
+              };
               setCredDone(d => d + 1);
               if (r.status === "HIT") {
                 setCredHits(prev => [r, ...prev]);
+                setCredTab("hit");
               } else if (r.status === "FAIL") {
                 setCredFails(f => f + 1);
+                setCredFailList(prev => [r, ...prev]);
               } else {
                 setCredErrors(e => e + 1);
+                setCredFailList(prev => [r, ...prev]);
               }
               setCredRecent(prev => [r, ...prev].slice(0, 50));
             } else if (ev.type === "done") {
@@ -2142,48 +2161,69 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   </div>
                 </section>
 
-                {/* HITs panel */}
-                {credHits.length > 0 && (
-                  <section className="lb-cred-section lb-cred-hits-section">
-                    <div className="lb-cred-section-header">
-                      <span className="lb-cred-section-icon">✅</span>
-                      <h3 className="lb-cred-section-title">HITs <span className="lb-cred-hit-count">{credHits.length}</span></h3>
-                      <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits}>
-                        ⬇ Exportar
+                {/* Results tabs — HIT / FAIL */}
+                {(credRunning || credDone > 0) && (
+                  <section className="lb-cred-section lb-cred-tabs-section">
+                    {/* Tab header */}
+                    <div className="lb-cred-tab-bar">
+                      <button
+                        className={`lb-cred-tab-btn ${credTab === "hit" ? "lb-cred-tab-btn--active lb-cred-tab-btn--hit" : ""}`}
+                        onClick={() => setCredTab("hit")}
+                      >
+                        ✅ HITs
+                        <span className="lb-cred-tab-badge lb-cred-tab-badge--hit">{credHits.length}</span>
                       </button>
+                      <button
+                        className={`lb-cred-tab-btn ${credTab === "fail" ? "lb-cred-tab-btn--active lb-cred-tab-btn--fail" : ""}`}
+                        onClick={() => setCredTab("fail")}
+                      >
+                        ❌ FAILs
+                        <span className="lb-cred-tab-badge lb-cred-tab-badge--fail">{credFails + credErrors}</span>
+                      </button>
+                      {credTab === "hit" && credHits.length > 0 && (
+                        <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits} style={{ marginLeft: "auto" }}>
+                          ⬇ Exportar HITs
+                        </button>
+                      )}
                     </div>
-                    <div className="lb-cred-results-list">
-                      {credHits.map((r, i) => (
-                        <div key={i} className="lb-cred-row lb-cred-row--hit">
-                          <span className="lb-cred-row-badge">HIT</span>
-                          <div className="lb-cred-row-content">
-                            <span className="lb-cred-row-cred">{r.credential}</span>
-                            {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
 
-                {/* Recent activity */}
-                {credRecent.length > 0 && (
-                  <section className="lb-cred-section">
-                    <div className="lb-cred-section-header">
-                      <span className="lb-cred-section-icon">🕒</span>
-                      <h3 className="lb-cred-section-title">Feed em Tempo Real</h3>
-                    </div>
-                    <div className="lb-cred-results-list">
-                      {credRecent.map((r, i) => (
-                        <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
-                          <span className="lb-cred-row-badge">{r.status}</span>
-                          <div className="lb-cred-row-content">
-                            <span className="lb-cred-row-cred">{r.credential}</span>
-                            {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                    {/* HIT tab */}
+                    {credTab === "hit" && (
+                      <div className="lb-cred-results-list">
+                        {credHits.length === 0 ? (
+                          <div className="lb-cred-tab-empty">
+                            {credRunning ? "⏳ Buscando hits..." : "Nenhum hit encontrado"}
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ) : credHits.map((r, i) => (
+                          <div key={i} className="lb-cred-row lb-cred-row--hit">
+                            <span className="lb-cred-row-badge">HIT</span>
+                            <div className="lb-cred-row-content">
+                              <span className="lb-cred-row-cred">{r.credential}</span>
+                              {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* FAIL tab */}
+                    {credTab === "fail" && (
+                      <div className="lb-cred-results-list">
+                        {credFailList.length === 0 ? (
+                          <div className="lb-cred-tab-empty">
+                            {credRunning ? "⏳ Processando..." : "Nenhum fail registrado"}
+                          </div>
+                        ) : credFailList.map((r, i) => (
+                          <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
+                            <span className="lb-cred-row-badge">{r.status}</span>
+                            <div className="lb-cred-row-content">
+                              <span className="lb-cred-row-cred">{r.credential}</span>
+                              {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </section>
                 )}
               </div>

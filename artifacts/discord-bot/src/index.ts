@@ -3942,13 +3942,25 @@ function buildLiveCheckerEmbed(
     `🔀 **${concurrency}x paralelo**`,
   ].filter(Boolean).join("  •  ");
 
-  // ── Recent results (last 6) ───────────────────────────────────────────────
-  const recentLines = recent.slice(-6).map(r => {
-    const icon = r.status === "HIT" ? "✅" : r.status === "FAIL" ? "❌" : "⚠️";
-    const cred = r.credential.length > 42 ? r.credential.slice(0, 39) + "…" : r.credential;
-    const det  = r.detail.length    > 52 ? r.detail.slice(0, 49)    + "…" : r.detail;
-    return `${icon} \`${cred}\`\n> ${det}`;
-  }).join("\n");
+  // ── Split hits / fails from allResults ───────────────────────────────────
+  const allHits     = state.allResults.filter(r => r.status === "HIT");
+  const recentFails = state.allResults.filter(r => r.status !== "HIT").slice(-4);
+
+  const hitLines = allHits.length === 0
+    ? (done || stopped ? "*Nenhum hit encontrado.*" : "*Buscando...*")
+    : allHits.slice(0, 6).map(r => {
+        const cred = r.credential.length > 44 ? r.credential.slice(0, 41) + "…" : r.credential;
+        const det  = r.detail?.length > 50    ? r.detail.slice(0, 47)    + "…" : (r.detail ?? "");
+        return `> \`${cred}\`${det ? `\n> 📋 ${det}` : ""}`;
+      }).join("\n");
+
+  const failLines = recentFails.length === 0
+    ? (done || stopped ? "*—*" : "*Aguardando...*")
+    : recentFails.map(r => {
+        const icon = r.status === "ERROR" ? "⚠️" : "❌";
+        const cred = r.credential.length > 40 ? r.credential.slice(0, 37) + "…" : r.credential;
+        return `${icon} \`${cred}\``;
+      }).join("\n");
 
   const desc = [
     progressBar,
@@ -3957,8 +3969,11 @@ function buildLiveCheckerEmbed(
     statsLine,
     metaLine,
     "",
-    "**Últimos resultados:**",
-    recentLines || "*Aguardando primeiros resultados...*",
+    `**✅ HITS${allHits.length > 0 ? ` (${allHits.length})` : ""}:**`,
+    hitLines,
+    "",
+    `**❌ FAILs recentes:**`,
+    failLines,
   ].join("\n");
 
   const color = stopped
