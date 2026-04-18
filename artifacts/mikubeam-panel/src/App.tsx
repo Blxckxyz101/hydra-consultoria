@@ -1671,7 +1671,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         }
       }
     } catch (e) {
-      if ((e as Error).name !== "AbortError") addLog(`✕ Checker erro: ${String(e)}`, "error");
+      if ((e as Error).name === "AbortError") {
+        // User clicked Stop — persist whatever we checked so far (even < 10 threshold)
+        const finalChecked = loadCheckedCreds(credTarget);
+        sessionChecked.forEach(c => finalChecked.add(c));
+        if (sessionChecked.size > 0) saveCheckedCreds(credTarget, finalChecked);
+      } else {
+        addLog(`✕ Checker erro: ${String(e)}`, "error");
+      }
     }
     setCredRunning(false);
   }
