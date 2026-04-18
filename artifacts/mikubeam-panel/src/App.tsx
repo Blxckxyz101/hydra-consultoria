@@ -1687,6 +1687,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     }
 
     setCredRunning(true);
+    setCredPaused(false);
     setCredTotal(lines.length);
     setCredDone(0);
     setCredHits([]);
@@ -1752,6 +1753,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               login?: string;
               status?: "HIT" | "FAIL" | "ERROR";
               detail?: string;
+              hits?: number;
+              fails?: number;
+              errors?: number;
+              elapsedMs?: number;
+              credsPerMin?: number;
+              stopped?: boolean;
             };
             if (ev.type === "start" && ev.total) {
               setCredTotal(ev.total);
@@ -1795,6 +1802,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               const finalChecked = loadCheckedCreds(credTarget);
               sessionChecked.forEach(c => finalChecked.add(c));
               saveCheckedCreds(credTarget, finalChecked);
+              // Completion log
+              const secs = ev.elapsedMs != null ? `${(ev.elapsedMs / 1000).toFixed(1)}s` : "";
+              const cpm  = ev.credsPerMin != null ? ` — ${ev.credsPerMin}/min` : "";
+              const summary = ev.stopped
+                ? `⏹ Checker interrompido — ${ev.hits ?? 0} HITs / ${ev.fails ?? 0} FAILs / ${ev.errors ?? 0} ERRORs${secs ? ` em ${secs}` : ""}${cpm}`
+                : `✓ Checker concluído — ${ev.hits ?? 0} HITs / ${ev.fails ?? 0} FAILs / ${ev.errors ?? 0} ERRORs${secs ? ` em ${secs}` : ""}${cpm}`;
+              addLog(summary, ev.stopped ? "warn" : "info");
               // Job finished — clear saved job ID
               credJobIdRef.current = null;
               setCredJobId(null);
@@ -1804,6 +1818,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             }
           } catch { /**/ }
         }
+      }
+      // Stream ended without "done" event — proxy/connection cut, job still running on server
+      const orphanJid = credJobIdRef.current;
+      if (orphanJid && !ac.signal.aborted) {
+        addLog("⚠️ Stream encerrado antes do fim. Reconectando ao job...", "warn");
+        console.warn("[checker] stream closed without 'done' event, jobId:", orphanJid);
+        await reconnectToCheckerJob(orphanJid);
+        return;
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") {
@@ -1817,10 +1839,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         const jid = credJobIdRef.current;
         if (jid && !ac.signal.aborted) {
           addLog("⚠️ Conexão perdida. Reconectando ao job...", "warn");
+          console.warn("[checker] stream error, reconnecting jobId:", jid, e);
           await reconnectToCheckerJob(jid);
           return;
         }
         addLog(`✕ Checker erro: ${String(e)}`, "error");
+        console.error("[checker] fatal error (no jobId to reconnect):", e);
         releaseWakeLock();
       }
     }
@@ -1876,7 +1900,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
             if (!dataLine) continue;
             try {
-              const ev = JSON.parse(dataLine.slice(5).trim()) as { type: string; total?: number; credential?: string; login?: string; status?: "HIT" | "FAIL" | "ERROR"; detail?: string };
+              const ev = JSON.parse(dataLine.slice(5).trim()) as { type: string; total?: number; credential?: string; login?: string; status?: "HIT" | "FAIL" | "ERROR"; detail?: string; hits?: number; fails?: number; errors?: number; elapsedMs?: number; credsPerMin?: number; stopped?: boolean };
               if (ev.type === "start" && ev.total) setCredTotal(ev.total);
               else if (ev.type === "result" && ev.credential) {
                 const r: CredResult = { credential: ev.credential, login: ev.login ?? "", status: ev.status ?? "ERROR", detail: ev.detail };
@@ -1887,6 +1911,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 setCredRecent(prev => [r, ...prev].slice(0, 50));
               } else if (ev.type === "done") {
                 jobDone = true;
+                const secs2 = ev.elapsedMs != null ? `${(ev.elapsedMs / 1000).toFixed(1)}s` : "";
+                const cpm2  = ev.credsPerMin != null ? ` — ${ev.credsPerMin}/min` : "";
+                const sum2  = ev.stopped
+                  ? `⏹ Checker interrompido — ${ev.hits ?? 0} HITs / ${ev.fails ?? 0} FAILs / ${ev.errors ?? 0} ERRORs${secs2 ? ` em ${secs2}` : ""}${cpm2}`
+                  : `✓ Checker concluído — ${ev.hits ?? 0} HITs / ${ev.fails ?? 0} FAILs / ${ev.errors ?? 0} ERRORs${secs2 ? ` em ${secs2}` : ""}${cpm2}`;
+                addLog(sum2, ev.stopped ? "warn" : "info");
                 credJobIdRef.current = null;
                 setCredJobId(null);
                 localStorage.removeItem("lb-checker-job-id");

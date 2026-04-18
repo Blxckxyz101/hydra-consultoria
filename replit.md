@@ -204,8 +204,11 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Body size limit raised to 10MB**: Express JSON body parser was 100KB default — caused `PayloadTooLargeError` for large credential files. Fixed with `express.json({ limit: "10mb" })`.
 - **File line-limit selector**: Dropdown next to 📂 Arquivo button — options: ∞ Todas, 500, 1 000, 2 000, 5 000, 10 000, 20 000, 50 000. When a limit is active, the selector turns gold, the line count badge shows "X linhas / max Y", and any truncation is logged to the terminal.
 
-**Bug Fixes (T007):**
+**Bug Fixes (T007 + post-session):**
 - **Double-counting on reconnect fixed**: `reconnectToCheckerJob` now resets `credDone/credHits/credFails/credErrors/credFailList/credRecent/credPaused` before re-subscribing to the SSE buffer replay. Previous behavior replayed all events on top of existing counters.
+- **Premature stream closure → silent stop fixed**: After the SSE while-loop, if `credJobIdRef.current` is still set (meaning the "done" event was never received), the frontend now automatically reconnects to the job instead of silently stopping. Handles Replit proxy connection cuts.
+- **Stale pause state on new session**: `handleCredStart` now calls `setCredPaused(false)` so a paused-then-stopped session doesn't bleed into the next run.
+- **Completion log message added**: `ev.type === "done"` now logs `✓ Checker concluído — X HITs / Y FAILs / Z ERRORs em Ns — K/min` (or ⏹ if stopped). Previously, the checker would silently return to "Iniciar" with no confirmation.
 - **TypeScript**: All 3 packages pass `tsc --noEmit` with zero errors.
 
 **Discord Bot (T004):**
