@@ -74,16 +74,26 @@ export async function callDarkflow(apiModule: string, consulta: string): Promise
   url.searchParams.set("consulta", consulta);
   const res = await fetch(url.toString(), { signal: AbortSignal.timeout(25_000) });
 
-  // Sempre tenta ler o body JSON, mesmo em respostas 4xx/5xx —
-  // a API retorna { error: "CPF invalido" } com HTTP 400, por exemplo.
+  // Lê o body como texto primeiro para inspecionar antes de fazer JSON.parse.
+  // Muitos módulos retornam { error: "..." } com HTTP 4xx,
+  // e alguns retornam HTML/texto puro com HTTP 200 quando offline.
+  const raw = await res.text();
+
   let body: unknown;
   try {
-    body = await res.json();
+    body = JSON.parse(raw);
   } catch {
-    throw new Error(`HTTP ${res.status} — ${res.statusText} (body não é JSON)`);
+    // Não é JSON — normaliza como erro legível para o handler
+    const preview = raw.trim().slice(0, 180).replace(/\s+/g, " ");
+    body = {
+      error: res.ok
+        ? `Módulo indisponível no momento (resposta inesperada da API).`
+        : `HTTP ${res.status} — ${res.statusText}`,
+      rawPreview: preview || "(vazio)",
+    };
   }
 
-  // Repassa o body para o caller tratar; a checagem de hasError cobre os 4xx/5xx
+  // Repassa sempre o body; a checagem de hasError/hasData acontece no handler
   return body;
 }
 
