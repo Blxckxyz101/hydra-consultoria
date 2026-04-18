@@ -350,6 +350,8 @@ const HTTP_PROXY_METHODS = new Set([
   "h2-storm", "pipeline-flood", "conn-flood", "slowloris",
   // Composite bypass
   "bypass-storm",
+  // New vectors — benefit from IP rotation
+  "tls-session-exhaust", "cache-buster",
 ]);
 
 function spawnPool(
@@ -781,7 +783,7 @@ async function runAttackWorkers(
 const METHODS_CATALOGUE = [
   // Geass / Special
   { id: "geass-override",       name: "Geass Override ∞ [ARES 35v]",          layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "MAX POWER — 35 simultaneous attack vectors: H2+TCP+UDP+TLS+Slowloris+WAF+WebSocket+GraphQL+RUDY+Cache+Pipeline+Smuggling+QUIC+ICMP+DNS+NTP+Memcached+SSDP+DoH+gRPC" },
-  { id: "bypass-storm",         name: "Bypass Storm [WAF/CF 7v]",             layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "7-vector WAF/CF bypass: WAF-Bypass + H2-RST + H2-CONTINUATION + HPACK-Bomb + HTTP-Smuggling + HTTP-Bypass + Cache-Poison — beats all rate limiting" },
+  { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST → Phase 3: AppFlood+CacheBust. All 3 phases run concurrently with independent thread pools" },
   // L7 Application
   { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
   { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
@@ -822,6 +824,9 @@ const METHODS_CATALOGUE = [
   { id: "http2-priority-storm", name: "H2 Priority Storm — RFC 7540 §6.3",    layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "PRIORITY frames force server to rebuild stream dependency tree — 150K frames/sec" },
   { id: "h2-rst-burst",         name: "H2 RST Burst — CVE-2023-44487",        layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "HEADERS+RST_STREAM pairs — pure write-path overload, zero read-side pressure" },
   { id: "grpc-flood",           name: "gRPC Flood — Handler Pool Exhaust",    layer: "L7",   protocol: "gRPC/HTTP2",           tier: "A",      description: "application/grpc content-type — exhausts gRPC handler thread pool" },
+  // ── New vectors ───────────────────────────────────────────────────────────
+  { id: "tls-session-exhaust",  name: "TLS Session Cache Exhaustion",          layer: "L4",   protocol: "TLS",                  tier: "A",      description: "Full TLS handshake per conn — no resumption — saturates server's RSA/ECDHE crypto thread pool. 5× more CPU-intensive than conn-flood" },
+  { id: "cache-buster",         name: "Cache Busting — 100% Origin Hit Rate",  layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Unique cache keys + Cache-Control:no-cache + Vary bombs — forces CDN to miss 100% of requests, overwhelming the origin directly" },
 ];
 
 router.get("/methods", (_req, res): void => {

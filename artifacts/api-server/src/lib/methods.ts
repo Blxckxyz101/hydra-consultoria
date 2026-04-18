@@ -332,4 +332,31 @@ export const ATTACK_METHODS = [
     protocol: "HTTP/2" as const,
     description: "Sends properly framed gRPC requests (content-type: application/grpc) over HTTP/2 to exhaust server-side gRPC handler threads. gRPC uses a SEPARATE quota and rate-limiter from HTTP — most WAFs (Cloudflare, Akamai, Imperva) have more lenient limits for gRPC. Each request sends a 5-byte length-prefixed gRPC frame with a valid protobuf payload, targeting health/reflection/custom gRPC endpoints. Forces the server to (1) decode gRPC frame, (2) invoke handler, (3) encode response — exhausting the gRPC goroutine/thread pool independently of the HTTP handler pool.",
   },
+
+  // ── NEW: TLS Session Cache Exhaustion ─────────────────────────────────────
+  {
+    id: "tls-session-exhaust",
+    name: "TLS Session Cache Exhaustion",
+    layer: "L4" as const,
+    protocol: "TCP" as const,
+    description: "Forces full TLS handshakes on every connection by disabling session resumption (unique random session IDs, no tickets). Each new TLS 1.2/1.3 handshake requires an asymmetric key exchange (~3-5ms CPU on server). Opens thousands of connections/sec, each triggering a full handshake — server's TLS session cache fills completely, LRU evictions become constant, and the crypto thread pool saturates. More CPU-intensive than conn-flood because it forces RSA/ECDHE operations per connection rather than just TCP state allocation.",
+  },
+
+  // ── NEW: HTTP Cache Busting ───────────────────────────────────────────────
+  {
+    id: "cache-buster",
+    name: "HTTP Cache Busting (100% Origin Hit Rate)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Sends GET requests with unique cache-busting parameters on every request: random query strings (?_cb=...), randomized Vary headers (Accept-Language, Accept-Encoding permutations), and Cache-Control: no-cache / Pragma: no-cache. Forces a 100% origin miss rate — every request bypasses CDN edge cache and hits the origin server directly. Extremely effective against Cloudflare/Akamai/Fastly-cached sites where 95%+ of traffic normally hits edge nodes. Combined with high concurrency, overwhelms the origin that was previously shielded by CDN caching.",
+  },
+
+  // ── NEW: Bypass Storm (Composite Multi-Phase) ─────────────────────────────
+  {
+    id: "bypass-storm",
+    name: "Bypass Storm ∞ (Adaptive Multi-Phase Composite)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Intelligent 3-phase composite attack that adapts to WAF/CDN defenses: Phase 1 (0-25% of duration) = TLS Session Exhaustion + Connection Flood — exhausts the TCP/TLS connection table before any HTTP rate limiting can activate. Phase 2 (25-70%) = WAF Bypass + H2 RST Burst (CVE-2023-44487) — while connection table is under pressure, fires simultaneous JA3-randomized Chrome HTTP/2 bypass + rapid RST pairs. Phase 3 (70-100%) = App Smart Flood + Cache Busting — bypasses any surviving WAF rules with application-layer DB-exhausting POST requests + 100% origin-hit cache destruction. Each phase uses a separate thread pool — all 3 phases run concurrently after initial sequencing. Combines the most effective bypass technique from 7 individual vectors.",
+  },
 ];

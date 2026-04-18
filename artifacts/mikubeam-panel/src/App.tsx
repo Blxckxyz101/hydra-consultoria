@@ -658,7 +658,9 @@ function Panel() {
   const [credRecent, setCredRecent]         = useState<CredResult[]>([]);
   const [credSkipped, setCredSkipped]       = useState(0);
   const [credUseCluster, setCredUseCluster] = useState(() => localStorage.getItem("lb-cred-cluster") === "1");
+  const [credJobId, setCredJobId]           = useState<string | null>(() => localStorage.getItem("lb-checker-job-id"));
   const credAbortRef                         = useRef<AbortController | null>(null);
+  const credJobIdRef                         = useRef<string | null>(null);
   const credFileRef                          = useRef<HTMLInputElement>(null);
 
   function getCheckedCredsKey(t: string) { return `lb-checked-creds-${t}`; }
@@ -1555,6 +1557,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   function handleCredStop() {
     credAbortRef.current?.abort();
+    // Tell the server to stop the background job (it won't stop on its own when we abort the reader)
+    const jid = credJobIdRef.current ?? credJobId;
+    if (jid) {
+      void fetch(`${BASE}/api/checker/${jid}`, { method: "DELETE" }).catch(() => {});
+      credJobIdRef.current = null;
+      setCredJobId(null);
+      localStorage.removeItem("lb-checker-job-id");
+    }
     setCredRunning(false);
   }
 
@@ -1606,6 +1616,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         addLog(`✕ Checker stream falhou: HTTP ${res.status}`, "error");
         setCredRunning(false);
         return;
+      }
+
+      // Save job ID for reconnect after browser close/refresh
+      const jid = res.headers.get("X-Checker-Job-Id");
+      if (jid) {
+        credJobIdRef.current = jid;
+        setCredJobId(jid);
+        localStorage.setItem("lb-checker-job-id", jid);
       }
 
       const reader = res.body.getReader();
@@ -1665,6 +1683,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               const finalChecked = loadCheckedCreds(credTarget);
               sessionChecked.forEach(c => finalChecked.add(c));
               saveCheckedCreds(credTarget, finalChecked);
+              // Job finished — clear saved job ID
+              credJobIdRef.current = null;
+              setCredJobId(null);
+              localStorage.removeItem("lb-checker-job-id");
               setCredRunning(false);
             }
           } catch { /**/ }
@@ -1679,6 +1701,57 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       } else {
         addLog(`✕ Checker erro: ${String(e)}`, "error");
       }
+    }
+    setCredRunning(false);
+  }
+
+  async function reconnectToCheckerJob(jobId: string) {
+    const ac = new AbortController();
+    credAbortRef.current = ac;
+    credJobIdRef.current = jobId;
+    setCredRunning(true);
+    try {
+      const res = await fetch(`${BASE}/api/checker/${jobId}/stream`, { signal: ac.signal });
+      if (!res.ok || !res.body) {
+        addLog(`✕ Job ${jobId} não encontrado ou expirou`, "error");
+        localStorage.removeItem("lb-checker-job-id");
+        setCredJobId(null);
+        setCredRunning(false);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const chunk of parts) {
+          const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            const ev = JSON.parse(dataLine.slice(5).trim()) as { type: string; total?: number; credential?: string; login?: string; status?: "HIT" | "FAIL" | "ERROR"; detail?: string };
+            if (ev.type === "start" && ev.total) setCredTotal(ev.total);
+            else if (ev.type === "result" && ev.credential) {
+              const r: CredResult = { credential: ev.credential, login: ev.login ?? "", status: ev.status ?? "ERROR", detail: ev.detail };
+              setCredDone(d => d + 1);
+              if (r.status === "HIT") { setCredHits(prev => [r, ...prev]); setCredTab("hit"); }
+              else if (r.status === "FAIL") { setCredFails(f => f + 1); setCredFailList(prev => [r, ...prev]); }
+              else { setCredErrors(e => e + 1); setCredFailList(prev => [r, ...prev]); }
+              setCredRecent(prev => [r, ...prev].slice(0, 50));
+            } else if (ev.type === "done") {
+              credJobIdRef.current = null;
+              setCredJobId(null);
+              localStorage.removeItem("lb-checker-job-id");
+              setCredRunning(false);
+            }
+          } catch { /**/ }
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") addLog(`✕ Reconexão erro: ${String(e)}`, "error");
     }
     setCredRunning(false);
   }
@@ -2093,6 +2166,30 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         ══════════════════════════════════════════════ */}
         {activePage === "checker" && (
           <div className="lb-cred-page">
+
+            {/* ── Reconnect banner — shown when a background job exists but panel isn't connected ── */}
+            {credJobId && !credRunning && (
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", marginBottom:8, background:"rgba(212,175,55,0.12)", border:"1px solid rgba(212,175,55,0.35)", borderRadius:8 }}>
+                <span style={{ fontSize:16 }}>🔄</span>
+                <span style={{ flex:1, color:"#d4af37", fontSize:13, fontFamily:"var(--font-mono)" }}>
+                  Checker em background — job <code style={{ background:"rgba(0,0,0,0.3)", padding:"1px 5px", borderRadius:3 }}>{credJobId}</code> ainda ativo
+                </span>
+                <button
+                  className="lb-btn lb-btn--gold"
+                  style={{ padding:"5px 12px", fontSize:12 }}
+                  onClick={() => void reconnectToCheckerJob(credJobId)}
+                >Reconectar</button>
+                <button
+                  className="lb-cred-mini-btn"
+                  title="Parar o job e descartar"
+                  onClick={() => {
+                    void fetch(`${BASE}/api/checker/${credJobId}`, { method: "DELETE" }).catch(() => {});
+                    setCredJobId(null);
+                    localStorage.removeItem("lb-checker-job-id");
+                  }}
+                >✕</button>
+              </div>
+            )}
 
             {/* ── Live stats banner (when running or done) ── */}
             {(credRunning || credDone > 0) && (

