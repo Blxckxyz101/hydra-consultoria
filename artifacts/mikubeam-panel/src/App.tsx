@@ -652,9 +652,10 @@ function Panel() {
   const [credDone, setCredDone]             = useState(0);
   const [credHits, setCredHits]             = useState<CredResult[]>([]);
   const [credFailList, setCredFailList]     = useState<CredResult[]>([]);
+  const [credErrorList, setCredErrorList]   = useState<CredResult[]>([]);
   const [credFails, setCredFails]           = useState(0);
   const [credErrors, setCredErrors]         = useState(0);
-  const [credTab, setCredTab]               = useState<"hit" | "fail">("hit");
+  const [credTab, setCredTab]               = useState<"hit" | "fail" | "error">("hit");
   const [credRecent, setCredRecent]         = useState<CredResult[]>([]);
   const [credSkipped, setCredSkipped]       = useState(0);
   const [credUseCluster, setCredUseCluster] = useState(() => localStorage.getItem("lb-cred-cluster") === "1");
@@ -1714,6 +1715,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setCredDone(0);
     setCredHits([]);
     setCredFailList([]);
+    setCredErrorList([]);
     setCredFails(0);
     setCredErrors(0);
     setCredRecent([]);
@@ -1880,7 +1882,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setCredRunning(true);
     // Reset counters — server will replay all buffered events, rebuilding from scratch
     setCredDone(0); setCredHits([]); setCredFails(0); setCredErrors(0);
-    setCredFailList([]); setCredRecent([]); setCredPaused(false);
+    setCredFailList([]); setCredErrorList([]); setCredRecent([]); setCredPaused(false);
 
     const MAX_RETRIES = 20;
     let attempt      = 0;
@@ -1927,9 +1929,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               else if (ev.type === "result" && ev.credential) {
                 const r: CredResult = { credential: ev.credential, login: ev.login ?? "", status: ev.status ?? "ERROR", detail: ev.detail };
                 setCredDone(d => d + 1);
-                if (r.status === "HIT") { setCredHits(prev => [r, ...prev]); setCredTab("hit"); }
-                else if (r.status === "FAIL") { setCredFails(f => f + 1); setCredFailList(prev => [r, ...prev]); }
-                else { setCredErrors(e => e + 1); setCredFailList(prev => [r, ...prev]); }
+                if (r.status === "HIT")  { setCredHits(prev => [r, ...prev]); setCredTab("hit"); }
+                else if (r.status === "FAIL")  { setCredFails(f => f + 1); setCredFailList(prev => [r, ...prev]); }
+                else { setCredErrors(e => e + 1); setCredErrorList(prev => [r, ...prev]); }
                 setCredRecent(prev => [r, ...prev].slice(0, 50));
               } else if (ev.type === "done") {
                 jobDone = true;
@@ -2690,7 +2692,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         onClick={() => setCredTab("fail")}
                       >
                         ❌ FAILs
-                        <span className="lb-cred-tab-badge lb-cred-tab-badge--fail">{credFails + credErrors}</span>
+                        <span className="lb-cred-tab-badge lb-cred-tab-badge--fail">{credFails}</span>
+                      </button>
+                      <button
+                        className={`lb-cred-tab-btn ${credTab === "error" ? "lb-cred-tab-btn--active lb-cred-tab-btn--error" : ""}`}
+                        onClick={() => setCredTab("error")}
+                      >
+                        ⚠️ ERRORs
+                        <span className="lb-cred-tab-badge lb-cred-tab-badge--error">{credErrors}</span>
                       </button>
                       {credTab === "hit" && credHits.length > 0 && (
                         <>
@@ -2749,8 +2758,27 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                             {credRunning ? "⏳ Processando..." : "Nenhum fail registrado"}
                           </div>
                         ) : credFailList.map((r, i) => (
-                          <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
-                            <span className="lb-cred-row-badge">{r.status}</span>
+                          <div key={i} className="lb-cred-row lb-cred-row--fail">
+                            <span className="lb-cred-row-badge lb-badge--fail">FAIL</span>
+                            <div className="lb-cred-row-content">
+                              <span className="lb-cred-row-cred">{r.credential}</span>
+                              {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ERROR tab */}
+                    {credTab === "error" && (
+                      <div className="lb-cred-results-list">
+                        {credErrorList.length === 0 ? (
+                          <div className="lb-cred-tab-empty">
+                            {credRunning ? "⏳ Processando..." : "Nenhum erro registrado"}
+                          </div>
+                        ) : credErrorList.map((r, i) => (
+                          <div key={i} className="lb-cred-row lb-cred-row--error">
+                            <span className="lb-cred-row-badge lb-badge--error">ERROR</span>
                             <div className="lb-cred-row-content">
                               <span className="lb-cred-row-cred">{r.credential}</span>
                               {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
