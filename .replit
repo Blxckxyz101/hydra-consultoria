@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -20,6 +20,10 @@ author = "agent"
 task = "workflow.run"
 args = "artifacts/discord-bot: Discord Bot"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/telegram-bot: Telegram Bot"
+
 [[workflows.workflow]]
 name = "artifacts/discord-bot: Discord Bot"
 author = "agent"
@@ -27,6 +31,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/discord-bot run dev"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "artifacts/telegram-bot: Telegram Bot"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/telegram-bot run dev"
 
 [workflows.workflow.metadata]
 outputType = "console"
@@ -52,6 +67,10 @@ localPort = 8082
 externalPort = 3002
 
 [[ports]]
+localPort = 21723
+externalPort = 3001
+
+[[ports]]
 localPort = 22453
 externalPort = 3000
 
@@ -68,3 +87,6 @@ RESIDENTIAL_PORT = "8080"
 RESIDENTIAL_USER = "SHJysch1"
 RESIDENTIAL_COUNT = "1000"
 DARKFLOW_TOKEN = "NCi2DZhsuaA5Q4D7irwRbSrkueWioVYY"
+
+[nix]
+channel = "stable-25_05"

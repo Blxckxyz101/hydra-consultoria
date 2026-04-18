@@ -11,6 +11,7 @@ import eventsRouter from "./events";
 import imageRouter from "./image";
 import queryRouter from "./query";
 import checkerRouter from "./checker";
+import credentialsRouter from "./credentials";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(clusterRouter);
 router.use(imageRouter);
 router.use(queryRouter);
 router.use(checkerRouter);
+router.use("/credentials", credentialsRouter);
 
 export default router;

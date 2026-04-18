@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/telegram-bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm run build && pnpm run start",
+    "build": "node ./build.mjs",
+    "start": "NODE_ENV=production node --enable-source-maps ./dist/index.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "node-fetch": "^3.3.2",
+    "eventsource": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.8.3"
+  }
+}

