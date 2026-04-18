@@ -641,7 +641,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -1665,8 +1665,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     // Financeiro BR
     mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR" },
     ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR" },
+    // Gaming
+    riot:         { label: "Riot / Valorant",icon: "🎮", category: "Gaming" },
   };
-  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR"];
+  const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR", "Gaming"];
 
   function handleCredStop() {
     credAbortRef.current?.abort();

