@@ -214,4 +214,14 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 **Discord Bot (T004):**
 - Bot already had per-HIT real-time alerts: `@everyone 🚨 LOGIN ATIVO!` fires for dashboard-specific HITs mid-run. End-of-run HITs embed posted to channel as public summary.
 
+#### v4.4 — /darkflow Command (21 módulos)
+
+**Discord `/darkflow` command** (`artifacts/discord-bot/src/darkflow.ts`):
+- 21 subcommands mapping to darkflowapis.space API modules: `placa`, `cnh`, `renavam`, `processos`, `numero_processo`, `chassi`, `credilink_cpf`, `credilink_nome`, `credilink_telefone`, `busca_bancos`, `cadsus`, `pai`, `mae`, `score`, `oab`, `sisreg`, `placa_sesp`, `ard`, `infracao`, `cnh_sv`, `foto_mg`
+- Each subcommand accepts the appropriate input (CPF, placa, nome, telefone, número, chassi, etc.)
+- Replies with Discord embed showing top 8 fields from the response (priority keys: nome, cpf, nascimento, telefone, status, etc.)
+- Full response attached as `.txt` file formatted with headers and `Bot made by blxckxyz` footer
+- API-level errors shown in orange embed; network errors shown in red embed
+- Token stored in `DARKFLOW_TOKEN` shared env var
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
