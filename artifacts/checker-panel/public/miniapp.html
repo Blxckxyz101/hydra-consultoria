@@ -132,6 +132,14 @@ body::before{content:'';position:fixed;inset:0;z-index:0;
 .live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.65)}}
 
+/* ── File upload ─────────────────────────────────────────── */
+.file-btn-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.btn-file{flex-shrink:0;padding:10px 14px;background:var(--bg3);border:1px dashed rgba(201,162,39,.4);color:var(--gold);font-size:.72rem;font-weight:700;border-radius:var(--radius);cursor:pointer;transition:background .15s,border-color .15s;white-space:nowrap}
+.btn-file:active,.btn-file:hover{background:rgba(201,162,39,.1);border-color:var(--gold)}
+.file-name{font-size:.65rem;color:var(--text2);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.or-divider{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:.58rem;letter-spacing:.1em;color:var(--text2);text-transform:uppercase}
+.or-divider::before,.or-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+
 /* ── Export btn ──────────────────────────────────────────── */
 .export-btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border-radius:var(--radius);background:rgba(201,162,39,.1);border:1px solid rgba(201,162,39,.25);color:var(--gold2);font-size:.72rem;font-weight:700;cursor:pointer;margin-top:12px}
 .export-btn:active{opacity:.8}
@@ -189,6 +197,18 @@ body::before{content:'';position:fixed;inset:0;z-index:0;
     </div>
 
     <div class="sec-label">Credenciais</div>
+    <!-- hidden file input -->
+    <input type="file" id="file-input" accept=".txt,.csv,.log,text/plain" style="display:none" onchange="handleFileInput(event)"/>
+
+    <div class="file-btn-row">
+      <button class="btn btn-file" onclick="document.getElementById('file-input').click()">
+        📎 Anexar arquivo .txt
+      </button>
+      <span class="file-name" id="file-name">nenhum arquivo</span>
+    </div>
+
+    <div class="or-divider"><span>ou cole abaixo</span></div>
+
     <textarea class="cred-area" id="cred-area"
       placeholder="usuario@email.com:senha123&#10;outro_user:outra_senha&#10;&#10;Um par por linha (login:senha)"
       oninput="countCreds()"
@@ -343,6 +363,24 @@ function switchTab(tab) {
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("show"));
   document.getElementById(`panel-${tab}`).classList.add("show");
   currentTab = tab;
+}
+
+// ── File upload ───────────────────────────────────────────────────────────────
+function handleFileInput(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target?.result ?? "";
+    document.getElementById("cred-area").value = text;
+    document.getElementById("file-name").textContent = file.name;
+    countCreds();
+    toast(`📎 ${file.name} carregado`);
+  };
+  reader.onerror = () => toast("❌ Erro ao ler arquivo");
+  reader.readAsText(file, "utf-8");
+  // Reset input so same file can be re-selected
+  event.target.value = "";
 }
 
 // ── Credential counter ────────────────────────────────────────────────────────

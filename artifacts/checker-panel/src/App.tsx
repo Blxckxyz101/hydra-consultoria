@@ -82,6 +82,7 @@ export default function App() {
   const [speed,       setSpeed]       = useState(0);
   const [results,     setResults]     = useState<JobResult>({ hits: [], fails: [], errors: [] });
   const [finished,    setFinished]    = useState(false);
+  const [resultTab,   setResultTab]   = useState<"hit" | "fail" | "error">("hit");
 
   const esRef      = useRef<EventSource | null>(null);
   const doneRef    = useRef(0);
@@ -128,6 +129,7 @@ export default function App() {
     setFinished(false);
     setDone(0); doneRef.current = 0;
     setResults({ hits: [], fails: [], errors: [] });
+    setResultTab("hit");
     startRef.current = Date.now();
 
     // Speed meter
@@ -201,8 +203,6 @@ export default function App() {
     esRef.current?.close();
     if (speedTimer.current) clearInterval(speedTimer.current);
   }, []);
-
-  const [resultTab, setResultTab] = useState<"hit" | "fail" | "error">("hit");
 
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const hitRate = done > 0 ? ((results.hits.length / done) * 100).toFixed(1) : "0.0";
@@ -303,7 +303,7 @@ export default function App() {
               )}
               <button
                 className="apex-btn apex-btn--ghost"
-                onClick={() => { setCredentials([]); setCredInput(""); setResults({ hits: [], fails: [], errors: [] }); setFinished(false); setDone(0); setTotal(0); }}
+                onClick={() => { setCredentials([]); setCredInput(""); setResults({ hits: [], fails: [], errors: [] }); setFinished(false); setDone(0); setTotal(0); setResultTab("hit"); }}
                 disabled={running}
               >
                 ↺ Reset
