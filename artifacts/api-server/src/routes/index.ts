@@ -12,6 +12,7 @@ import imageRouter from "./image";
 import queryRouter from "./query";
 import checkerRouter from "./checker";
 import credentialsRouter from "./credentials";
+import dnsRouter from "./dns";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(imageRouter);
 router.use(queryRouter);
 router.use(checkerRouter);
 router.use("/credentials", credentialsRouter);
+router.use(dnsRouter);
 
 export default router;

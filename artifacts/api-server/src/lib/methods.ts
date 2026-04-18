@@ -21,7 +21,7 @@ export const ATTACK_METHODS = [
     name: "DNS Water Torture  [CDN-bypass]",
     layer: "L3" as const,
     protocol: "UDP" as const,
-    description: "DNS Water Torture attack — floods target's authoritative NS servers with random subdomain queries. Bypasses CDN/WAF (NS servers are NOT protected by CloudFlare/Akamai). Forces recursive resolution for every query, fills NXDOMAIN cache, exhausts NS memory. Real DNS binary protocol packets via dgram UDP.",
+    description: "DNS Water Torture attack v2 — auto-resolves ALL IPs for ALL NS servers (not just first), floods every NS IP simultaneously. EDNS(0) OPT record forces 4096-byte response buffer per query. 43-char random labels (DNS max) create larger packets. 12 query types: A/AAAA/MX/TXT/ANY/DNSKEY/DS/SOA/NSEC/NSEC3/CAA/RRSIG. 20% CHAOS class queries force unexpected DNS parsing paths. Pre-built 512-label pool eliminates randStr() bottleneck. Bypasses CDN/WAF entirely — NS servers are NOT behind Cloudflare/Akamai.",
   },
   {
     id: "ntp-amp",

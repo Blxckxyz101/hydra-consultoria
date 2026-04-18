@@ -156,6 +156,38 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 - **Total**: 7+ workers, ~6,400 TLS sockets, 160+ fingerprinted H2 sessions
 - **Benchmark** (confirmed with 20 threads on Replit): 71K→133K pps growing over full duration, no dropout
 
+#### DNS Water Torture v2 — Improvements (attack-worker.ts)
+
+- **EDNS(0) OPT record** — every query now includes RFC 6891 OPT record requesting 4096-byte UDP response; forces NS to allocate larger buffer per query
+- **ALL IPs per NS server** — resolves every A record for every NS name (was: first IP only). Most NS servers have 2-4 IPs; now floods all simultaneously
+- **43-char random labels** — pre-built pool of 512 labels using full DNS label length; larger FQDN = larger packets + more NS memory to parse
+- **12 query types** — added NSEC (47), NSEC3 (50), CAA (257), RRSIG (46) — NSEC forces DNSSEC chain traversal; NSEC3 forces hash chain computation; RRSIG is expensive to compute/verify
+- **CHAOS class (class=3)** — 20% of queries use CHAOS class instead of IN; forces DNS server through non-standard code paths
+- **512-label pool** — pre-built at attack start to eliminate `Math.random()` overhead per packet during the burst loop
+- **Description updated** in methods.ts to reflect all improvements
+
+#### DNS Recon Tool (`/api/dns/recon`)
+
+New route (`artifacts/api-server/src/routes/dns.ts`):
+- **GET /api/dns/recon?domain=X** — full DNS intelligence sweep
+- **All record types**: A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS (parallel)
+- **All NS IPs**: resolves every A record for every NS server (multi-IP support)
+- **AXFR zone transfer attempt**: tries TCP AXFR on each NS server; detects if zone transfer is allowed (vulnerability)
+- **Wildcard DNS detection**: probes random hostname first — if it resolves, marks domain as wildcard and skips subdomain enumeration (prevents false positives like *.vercel.app)
+- **47 common subdomains**: brute-force enumeration with wildcard filtering
+- **CDN/Provider fingerprinting**: identifies Cloudflare, Vercel, AWS, Fastly, Akamai, GCP, DigitalOcean, Hetzner from CIDR ranges
+- **Email security**: SPF, DMARC, DKIM detection
+- **DNSSEC status**: detects DNSKEY + DS records
+- **Reverse DNS**: hostname lookup for all A records
+- **Summary**: totalIPs, nsCount, subdomainsFound, axfrVulnerable, dnssecEnabled, cdnDetected, providers[]
+
+#### DNS Recon Tab in Lelouch Panel
+
+- New "🌐 DNS Recon" tab added to the Lelouch panel header (alongside ⚔ Ataque, 🔑 Credential Checker)
+- Left column: search input + scan button + summary cards (IPs / NS / Subdomains / AXFR)
+- Right column: record tables (A/AAAA/MX/TXT/NS/SOA/CAA), NS Details (all IPs + provider), Subdomains, AXFR results, Email Security, DNSSEC
+- localStorage persists "dns" page state
+
 ### Discord Bot (`artifacts/discord-bot`)
 
 - **Framework**: discord.js v14

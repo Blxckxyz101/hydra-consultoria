@@ -631,9 +631,15 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns") ?? "attack"
   );
+
+  /* DNS Recon */
+  const [dnsQuery,   setDnsQuery]   = useState("");
+  const [dnsResult,  setDnsResult]  = useState<Record<string, unknown> | null>(null);
+  const [dnsLoading, setDnsLoading] = useState(false);
+  const [dnsError,   setDnsError]   = useState("");
 
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
@@ -2413,6 +2419,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 </span>
               )}
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "dns" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("dns")}
+            >
+              🌐 DNS Recon
+            </button>
           </div>
         </header>
 
@@ -2790,6 +2802,242 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   </section>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════
+            DNS RECON PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "dns" && (
+          <div className="lb-cred-page">
+            <div className="lb-cred-layout">
+              <div className="lb-cred-left" style={{ maxWidth: 480 }}>
+
+                {/* Search */}
+                <section className="lb-cred-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🌐</span>
+                    <h3 className="lb-cred-section-title">DNS Intelligence</h3>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input
+                      className="lb-input"
+                      style={{ flex: 1 }}
+                      placeholder="ex: google.com ou https://meusite.com"
+                      value={dnsQuery}
+                      onChange={e => setDnsQuery(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && !dnsLoading) {
+                          const domain = dnsQuery.trim().replace(/^https?:\/\//, "").split("/")[0];
+                          if (!domain) return;
+                          setDnsLoading(true); setDnsError(""); setDnsResult(null);
+                          fetch(`${BASE}/api/dns/recon?domain=${encodeURIComponent(domain)}`)
+                            .then(r => r.json())
+                            .then(d => { setDnsResult(d as Record<string, unknown>); setDnsLoading(false); })
+                            .catch(err => { setDnsError(String(err)); setDnsLoading(false); });
+                        }
+                      }}
+                    />
+                    <button
+                      className="lb-btn lb-btn--gold"
+                      disabled={dnsLoading || !dnsQuery.trim()}
+                      onClick={() => {
+                        const domain = dnsQuery.trim().replace(/^https?:\/\//, "").split("/")[0];
+                        if (!domain) return;
+                        setDnsLoading(true); setDnsError(""); setDnsResult(null);
+                        fetch(`${BASE}/api/dns/recon?domain=${encodeURIComponent(domain)}`)
+                          .then(r => r.json())
+                          .then(d => { setDnsResult(d as Record<string, unknown>); setDnsLoading(false); })
+                          .catch(err => { setDnsError(String(err)); setDnsLoading(false); });
+                      }}
+                    >
+                      {dnsLoading ? "🔍 Scaneando..." : "🔍 Escanear"}
+                    </button>
+                  </div>
+                  {dnsError && <p style={{ color: "#e74c3c", fontSize: 12, marginTop: 6 }}>{dnsError}</p>}
+                  {dnsLoading && (
+                    <div style={{ padding: "12px 0", textAlign: "center", color: "#d4af37", fontSize: 13 }}>
+                      ⏳ Resolvendo registros DNS, tentando AXFR, enumerando subdomínios...
+                    </div>
+                  )}
+                </section>
+
+                {/* Summary */}
+                {dnsResult && (() => {
+                  const summary = dnsResult.summary as Record<string, unknown> ?? {};
+                  const providers = (summary.providers as string[]) ?? [];
+                  const vuln = summary.axfrVulnerable as boolean;
+                  return (
+                    <section className="lb-cred-section">
+                      <div className="lb-cred-section-header">
+                        <span className="lb-cred-section-icon">📊</span>
+                        <h3 className="lb-cred-section-title">Resumo — {dnsResult.domain as string}</h3>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {[
+                          { label: "IPs", value: summary.totalIPs as number },
+                          { label: "NS", value: summary.nsCount as number },
+                          { label: "Subdomínios", value: summary.subdomainsFound as number },
+                        ].map(({ label, value }) => (
+                          <div key={label} style={{ flex: 1, minWidth: 80, padding: "10px 14px", background: "rgba(212,175,55,0.06)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: 8, textAlign: "center" }}>
+                            <div style={{ fontSize: 20, fontWeight: 800, color: "#d4af37" }}>{value}</div>
+                            <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
+                          </div>
+                        ))}
+                        <div style={{ flex: 1, minWidth: 80, padding: "10px 14px", background: vuln ? "rgba(231,76,60,0.12)" : "rgba(46,204,113,0.06)", border: `1px solid ${vuln ? "rgba(231,76,60,0.4)" : "rgba(46,204,113,0.2)"}`, borderRadius: 8, textAlign: "center" }}>
+                          <div style={{ fontSize: 16, fontWeight: 800, color: vuln ? "#e74c3c" : "#2ecc71" }}>{vuln ? "⚠️ VULN" : "✓ OK"}</div>
+                          <div style={{ fontSize: 10, color: "#aaa", textTransform: "uppercase", letterSpacing: 1 }}>AXFR</div>
+                        </div>
+                      </div>
+                      {providers.length > 0 && (
+                        <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {providers.map(p => (
+                            <span key={p} style={{ padding: "3px 10px", background: "rgba(212,175,55,0.1)", border: "1px solid rgba(212,175,55,0.3)", borderRadius: 12, fontSize: 11, color: "#d4af37" }}>{p}</span>
+                          ))}
+                          {(summary.dnssecEnabled as boolean) && (
+                            <span style={{ padding: "3px 10px", background: "rgba(52,152,219,0.1)", border: "1px solid rgba(52,152,219,0.3)", borderRadius: 12, fontSize: 11, color: "#3498db" }}>🔐 DNSSEC</span>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })()}
+              </div>
+
+              {/* Right: Records */}
+              {dnsResult && (
+                <div className="lb-cred-right" style={{ flex: 1, minWidth: 0 }}>
+                  {/* DNS Records */}
+                  {[
+                    { icon: "🔵", label: "A Records (IPv4)", key: "A" },
+                    { icon: "🟣", label: "AAAA Records (IPv6)", key: "AAAA" },
+                    { icon: "📬", label: "MX Records", key: "MX" },
+                    { icon: "📝", label: "TXT Records", key: "TXT" },
+                    { icon: "🖧",  label: "NS Records",  key: "NS"  },
+                    { icon: "🗂",  label: "SOA Record",   key: "SOA" },
+                    { icon: "🔒", label: "CAA Records",  key: "CAA" },
+                  ].map(({ icon, label, key }) => {
+                    const recs = ((dnsResult.records as Record<string, string[]>)?.[key] ?? []);
+                    if (recs.length === 0) return null;
+                    return (
+                      <section key={key} className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">{icon}</span>
+                          <h3 className="lb-cred-section-title">{label}</h3>
+                          <span style={{ marginLeft: "auto", fontSize: 11, color: "#888" }}>{recs.length}</span>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {recs.map((r, i) => (
+                            <code key={i} style={{ padding: "4px 8px", background: "rgba(0,0,0,0.3)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", wordBreak: "break-all" }}>{r}</code>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  })}
+
+                  {/* NS Details with IPs */}
+                  {(() => {
+                    const nsDetails = dnsResult.nsDetails as Array<{ name: string; ips: string[]; providers: string[] }> ?? [];
+                    if (nsDetails.length === 0) return null;
+                    return (
+                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">🖧</span>
+                          <h3 className="lb-cred-section-title">NS Servers — Todos IPs</h3>
+                        </div>
+                        {nsDetails.map((ns, i) => (
+                          <div key={i} style={{ marginBottom: 6, padding: "8px 10px", background: "rgba(0,0,0,0.25)", borderRadius: 6 }}>
+                            <div style={{ fontWeight: 700, color: "#d4af37", fontSize: 12, marginBottom: 4 }}>{ns.name}</div>
+                            {ns.ips.map((ip, j) => (
+                              <div key={j} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 2 }}>
+                                <code style={{ fontSize: 11, color: "#e8e8e8" }}>{ip}</code>
+                                <span style={{ fontSize: 10, color: "#888", background: "rgba(255,255,255,0.05)", padding: "1px 6px", borderRadius: 8 }}>{ns.providers[j]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </section>
+                    );
+                  })()}
+
+                  {/* Subdomains */}
+                  {(() => {
+                    const subs = dnsResult.subdomains as string[] ?? [];
+                    if (subs.length === 0) return null;
+                    return (
+                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">🔭</span>
+                          <h3 className="lb-cred-section-title">Subdomínios Encontrados</h3>
+                          <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{subs.length} hit{subs.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        {subs.map((s, i) => (
+                          <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
+                        ))}
+                      </section>
+                    );
+                  })()}
+
+                  {/* AXFR */}
+                  {(() => {
+                    const axfr = dnsResult.axfr as Array<{ ns: string; result: string }> ?? [];
+                    if (axfr.length === 0) return null;
+                    return (
+                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">⚡</span>
+                          <h3 className="lb-cred-section-title">AXFR Zone Transfer</h3>
+                        </div>
+                        {axfr.map((a, i) => (
+                          <div key={i} style={{ marginBottom: 4, padding: "6px 10px", background: a.result.includes("ALLOWED") ? "rgba(231,76,60,0.1)" : "rgba(0,0,0,0.2)", borderLeft: `2px solid ${a.result.includes("ALLOWED") ? "#e74c3c" : "#555"}`, borderRadius: 4 }}>
+                            <div style={{ fontSize: 10, color: "#888", marginBottom: 2 }}>{a.ns}</div>
+                            <div style={{ fontSize: 12, color: a.result.includes("ALLOWED") ? "#e74c3c" : "#aaa" }}>{a.result}</div>
+                          </div>
+                        ))}
+                      </section>
+                    );
+                  })()}
+
+                  {/* Email Security */}
+                  {(() => {
+                    const es = dnsResult.emailSecurity as Record<string, string[]> ?? {};
+                    return (
+                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">📧</span>
+                          <h3 className="lb-cred-section-title">Email Security</h3>
+                        </div>
+                        {[
+                          { label: "SPF",   data: es.spf   ?? [] },
+                          { label: "DMARC", data: es.dmarc ?? [] },
+                          { label: "DKIM",  data: es.dkim  ?? [] },
+                        ].map(({ label, data }) => (
+                          <div key={label} style={{ marginBottom: 6 }}>
+                            <div style={{ fontSize: 10, color: "#d4af37", fontWeight: 700, marginBottom: 3 }}>{label}</div>
+                            {data.map((d, i) => (
+                              <code key={i} style={{ display: "block", fontSize: 11, color: d.includes("Not") ? "#888" : "#e8e8e8", padding: "3px 8px", background: "rgba(0,0,0,0.2)", borderRadius: 3, wordBreak: "break-all", marginBottom: 2 }}>{d}</code>
+                            ))}
+                          </div>
+                        ))}
+                      </section>
+                    );
+                  })()}
+
+                  {/* DNSSEC */}
+                  {dnsResult.dnssec && (
+                    <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                      <div className="lb-cred-section-header">
+                        <span className="lb-cred-section-icon">🔐</span>
+                        <h3 className="lb-cred-section-title">DNSSEC</h3>
+                      </div>
+                      <code style={{ fontSize: 11, color: "#e8e8e8" }}>
+                        {(dnsResult.dnssec as Record<string, string>).status}
+                      </code>
+                    </section>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
