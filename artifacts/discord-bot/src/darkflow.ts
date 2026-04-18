@@ -198,21 +198,43 @@ function extractFromObject(obj: Record<string, unknown>, limit: number): EmbedFi
   return fields;
 }
 
+/**
+ * Muitas APIs retornam { status, meta, dados: {...} } ou { data: [...] }.
+ * Esta função desempacota o wrapper e extrai os campos de dentro.
+ */
+function unwrapData(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+
+  // Wrapper comum: { dados: {...} } ou { data: {...} } ou { result: {...} } ou { resultado: {...} }
+  for (const key of ["dados", "data", "result", "resultado", "retorno", "response"]) {
+    if (obj[key] !== undefined && obj[key] !== null) {
+      return obj[key];
+    }
+  }
+  return raw;
+}
+
 export function extractEmbedFields(data: unknown, limit = 8): EmbedField[] {
   if (!data) return [];
-  if (Array.isArray(data)) {
-    if (data.length === 0) return [];
-    const first = data[0] as Record<string, unknown>;
+
+  const unwrapped = unwrapData(data);
+
+  if (Array.isArray(unwrapped)) {
+    if (unwrapped.length === 0) return [];
+    const first = unwrapped[0] as Record<string, unknown>;
     const fields = typeof first === "object" && first !== null
       ? extractFromObject(first, limit - 1)
       : [];
-    if (data.length > 1) fields.push({ name: "📦 Total", value: `\`${data.length} registros\``, inline: true });
+    if (unwrapped.length > 1) fields.push({ name: "📦 Total", value: `\`${unwrapped.length} registros\``, inline: true });
     return fields;
   }
-  if (typeof data === "object" && data !== null) {
-    return extractFromObject(data as Record<string, unknown>, limit);
+
+  if (typeof unwrapped === "object" && unwrapped !== null) {
+    return extractFromObject(unwrapped as Record<string, unknown>, limit);
   }
-  return [{ name: "Resultado", value: `\`${String(data)}\``, inline: false }];
+
+  return [{ name: "Resultado", value: `\`${String(unwrapped)}\``, inline: false }];
 }
 
 // ── Discord handler ──────────────────────────────────────────────────────────
