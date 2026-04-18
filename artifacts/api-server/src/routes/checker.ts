@@ -18,14 +18,39 @@ interface CurlResult {
   location:   string; // value of Location header (from redirect), if any
 }
 
+// Maps curl exit codes to short human-readable labels
+function curlExitLabel(code: number | null | undefined): string {
+  const labels: Record<number, string> = {
+    1:  "UNSUPPORTED_PROTOCOL", 2:  "INIT_FAILED",       3:  "BAD_URL",
+    5:  "CANT_RESOLVE_PROXY",   6:  "CANT_RESOLVE_HOST", 7:  "CONNECT_FAILED",
+    8:  "FTP_WEIRD_REPLY",      9:  "FTP_DENIED",        16: "HTTP2_FRAMING",
+    18: "PARTIAL_FILE",         22: "HTTP_RETURNED_ERROR",23: "WRITE_ERROR",
+    25: "UPLOAD_FAILED",        26: "READ_ERROR",         27: "OUT_OF_MEMORY",
+    28: "TIMEOUT",              33: "RANGE_ERROR",        34: "HTTP_POST_ERROR",
+    35: "SSL_CONNECT_ERROR",    51: "PEER_CERT_INVALID",  52: "GOT_NOTHING",
+    53: "SSL_ENGINE_NOT_FOUND", 56: "RECV_ERROR",         58: "LOCAL_CERT_PROBLEM",
+    60: "SSL_CACERT_VERIFY",    77: "SSL_CACERT_BADFILE", 78: "RESOURCE_NOT_FOUND",
+    97: "HTTP3_ERROR",          98: "QUIC_CONNECT_ERROR",
+  };
+  return code != null && labels[code] ? `CURL_${code}:${labels[code]}` : `CURL_ERR_${code ?? "?"}`;
+}
+
 function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
   // Base args: silent + dump headers to stdout + timeout
   const args = ["-s", "--max-time", String(Math.ceil(timeoutMs / 1000)), "-D", "-", ...argv];
 
   return new Promise((resolve, reject) => {
-    const child = execFile("curl", args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    const child = execFile("curl", args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       // curl exit-code ≠ 0 is ok as long as we got output (e.g. 302 with --max-redirs 0)
-      if (!stdout && err) return reject(new Error(err.message.split("\n")[0]));
+      if (!stdout && err) {
+        // Prefer curl's own stderr message (e.g. "curl: (7) Failed to connect to...")
+        const stderrClean = (stderr ?? "").trim().replace(/^curl:\s*/i, "").slice(0, 120);
+        const code = (err as NodeJS.ErrnoException & { code?: number | string }).code;
+        const exitCode = typeof code === "number" ? code : parseInt(String(err.message.match(/exit code (\d+)/)?.[1] ?? ""), 10) || null;
+        const label = curlExitLabel(exitCode);
+        const detail = stderrClean ? `${label} — ${stderrClean}` : label;
+        return reject(new Error(detail));
+      }
 
       // Split at first blank line separating headers from body
       // (may have multiple header blocks if curl followed a redirect for the GET phase)

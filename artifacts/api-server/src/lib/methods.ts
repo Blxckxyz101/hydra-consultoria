@@ -359,4 +359,13 @@ export const ATTACK_METHODS = [
     protocol: "HTTP" as const,
     description: "Intelligent 3-phase composite attack that adapts to WAF/CDN defenses: Phase 1 (0-25% of duration) = TLS Session Exhaustion + Connection Flood — exhausts the TCP/TLS connection table before any HTTP rate limiting can activate. Phase 2 (25-70%) = WAF Bypass + H2 RST Burst (CVE-2023-44487) — while connection table is under pressure, fires simultaneous JA3-randomized Chrome HTTP/2 bypass + rapid RST pairs. Phase 3 (70-100%) = App Smart Flood + Cache Busting — bypasses any surviving WAF rules with application-layer DB-exhausting POST requests + 100% origin-hit cache destruction. Each phase uses a separate thread pool — all 3 phases run concurrently after initial sequencing. Combines the most effective bypass technique from 7 individual vectors.",
   },
+
+  // ── NEW: Vercel / Next.js Specific Flood ──────────────────────────────────
+  {
+    id: "vercel-flood",
+    name: "Vercel Flood ∞ (Next.js 4-Vector Edge Annihilation)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Vercel/Next.js specific 4-vector attack that bypasses all Vercel edge caching simultaneously: (1) RSC Bypass — requests with ?_rsc=<random> trigger full React Server Component renders; Vercel adds Vary:RSC so every unique _rsc = cache MISS → origin serverless function invocation. (2) Image Optimizer DoS — /_next/image?url=X&w=<N>&q=<N> with unique random (url,width,quality,format) triggers CPU-intensive libvips resize+encode on each cold hit; thousands of concurrent resize ops exhaust Vercel's image lambda pool. (3) Edge API Cold Start — /api/* routes with unique params prevent Vercel runtime reuse; each cold start allocates a new Node.js V8 isolate (~50ms startup). (4) ISR Data Route Flood — /_next/data/<buildId>/[page].json with random buildIds forces getServerSideProps execution per request. Combined: saturates Vercel's serverless lambda concurrency limit (default 1000 concurrent executions), triggers 429/502 responses.",
+  },
 ];

