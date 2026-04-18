@@ -4282,7 +4282,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
@@ -4299,6 +4299,8 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     chk_hbomax:        "hbomax",
     chk_disney:        "disney",
     chk_paramount:     "paramount",
+    chk_sinesp:        "sinesp",
+    chk_serasa_exp:    "serasa_exp",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
   const targetLabel   = {
@@ -4307,6 +4309,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     serpro: "SERPRO", sisreg: "SISREG III", credilink: "CrediLink", serasa: "Serasa",
     crunchyroll: "Crunchyroll", netflix: "Netflix", amazon: "Amazon Prime",
     hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
+    sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
   }[target]!;
   const targetIcon    = {
     iseek: "🌐", datasus: "🏥", sipni: "💉",
@@ -4314,11 +4317,13 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     serpro: "🛡️", sisreg: "🏨", credilink: "💳", serasa: "📊",
     crunchyroll: "🍥", netflix: "🎬", amazon: "📦",
     hbomax: "👑", disney: "🏰", paramount: "⭐",
+    sinesp: "🚔", serasa_exp: "💼",
   }[target]!;
   const concurrency   = {
     iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
     serpro: 4, sisreg: 2, credilink: 4, serasa: 2,
     crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
+    sinesp: 2, serasa_exp: 3,
   }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────

