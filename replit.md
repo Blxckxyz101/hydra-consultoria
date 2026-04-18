@@ -24,6 +24,25 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
+## Telegram Bot (`artifacts/telegram-bot`)
+
+- **Framework**: Telegraf + TypeScript
+- **Theme**: Lelouch Britannia / GEASS COMMAND CENTER
+- **Design**: Mensagem única com teclado inline — sem flood de mensagens
+- **Checker**: Progresso live na mesma mensagem, botão inline "🛑 PARAR GEASS"
+- **Mini-App**: Telegram WebApp com tema Lelouch (lelouch.png, lelouch-eyes.jpg, geass.jpg)
+- **URL Mini-App**: `${REPLIT_DEV_DOMAIN}/checker-panel/miniapp.html` (automático via env)
+- **Comandos**: `/start`, `/checker`, `/url`, `/import`, `/stats`, `/hits`, `/fails`, `/errors`, `/stop`
+- **Config**: `TELEGRAM_BOT_TOKEN` (secret), `API_BASE` (default `http://localhost:8080`), `MINIAPP_URL` (opcional)
+
+## Apex Checker Panel (`artifacts/checker-panel`)
+
+- **Framework**: React + Vite + Tailwind
+- **Design**: APEX CHECKER — dark neon minimal
+- **Resultados**: Abas separadas (✅ HITs / ❌ FAILs / ⚠️ Erros)
+- **Mini-App Telegram**: `public/miniapp.html` com tema Lelouch (dark purple/red/gold)
+- **Assets**: lelouch.png, lelouch-eyes.jpg, geass.jpg na pasta `public/`
+
 ## Lelouch Britannia Panel
 
 A network stress test / load testing control panel themed after Lelouch vi Britannia from Code Geass.

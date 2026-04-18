@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>Geass Command Center</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg:      #050008;
+    --bg2:     #0d0018;
+    --red:     #cc1a1a;
+    --red2:    #ff2020;
+    --gold:    #c9a227;
+    --gold2:   #f0cc50;
+    --purple:  #4a0080;
+    --text:    #f0e6ff;
+    --text2:   #a08ab8;
+    --border:  #2a0050;
+    --mono:    'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow-x: hidden; }
+
+  /* ─── Animated background ─────────────── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(76,0,128,.4) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 100%, rgba(180,0,0,.2) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  /* ─── Geass symbol (rotating) ─────────────── */
+  .geass-bg {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(90vw, 500px); height: min(90vw, 500px);
+    opacity: .06;
+    animation: spin 40s linear infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+  @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+  /* ─── Layout ─────────────── */
+  .app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* ─── Hero ─────────────── */
+  .hero {
+    position: relative;
+    display: flex; align-items: flex-end; justify-content: center;
+    height: 260px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-img {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    height: 100%; width: auto; max-width: 120%;
+    object-fit: cover; object-position: center top;
+    filter: saturate(1.3) contrast(1.1);
+  }
+  .hero-overlay {
+    position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(5,0,8,.1) 40%, rgba(5,0,8,1) 100%);
+  }
+  .hero-title {
+    position: relative; z-index: 2;
+    text-align: center; padding-bottom: 20px;
+  }
+  .hero-title h1 {
+    font-size: 1.4rem; font-weight: 900; letter-spacing: .1em;
+    color: var(--gold2);
+    text-shadow: 0 0 20px rgba(201,162,39,.6), 0 0 40px rgba(201,162,39,.3);
+    text-transform: uppercase;
+  }
+  .hero-title p {
+    font-size: .7rem; color: var(--text2); letter-spacing: .2em; margin-top: 4px;
+  }
+
+  /* ─── Eye badge ─────────────── */
+  .eye-badge {
+    position: absolute; top: 12px; right: 12px; z-index: 3;
+    width: 52px; height: 52px; border-radius: 50%;
+    overflow: hidden; border: 2px solid var(--red);
+    box-shadow: 0 0 16px rgba(200,0,0,.6);
+  }
+  .eye-badge img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* ─── Content ─────────────── */
+  .content { flex: 1; padding: 20px 16px 32px; }
+
+  /* ─── Divider ─────────────── */
+  .divider {
+    display: flex; align-items: center; gap: 8px;
+    margin: 16px 0 12px;
+    font-size: .65rem; letter-spacing: .18em; color: var(--red); text-transform: uppercase;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(to right, transparent, var(--red), transparent);
+  }
+
+  /* ─── Stat cards ─────────────── */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 12px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-card.red  { border-color: rgba(204,26,26,.4); }
+  .stat-card.gold { border-color: rgba(201,162,39,.3); grid-column: 1/-1; }
+  .stat-label { font-size: .6rem; color: var(--text2); text-transform: uppercase; letter-spacing: .1em; }
+  .stat-value {
+    font-size: 1.6rem; font-weight: 900; font-family: var(--mono);
+    color: var(--gold2);
+    text-shadow: 0 0 12px rgba(201,162,39,.4);
+  }
+  .stat-card.red  .stat-value { color: var(--red2); text-shadow: 0 0 12px rgba(255,32,32,.4); }
+  .stat-sub { font-size: .65rem; color: var(--text2); }
+
+  /* ─── Quote ─────────────── */
+  .quote {
+    margin-top: 20px;
+    padding: 14px 16px; border-left: 3px solid var(--red);
+    background: rgba(204,26,26,.07); border-radius: 0 8px 8px 0;
+    font-style: italic; font-size: .8rem; color: var(--text2);
+    line-height: 1.5;
+  }
+  .quote strong { color: var(--gold); font-style: normal; display: block; margin-top: 6px; font-size: .7rem; }
+
+  /* ─── Bottom bar ─────────────── */
+  .bottom-bar {
+    position: sticky; bottom: 0; z-index: 10;
+    background: rgba(5,0,8,.95); border-top: 1px solid var(--border);
+    padding: 12px 16px; display: flex; gap: 8px;
+    backdrop-filter: blur(12px);
+  }
+  .btn {
+    flex: 1; padding: 12px 8px; border: none; border-radius: 10px;
+    font-weight: 700; font-size: .82rem; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .05em; transition: opacity .15s;
+  }
+  .btn:active { opacity: .8; }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--red) 0%, #8a0000 100%);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(204,0,0,.35);
+  }
+  .btn-ghost {
+    background: var(--bg2); color: var(--text2);
+    border: 1px solid var(--border);
+  }
+
+  /* ─── Live indicator ─────────────── */
+  .live-dot {
+    display: inline-block; width: 7px; height: 7px;
+    border-radius: 50%; background: #22ff88;
+    animation: pulse 1.2s ease-in-out infinite;
+    margin-right: 5px; vertical-align: middle;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .4; transform: scale(.7); }
+  }
+  .live-label { font-size: .65rem; color: #22ff88; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+<img class="geass-bg" src="geass.jpg" alt=""/>
+
+<div class="app">
+  <!-- Hero -->
+  <div class="hero">
+    <img class="hero-img" src="lelouch.png" alt="Lelouch"/>
+    <div class="hero-overlay"></div>
+    <div class="hero-title">
+      <h1>👁 Geass Command Center 👁</h1>
+      <p>⚔️ APEX CHECKER · LELOUCH BRITANNIA ⚔️</p>
+    </div>
+    <div class="eye-badge"><img src="lelouch-eyes.jpg" alt="geass eye"/></div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <div class="divider">✦ STATUS DO CHECKER ✦</div>
+
+    <div class="stat-grid" id="stats">
+      <div class="stat-card red">
+        <div class="stat-label">✅ HITs</div>
+        <div class="stat-value" id="v-hits">—</div>
+        <div class="stat-sub">credenciais válidas</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">❌ FAILs</div>
+        <div class="stat-value" id="v-fails">—</div>
+        <div class="stat-sub">senha incorreta</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">⚠️ Erros</div>
+        <div class="stat-value" id="v-errors">—</div>
+        <div class="stat-sub">2FA / timeout / etc</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">⚡ Progresso</div>
+        <div class="stat-value" id="v-pct">—</div>
+        <div class="stat-sub" id="v-done">aguardando...</div>
+      </div>
+      <div class="stat-card gold">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div class="stat-label">🎯 Alvo Atual</div>
+            <div class="stat-value" style="font-size:1.1rem" id="v-target">—</div>
+          </div>
+          <div style="text-align:right">
+            <span class="live-dot" id="live-dot" style="display:none"></span>
+            <span class="live-label" id="live-label">IDLE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider">✦ PODER DO GEASS ✦</div>
+    <div class="quote">
+      "Eu ordeno — você me obedecerá. Ninguém pode negar o poder do Geass."
+      <strong>— Lelouch vi Britannia</strong>
+    </div>
+  </div>
+
+  <!-- Bottom bar -->
+  <div class="bottom-bar">
+    <button class="btn btn-primary" onclick="openPanel()">⚔️ Abrir Painel</button>
+    <button class="btn btn-ghost" onclick="closeApp()">✕ Fechar</button>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+// Parse data from Telegram initData or URL params
+const params = new URLSearchParams(window.location.search);
+const jobId   = params.get("job");
+const apiBase = params.get("api") || "";
+
+function setVal(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+
+function openPanel() {
+  const url = window.location.origin + window.location.pathname.replace("miniapp.html", "");
+  if (tg) { tg.openLink(url); }
+  else { window.open(url, "_blank"); }
+}
+function closeApp() { if (tg) { tg.close(); } else { window.close(); } }
+
+async function loadStats() {
+  if (!apiBase && !jobId) return;
+  try {
+    if (jobId && apiBase) {
+      const r = await fetch(`${apiBase}/api/checker/${jobId}/status`).catch(() => null);
+      if (r && r.ok) {
+        const d = await r.json();
+        setVal("v-hits",   d.hits   ?? "—");
+        setVal("v-fails",  d.fails  ?? "—");
+        setVal("v-errors", d.errors ?? "—");
+        const pct = d.total > 0 ? Math.round((d.done / d.total) * 100) + "%" : "—";
+        setVal("v-pct",    pct);
+        setVal("v-done",   d.total ? `${d.done}/${d.total} verificados` : "aguardando...");
+        setVal("v-target", d.target ? d.target.toUpperCase() : "—");
+        const dot   = document.getElementById("live-dot");
+        const label = document.getElementById("live-label");
+        if (d.running) {
+          dot.style.display = "inline-block"; label.textContent = "AO VIVO";
+        } else {
+          dot.style.display = "none"; label.textContent = d.done > 0 ? "CONCLUÍDO" : "IDLE";
+        }
+      }
+    }
+  } catch { /**/ }
+}
+
+loadStats();
+setInterval(loadStats, 3000);
+</script>
+</body>
+</html>

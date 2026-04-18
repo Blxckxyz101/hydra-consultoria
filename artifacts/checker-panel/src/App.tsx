@@ -202,6 +202,8 @@ export default function App() {
     if (speedTimer.current) clearInterval(speedTimer.current);
   }, []);
 
+  const [resultTab, setResultTab] = useState<"hit" | "fail" | "error">("hit");
+
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const hitRate = done > 0 ? ((results.hits.length / done) * 100).toFixed(1) : "0.0";
 
@@ -373,29 +375,42 @@ export default function App() {
           </div>
         </div>
 
-        {/* ── Results columns ── */}
-        <div className="apex-results">
-          {/* HITs */}
-          <ResultColumn
-            type="hit"
-            title="✅ HITs"
-            items={results.hits}
-            onExport={() => exportTxt(results.hits, `hits_${target}`)}
-          />
-          {/* FAILs */}
-          <ResultColumn
-            type="fail"
-            title="❌ FAILs"
-            items={results.fails}
-            onExport={() => exportTxt(results.fails, `fails_${target}`)}
-          />
-          {/* ERRORs */}
-          <ResultColumn
-            type="error"
-            title="⚠️ ERRORs"
-            items={results.errors}
-            onExport={() => exportTxt(results.errors, `errors_${target}`)}
-          />
+        {/* ── Results tabs ── */}
+        <div className="apex-result-tabs-wrap">
+          {/* Tab bar */}
+          <div className="apex-result-tabbar">
+            {(["hit", "fail", "error"] as const).map(tab => {
+              const cfg = {
+                hit:   { label: "✅ HITs",   count: results.hits.length,   cls: "hit"   },
+                fail:  { label: "❌ FAILs",  count: results.fails.length,  cls: "fail"  },
+                error: { label: "⚠️ Erros",  count: results.errors.length, cls: "error" },
+              }[tab];
+              return (
+                <button
+                  key={tab}
+                  className={`apex-result-tab apex-result-tab--${cfg.cls} ${resultTab === tab ? "apex-result-tab--active" : ""}`}
+                  onClick={() => setResultTab(tab)}
+                >
+                  {cfg.label}
+                  <span className={`apex-result-tab-badge apex-result-tab-badge--${cfg.cls}`}>
+                    {cfg.count.toLocaleString()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {/* Active panel */}
+          <div className="apex-result-tab-panel">
+            {resultTab === "hit" && (
+              <ResultColumn type="hit" title="✅ HITs" items={results.hits} onExport={() => exportTxt(results.hits, `hits_${target}`)} />
+            )}
+            {resultTab === "fail" && (
+              <ResultColumn type="fail" title="❌ FAILs" items={results.fails} onExport={() => exportTxt(results.fails, `fails_${target}`)} />
+            )}
+            {resultTab === "error" && (
+              <ResultColumn type="error" title="⚠️ ERRORs" items={results.errors} onExport={() => exportTxt(results.errors, `errors_${target}`)} />
+            )}
+          </div>
         </div>
 
       </main>

