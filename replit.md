@@ -202,6 +202,7 @@ A network stress test / load testing control panel themed after Lelouch vi Brita
 **Backend Improvements (T002):**
 - **Proxy retry on IP block**: Detects `PROXY_IP_BLOCKED`, `CONNECT_FAILED`, HTTP 000 errors in checker mapper. Sleeps 2.5s for residential IP rotation, retries once before classifying as ERROR.
 - **Body size limit raised to 10MB**: Express JSON body parser was 100KB default — caused `PayloadTooLargeError` for large credential files. Fixed with `express.json({ limit: "10mb" })`.
+- **File line-limit selector**: Dropdown next to 📂 Arquivo button — options: ∞ Todas, 500, 1 000, 2 000, 5 000, 10 000, 20 000, 50 000. When a limit is active, the selector turns gold, the line count badge shows "X linhas / max Y", and any truncation is logged to the terminal.
 
 **Bug Fixes (T007):**
 - **Double-counting on reconnect fixed**: `reconnectToCheckerJob` now resets `credDone/credHits/credFails/credErrors/credFailList/credRecent/credPaused` before re-subscribing to the SSE buffer replay. Previous behavior replayed all events on top of existing counters.

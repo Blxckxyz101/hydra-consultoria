@@ -662,6 +662,7 @@ function Panel() {
   const [credPaused, setCredPaused]         = useState(false);
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [credHitFilter, setCredHitFilter]   = useState("");
+  const [credFileLimit, setCredFileLimit]   = useState<number>(0); // 0 = unlimited
   const [telegramToken, setTelegramToken]   = useState(() => localStorage.getItem("lb-tg-token") ?? "");
   const [telegramChatId, setTelegramChatId] = useState(() => localStorage.getItem("lb-tg-chat") ?? "");
   const [showTgSettings, setShowTgSettings] = useState(false);
@@ -1931,7 +1932,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => setCredText((ev.target?.result as string) ?? "");
+    reader.onload = ev => {
+      const raw = (ev.target?.result as string) ?? "";
+      if (credFileLimit > 0) {
+        const lines = raw.split("\n");
+        const limited = lines.slice(0, credFileLimit);
+        setCredText(limited.join("\n"));
+        if (lines.length > credFileLimit) {
+          addLog(`📂 Arquivo lido: ${lines.length.toLocaleString("pt-BR")} linhas → limitado a ${credFileLimit.toLocaleString("pt-BR")} linhas`, "warn");
+        }
+      } else {
+        setCredText(raw);
+      }
+    };
     reader.readAsText(file);
     e.target.value = "";
   }
@@ -2519,8 +2532,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   <div className="lb-cred-section-header">
                     <span className="lb-cred-section-icon">📋</span>
                     <h3 className="lb-cred-section-title">Credenciais</h3>
-                    <span className="lb-cred-count">
+                    <span className="lb-cred-count" style={credFileLimit > 0 ? { color: "#D4AF37" } : undefined}>
                       {credText ? credText.split("\n").filter(l => l.trim()).length : 0} linhas
+                      {credFileLimit > 0 && <span style={{ opacity: 0.65 }}> / max {credFileLimit.toLocaleString("pt-BR")}</span>}
                     </span>
                   </div>
                   <textarea
@@ -2536,7 +2550,30 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       className="lb-cred-mini-btn"
                       onClick={() => credFileRef.current?.click()}
                       disabled={credRunning}
+                      title={credFileLimit > 0 ? `Ler até ${credFileLimit.toLocaleString("pt-BR")} linhas do arquivo` : "Ler arquivo completo"}
                     >📂 Arquivo</button>
+                    <select
+                      value={credFileLimit}
+                      onChange={e => setCredFileLimit(Number(e.target.value))}
+                      disabled={credRunning}
+                      title="Limite de linhas ao carregar arquivo"
+                      style={{
+                        background: credFileLimit > 0 ? "rgba(212,175,55,0.15)" : "rgba(0,0,0,0.35)",
+                        border: `1px solid ${credFileLimit > 0 ? "rgba(212,175,55,0.5)" : "rgba(255,255,255,0.12)"}`,
+                        color: credFileLimit > 0 ? "#D4AF37" : "var(--color-text-muted)",
+                        borderRadius: 5, padding: "3px 6px", fontSize: 11,
+                        fontFamily: "var(--font-mono)", cursor: "pointer",
+                      }}
+                    >
+                      <option value={0}>∞ Todas</option>
+                      <option value={500}>500 lin.</option>
+                      <option value={1000}>1 000</option>
+                      <option value={2000}>2 000</option>
+                      <option value={5000}>5 000</option>
+                      <option value={10000}>10 000</option>
+                      <option value={20000}>20 000</option>
+                      <option value={50000}>50 000</option>
+                    </select>
                     <button
                       className="lb-cred-mini-btn"
                       onClick={() => setCredText("")}
