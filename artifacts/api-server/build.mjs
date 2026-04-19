@@ -27,7 +27,14 @@ async function buildAll() {
     format: "esm",
     outfile: path.join(botDist, "index.mjs"),
     logLevel: "info",
-    external: ["canvas", "*.node", "bufferutil", "utf-8-validate", "fsevents"],
+    external: [
+      "canvas", "*.node", "bufferutil", "utf-8-validate", "fsevents",
+      // @discordjs/voice native/optional dependencies
+      "@discordjs/opus", "opusscript", "sodium-native", "sodium-plus",
+      "prism-media", "ffmpeg-static",
+      "@snazzah/davey", "@snazzah/davey-linux-x64-gnu", "@snazzah/*",
+      "tweetnacl", "@discordjs/voice",
+    ],
     define: { "process.env.NODE_ENV": '"production"' },
     banner: {
       js: `import { createRequire as __bannerCrReq } from 'node:module';

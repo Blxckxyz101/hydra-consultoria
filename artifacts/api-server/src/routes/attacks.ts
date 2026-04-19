@@ -92,7 +92,9 @@ setInterval(async () => {
   dbBatchPkts.clear();
   dbBatchBytes.clear();
   for (const [id, pkts, bytes] of snapshot) {
-    void addStats(id, pkts, bytes);
+    addStats(id, pkts, bytes).catch(err =>
+      console.warn(`[DB-BATCHER] addStats failed for attack ${id}:`, err instanceof Error ? err.message : err)
+    );
   }
 }, 500);
 
@@ -176,7 +178,9 @@ async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     });
-  } catch { /* silent */ }
+  } catch (err) {
+    console.warn(`[WEBHOOK] Failed to fire webhook to ${url}:`, err instanceof Error ? err.message : err);
+  }
 }
 
 // ── Kill webhook: fire when target confirmed down (called from panel /api/notify) ──
