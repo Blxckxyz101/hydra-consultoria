@@ -413,13 +413,17 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         selfMute:       true,
       });
 
-      await entersState(conn, VoiceConnectionStatus.Ready, 15_000);
-
-      // Store our own reference — used by /voice sniff and /voice leave
+      // Store IMMEDIATELY — before entersState so sniff can find it even during connecting
       activeConns.set(guildId, conn);
-
-      // Auto-remove from our map when the connection is destroyed
       conn.on(VoiceConnectionStatus.Destroyed, () => activeConns.delete(guildId));
+
+      // Wait up to 20s for Ready — if it times out the connection still exists in Discord
+      // and /voice sniff will wait for it itself
+      try {
+        await entersState(conn, VoiceConnectionStatus.Ready, 20_000);
+      } catch {
+        console.warn(`[VOICE JOIN] entersState timed out — connection still stored, sniff will wait`);
+      }
 
       // Track SSRCs via speaking events (Discord sends {userId, ssrc} in SPEAKING gateway event)
       conn.receiver.speaking.on("start", (speakingUserId) => {
@@ -518,28 +522,45 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
   // ── /voice sniff ───────────────────────────────────────────────────────────
   if (sub === "sniff") {
+    // ⚠️ MUST defer FIRST — Discord expires interactions after 3s with no response.
+    // All further checks use editReply so there is no expiry risk.
+    await interaction.deferReply();
+
     // Use our own stored reference first — more reliable than getVoiceConnection()
     let conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
 
-    // If still connecting (e.g. user ran sniff right after join), wait up to 10s for Ready
-    if (conn && conn.state.status !== VoiceConnectionStatus.Ready &&
-                conn.state.status !== VoiceConnectionStatus.Destroyed) {
-      try { await entersState(conn, VoiceConnectionStatus.Ready, 10_000); }
-      catch { /* will be caught by the check below */ }
-      conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
-    }
-
-    if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed ||
-                 conn.state.status === VoiceConnectionStatus.Disconnected) {
-      console.log(`[VOICE SNIFF] No ready connection for guild ${guildId} — status: ${conn?.state.status ?? "null"}, activeConns has: ${activeConns.has(guildId)}`);
-      await interaction.reply({
+    if (!conn) {
+      console.log(`[VOICE SNIFF] No connection for guild ${guildId}`);
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
             .setTitle("📡 Bot não está em nenhuma call")
             .setDescription("Use `/voice join` primeiro para entrar em um canal de voz."),
         ],
-        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // If still connecting (e.g. user ran sniff right after join), wait up to 18s for Ready
+    if (conn.state.status !== VoiceConnectionStatus.Ready &&
+        conn.state.status !== VoiceConnectionStatus.Destroyed) {
+      console.log(`[VOICE SNIFF] Waiting for Ready — current status: ${conn.state.status}`);
+      try { await entersState(conn, VoiceConnectionStatus.Ready, 18_000); }
+      catch { /* check status below */ }
+      conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+    }
+
+    if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed ||
+                 conn.state.status === VoiceConnectionStatus.Disconnected) {
+      console.log(`[VOICE SNIFF] Connection not Ready — status: ${conn?.state.status ?? "null"}`);
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.RED)
+            .setTitle("📡 Conexão de voz não está pronta")
+            .setDescription("A conexão com o servidor de voz falhou. Tente `/voice leave` e `/voice join` novamente."),
+        ],
       });
       return;
     }
@@ -547,15 +568,14 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     // Stop any previous session for this guild
     stopSession(guildId);
 
-    // Resolve the voice channel the bot is in.
-    // conn.joinConfig.channelId is set by joinVoiceChannel() and is always reliable.
+    // Resolve the voice channel the bot is in
     const joinedChannelId =
       conn.joinConfig.channelId ??
       interaction.guild!.voiceStates.cache.get(interaction.client.user!.id)?.channelId;
 
     console.log(`[VOICE SNIFF] joinedChannelId=${joinedChannelId}, connStatus=${conn.state.status}`);
 
-    // Try cache first, then fetch from API (in case channel isn't cached yet)
+    // Try cache first, then fetch from API
     let vc: VoiceChannel | StageChannel | null = null;
     if (joinedChannelId) {
       const cached = interaction.guild!.channels.cache.get(joinedChannelId);
@@ -571,19 +591,16 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
     if (!vc) {
       console.log(`[VOICE SNIFF] Could not resolve VC — joinedChannelId=${joinedChannelId}`);
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
             .setTitle("📡 Canal de voz não encontrado")
             .setDescription("Não foi possível resolver o canal. Tente `/voice leave` e `/voice join` novamente."),
         ],
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
-
-    await interaction.deferReply();
 
     // Resolve IP and geo before first render
     const { ip: serverIp } = extractServerEndpoint(conn);
