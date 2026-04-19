@@ -14,6 +14,7 @@ import checkerRouter from "./checker";
 import credentialsRouter from "./credentials";
 import dnsRouter from "./dns";
 import discordRouter from "./discord";
+import nitroRouter from "./nitro";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(checkerRouter);
 router.use("/credentials", credentialsRouter);
 router.use(dnsRouter);
 router.use(discordRouter);
+router.use(nitroRouter);
 
 export default router;

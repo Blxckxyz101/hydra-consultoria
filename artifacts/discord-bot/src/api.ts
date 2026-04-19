@@ -198,9 +198,22 @@ export const api = {
     req<CheckerResponse>("/api/checker/check", {
       method: "POST",
       body:   JSON.stringify({ credentials, target }),
-      signal: AbortSignal.timeout(Math.min(credentials.length * 4_000 + 30_000, 14 * 60_000)), // ~4s/cred, max 14min
+      signal: AbortSignal.timeout(Math.min(credentials.length * 4_000 + 30_000, 14 * 60_000)),
+    }),
+
+  // ── Nitro ────────────────────────────────────────────────────────────────
+  checkNitroCodes: (codes: string[]) =>
+    req<NitroCheckResponse>("/api/nitro/check", {
+      method: "POST",
+      body:   JSON.stringify({ codes }),
+      signal: AbortSignal.timeout(Math.min(codes.length * 10_000 + 15_000, 5 * 60_000)),
     }),
 };
+
+// ── Nitro types ───────────────────────────────────────────────────────────────
+export type NitroCodeStatus = "valid" | "invalid" | "rate_limited" | "error";
+export interface NitroCodeResult { code: string; status: NitroCodeStatus; plan?: string; retryAfterMs?: number; }
+export interface NitroCheckResponse { results: NitroCodeResult[]; proxyCount: number; }
 
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
 
