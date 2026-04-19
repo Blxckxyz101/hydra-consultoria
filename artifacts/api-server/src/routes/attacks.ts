@@ -291,14 +291,12 @@ router.get("/advisor", async (req, res): Promise<void> => {
   } catch (e) { res.status(503).json({ error: "AI advisor unavailable", detail: String(e) }); }
 });
 
-// ── DB stats accumulator ──────────────────────────────────────────────────
-async function addStats(id: number, pkts: number, bytes: number) {
-  try {
-    await db.update(attacksTable).set({
-      packetsSent: sql`${attacksTable.packetsSent} + ${pkts}`,
-      bytesSent:   sql`${attacksTable.bytesSent}   + ${bytes}`,
-    }).where(eq(attacksTable.id, id));
-  } catch { /* ignore */ }
+// ── DB stats accumulator — throws on error so callers can log it ─────────
+async function addStats(id: number, pkts: number, bytes: number): Promise<void> {
+  await db.update(attacksTable).set({
+    packetsSent: sql`${attacksTable.packetsSent} + ${pkts}`,
+    bytesSent:   sql`${attacksTable.bytesSent}   + ${bytes}`,
+  }).where(eq(attacksTable.id, id));
 }
 
 // ── Worker stats handler: update in-memory live stats + batch for DB ───────
@@ -896,7 +894,11 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
     const pendingBytes = dbBatchBytes.get(id) ?? 0;
     dbBatchPkts.delete(id);
     dbBatchBytes.delete(id);
-    if (pending > 0 || pendingBytes > 0) void addStats(id, pending, pendingBytes);
+    if (pending > 0 || pendingBytes > 0) {
+      addStats(id, pending, pendingBytes).catch(err =>
+        console.warn(`[FINALLY] addStats flush failed for #${id}:`, err instanceof Error ? err.message : err)
+      );
+    }
 
     attackLiveConns.delete(id);
     livePackets.delete(id);
@@ -922,7 +924,9 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
           .where(eq(attacksTable.id, id)).returning();
         if (fin?.webhookUrl) await fireWebhook(fin.webhookUrl, fin);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn(`[ATTACK #${id}] DB finalize failed:`, err instanceof Error ? err.message : err);
+    }
   });
 
   res.status(201).json(attack);
@@ -1136,7 +1140,11 @@ router.post("/attacks/multi", async (req, res): Promise<void> => {
     ).finally(async () => {
       const pp = dbBatchPkts.get(aid) ?? 0; const bb = dbBatchBytes.get(aid) ?? 0;
       dbBatchPkts.delete(aid); dbBatchBytes.delete(aid);
-      if (pp > 0 || bb > 0) void addStats(aid, pp, bb);
+      if (pp > 0 || bb > 0) {
+        addStats(aid, pp, bb).catch(err =>
+          console.warn(`[SCHED-FINALLY] addStats flush failed for #${aid}:`, err instanceof Error ? err.message : err)
+        );
+      }
       attackLiveConns.delete(aid); livePackets.delete(aid); liveBytes.delete(aid);
       livePps.delete(aid);         liveBps.delete(aid);
       prevPktsSnap.delete(aid);    prevBytesSnap.delete(aid);
@@ -1150,7 +1158,9 @@ router.post("/attacks/multi", async (req, res): Promise<void> => {
             .where(eq(attacksTable.id, aid)).returning();
           if (fin?.webhookUrl) await fireWebhook(fin.webhookUrl, fin);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn(`[SCHED-ATTACK #${aid}] DB finalize failed:`, err instanceof Error ? err.message : err);
+      }
     });
     results.push(atk);
   }
@@ -1166,7 +1176,9 @@ router.post("/notify", async (req, res): Promise<void> => {
     try {
       const [a] = await db.select().from(attacksTable).where(eq(attacksTable.id, parseInt(attackId, 10)));
       attackData = a ?? null;
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.warn("[NOTIFY] DB fetch failed:", err instanceof Error ? err.message : err);
+    }
   }
   const evt = event ?? "target_down";
   const desc = message ?? (attackData ? `Target **${attackData.target}** confirmed OFFLINE` : "Target confirmed OFFLINE");

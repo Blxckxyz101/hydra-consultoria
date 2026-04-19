@@ -3,13 +3,14 @@
  * Commands: /voice join | leave | sniff
  *
  * Sniff exibe em tempo real:
- *   • IP + região geográfica do servidor de voz Discord (via reverse-DNS + ipapi.co)
+ *   • IP exato + hostname (reverse-DNS) + região geográfica do servidor de voz Discord
  *   • Ping UDP, jitter, packet loss, bitrate, criptografia
  *   • Todos os participantes da call com SSRC, estado de voz e se estão falando
  *   • Pacotes RTP TX/RX/lost ao longo do tempo
  *
  * ⚠️  IPs individuais de usuários NÃO são expostos pelo Discord (toda voz passa
- *     pelos servidores do Discord). O que exibimos é o servidor de relay do Discord.
+ *     pelos servidores do Discord). O que exibimos é o servidor de relay do Discord
+ *     com hostname via reverse-DNS (ex: brazil1-a.discord.gg).
  */
 
 import {
@@ -28,6 +29,7 @@ import {
   type VoiceChannel,
   type StageChannel,
 } from "discord.js";
+import { promises as dns } from "node:dns";
 import { isOwner, isMod } from "./bot-config.js";
 import { COLORS } from "./config.js";
 
@@ -46,9 +48,9 @@ interface ParticipantInfo {
 }
 
 interface SniffSession {
-  interval:    ReturnType<typeof setInterval>;
+  interval:    ReturnType<typeof setInterval> | null;
   ssrcMap:     Map<string, number>;   // userId → ssrc
-  speakingSet: Set<string>;           // userId of currently speaking users
+  speakingSet: Set<string>;           // userId de quem está falando
   startedAt:   number;
   vcId:        string;
   vcName:      string;
@@ -56,23 +58,36 @@ interface SniffSession {
 }
 
 interface ServerGeo {
-  ip:      string;
-  country: string;
-  region:  string;
-  city:    string;
-  org:     string;
-  flag:    string;
+  ip:       string;
+  hostname: string | null;   // via reverse-DNS: "brazil1-a.discord.gg" etc.
+  country:  string;
+  region:   string;
+  city:     string;
+  org:      string;
+  flag:     string;
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const sniffSessions = new Map<string, SniffSession>();
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Permission helpers ─────────────────────────────────────────────────────────
 
 function isAdmin(userId: string, username: string): boolean {
   return isOwner(userId, username) || isMod(userId, username);
 }
+
+function denyEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(COLORS.RED)
+    .setTitle("👁 Permissão Negada — Geass")
+    .setDescription(
+      "*\"Only those bound by my Geass may stand before me.\"*\n\n" +
+      "Este comando é exclusivo para **owners** e **admins** do bot.",
+    );
+}
+
+// ── Formatters ────────────────────────────────────────────────────────────────
 
 function fmt(n: number, dec = 1): string {
   return n.toFixed(dec);
@@ -104,33 +119,83 @@ function voiceStateIcons(p: ParticipantInfo): string {
   return icons.length > 0 ? icons.join("") : "🎧";
 }
 
-/** Reverse DNS lookup of the voice server IP for identifying Discord region. */
-async function lookupServerGeo(ip: string): Promise<ServerGeo | null> {
+// ── Network lookups ───────────────────────────────────────────────────────────
+
+/** Reverse-DNS lookup: IP → hostname (ex: brazil1-a.discord.gg). */
+async function reverseDns(ip: string): Promise<string | null> {
   if (!ip || ip === "unknown") return null;
   try {
-    const resp = await fetch(`https://ipapi.co/${ip}/json/`, {
-      signal: AbortSignal.timeout(4_000),
-      headers: { "User-Agent": "Discord-Bot/1.0" },
-    });
-    if (!resp.ok) return null;
-    const d = await resp.json() as Record<string, unknown>;
-    if (d.error) return null;
-    const country = String(d.country_name ?? "");
-    const code    = String(d.country_code ?? "").toLowerCase();
-    const flag    = code.length === 2
-      ? String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 97))
-      : "🌐";
-    return {
-      ip,
-      country,
-      region:  String(d.region ?? ""),
-      city:    String(d.city ?? ""),
-      org:     String(d.org ?? ""),
-      flag,
-    };
+    const hostnames = await dns.reverse(ip);
+    return hostnames[0] ?? null;
   } catch {
     return null;
   }
+}
+
+/** GeoIP + reverse-DNS combined lookup. */
+async function lookupServerGeo(ip: string): Promise<ServerGeo | null> {
+  if (!ip || ip === "unknown") return null;
+
+  const [hostname, geoResp] = await Promise.allSettled([
+    reverseDns(ip),
+    fetch(`https://ipapi.co/${ip}/json/`, {
+      signal: AbortSignal.timeout(5_000),
+      headers: { "User-Agent": "Discord-VoiceSniffer/2.0" },
+    }).then(r => r.ok ? r.json() as Promise<Record<string, unknown>> : null),
+  ]);
+
+  const hn  = hostname.status === "fulfilled" ? hostname.value : null;
+  const geo = geoResp.status  === "fulfilled" ? geoResp.value  : null;
+
+  if (!geo || (geo as Record<string, unknown>)["error"]) {
+    return {
+      ip, hostname: hn,
+      country: "Desconhecido", region: "", city: "", org: "", flag: "🌐",
+    };
+  }
+
+  const d       = geo as Record<string, unknown>;
+  const country = String(d["country_name"] ?? "");
+  const code    = String(d["country_code"] ?? "").toLowerCase();
+  const flag    = code.length === 2
+    ? String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 97))
+    : "🌐";
+
+  return {
+    ip, hostname: hn,
+    country,
+    region:  String(d["region"] ?? ""),
+    city:    String(d["city"] ?? ""),
+    org:     String(d["org"] ?? ""),
+    flag,
+  };
+}
+
+// ── Internal state extractors ─────────────────────────────────────────────────
+
+/** Extract the voice server IP+port from multiple fallback paths in internal state. */
+function extractServerEndpoint(conn: VoiceConnection): { ip: string; port: number } {
+  const state = conn.state as Record<string, unknown>;
+
+  // Path 1: networking.state (Ready status)
+  const networking = state["networking"]  as Record<string, unknown> | undefined;
+  const netState   = networking?.["state"] as Record<string, unknown> | undefined;
+
+  const ip1   = netState?.["ip"]   as string | undefined;
+  const port1 = netState?.["port"] as number | undefined;
+  if (ip1 && ip1 !== "unknown") return { ip: ip1, port: port1 ?? 0 };
+
+  // Path 2: networking.state.udp
+  const udp  = netState?.["udp"] as Record<string, unknown> | undefined;
+  const ip2  = udp?.["remote"]   as Record<string, unknown> | undefined;
+  if (ip2?.["address"]) return { ip: String(ip2["address"]), port: Number(ip2["port"] ?? 0) };
+
+  // Path 3: root state
+  const ip3   = state["ip"]   as string | undefined;
+  const port3 = state["port"] as number | undefined;
+  if (ip3 && ip3 !== "unknown") return { ip: ip3, port: port3 ?? 0 };
+
+  return { ip: "unknown", port: 0 };
 }
 
 /** Extract RTP/UDP stats from the voice connection internals. */
@@ -139,18 +204,17 @@ function getNetworkStats(conn: VoiceConnection) {
   const networking = state["networking"]  as Record<string, unknown> | undefined;
   const netState   = networking?.["state"] as Record<string, unknown> | undefined;
   const udp        = netState?.["udp"]    as Record<string, unknown> | undefined;
-  const ready      = netState             as Record<string, unknown> | undefined;
+
+  const { ip, port } = extractServerEndpoint(conn);
 
   const ping        = typeof conn.ping?.udp === "number" ? conn.ping.udp : -1;
   const packetsRx   = (udp?.["packetsReceived"]  as number | undefined) ?? 0;
   const packetsTx   = (udp?.["packetsSent"]      as number | undefined) ?? 0;
   const packetsLost = (udp?.["packetsLost"]       as number | undefined) ?? 0;
   const jitter      = (udp?.["jitter"]            as number | undefined) ?? 0;
-  const bitrateKbps = (ready?.["bitrateKbps"]    as number | undefined) ?? 0;
-  const encryption  = (ready?.["encryptionMode"] as string | undefined) ?? "xchacha20_poly1305";
-  const ssrc        = (ready?.["ssrc"]            as number | undefined) ?? null;
-  const ip          = (ready?.["ip"]              as string | undefined) ?? "unknown";
-  const port        = (ready?.["port"]            as number | undefined) ?? 0;
+  const bitrateKbps = (netState?.["bitrateKbps"] as number | undefined) ?? 0;
+  const encryption  = (netState?.["encryptionMode"] as string | undefined) ?? "xchacha20_poly1305";
+  const ssrc        = (netState?.["ssrc"]         as number | undefined) ?? null;
 
   const totalRx     = packetsRx + packetsLost;
   const lossPercent = totalRx > 0 ? (packetsLost / totalRx) * 100 : 0;
@@ -180,7 +244,8 @@ function getParticipants(
   }));
 }
 
-/** Build the full sniff embed. */
+// ── Embed builder ─────────────────────────────────────────────────────────────
+
 function buildSniffEmbed(
   conn:        VoiceConnection,
   session:     SniffSession,
@@ -204,22 +269,32 @@ function buildSniffEmbed(
   const connIcon = ns.connStatus === VoiceConnectionStatus.Ready      ? "🟢" :
                    ns.connStatus === VoiceConnectionStatus.Connecting  ? "🟡" : "🔴";
 
-  // Geo info about the voice server
-  const geo = session.serverGeo;
-  const geoLine = geo
+  // Voice server IP block
+  const geo      = session.serverGeo;
+  const ipLine   = `\`${ns.ip}:${ns.port}\``;
+  const hostLine = geo?.hostname ? `🖥 **Hostname:** \`${geo.hostname}\`` : "";
+  const geoLine  = geo && geo.country !== "Desconhecido"
     ? `${geo.flag} **${geo.city}, ${geo.country}** — \`${geo.org}\``
-    : `\`${ns.ip}:${ns.port}\``;
+    : ipLine;
 
   // Participants
-  const participants = getParticipants(vc, session);
+  const participants   = getParticipants(vc, session);
   const participantLines = participants.map(p => {
-    const icons = voiceStateIcons(p);
+    const icons  = voiceStateIcons(p);
     const ssrcTag = p.ssrc !== null ? ` · SSRC:\`${p.ssrc}\`` : "";
     return `${icons} **${p.tag}**${ssrcTag}`;
   });
 
-  // Stats bar
   const totalPkts = ns.packetsRx + ns.packetsLost;
+
+  const ipBlock = [
+    `${connIcon} **Status:** \`${ns.connStatus}\``,
+    `🔌 **IP Exato:** ${ipLine}`,
+    ...(hostLine ? [hostLine] : []),
+    `📍 **Localização:** ${geoLine}`,
+    `🔐 **Criptografia:** \`${cryptoShort}\``,
+    `🆔 **SSRC do Bot:** \`${ns.ssrc ?? "—"}\``,
+  ].join("\n");
 
   return new EmbedBuilder()
     .setColor(lossColor(ns.lossPercent))
@@ -233,13 +308,7 @@ function buildSniffEmbed(
     .addFields(
       {
         name: "🌐 Servidor de Voz Discord",
-        value: [
-          `${connIcon} **Status:** \`${ns.connStatus}\``,
-          `📍 **Localização:** ${geoLine}`,
-          `🔌 **Endereço IP:** \`${ns.ip}:${ns.port}\``,
-          `🔐 **Criptografia:** \`${cryptoShort}\``,
-          `🆔 **SSRC do Bot:** \`${ns.ssrc ?? "—"}\``,
-        ].join("\n"),
+        value: ipBlock,
         inline: false,
       },
       {
@@ -269,8 +338,6 @@ function buildSniffEmbed(
           : "*Canal vazio*",
         inline: false,
       },
-    )
-    .addFields(
       {
         name: "📖 Legenda",
         value: "🎙 Falando · 🔇 Mutado · 🔕 Ensurdecido · 📺 Stream · 📷 Camera · 🤖 Bot · 🎧 Ouvindo",
@@ -279,6 +346,15 @@ function buildSniffEmbed(
     )
     .setFooter({ text: "👁 Lelouch Intelligence · Atualiza a cada 5s · /voice leave para encerrar" })
     .setTimestamp();
+}
+
+// ── Session cleanup ────────────────────────────────────────────────────────────
+
+function stopSession(guildId: string): void {
+  const s = sniffSessions.get(guildId);
+  if (!s) return;
+  if (s.interval !== null) clearInterval(s.interval);
+  sniffSessions.delete(guildId);
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -294,26 +370,16 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     return;
   }
 
+  // Double-check: Discord-level permission + our bot-config admin list
   if (!isAdmin(userId, userName)) {
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.RED)
-          .setTitle("👁 Permissão Negada — Geass")
-          .setDescription(
-            "*\"Only those bound by my Geass may stand before me.\"*\n\n" +
-            "Este comando é exclusivo para **owners** e **admins** do bot.",
-          ),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply({ embeds: [denyEmbed()], flags: MessageFlags.Ephemeral });
     return;
   }
 
   // ── /voice join ────────────────────────────────────────────────────────────
   if (sub === "join") {
-    const member  = await interaction.guild!.members.fetch(userId).catch(() => null);
-    const vc      = member?.voice?.channel;
+    const member = await interaction.guild!.members.fetch(userId).catch(() => null);
+    const vc     = member?.voice?.channel;
 
     if (!vc || (vc.type !== ChannelType.GuildVoice && vc.type !== ChannelType.GuildStageVoice)) {
       await interaction.reply({
@@ -328,6 +394,9 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
       return;
     }
 
+    // Stop any previous sniff session before re-joining
+    stopSession(guildId);
+
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
@@ -335,26 +404,23 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         channelId:      vc.id,
         guildId,
         adapterCreator: interaction.guild!.voiceAdapterCreator,
-        selfDeaf:       false,  // não deafen — permite VoiceReceiver escutar SSRCs
+        selfDeaf:       false,  // não deafen — permite ouvir SSRCs via speaking events
         selfMute:       true,
       });
 
-      await entersState(conn, VoiceConnectionStatus.Ready, 12_000);
+      await entersState(conn, VoiceConnectionStatus.Ready, 15_000);
 
-      // Attach speaking listener to track SSRCs
-      // (happens automatically via receiver when not self-deafened)
+      // Track SSRCs via speaking events (Discord sends {userId, ssrc} in SPEAKING gateway event)
       conn.receiver.speaking.on("start", (speakingUserId) => {
         const session = sniffSessions.get(guildId);
-        if (!session) return;
-        session.speakingSet.add(speakingUserId);
-        // Try to map SSRC from internal voice WebSocket ssrcMap (userId → ssrc)
-        // The voice gateway sends SPEAKING events with {ssrc, userId} internally
+        if (session) session.speakingSet.add(speakingUserId);
+
         try {
           const networking = (conn.state as Record<string, unknown>)["networking"] as Record<string, unknown> | undefined;
           const netSt      = networking?.["state"] as Record<string, unknown> | undefined;
           const ws         = netSt?.["ws"] as Record<string, unknown> | undefined;
-          const ssrcMap    = ws?.["ssrcMap"] as Map<number, string> | undefined; // ssrc → userId
-          if (ssrcMap) {
+          const ssrcMap    = ws?.["ssrcMap"] as Map<number, string> | undefined;
+          if (ssrcMap && session) {
             for (const [ssrc, uid] of ssrcMap.entries()) {
               if (uid === speakingUserId) { session.ssrcMap.set(speakingUserId, ssrc); break; }
             }
@@ -366,11 +432,14 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         sniffSessions.get(guildId)?.speakingSet.delete(speakingUserId);
       });
 
-      // Get initial geo for voice server IP
-      const netState = conn.state as Record<string, unknown>;
-      const networking = netState["networking"] as Record<string, unknown> | undefined;
-      const ns = networking?.["state"] as Record<string, unknown> | undefined;
-      const serverIp = (ns?.["ip"] as string | undefined) ?? "unknown";
+      // Grab voice server IP right after Ready
+      const { ip: serverIp, port } = extractServerEndpoint(conn);
+      const [geo] = await Promise.allSettled([lookupServerGeo(serverIp)]);
+      const resolvedGeo = geo.status === "fulfilled" ? geo.value : null;
+      const hostnameDisp = resolvedGeo?.hostname ? `\n🖥 Hostname: \`${resolvedGeo.hostname}\`` : "";
+      const locationDisp = resolvedGeo?.country
+        ? `\n📍 ${resolvedGeo.flag} ${resolvedGeo.city}, ${resolvedGeo.country} — \`${resolvedGeo.org}\``
+        : "";
 
       const memberCount = vc.members.size;
 
@@ -381,7 +450,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
             .setTitle("🔊 Lelouch entrou na call")
             .setDescription(
               `Conectado em **#${vc.name}** · ${memberCount} participante${memberCount !== 1 ? "s" : ""}.\n\n` +
-              `Servidor de voz: \`${serverIp}\`\n\n` +
+              `**🔌 IP do Servidor de Voz:** \`${serverIp}:${port}\`${hostnameDisp}${locationDisp}\n\n` +
               `Use \`/voice sniff\` para iniciar o monitor de rede em tempo real.\n` +
               `Use \`/voice leave\` para sair.`,
             ),
@@ -405,11 +474,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
   // ── /voice leave ───────────────────────────────────────────────────────────
   if (sub === "leave") {
-    const session = sniffSessions.get(guildId);
-    if (session) {
-      clearInterval(session.interval);
-      sniffSessions.delete(guildId);
-    }
+    stopSession(guildId);
 
     const conn = getVoiceConnection(guildId);
     if (!conn) {
@@ -454,13 +519,12 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
       return;
     }
 
-    // Stop any previous session
-    const prev = sniffSessions.get(guildId);
-    if (prev) { clearInterval(prev.interval); sniffSessions.delete(guildId); }
+    // Stop any previous session for this guild
+    stopSession(guildId);
 
-    // Resolve voice channel
-    const botMember   = await interaction.guild!.members.fetchMe().catch(() => null);
-    const vc          = botMember?.voice?.channel as VoiceChannel | StageChannel | null;
+    // Resolve voice channel from bot's current state
+    const botMember = await interaction.guild!.members.fetchMe().catch(() => null);
+    const vc        = botMember?.voice?.channel as VoiceChannel | StageChannel | null;
     if (!vc) {
       await interaction.reply({
         embeds: [
@@ -476,36 +540,29 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
     await interaction.deferReply();
 
-    // Resolve voice server IP for geo lookup
-    const netState   = conn.state as Record<string, unknown>;
-    const networking = netState["networking"] as Record<string, unknown> | undefined;
-    const ns         = networking?.["state"]  as Record<string, unknown> | undefined;
-    const serverIp   = (ns?.["ip"] as string | undefined) ?? "unknown";
-
-    // Kick off geo lookup (async, non-blocking)
-    const geoPromise = lookupServerGeo(serverIp);
+    // Resolve IP and geo before first render
+    const { ip: serverIp } = extractServerEndpoint(conn);
+    const serverGeo = await lookupServerGeo(serverIp).catch(() => null);
 
     const session: SniffSession = {
-      interval:    0 as unknown as ReturnType<typeof setInterval>,
+      interval:    null,
       ssrcMap:     new Map(),
       speakingSet: new Set(),
       startedAt:   Date.now(),
       vcId:        vc.id,
       vcName:      vc.name,
-      serverGeo:   null,
+      serverGeo,
     };
     sniffSessions.set(guildId, session);
 
-    // Resolve geo before first render
-    session.serverGeo = await geoPromise;
-
     let sampleCount = 0;
 
-    const tick = async () => {
+    const tick = async (): Promise<void> => {
       const currentConn = getVoiceConnection(guildId);
+
+      // If connection was destroyed, stop session and update embed
       if (!currentConn || currentConn.state.status === VoiceConnectionStatus.Destroyed) {
-        clearInterval(session.interval);
-        sniffSessions.delete(guildId);
+        stopSession(guildId);
         try {
           await interaction.editReply({
             embeds: [
@@ -519,22 +576,28 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         return;
       }
 
-      // Refresh voice channel members from cache
-      const guild   = interaction.guild;
-      const vcFresh = guild?.channels.cache.get(session.vcId) as VoiceChannel | StageChannel | undefined;
+      // Refresh VC from cache to get latest member list
+      const vcFresh = interaction.guild?.channels.cache.get(session.vcId) as VoiceChannel | StageChannel | undefined;
       if (!vcFresh) return;
 
       sampleCount++;
       try {
         const embed = buildSniffEmbed(currentConn, session, vcFresh, sampleCount);
         await interaction.editReply({ embeds: [embed] });
-      } catch { /**/ }
+      } catch (err) {
+        // Interaction expired (Discord 15-min token limit) — stop silently
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("Unknown interaction") || msg.includes("10062") || msg.includes("expired")) {
+          stopSession(guildId);
+        }
+      }
     };
 
-    // First render immediately
+    // First render immediately, then every 5 seconds
     await tick();
-    // Then every 5 seconds
-    session.interval = setInterval(() => void tick(), 5_000);
+    if (sniffSessions.has(guildId)) {
+      session.interval = setInterval(() => void tick(), 5_000);
+    }
     return;
   }
 }

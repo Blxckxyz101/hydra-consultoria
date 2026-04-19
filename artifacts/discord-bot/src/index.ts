@@ -651,17 +651,18 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("voice")
     .setDescription("🔊 Voice channel control + network sniffer — admin only")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand(sub =>
       sub.setName("join")
-        .setDescription("🔊 Bot entra no canal de voz que você está (admin only)")
+        .setDescription("🔊 Bot entra no canal de voz que você está")
     )
     .addSubcommand(sub =>
       sub.setName("leave")
-        .setDescription("🔇 Bot sai do canal de voz atual e para o sniff (admin only)")
+        .setDescription("🔇 Bot sai do canal de voz atual e para o sniff")
     )
     .addSubcommand(sub =>
       sub.setName("sniff")
-        .setDescription("📡 Monitor de tráfego RTP/UDP em tempo real — Discord Wireshark (admin only)")
+        .setDescription("📡 Monitor de tráfego RTP/UDP em tempo real — Discord Wireshark")
     ),
 
 ].map(c => c.toJSON());
