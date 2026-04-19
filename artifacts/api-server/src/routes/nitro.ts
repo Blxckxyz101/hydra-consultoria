@@ -85,8 +85,8 @@ router.post("/nitro/check", async (req, res): Promise<void> => {
     return;
   }
 
-  if (codes.length > 50) {
-    res.status(400).json({ error: "maximum 50 codes per request" });
+  if (codes.length > 500) {
+    res.status(400).json({ error: "maximum 500 codes per request" });
     return;
   }
 
@@ -106,8 +106,8 @@ router.post("/nitro/check", async (req, res): Promise<void> => {
       if (!code) break;
       const result = await checkSingle(code);
       completed.set(code, result);
-      // Small spacing between requests to be respectful to Discord's API
-      if (queue.length > 0) await new Promise(r => setTimeout(r, 250));
+      // Respect Discord's gift-code API rate limit (~1 req/s per IP)
+      if (queue.length > 0) await new Promise(r => setTimeout(r, 900));
     }
   }
 

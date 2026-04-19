@@ -639,9 +639,113 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro") ?? "attack"
   );
+
+  /* ── Nitro Generator ── */
+  const [nitroRunning,    setNitroRunning]    = useState(false);
+  const [nitroBatch,      setNitroBatch]      = useState(20);
+  const [nitroType,       setNitroType]       = useState<"classic" | "boost" | "both">("both");
+  const [nitroTotal,      setNitroTotal]      = useState(0);
+  const [nitroValid,      setNitroValid]      = useState(0);
+  const [nitroInvalid,    setNitroInvalid]    = useState(0);
+  const [nitroRL,         setNitroRL]         = useState(0);
+  const [nitroErrors,     setNitroErrors]     = useState(0);
+  const [nitroCycles,     setNitroCycles]     = useState(0);
+  const [nitroStartTime,  setNitroStartTime]  = useState(0);
+  const [nitroLastCycle,  setNitroLastCycle]  = useState(0);
+  const [nitroHits,       setNitroHits]       = useState<{ code: string; plan: string; at: number }[]>([]);
+  const [nitroLogs,       setNitroLogs]       = useState<{ text: string; type: "info" | "success" | "error" | "warn" }[]>([]);
+  const nitroLoopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nitroRunRef  = useRef(false);
+
+  const NITRO_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const genNitroCodePanel = (len: number) => {
+    let out = "";
+    for (let i = 0; i < len; i++) out += NITRO_CHARS[Math.floor(Math.random() * NITRO_CHARS.length)];
+    return out;
+  };
+
+  const nitroLog = useCallback((text: string, type: "info" | "success" | "error" | "warn" = "info") => {
+    setNitroLogs(prev => [...prev.slice(-199), { text, type }]);
+  }, []);
+
+  const startNitroGenerator = useCallback(() => {
+    nitroRunRef.current = true;
+    setNitroRunning(true);
+    setNitroStartTime(Date.now());
+    setNitroTotal(0); setNitroValid(0); setNitroInvalid(0);
+    setNitroRL(0); setNitroErrors(0); setNitroCycles(0); setNitroHits([]);
+    nitroLog(`⚡ Gerador iniciado — ${nitroBatch} códigos/ciclo — tipo: ${nitroType}`, "info");
+
+    const runCycle = async () => {
+      if (!nitroRunRef.current) return;
+      const codes: string[] = [];
+      const bs = nitroBatch;
+      const ct = nitroType;
+      for (let i = 0; i < bs; i++) {
+        if (ct === "classic")    codes.push(genNitroCodePanel(16));
+        else if (ct === "boost") codes.push(genNitroCodePanel(24));
+        else codes.push(genNitroCodePanel(i % 2 === 0 ? 16 : 24));
+      }
+
+      nitroLog(`🔄 Ciclo iniciado — verificando ${bs} códigos...`, "info");
+      try {
+        const resp = await fetch(`${BASE}/api/nitro/check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ codes }),
+          signal: AbortSignal.timeout(bs * 12_000 + 30_000),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json() as {
+          results: { code: string; status: string; plan?: string }[];
+          proxyCount: number;
+        };
+        let batchValid = 0, batchInvalid = 0, batchRL = 0, batchErr = 0;
+        const newHits: { code: string; plan: string; at: number }[] = [];
+        for (const r of data.results) {
+          if (r.status === "valid") {
+            batchValid++;
+            newHits.push({ code: r.code, plan: r.plan ?? "Nitro", at: Date.now() });
+            nitroLog(`🎁 HIT! ${r.code} — ${r.plan ?? "Nitro"}`, "success");
+          } else if (r.status === "invalid") {
+            batchInvalid++;
+          } else if (r.status === "rate_limited") {
+            batchRL++;
+          } else {
+            batchErr++;
+          }
+        }
+        setNitroTotal(t => t + bs);
+        setNitroValid(v => v + batchValid);
+        setNitroInvalid(i => i + batchInvalid);
+        setNitroRL(r => r + batchRL);
+        setNitroErrors(e => e + batchErr);
+        setNitroCycles(c => c + 1);
+        setNitroLastCycle(Date.now());
+        if (newHits.length > 0) setNitroHits(prev => [...prev, ...newHits].slice(-50));
+        nitroLog(`✅ Ciclo concluído — válidos: ${batchValid} | inválidos: ${batchInvalid} | rl: ${batchRL}`, batchValid > 0 ? "success" : "info");
+      } catch (err) {
+        nitroLog(`❌ Erro no ciclo: ${String(err).slice(0, 80)}`, "error");
+        setNitroErrors(e => e + bs);
+      }
+
+      if (nitroRunRef.current) {
+        nitroLoopRef.current = setTimeout(() => { void runCycle(); }, 5_000);
+      }
+    };
+
+    nitroLoopRef.current = setTimeout(() => { void runCycle(); }, 500);
+  }, [nitroBatch, nitroType, nitroLog]);
+
+  const stopNitroGenerator = useCallback(() => {
+    nitroRunRef.current = false;
+    setNitroRunning(false);
+    if (nitroLoopRef.current) clearTimeout(nitroLoopRef.current);
+    nitroLog("⏹ Gerador parado.", "warn");
+  }, [nitroLog]);
 
   /* DNS Recon */
   const [dnsQuery,   setDnsQuery]   = useState("");
@@ -2415,6 +2519,29 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               ⚔ Ataque
             </button>
             <button
+              className={`lb-page-tab ${activePage === "nitro" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("nitro")}
+            >
+              🎁 Nitro Gen
+              {nitroRunning && activePage !== "nitro" && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  marginLeft: 6, padding: "1px 7px", borderRadius: 10,
+                  background: nitroValid > 0 ? "rgba(46,204,113,0.2)" : "rgba(155,89,182,0.2)",
+                  border: `1px solid ${nitroValid > 0 ? "rgba(46,204,113,0.5)" : "rgba(155,89,182,0.5)"}`,
+                  fontSize: 10, fontWeight: 600, color: nitroValid > 0 ? "#2ecc71" : "#9b59b6",
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: nitroValid > 0 ? "#2ecc71" : "#9b59b6",
+                    animation: "lb-pulse 1.4s ease-in-out infinite",
+                    flexShrink: 0,
+                  }} />
+                  {nitroValid > 0 ? `${nitroValid} HIT` : "LIVE"}
+                </span>
+              )}
+            </button>
+            <button
               className={`lb-page-tab ${activePage === "checker" ? "lb-page-tab--active" : ""}`}
               onClick={() => setActivePage("checker")}
             >
@@ -2469,6 +2596,229 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             </button>
           </div>
         </header>
+
+        {/* ══════════════════════════════════════════════
+            NITRO GENERATOR PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "nitro" && (() => {
+          const elapsed  = nitroStartTime > 0 ? Math.round((Date.now() - nitroStartTime) / 1000) : 0;
+          const hitRate  = nitroTotal > 0 ? ((nitroValid / nitroTotal) * 100).toFixed(2) : "0.00";
+          const speed    = elapsed > 0 ? (nitroTotal / elapsed).toFixed(1) : "0";
+          return (
+          <div className="lb-cred-page">
+            <div className="lb-cred-layout">
+
+              {/* ── LEFT: Controls ── */}
+              <div className="lb-cred-left" style={{ maxWidth: 380 }}>
+
+                {/* Status card */}
+                <section className="lb-cred-section" style={{
+                  borderColor: nitroRunning ? (nitroValid > 0 ? "rgba(46,204,113,0.5)" : "rgba(155,89,182,0.5)") : "rgba(255,255,255,0.07)",
+                }}>
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🎁</span>
+                    <h3 className="lb-cred-section-title">Nitro Generator</h3>
+                    {nitroRunning && (
+                      <span style={{
+                        marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "2px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700,
+                        background: nitroValid > 0 ? "rgba(46,204,113,0.15)" : "rgba(155,89,182,0.15)",
+                        border: `1px solid ${nitroValid > 0 ? "rgba(46,204,113,0.5)" : "rgba(155,89,182,0.4)"}`,
+                        color: nitroValid > 0 ? "#2ecc71" : "#9b59b6",
+                      }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", animation: "lb-pulse 1.4s ease-in-out infinite", flexShrink: 0 }} />
+                        LIVE
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ fontSize: 12, color: "#aaa", marginBottom: 14, lineHeight: 1.6 }}>
+                    Gera e verifica códigos Nitro via Discord API. Roda em ciclos contínuos via API server com rate-limit inteligente.
+                  </p>
+
+                  {/* Batch size */}
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#ccc", marginBottom: 6 }}>
+                      <span>Códigos por ciclo</span>
+                      <span style={{ color: "#9b59b6", fontWeight: 700 }}>{nitroBatch}</span>
+                    </label>
+                    <input
+                      type="range" min={10} max={100} step={10}
+                      value={nitroBatch}
+                      disabled={nitroRunning}
+                      onChange={e => setNitroBatch(Number(e.target.value))}
+                      style={{ width: "100%", accentColor: "#9b59b6" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#666" }}>
+                      <span>10</span><span>100</span>
+                    </div>
+                  </div>
+
+                  {/* Code type */}
+                  <div style={{ marginBottom: 18 }}>
+                    <label style={{ fontSize: 12, color: "#ccc", display: "block", marginBottom: 6 }}>Tipo de código</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {(["classic", "boost", "both"] as const).map(t => (
+                        <button
+                          key={t}
+                          disabled={nitroRunning}
+                          onClick={() => setNitroType(t)}
+                          style={{
+                            flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: nitroRunning ? "not-allowed" : "pointer",
+                            background: nitroType === t ? "rgba(155,89,182,0.25)" : "rgba(255,255,255,0.04)",
+                            border: `1px solid ${nitroType === t ? "rgba(155,89,182,0.7)" : "rgba(255,255,255,0.1)"}`,
+                            color: nitroType === t ? "#c39bd3" : "#888",
+                          }}
+                        >
+                          {t === "classic" ? "🎮 Classic" : t === "boost" ? "💎 Boost" : "🔀 Ambos"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Start / Stop button */}
+                  {!nitroRunning ? (
+                    <button
+                      className="lb-btn-launch"
+                      style={{ width: "100%", padding: "12px 0", fontSize: 14, fontWeight: 700 }}
+                      onClick={startNitroGenerator}
+                    >
+                      ⚡ Iniciar Gerador
+                    </button>
+                  ) : (
+                    <button
+                      className="lb-btn-stop"
+                      style={{ width: "100%", padding: "12px 0", fontSize: 14, fontWeight: 700 }}
+                      onClick={stopNitroGenerator}
+                    >
+                      ⏹ Parar Gerador
+                    </button>
+                  )}
+                </section>
+
+                {/* Stats card */}
+                <section className="lb-cred-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">📊</span>
+                    <h3 className="lb-cred-section-title">Estatísticas</h3>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {[
+                      { label: "Total checado", value: nitroTotal, color: "#ccc" },
+                      { label: "Ciclos", value: nitroCycles, color: "#7f8c8d" },
+                      { label: "Válidos", value: nitroValid, color: "#2ecc71" },
+                      { label: "Inválidos", value: nitroInvalid, color: "#e74c3c" },
+                      { label: "Rate-limited", value: nitroRL, color: "#f39c12" },
+                      { label: "Erros", value: nitroErrors, color: "#e67e22" },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value.toLocaleString()}</div>
+                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#9b59b6" }}>{hitRate}%</div>
+                      <div style={{ fontSize: 10, color: "#666" }}>Hit rate</div>
+                    </div>
+                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#3498db" }}>{speed}/s</div>
+                      <div style={{ fontSize: 10, color: "#666" }}>Velocidade</div>
+                    </div>
+                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: "#7f8c8d" }}>{elapsed}s</div>
+                      <div style={{ fontSize: 10, color: "#666" }}>Tempo total</div>
+                    </div>
+                  </div>
+                </section>
+
+              </div>
+
+              {/* ── RIGHT: Hits + Live log ── */}
+              <div className="lb-cred-right">
+
+                {/* Hits list */}
+                <section className="lb-cred-section" style={{ flex: "0 0 auto", maxHeight: 280, overflow: "hidden" }}>
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🏆</span>
+                    <h3 className="lb-cred-section-title">Códigos Válidos Encontrados</h3>
+                    <span style={{ marginLeft: "auto", padding: "1px 8px", borderRadius: 8, background: "rgba(46,204,113,0.15)", border: "1px solid rgba(46,204,113,0.3)", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>
+                      {nitroHits.length}
+                    </span>
+                  </div>
+                  {nitroHits.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: "#555", fontSize: 13 }}>
+                      Nenhum hit ainda. O Geass está buscando...
+                    </div>
+                  ) : (
+                    <div style={{ overflowY: "auto", maxHeight: 200, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {[...nitroHits].reverse().map((h, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(46,204,113,0.08)", borderRadius: 8, border: "1px solid rgba(46,204,113,0.2)" }}>
+                          <span style={{ fontSize: 18 }}>🎁</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: "monospace", fontSize: 12, color: "#2ecc71", fontWeight: 700 }}>{h.code}</div>
+                            <div style={{ fontSize: 11, color: "#888" }}>{h.plan}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "rgba(46,204,113,0.15)", border: "1px solid rgba(46,204,113,0.4)", color: "#2ecc71", cursor: "pointer" }}
+                              onClick={() => navigator.clipboard.writeText(h.code).catch(() => {})}
+                            >
+                              📋
+                            </button>
+                            <a
+                              href={`https://discord.gift/${h.code}`}
+                              target="_blank" rel="noreferrer"
+                              style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "rgba(88,101,242,0.15)", border: "1px solid rgba(88,101,242,0.4)", color: "#7289da", textDecoration: "none" }}
+                            >
+                              🔗
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                {/* Live log */}
+                <section className="lb-cred-section" style={{ flex: 1 }}>
+                  <div className="lb-cred-section-header" style={{ marginBottom: 8 }}>
+                    <span className="lb-cred-section-icon">📋</span>
+                    <h3 className="lb-cred-section-title">Log em Tempo Real</h3>
+                    {nitroLogs.length > 0 && (
+                      <button
+                        style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 6, fontSize: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#888", cursor: "pointer" }}
+                        onClick={() => setNitroLogs([])}
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+                  <div style={{
+                    fontFamily: "monospace", fontSize: 11, lineHeight: 1.7,
+                    maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column",
+                    background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "8px 10px",
+                    border: "1px solid rgba(255,255,255,0.05)",
+                  }}>
+                    {nitroLogs.length === 0 ? (
+                      <span style={{ color: "#444" }}>Aguardando início do gerador...</span>
+                    ) : (
+                      [...nitroLogs].reverse().map((l, i) => (
+                        <span key={i} style={{
+                          color: l.type === "success" ? "#2ecc71" : l.type === "error" ? "#e74c3c" : l.type === "warn" ? "#f39c12" : "#888",
+                        }}>
+                          {l.text}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+              </div>
+            </div>
+          </div>
+          );
+        })()}
 
         {/* ══════════════════════════════════════════════
             CREDENTIAL CHECKER PAGE

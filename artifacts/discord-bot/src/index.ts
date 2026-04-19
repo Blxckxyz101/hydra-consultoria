@@ -670,16 +670,37 @@ const COMMANDS = [
   // ── /nitro ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("nitro")
-    .setDescription("🎁 Discord Nitro Gift Code Generator & Checker — via proxy pool")
+    .setDescription("🎁 Discord Nitro Gift Code Generator & Checker — background infinito via proxy pool")
     .addSubcommand(sub =>
       sub.setName("gen")
-        .setDescription("⚡ Gerar e verificar códigos Nitro — concorrência real via proxy pool")
+        .setDescription("⚡ Gerador INFINITO — roda em background mesmo saindo do Discord, stop via botão")
+        .addIntegerOption(opt =>
+          opt.setName("batch")
+            .setDescription("Códigos por ciclo (10–100, padrão: 20)")
+            .setRequired(false)
+            .setMinValue(10)
+            .setMaxValue(100)
+        )
+        .addStringOption(opt =>
+          opt.setName("type")
+            .setDescription("Tipo de código (padrão: ambos)")
+            .setRequired(false)
+            .addChoices(
+              { name: "🎮 Classic (16 chars)", value: "classic" },
+              { name: "💎 Boost (24 chars)",   value: "boost"   },
+              { name: "🔀 Ambos",               value: "both"    },
+            )
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("oneshot")
+        .setDescription("🎯 Gerar e checar N códigos de uma vez (1–500)")
         .addIntegerOption(opt =>
           opt.setName("amount")
-            .setDescription("Quantidade de códigos para gerar e checar (1–50, padrão: 10)")
+            .setDescription("Quantidade de códigos (1–500, padrão: 50)")
             .setRequired(false)
             .setMinValue(1)
-            .setMaxValue(50)
+            .setMaxValue(500)
         )
         .addStringOption(opt =>
           opt.setName("type")
@@ -884,6 +905,31 @@ function pushNitroSession(session: NitroSession): void {
 }
 
 loadNitroHistory();
+
+// ── Active background generators — one per channel ───────────────────────────
+interface NitroGenerator {
+  loopHandle:  NodeJS.Timeout | null;  // null while a batch is in-progress
+  running:     boolean;
+  channelId:   string;
+  guildId:     string | null;
+  messageId:   string;
+  userId:      string;
+  username:    string;
+  batchSize:   number;
+  codeType:    "classic" | "boost" | "both";
+  stats: {
+    total:      number;
+    valid:      number;
+    invalid:    number;
+    rateLimited: number;
+    errors:     number;
+    batches:    number;
+    startTime:  number;
+    lastBatchAt: number;
+    hits:       { code: string; plan: string; at: number }[];
+  };
+}
+const activeGenerators = new Map<string, NitroGenerator>(); // key: channelId
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PAGINATION HELPER — Arrow-button embed pager (5 min TTL)
@@ -2090,6 +2136,43 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       const message = err instanceof Error ? err.message : String(err);
       await interaction.editReply({ embeds: [buildErrorEmbed("LANG SWITCH FAILED", message)], components: [] });
     }
+    return;
+  }
+
+  // ── Nitro Generator — Stop button ────────────────────────────────────────
+  if (customId.startsWith("nitro_stop_")) {
+    const targetChannelId = customId.slice("nitro_stop_".length);
+    const gen = activeGenerators.get(targetChannelId);
+
+    if (!gen) {
+      await interaction.reply({ content: "⚠️ Nenhum gerador ativo neste canal.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    gen.running = false;
+    if (gen.loopHandle) clearTimeout(gen.loopHandle);
+    activeGenerators.delete(targetChannelId);
+
+    const elapsed  = Math.round((Date.now() - gen.stats.startTime) / 1000);
+    const rate     = gen.stats.total > 0 ? ((gen.stats.valid / gen.stats.total) * 100).toFixed(2) : "0.00";
+    const stopEmbed = new EmbedBuilder()
+      .setColor(COLORS.GRAY)
+      .setTitle("⏹ NITRO GENERATOR — Parado")
+      .setDescription(`Gerador parado por <@${interaction.user.id}>.`)
+      .addFields({
+        name: "📊 Resultado Final",
+        value: [
+          `🔢 **Total checado:** ${gen.stats.total}   🔁 **Ciclos:** ${gen.stats.batches}`,
+          `✅ **Válidos:** ${gen.stats.valid}   ❌ **Inválidos:** ${gen.stats.invalid}`,
+          `⏳ **Rate-limited:** ${gen.stats.rateLimited}   ⚠️ **Erros:** ${gen.stats.errors}`,
+          `📈 **Hit rate:** ${rate}%   ⏱️ **Tempo total:** ${elapsed}s`,
+        ].join("\n"),
+        inline: false,
+      })
+      .setTimestamp()
+      .setFooter({ text: `${AUTHOR} • Nitro Generator stopped` });
+
+    await interaction.update({ embeds: [stopEmbed], components: [] });
     return;
   }
 
@@ -5132,14 +5215,184 @@ async function main(): Promise<void> {
       return;
     }
 
-    // ── /nitro gen — generate + check N codes via proxy pool ─────────────────
+    // ── /nitro gen — INFINITE background generator (public embed + stop button) ──
     if (sub === "gen") {
-      const amount = interaction.options.getInteger("amount") ?? 10;
+      const batchSize = interaction.options.getInteger("batch") ?? 20;
+      const codeType  = (interaction.options.getString("type") ?? "both") as "classic" | "boost" | "both";
+      const channelId = interaction.channelId;
+
+      // One generator per channel — stop existing one first
+      if (activeGenerators.has(channelId)) {
+        const existing = activeGenerators.get(channelId)!;
+        existing.running = false;
+        if (existing.loopHandle) clearTimeout(existing.loopHandle);
+        activeGenerators.delete(channelId);
+      }
+
+      const typeLabel = codeType === "classic" ? "🎮 Classic (16)" : codeType === "boost" ? "💎 Boost (24)" : "🔀 Classic + Boost";
+
+      // ── Post PUBLIC embed (non-ephemeral) ────────────────────────────────
+      await interaction.deferReply(); // no ephemeral flag → PUBLIC
+
+      const stopBtn = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`nitro_stop_${channelId}`)
+          .setLabel("⏹ Parar Gerador")
+          .setStyle(ButtonStyle.Danger),
+      );
+
+      const buildGenEmbed = (gen: NitroGenerator, status: "running" | "stopped") => {
+        const elapsed  = Math.round((Date.now() - gen.stats.startTime) / 1000);
+        const rate     = gen.stats.total > 0 ? ((gen.stats.valid / gen.stats.total) * 100).toFixed(2) : "0.00";
+        const speed    = elapsed > 0 ? (gen.stats.total / elapsed).toFixed(1) : "0";
+        const lastBatch = gen.stats.lastBatchAt > 0 ? `<t:${Math.floor(gen.stats.lastBatchAt / 1000)}:R>` : "—";
+
+        const hitLines = gen.stats.hits.slice(-5).map(h =>
+          `🎁 \`${h.code}\` — **${h.plan}**\nhttps://discord.gift/${h.code}`
+        ).join("\n");
+
+        const embed = new EmbedBuilder()
+          .setColor(status === "running" ? (gen.stats.valid > 0 ? COLORS.GREEN : COLORS.PURPLE) : COLORS.GRAY)
+          .setTitle(
+            status === "running"
+              ? (gen.stats.valid > 0 ? "🎉 NITRO GENERATOR — HIT ENCONTRADO!" : "⚡ NITRO GENERATOR — Rodando em background...")
+              : "⏹ NITRO GENERATOR — Parado"
+          )
+          .setDescription(
+            status === "running"
+              ? `🔄 Gerando **${gen.batchSize}** códigos por ciclo — tipo: **${typeLabel}**\n*Rode em segundo plano — feche o Discord à vontade!*`
+              : `Gerador parado por <@${gen.userId}>. Use \`/nitro gen\` para reiniciar.`
+          )
+          .addFields(
+            {
+              name: "📊 Estatísticas Acumuladas",
+              value: [
+                `🔢 **Total checado:** ${gen.stats.total}   |   🔁 **Ciclos:** ${gen.stats.batches}`,
+                `✅ **Válidos:** ${gen.stats.valid}   ❌ **Inválidos:** ${gen.stats.invalid}`,
+                `⏳ **Rate-limited:** ${gen.stats.rateLimited}   ⚠️ **Erros:** ${gen.stats.errors}`,
+                `📈 **Hit rate:** ${rate}%   ⚡ **Velocidade:** ${speed} cod/s`,
+                `⏱️ **Tempo total:** ${elapsed}s   🕐 **Último ciclo:** ${lastBatch}`,
+              ].join("\n"),
+              inline: false,
+            },
+            ...(gen.stats.hits.length > 0 ? [{
+              name: `🏆 Últimos ${Math.min(5, gen.stats.hits.length)} Hit(s) (${gen.stats.hits.length} total)`,
+              value: hitLines.slice(0, 1024),
+              inline: false,
+            }] : []),
+          )
+          .setTimestamp()
+          .setFooter({ text: `${AUTHOR} • Nitro Generator • ${interaction.user.username}` });
+
+        return embed;
+      };
+
+      // Initial gen object
+      const gen: NitroGenerator = {
+        loopHandle:  null,
+        running:     true,
+        channelId,
+        guildId:     interaction.guildId,
+        messageId:   "",
+        userId:      interaction.user.id,
+        username:    interaction.user.username,
+        batchSize,
+        codeType,
+        stats: {
+          total: 0, valid: 0, invalid: 0, rateLimited: 0, errors: 0,
+          batches: 0, startTime: Date.now(), lastBatchAt: 0, hits: [],
+        },
+      };
+      activeGenerators.set(channelId, gen);
+
+      await interaction.editReply({ embeds: [buildGenEmbed(gen, "running")], components: [stopBtn] });
+      const msg = await interaction.fetchReply();
+      gen.messageId = msg.id;
+
+      // ── Background loop ───────────────────────────────────────────────────
+      const runBatch = async () => {
+        const g = activeGenerators.get(channelId);
+        if (!g || !g.running) return;
+
+        // Generate codes for this batch
+        const codes: string[] = [];
+        for (let i = 0; i < g.batchSize; i++) {
+          if (g.codeType === "classic")    codes.push(genNitroCode(16));
+          else if (g.codeType === "boost") codes.push(genNitroCode(24));
+          else codes.push(genNitroCode(i % 2 === 0 ? 16 : 24));
+        }
+
+        // Call API server
+        try {
+          const resp = await api.checkNitroCodes(codes);
+          for (const r of resp.results) {
+            if (r.status === "valid") {
+              g.stats.valid++;
+              g.stats.hits.push({ code: r.code, plan: r.plan ?? "Nitro", at: Date.now() });
+              if (g.stats.hits.length > 50) g.stats.hits = g.stats.hits.slice(-50);
+              void sendNitroHitAlert(g.guildId, r.code, r.plan ?? "Nitro", g.username);
+            } else if (r.status === "invalid") {
+              g.stats.invalid++;
+            } else if (r.status === "rate_limited") {
+              g.stats.rateLimited++;
+            } else {
+              g.stats.errors++;
+            }
+          }
+          g.stats.total   += codes.length;
+          g.stats.batches += 1;
+          g.stats.lastBatchAt = Date.now();
+
+          // Save batch to history
+          pushNitroSession({
+            id:          `nitro_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            userId:      g.userId,
+            username:    g.username,
+            guildId:     g.guildId,
+            timestamp:   Date.now(),
+            amount:      codes.length,
+            codeType:    g.codeType,
+            valid:       resp.results.filter(r => r.status === "valid").length,
+            invalid:     resp.results.filter(r => r.status === "invalid").length,
+            rateLimited: resp.results.filter(r => r.status === "rate_limited").length,
+            errors:      resp.results.filter(r => r.status === "error").length,
+            hitCodes:    resp.results.filter(r => r.status === "valid").map(r => ({ code: r.code, plan: r.plan ?? "Nitro" })),
+            durationMs:  0,
+            proxyCount:  resp.proxyCount,
+          });
+        } catch {
+          g.stats.errors += codes.length;
+        }
+
+        // Update the embed via direct message edit (works even after 15-min token expiry)
+        try {
+          const channel = await client.channels.fetch(channelId);
+          if (channel && channel.isTextBased() && "messages" in channel) {
+            await (channel as import("discord.js").TextChannel).messages.edit(
+              g.messageId,
+              { embeds: [buildGenEmbed(g, "running")], components: [stopBtn] },
+            );
+          }
+        } catch { /* silently skip if message was deleted */ }
+
+        // Schedule next batch (5 seconds grace between cycles)
+        if (activeGenerators.get(channelId)?.running) {
+          g.loopHandle = setTimeout(() => { void runBatch(); }, 5_000);
+        }
+      };
+
+      // Start first batch immediately
+      gen.loopHandle = setTimeout(() => { void runBatch(); }, 2_000);
+      return;
+    }
+
+    // ── /nitro oneshot — generate + check N codes, return when done ───────────
+    if (sub === "oneshot") {
+      const amount = interaction.options.getInteger("amount") ?? 50;
       const type   = (interaction.options.getString("type") ?? "both") as "classic" | "boost" | "both";
 
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      // ── Generate codes ────────────────────────────────────────────────────
       const codes: string[] = [];
       for (let i = 0; i < amount; i++) {
         if (type === "classic")    codes.push(genNitroCode(16));
@@ -5148,22 +5401,15 @@ async function main(): Promise<void> {
       }
       const typeLabel = type === "classic" ? "🎮 Classic (16)" : type === "boost" ? "💎 Boost (24)" : "🔀 Classic + Boost";
 
-      // ── Progress embed ────────────────────────────────────────────────────
-      const progressEmbed = new EmbedBuilder()
-        .setColor(COLORS.ORANGE)
-        .setTitle("⚡ NITRO GENERATOR — Processando...")
-        .setDescription(
-          `Verificando **${amount}** código(s) via **proxy pool** com **concorrência real (3 workers)**.\n\n` +
-          `🔄 Tipo: ${typeLabel}\n` +
-          `🌐 Rate-limit inteligente: retry automático via Retry-After\n\n` +
-          `⏳ Aguarde...`
-        )
-        .setTimestamp()
-        .setFooter({ text: `${AUTHOR} • Nitro Generator` });
+      await interaction.editReply({
+        embeds: [new EmbedBuilder()
+          .setColor(COLORS.ORANGE)
+          .setTitle("⚡ NITRO ONESHOT — Processando...")
+          .setDescription(`Verificando **${amount}** código(s)…\n🔄 Tipo: ${typeLabel}\n\n⏳ Aguarde, isso pode levar alguns minutos...`)
+          .setTimestamp()
+          .setFooter({ text: `${AUTHOR} • Nitro One-Shot` })],
+      });
 
-      await interaction.editReply({ embeds: [progressEmbed] });
-
-      // ── Call API server relay (concurrency + proxy rotation) ─────────────
       const startTime = Date.now();
       let results: NitroCodeResult[] = [];
       let proxyCount = 0;
@@ -5177,16 +5423,14 @@ async function main(): Promise<void> {
           embeds: [new EmbedBuilder()
             .setColor(COLORS.RED)
             .setTitle("⚠️ ERRO — API SERVER INACESSÍVEL")
-            .setDescription(`Não foi possível alcançar o servidor de verificação.\n\`\`\`${String(err).slice(0, 200)}\`\`\`\nVerifique se o API server está online.`)
+            .setDescription(`\`\`\`${String(err).slice(0, 200)}\`\`\``)
             .setTimestamp()
             .setFooter({ text: AUTHOR })],
         });
         return;
       }
 
-      const durationMs = Date.now() - startTime;
-
-      // ── Parse results ─────────────────────────────────────────────────────
+      const durationMs  = Date.now() - startTime;
       const valid       = results.filter(r => r.status === "valid");
       const invalid     = results.filter(r => r.status === "invalid");
       const rateLimited = results.filter(r => r.status === "rate_limited");
@@ -5195,85 +5439,48 @@ async function main(): Promise<void> {
       const hitRate     = ((valid.length / amount) * 100).toFixed(1);
       const durationSec = (durationMs / 1000).toFixed(1);
 
-      // ── Notify log channel for each hit (non-blocking) ───────────────────
       for (const hit of valid) {
         void sendNitroHitAlert(interaction.guildId, hit.code, hit.plan ?? "Nitro", interaction.user.username);
       }
 
-      // ── Save to history ───────────────────────────────────────────────────
       const sessionId = `nitro_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       pushNitroSession({
-        id:          sessionId,
-        userId:      interaction.user.id,
-        username:    interaction.user.username,
-        guildId:     interaction.guildId,
-        timestamp:   Date.now(),
-        amount,
-        codeType:    type,
-        valid:       valid.length,
-        invalid:     invalid.length,
-        rateLimited: rateLimited.length,
-        errors:      errors.length,
-        hitCodes:    valid.map(r => ({ code: r.code, plan: r.plan ?? "Nitro" })),
-        durationMs,
-        proxyCount,
+        id: sessionId, userId: interaction.user.id, username: interaction.user.username,
+        guildId: interaction.guildId, timestamp: Date.now(), amount, codeType: type,
+        valid: valid.length, invalid: invalid.length, rateLimited: rateLimited.length,
+        errors: errors.length, hitCodes: valid.map(r => ({ code: r.code, plan: r.plan ?? "Nitro" })),
+        durationMs, proxyCount,
       });
 
-      // ── Result embed ──────────────────────────────────────────────────────
       const resultEmbed = new EmbedBuilder()
         .setColor(hasHit ? COLORS.GREEN : COLORS.RED)
-        .setTitle(hasHit ? "🎉 NITRO HIT ENCONTRADO!" : "🎁 NITRO GENERATOR — Resultado")
+        .setTitle(hasHit ? "🎉 NITRO HIT ENCONTRADO!" : "🎁 NITRO ONESHOT — Resultado")
+        .setDescription(hasHit ? `*"O Geass revelou um presente!"*` : `*"O Geass busca. Use \`/nitro stats\` para ver o acumulado."*`)
+        .addFields(
+          {
+            name: "📊 Resultado",
+            value: [
+              `🎯 **Gerados:** ${amount}   |   Tipo: ${typeLabel}`,
+              `✅ **Válidos:** ${valid.length}   ❌ **Inválidos:** ${invalid.length}`,
+              `⏳ **Rate-limited:** ${rateLimited.length}   ⚠️ **Erros:** ${errors.length}`,
+              `📈 **Hit rate:** ${hitRate}%`,
+              `⏱️ **Duração:** ${durationSec}s   🌐 **Proxies no pool:** ${proxyCount}`,
+            ].join("\n"),
+            inline: false,
+          },
+          ...(valid.length > 0 ? [{
+            name: "🏆 CÓDIGOS VÁLIDOS",
+            value: valid.map(v => `🎁 \`${v.code}\` — **${v.plan ?? "Nitro"}**\nhttps://discord.gift/${v.code}`).join("\n\n").slice(0, 1024),
+            inline: false,
+          }] : []),
+          ...(invalid.length > 0 ? [{
+            name: `❌ Amostra de Inválidos (${Math.min(10, invalid.length)} de ${invalid.length})`,
+            value: invalid.slice(0, 10).map(r => `\`${r.code}\``).join("\n"),
+            inline: false,
+          }] : []),
+        )
         .setTimestamp()
-        .setFooter({ text: `${AUTHOR} • Nitro Generator • Session ${sessionId.slice(-6)}` });
-
-      // ── Stats field ───────────────────────────────────────────────────────
-      resultEmbed.addFields({
-        name: "📊 Estatísticas da Sessão",
-        value: [
-          `🎯 **Gerados:** ${amount}   |   Tipo: ${typeLabel}`,
-          `✅ **Válidos:** ${valid.length}   ❌ **Inválidos:** ${invalid.length}`,
-          `⏳ **Rate-limited:** ${rateLimited.length}   ⚠️ **Erros:** ${errors.length}`,
-          `📈 **Hit rate:** ${hitRate}%`,
-          `⏱️ **Duração:** ${durationSec}s   🌐 **Proxies no pool:** ${proxyCount}`,
-        ].join("\n"),
-        inline: false,
-      });
-
-      // ── Valid codes ───────────────────────────────────────────────────────
-      if (valid.length > 0) {
-        const validLines = valid.map(v =>
-          `🎁 \`${v.code}\` — **${v.plan ?? "Nitro"}**\n🔗 https://discord.gift/${v.code}`
-        ).join("\n\n");
-        resultEmbed.addFields({
-          name: "🏆 CÓDIGOS VÁLIDOS",
-          value: validLines.slice(0, 1024),
-          inline: false,
-        });
-      }
-
-      // ── Sample of invalid codes (max 10) ─────────────────────────────────
-      if (invalid.length > 0) {
-        const sample = invalid.slice(0, 10).map(r => `\`${r.code}\``).join("\n");
-        resultEmbed.addFields({
-          name: `❌ Amostra de Inválidos (${Math.min(10, invalid.length)} de ${invalid.length})`,
-          value: sample,
-          inline: false,
-        });
-      }
-
-      if (rateLimited.length > 0) {
-        resultEmbed.addFields({
-          name: "⏳ Rate-limited (retry automático já aplicado)",
-          value: `${rateLimited.length} código(s) ainda rate-limited após retry.\nO servidor aguardou o header \`Retry-After\` automaticamente.`,
-          inline: false,
-        });
-      }
-
-      resultEmbed.setDescription(
-        hasHit
-          ? `*"O poder do Geass revelou um presente! O canal de log foi notificado."*`
-          : `*"O Geass busca, mas nem sempre encontra. Histórico salvo. Use \`/nitro stats\` para ver o acumulado."*`
-      );
+        .setFooter({ text: `${AUTHOR} • Nitro One-Shot • Session ${sessionId.slice(-6)}` });
 
       await interaction.editReply({ embeds: [resultEmbed] });
     }
