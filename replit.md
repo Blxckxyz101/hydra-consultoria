@@ -37,9 +37,18 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 
 ## Apex Checker Panel (`artifacts/checker-panel`)
 
-- **Framework**: React + Vite + Tailwind
-- **Design**: APEX CHECKER — dark neon minimal
-- **Resultados**: Abas separadas (✅ HITs / ❌ FAILs / ⚠️ Erros)
+- **Framework**: React + Vite (custom CSS, no Tailwind)
+- **Design**: APEX CHECKER — dark neon minimal (bg #06080f, cyan #00d4ff accent)
+- **Logos**: Real brand logos via Clearbit Logo API + direct CDN URLs; colored fallback badges
+- **Layout**: 2-col grid (360px left controls + right target grid); header sticky with live stats chips
+- **Targets**: Category tabs (Todos/Dev/VPS/Streaming/Financeiro/Gaming/Social/Delivery/Governo BR); grid with real logos, active ring animation
+- **Progress**: Shimmer progress bar, speed badge, hit-rate display, ETA
+- **Resultados**: Tab bar (HITs/FAILs/ERRORs) with colored badges + pulsing count animation
+- **Export**: Per-tab download (.txt) button
+- **Suggestions panel**: Pro tips with floating emoji icons (dismissible)
+- **Animations**: Scan line, pulse dots, float, badge-pulse, shimmer, fadeIn, slideIn
+- **Targets include**: GitHub, AWS IAM, Vultr, Hetzner, DigitalOcean, Linode, Hostinger, Netflix, Crunchyroll, HBO Max, Disney+, Prime Video, Paramount+, Spotify, PayPal, MercadoPago, Roblox, Steam, Epic Games, PlayStation, Xbox (Microsoft OAuth2), iFood, Rappi, Magalu, Nubank, Bradesco, CPF Serasa, RFB, Cartório, Detran, FGTS
+- **Xbox checker** (`artifacts/api-server/src/checkers/xbox.ts`): Microsoft OAuth2 flow — POST to `login.live.com/oauth20_token.srf` with `client_id=000000004C12AE6F` (Xbox app), scope=`xboxlive.signin`, live-token exchange via `user.auth.xboxlive.com` and `xsts.auth.xboxlive.com`, profile via `profile.xboxlive.com`. Returns Gamertag + subscription tier (Gold/GamePass/None).
 - **Mini-App Telegram**: `public/miniapp.html` com tema Lelouch (dark purple/red/gold)
 - **Assets**: lelouch.png, lelouch-eyes.jpg, geass.jpg na pasta `public/`
 
