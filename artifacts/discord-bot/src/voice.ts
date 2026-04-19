@@ -17,7 +17,6 @@ import {
   joinVoiceChannel,
   getVoiceConnection,
   VoiceConnectionStatus,
-  entersState,
   type VoiceConnection,
 } from "@discordjs/voice";
 import {
@@ -122,9 +121,25 @@ function voiceStateIcons(p: ParticipantInfo): string {
 
 // ── Network lookups ───────────────────────────────────────────────────────────
 
-/** Reverse-DNS lookup: IP → hostname (ex: brazil1-a.discord.gg). */
+/**
+ * Resolve a hostname to its first IPv4 address.
+ * If the input looks like an IP already, returns it unchanged.
+ */
+async function resolveHostname(host: string): Promise<string> {
+  if (!host || host === "unknown") return host;
+  // Already an IP (IPv4 or IPv6)
+  if (/^[\d.:]+$/.test(host)) return host;
+  try {
+    const addrs = await dns.resolve4(host);
+    return addrs[0] ?? host;
+  } catch {
+    return host;
+  }
+}
+
+/** Reverse-DNS lookup: IP → hostname. Returns null on failure. */
 async function reverseDns(ip: string): Promise<string | null> {
-  if (!ip || ip === "unknown") return null;
+  if (!ip || /[a-zA-Z]/.test(ip)) return null; // already a hostname or empty
   try {
     const hostnames = await dns.reverse(ip);
     return hostnames[0] ?? null;
@@ -133,96 +148,172 @@ async function reverseDns(ip: string): Promise<string | null> {
   }
 }
 
-/** GeoIP + reverse-DNS combined lookup. */
-async function lookupServerGeo(ip: string): Promise<ServerGeo | null> {
-  if (!ip || ip === "unknown") return null;
+/**
+ * GeoIP lookup.
+ * Accepts EITHER an IP address OR a hostname (discord voice hostnames like brazil1-a.discord.gg).
+ * When a hostname is provided, it is DNS-resolved to an IP first.
+ */
+async function lookupServerGeo(hostnameOrIp: string): Promise<ServerGeo | null> {
+  if (!hostnameOrIp || hostnameOrIp === "unknown") return null;
 
-  const [hostname, geoResp] = await Promise.allSettled([
-    reverseDns(ip),
-    fetch(`https://ipapi.co/${ip}/json/`, {
-      signal: AbortSignal.timeout(5_000),
-      headers: { "User-Agent": "Discord-VoiceSniffer/2.0" },
-    }).then(r => r.ok ? r.json() as Promise<Record<string, unknown>> : null),
+  const isHostname = /[a-zA-Z]/.test(hostnameOrIp);
+
+  // Resolve in parallel: DNS forward-resolve (if hostname) + reverse-DNS fallback
+  const [ipResult, hnResult] = await Promise.allSettled([
+    isHostname ? resolveHostname(hostnameOrIp) : Promise.resolve(hostnameOrIp),
+    isHostname ? Promise.resolve(hostnameOrIp) : reverseDns(hostnameOrIp),
   ]);
 
-  const hn  = hostname.status === "fulfilled" ? hostname.value : null;
-  const geo = geoResp.status  === "fulfilled" ? geoResp.value  : null;
+  const ip       = ipResult.status === "fulfilled"  ? ipResult.value  : hostnameOrIp;
+  const hostname = hnResult.status === "fulfilled"  ? hnResult.value  : null;
 
-  if (!geo || (geo as Record<string, unknown>)["error"]) {
+  // GeoIP fetch against the resolved IP
+  let geo: Record<string, unknown> | null = null;
+  try {
+    const resp = await fetch(`https://ipapi.co/${ip}/json/`, {
+      signal:  AbortSignal.timeout(6_000),
+      headers: { "User-Agent": "Mozilla/5.0 LelouchBot/3.0" },
+    });
+    if (resp.ok) geo = await resp.json() as Record<string, unknown>;
+  } catch { /* timeout / network error */ }
+
+  if (!geo || geo["error"]) {
     return {
-      ip, hostname: hn,
+      ip, hostname: isHostname ? hostnameOrIp : hostname,
       country: "Desconhecido", region: "", city: "", org: "", flag: "🌐",
     };
   }
 
-  const d       = geo as Record<string, unknown>;
-  const country = String(d["country_name"] ?? "");
-  const code    = String(d["country_code"] ?? "").toLowerCase();
+  const country = String(geo["country_name"] ?? "");
+  const code    = String(geo["country_code"]  ?? "").toLowerCase();
   const flag    = code.length === 2
     ? String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 97))
     : "🌐";
 
   return {
-    ip, hostname: hn,
+    ip,
+    hostname: isHostname ? hostnameOrIp : (hostname ?? null),
     country,
-    region:  String(d["region"] ?? ""),
-    city:    String(d["city"] ?? ""),
-    org:     String(d["org"] ?? ""),
+    region: String(geo["region"] ?? ""),
+    city:   String(geo["city"]   ?? ""),
+    org:    String(geo["org"]    ?? ""),
     flag,
   };
 }
 
 // ── Internal state extractors ─────────────────────────────────────────────────
 
-/** Extract the voice server IP+port from multiple fallback paths in internal state. */
-function extractServerEndpoint(conn: VoiceConnection): { ip: string; port: number } {
-  const state = conn.state as Record<string, unknown>;
+/**
+ * NetworkingStatusCode mirrored from @discordjs/voice internals:
+ * 0=OpeningWs 1=Identifying 2=UdpHandshaking 3=SelectingProtocol 4=Ready 5=Resuming 6=Closed
+ */
+const NET_CODE_LABEL: Record<number, string> = {
+  0: "🔄 Abrindo WebSocket",
+  1: "🔑 Identificando",
+  2: "📡 Handshake UDP",
+  3: "🤝 Selecionando protocolo",
+  4: "✅ Pronto",
+  5: "🔁 Reconectando",
+  6: "❌ Fechado",
+};
 
-  // Path 1: networking.state (Ready status)
-  const networking = state["networking"]  as Record<string, unknown> | undefined;
-  const netState   = networking?.["state"] as Record<string, unknown> | undefined;
+/**
+ * Deep-extract voice server info from ALL known paths in @discordjs/voice internals.
+ *
+ * Priority:
+ *   1. conn.packets.server.endpoint  (VOICE_SERVER_UPDATE payload) — always available
+ *   2. networking._state.connectionOptions.endpoint
+ *   3. networking._state.udp.remote  (UDP socket remote endpoint — code 2+)
+ *
+ * Returns { hostname, ip, port, networkingCode }
+ */
+function extractVoiceServer(conn: VoiceConnection): {
+  hostname: string;
+  ip:       string;   // may equal hostname until DNS resolves
+  port:     number;
+  networkingCode: number;
+} {
+  const c    = conn as unknown as Record<string, unknown>;
+  const cs   = conn.state as Record<string, unknown>;
 
-  const ip1   = netState?.["ip"]   as string | undefined;
-  const port1 = netState?.["port"] as number | undefined;
-  if (ip1 && ip1 !== "unknown") return { ip: ip1, port: port1 ?? 0 };
+  // ── Networking internal state ──────────────────────────────────────────────
+  const networking   = cs["networking"]    as Record<string, unknown> | undefined;
+  const netInternal  = networking
+    ? ((networking["_state"] ?? networking["state"]) as Record<string, unknown> | undefined)
+    : undefined;
+  const networkingCode: number = (netInternal?.["code"] as number | undefined) ?? -1;
 
-  // Path 2: networking.state.udp
-  const udp  = netState?.["udp"] as Record<string, unknown> | undefined;
-  const ip2  = udp?.["remote"]   as Record<string, unknown> | undefined;
-  if (ip2?.["address"]) return { ip: String(ip2["address"]), port: Number(ip2["port"] ?? 0) };
+  // ── Path 1: conn.packets.server.endpoint (BEST — available instantly) ──────
+  //    Format: "brazil1-a.discord.gg:443" or "ip:port"
+  const packets  = c["packets"]        as Record<string, unknown> | undefined;
+  const server   = packets?.["server"] as Record<string, unknown> | undefined;
+  const rawEp    = server?.["endpoint"] as string | undefined;
 
-  // Path 3: root state
-  const ip3   = state["ip"]   as string | undefined;
-  const port3 = state["port"] as number | undefined;
-  if (ip3 && ip3 !== "unknown") return { ip: ip3, port: port3 ?? 0 };
+  if (rawEp) {
+    const idx      = rawEp.lastIndexOf(":");
+    const hostname = idx > 0 ? rawEp.slice(0, idx)           : rawEp;
+    const port     = idx > 0 ? parseInt(rawEp.slice(idx + 1), 10) : 443;
+    const ip       = /^[\d.]+$/.test(hostname) ? hostname : hostname; // hostname (resolve async later)
+    return { hostname, ip: hostname, port, networkingCode };
+  }
 
-  return { ip: "unknown", port: 0 };
+  // ── Path 2: networking._state.connectionOptions.endpoint ──────────────────
+  const connOpts = netInternal?.["connectionOptions"] as Record<string, unknown> | undefined;
+  const ep2      = connOpts?.["endpoint"] as string | undefined;
+  if (ep2) {
+    const idx      = ep2.lastIndexOf(":");
+    const hostname = idx > 0 ? ep2.slice(0, idx)           : ep2;
+    const port     = idx > 0 ? parseInt(ep2.slice(idx + 1), 10) : 443;
+    return { hostname, ip: hostname, port, networkingCode };
+  }
+
+  // ── Path 3: networking._state.udp.remote (code 2+ only) ───────────────────
+  const udp    = netInternal?.["udp"]    as Record<string, unknown> | undefined;
+  const remote = udp?.["remote"]         as Record<string, unknown> | undefined;
+  if (remote?.["ip"]) {
+    const ip   = String(remote["ip"]);
+    const port = Number(remote["port"] ?? 0);
+    return { hostname: ip, ip, port, networkingCode };
+  }
+
+  return { hostname: "unknown", ip: "unknown", port: 0, networkingCode };
 }
 
-/** Extract RTP/UDP stats from the voice connection internals. */
+/** Extract all RTP/UDP stats + voice server info from connection internals. */
 function getNetworkStats(conn: VoiceConnection) {
-  const state      = conn.state as Record<string, unknown>;
-  const networking = state["networking"]  as Record<string, unknown> | undefined;
-  const netState   = networking?.["state"] as Record<string, unknown> | undefined;
-  const udp        = netState?.["udp"]    as Record<string, unknown> | undefined;
+  const cs         = conn.state as Record<string, unknown>;
+  const networking = cs["networking"] as Record<string, unknown> | undefined;
+  const netInt     = networking
+    ? ((networking["_state"] ?? networking["state"]) as Record<string, unknown> | undefined)
+    : undefined;
 
-  const { ip, port } = extractServerEndpoint(conn);
+  // UDP socket stats (only populated after networkingCode 2+)
+  const udp        = netInt?.["udp"]    as Record<string, unknown> | undefined;
+  const connData   = netInt?.["connectionData"] as Record<string, unknown> | undefined;
+
+  const { hostname, ip, port, networkingCode } = extractVoiceServer(conn);
 
   const ping        = typeof conn.ping?.udp === "number" ? conn.ping.udp : -1;
-  const packetsRx   = (udp?.["packetsReceived"]  as number | undefined) ?? 0;
-  const packetsTx   = (udp?.["packetsSent"]      as number | undefined) ?? 0;
-  const packetsLost = (udp?.["packetsLost"]       as number | undefined) ?? 0;
-  const jitter      = (udp?.["jitter"]            as number | undefined) ?? 0;
-  const bitrateKbps = (netState?.["bitrateKbps"] as number | undefined) ?? 0;
-  const encryption  = (netState?.["encryptionMode"] as string | undefined) ?? "xchacha20_poly1305";
-  const ssrc        = (netState?.["ssrc"]         as number | undefined) ?? null;
+  const packetsRx   = (udp?.["packetsReceived"] as number | undefined) ?? 0;
+  const packetsTx   = (udp?.["packetsSent"]     as number | undefined) ?? 0;
+  const packetsLost = (udp?.["packetsLost"]      as number | undefined) ?? 0;
+  const jitter      = (udp?.["jitter"]           as number | undefined) ?? 0;
+  const bitrateKbps = (netInt?.["bitrateKbps"]   as number | undefined) ?? 0;
+  const encryption  = (connData?.["encryptionMode"] as string | undefined)
+                   ?? (netInt?.["encryptionMode"]   as string | undefined)
+                   ?? "XCHACHA20_POLY1305";
+  const ssrc        = (connData?.["ssrc"]         as number | undefined) ?? null;
 
   const totalRx     = packetsRx + packetsLost;
   const lossPercent = totalRx > 0 ? (packetsLost / totalRx) * 100 : 0;
 
   return {
     ping, packetsRx, packetsTx, packetsLost, lossPercent,
-    jitter, bitrateKbps, encryption, ssrc, ip, port,
+    jitter, bitrateKbps,
+    encryption: encryption.toUpperCase().replace(/_/g, " "),
+    ssrc, hostname, ip, port,
+    networkingCode,
+    networkingLabel: NET_CODE_LABEL[networkingCode] ?? "Desconhecido",
     connStatus: conn.state.status,
   };
 }
@@ -270,18 +361,19 @@ function buildSniffEmbed(
   const connIcon = ns.connStatus === VoiceConnectionStatus.Ready      ? "🟢" :
                    ns.connStatus === VoiceConnectionStatus.Connecting  ? "🟡" : "🔴";
 
-  // Voice server IP block
+  // Voice server block — hostname always available from conn.packets.server.endpoint
   const geo      = session.serverGeo;
-  const ipLine   = `\`${ns.ip}:${ns.port}\``;
-  const hostLine = geo?.hostname ? `🖥 **Hostname:** \`${geo.hostname}\`` : "";
+  const displayHost = ns.hostname !== "unknown" ? ns.hostname : (geo?.hostname ?? "unknown");
+  const displayIp   = geo?.ip && geo.ip !== displayHost ? ` · IP: \`${geo.ip}\`` : "";
+  const ipLine      = `\`${displayHost}:${ns.port}\`${displayIp}`;
   const geoLine  = geo && geo.country !== "Desconhecido"
     ? `${geo.flag} **${geo.city}, ${geo.country}** — \`${geo.org}\``
-    : ipLine;
+    : `🌐 Localização pendente...`;
 
   // Participants
-  const participants   = getParticipants(vc, session);
+  const participants     = getParticipants(vc, session);
   const participantLines = participants.map(p => {
-    const icons  = voiceStateIcons(p);
+    const icons   = voiceStateIcons(p);
     const ssrcTag = p.ssrc !== null ? ` · SSRC:\`${p.ssrc}\`` : "";
     return `${icons} **${p.tag}**${ssrcTag}`;
   });
@@ -289,9 +381,8 @@ function buildSniffEmbed(
   const totalPkts = ns.packetsRx + ns.packetsLost;
 
   const ipBlock = [
-    `${connIcon} **Status:** \`${ns.connStatus}\``,
-    `🔌 **IP Exato:** ${ipLine}`,
-    ...(hostLine ? [hostLine] : []),
+    `${connIcon} **Status:** \`${ns.connStatus}\` · Fase: ${ns.networkingLabel}`,
+    `🔌 **Servidor:** ${ipLine}`,
     `📍 **Localização:** ${geoLine}`,
     `🔐 **Criptografia:** \`${cryptoShort}\``,
     `🆔 **SSRC do Bot:** \`${ns.ssrc ?? "—"}\``,
@@ -413,17 +504,14 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         selfMute:       true,
       });
 
-      // Store IMMEDIATELY — before entersState so sniff can find it even during connecting
+      // Store IMMEDIATELY — sniff reads from this map
       activeConns.set(guildId, conn);
       conn.on(VoiceConnectionStatus.Destroyed, () => activeConns.delete(guildId));
 
-      // Wait up to 20s for Ready — if it times out the connection still exists in Discord
-      // and /voice sniff will wait for it itself
-      try {
-        await entersState(conn, VoiceConnectionStatus.Ready, 20_000);
-      } catch {
-        console.warn(`[VOICE JOIN] entersState timed out — connection still stored, sniff will wait`);
-      }
+      // Give Gateway ~800ms to deliver VOICE_SERVER_UPDATE (populates conn.packets.server)
+      // We do NOT wait for Ready — UDP may never complete on Replit's network,
+      // but the hostname is available the moment the WS READY opcode is received.
+      await new Promise(r => setTimeout(r, 800));
 
       // Track SSRCs via speaking events (Discord sends {userId, ssrc} in SPEAKING gateway event)
       conn.receiver.speaking.on("start", (speakingUserId) => {
@@ -447,16 +535,18 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         sniffSessions.get(guildId)?.speakingSet.delete(speakingUserId);
       });
 
-      // Grab voice server IP right after Ready
-      const { ip: serverIp, port } = extractServerEndpoint(conn);
-      const [geo] = await Promise.allSettled([lookupServerGeo(serverIp)]);
-      const resolvedGeo = geo.status === "fulfilled" ? geo.value : null;
-      const hostnameDisp = resolvedGeo?.hostname ? `\n🖥 Hostname: \`${resolvedGeo.hostname}\`` : "";
-      const locationDisp = resolvedGeo?.country
-        ? `\n📍 ${resolvedGeo.flag} ${resolvedGeo.city}, ${resolvedGeo.country} — \`${resolvedGeo.org}\``
-        : "";
+      // Extract voice server info from conn.packets.server.endpoint (always populated by now)
+      const { hostname: serverHost, ip: serverIp, port } = extractVoiceServer(conn);
+      const geo = await lookupServerGeo(serverHost !== "unknown" ? serverHost : serverIp).catch(() => null);
 
       const memberCount = vc.members.size;
+      const serverLine  = serverHost !== "unknown"
+        ? `\`${serverHost}:${port}\``
+        : "`(aguardando Gateway…)`";
+      const ipLine = geo?.ip && geo.ip !== serverHost ? `\n🔢 **IP:** \`${geo.ip}\`` : "";
+      const geoLine = geo && geo.country !== "Desconhecido"
+        ? `\n📍 ${geo.flag} **${geo.city}, ${geo.country}** — \`${geo.org}\``
+        : "";
 
       await interaction.editReply({
         embeds: [
@@ -465,7 +555,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
             .setTitle("🔊 Lelouch entrou na call")
             .setDescription(
               `Conectado em **#${vc.name}** · ${memberCount} participante${memberCount !== 1 ? "s" : ""}.\n\n` +
-              `**🔌 IP do Servidor de Voz:** \`${serverIp}:${port}\`${hostnameDisp}${locationDisp}\n\n` +
+              `**🔌 Servidor de Voz Discord:**\n${serverLine}${ipLine}${geoLine}\n\n` +
               `Use \`/voice sniff\` para iniciar o monitor de rede em tempo real.\n` +
               `Use \`/voice leave\` para sair.`,
             ),
@@ -526,40 +616,17 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     // All further checks use editReply so there is no expiry risk.
     await interaction.deferReply();
 
-    // Use our own stored reference first — more reliable than getVoiceConnection()
-    let conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+    // Use our own stored reference — do NOT wait for Ready, we work in any active state
+    const conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
 
-    if (!conn) {
-      console.log(`[VOICE SNIFF] No connection for guild ${guildId}`);
+    if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed ||
+                 conn.state.status === VoiceConnectionStatus.Disconnected) {
       await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
             .setTitle("📡 Bot não está em nenhuma call")
             .setDescription("Use `/voice join` primeiro para entrar em um canal de voz."),
-        ],
-      });
-      return;
-    }
-
-    // If still connecting (e.g. user ran sniff right after join), wait up to 18s for Ready
-    if (conn.state.status !== VoiceConnectionStatus.Ready &&
-        conn.state.status !== VoiceConnectionStatus.Destroyed) {
-      console.log(`[VOICE SNIFF] Waiting for Ready — current status: ${conn.state.status}`);
-      try { await entersState(conn, VoiceConnectionStatus.Ready, 18_000); }
-      catch { /* check status below */ }
-      conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
-    }
-
-    if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed ||
-                 conn.state.status === VoiceConnectionStatus.Disconnected) {
-      console.log(`[VOICE SNIFF] Connection not Ready — status: ${conn?.state.status ?? "null"}`);
-      await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.RED)
-            .setTitle("📡 Conexão de voz não está pronta")
-            .setDescription("A conexão com o servidor de voz falhou. Tente `/voice leave` e `/voice join` novamente."),
         ],
       });
       return;
@@ -602,9 +669,11 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
       return;
     }
 
-    // Resolve IP and geo before first render
-    const { ip: serverIp } = extractServerEndpoint(conn);
-    const serverGeo = await lookupServerGeo(serverIp).catch(() => null);
+    // Resolve geo from hostname (e.g. "brazil1-a.discord.gg") — no need for Ready state
+    const { hostname: serverHost, ip: serverIp } = extractVoiceServer(conn);
+    const geoTarget = serverHost !== "unknown" ? serverHost : serverIp;
+    console.log(`[VOICE SNIFF] server=${geoTarget}, connStatus=${conn.state.status}`);
+    const serverGeo = await lookupServerGeo(geoTarget).catch(() => null);
 
     const session: SniffSession = {
       interval:    null,
