@@ -3354,22 +3354,18 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   })()}
 
                   {/* Subdomains */}
-                  {(() => {
-                    const subs = dnsResult.subdomains as string[] ?? [];
-                    if (subs.length === 0) return null;
-                    return (
-                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
-                        <div className="lb-cred-section-header">
-                          <span className="lb-cred-section-icon">🔭</span>
-                          <h3 className="lb-cred-section-title">Subdomínios Encontrados</h3>
-                          <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{subs.length} hit{subs.length !== 1 ? "s" : ""}</span>
-                        </div>
-                        {subs.map((s, i) => (
-                          <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
-                        ))}
-                      </section>
-                    );
-                  })()}
+                  {Array.isArray(dnsResult.subdomains) && (dnsResult.subdomains as string[]).length > 0 ? (
+                    <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                      <div className="lb-cred-section-header">
+                        <span className="lb-cred-section-icon">🔭</span>
+                        <h3 className="lb-cred-section-title">Subdomínios Encontrados</h3>
+                        <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{(dnsResult.subdomains as string[]).length} hit{(dnsResult.subdomains as string[]).length !== 1 ? "s" : ""}</span>
+                      </div>
+                      {(dnsResult.subdomains as string[]).map((s, i) => (
+                        <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
+                      ))}
+                    </section>
+                  ) : null}
 
                   {/* AXFR */}
                   {(() => {

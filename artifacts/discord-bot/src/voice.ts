@@ -322,7 +322,7 @@ function extractVoiceServer(conn: VoiceConnection): {
   networkingCode: number;
 } {
   const c    = conn as unknown as Record<string, unknown>;
-  const cs   = conn.state as Record<string, unknown>;
+  const cs   = conn.state as unknown as Record<string, unknown>;
 
   // ── Networking internal state ──────────────────────────────────────────────
   const networking   = cs["networking"]    as Record<string, unknown> | undefined;
@@ -369,7 +369,7 @@ function extractVoiceServer(conn: VoiceConnection): {
 
 /** Extract all RTP/UDP stats + voice server info from connection internals. */
 function getNetworkStats(conn: VoiceConnection) {
-  const cs         = conn.state as Record<string, unknown>;
+  const cs         = conn.state as unknown as Record<string, unknown>;
   const networking = cs["networking"] as Record<string, unknown> | undefined;
   const netInt     = networking
     ? ((networking["_state"] ?? networking["state"]) as Record<string, unknown> | undefined)
@@ -630,7 +630,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         if (session) session.speakingSet.add(speakingUserId);
 
         try {
-          const networking = (conn.state as Record<string, unknown>)["networking"] as Record<string, unknown> | undefined;
+          const networking = (conn.state as unknown as Record<string, unknown>)["networking"] as Record<string, unknown> | undefined;
           const netSt      = networking?.["state"] as Record<string, unknown> | undefined;
           const ws         = netSt?.["ws"] as Record<string, unknown> | undefined;
           const ssrcMap    = ws?.["ssrcMap"] as Map<number, string> | undefined;

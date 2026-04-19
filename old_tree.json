@@ -1,0 +1,257 @@
+{
+  "sha": "eba3cc877dc778057cfa1d04d0ec2b357b29b532",
+  "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/eba3cc877dc778057cfa1d04d0ec2b357b29b532",
+  "tree": [
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7c345b1c78408d0a2a0db2ad7b46dbc4bb45da8d",
+      "size": 1824,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/7c345b1c78408d0a2a0db2ad7b46dbc4bb45da8d"
+    },
+    {
+      "path": "config.toml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5b34c80a06f483e3958a96804b5288efa6b5b1fd",
+      "size": 775,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/5b34c80a06f483e3958a96804b5288efa6b5b1fd"
+    },
+    {
+      "path": "data",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "bc3fa9c2720865186de74f7c1ab4cde997560b9a",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/bc3fa9c2720865186de74f7c1ab4cde997560b9a"
+    },
+    {
+      "path": "data/proxies.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "data/tokens.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "main.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "36ec3bf7823f2d4dbf562ee2642accc2078fedbc",
+      "size": 1467,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/36ec3bf7823f2d4dbf562ee2642accc2078fedbc"
+    },
+    {
+      "path": "run.bat",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6eb8f594ef50806f63d82d4f218ed682ec756053",
+      "size": 26,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/6eb8f594ef50806f63d82d4f218ed682ec756053"
+    },
+    {
+      "path": "src",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "cb8a437ec27ff76f88f2de6c3f9361c0d095f680",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/cb8a437ec27ff76f88f2de6c3f9361c0d095f680"
+    },
+    {
+      "path": "src/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "790a13c5f4128447da36108474d3289bebc305ab",
+      "size": 1828,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/790a13c5f4128447da36108474d3289bebc305ab"
+    },
+    {
+      "path": "src/funcs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8ed07fc7b4608acc005f1d6d41301e2f2b9579a0",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/8ed07fc7b4608acc005f1d6d41301e2f2b9579a0"
+    },
+    {
+      "path": "src/funcs/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "67b182ae0f1212b186db9b4d8bed547f3798da98",
+      "size": 495,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/67b182ae0f1212b186db9b4d8bed547f3798da98"
+    },
+    {
+      "path": "src/funcs/biochanger.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "aed3e9411ca818f91c8dc13492a34683825819c6",
+      "size": 462,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/aed3e9411ca818f91c8dc13492a34683825819c6"
+    },
+    {
+      "path": "src/funcs/channelchecker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b22e63c6ec3c2a42066085ec42875c0e12ab329a",
+      "size": 418,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/b22e63c6ec3c2a42066085ec42875c0e12ab329a"
+    },
+    {
+      "path": "src/funcs/channelspammer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "40ce31c220d32283c9a1d599efef8012d5126ead",
+      "size": 1506,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/40ce31c220d32283c9a1d599efef8012d5126ead"
+    },
+    {
+      "path": "src/funcs/checker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ae21dff74ac110546e7fee97654f8d433736c5b4",
+      "size": 473,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/ae21dff74ac110546e7fee97654f8d433736c5b4"
+    },
+    {
+      "path": "src/funcs/displaynamechanger.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3e6846507f41dccf196604d2343714b26ba340e5",
+      "size": 528,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/3e6846507f41dccf196604d2343714b26ba340e5"
+    },
+    {
+      "path": "src/funcs/leaver.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "25c95cf7e75f1ca5355611a1914dcecbfa75317d",
+      "size": 491,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/25c95cf7e75f1ca5355611a1914dcecbfa75317d"
+    },
+    {
+      "path": "src/funcs/nicknamechanger.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "809ab3ea6d45845417d22d4a8670277635f26615",
+      "size": 632,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/809ab3ea6d45845417d22d4a8670277635f26615"
+    },
+    {
+      "path": "src/funcs/serverchecker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "14608f6dd0ead33aba9941fa254971c3902d9336",
+      "size": 507,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/14608f6dd0ead33aba9941fa254971c3902d9336"
+    },
+    {
+      "path": "src/funcs/suppliers.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dfe4463ad753c1e631319940252ef82d92311c94",
+      "size": 706,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/dfe4463ad753c1e631319940252ef82d92311c94"
+    },
+    {
+      "path": "src/funcs/verifybypasses",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "0710710d93d8bf3ebc3ee68a991f9f9c5e291eee",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/0710710d93d8bf3ebc3ee68a991f9f9c5e291eee"
+    },
+    {
+      "path": "src/funcs/verifybypasses/__pycache__",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "37e75f4fd326e5064db8829b209cc0a1c01022bc",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/37e75f4fd326e5064db8829b209cc0a1c01022bc"
+    },
+    {
+      "path": "src/funcs/verifybypasses/__pycache__/verifybypasses.cpython-312.pyc",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2862c749877633c67862826faef5eee468dbfdbe",
+      "size": 2195,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/2862c749877633c67862826faef5eee468dbfdbe"
+    },
+    {
+      "path": "src/funcs/verifybypasses/verifybypasses.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "eb997a8475992e4ff0a2acb6e3476b268c86f09e",
+      "size": 924,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/eb997a8475992e4ff0a2acb6e3476b268c86f09e"
+    },
+    {
+      "path": "src/utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "fb7a933e92dc736f900e32050da4719753b11e23",
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/fb7a933e92dc736f900e32050da4719753b11e23"
+    },
+    {
+      "path": "src/utils/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4b9f608b440ee6411753f4cda3ac685138e5cdea",
+      "size": 17383,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/4b9f608b440ee6411753f4cda3ac685138e5cdea"
+    },
+    {
+      "path": "src/utils/console.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97deebfde12f8484de8fe46949f54367b34cabec",
+      "size": 5602,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/97deebfde12f8484de8fe46949f54367b34cabec"
+    },
+    {
+      "path": "src/utils/discord.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9555e2efe86089a08ee72f4d5c4e58fc17e3c33d",
+      "size": 5856,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/9555e2efe86089a08ee72f4d5c4e58fc17e3c33d"
+    },
+    {
+      "path": "src/utils/errorhandler.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a2b7db40120e2d7e514a57aabea64cf3a9526fe7",
+      "size": 206,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/a2b7db40120e2d7e514a57aabea64cf3a9526fe7"
+    },
+    {
+      "path": "src/utils/files.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a90f6ef45a760dbeaab4ae7b67e018e366fc4cfb",
+      "size": 1972,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/a90f6ef45a760dbeaab4ae7b67e018e366fc4cfb"
+    },
+    {
+      "path": "src/utils/printing.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c94907eba911f07d4bca8bfdd21cfaa2f333d943",
+      "size": 2504,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/c94907eba911f07d4bca8bfdd21cfaa2f333d943"
+    },
+    {
+      "path": "src/utils/rpc.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "44bc53ba40d9c1dea1c22127c7bb63ab9f365304",
+      "size": 2175,
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/blobs/44bc53ba40d9c1dea1c22127c7bb63ab9f365304"
+    }
+  ],
+  "truncated": false
+}

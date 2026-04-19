@@ -1,0 +1,827 @@
+[
+  {
+    "sha": "ec853584a1008cee81dfb1d83586f5a2dfbca9c4",
+    "node_id": "C_kwDOLlTP1toAKGVjODUzNTg0YTEwMDhjZWU4MWRmYjFkODM1ODZmNWEyZGZiY2E5YzQ",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-25T21:44:17Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-25T21:44:17Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "21073d38d1928774c9e91fc1ec3d0fef4e99d0dd",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/21073d38d1928774c9e91fc1ec3d0fef4e99d0dd"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/ec853584a1008cee81dfb1d83586f5a2dfbca9c4",
+      "comment_count": 7,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpn20xCRC1aQ7uu5UhlAAAK08QAI0MBvPzHab5A3MrKcsaG+8M\nh7V6Q517134IzSOdBTR26m7JaK8O9eNZu+6m8l56y+3Au+TVMp4szsZi1RJXdj+S\njI8rNTmT2AswmULidFQBFaBSsQ7MojHtza/n3keswjkS4tLHrFkAAUInGBx298c0\n8q/7bUfNX1kJVKr+V9+81FbBHurTgKyrbIB+nPPfyMkaUY/jSUtfF15bW7v64ySW\n1YAHDpCqmqxDDM+Mx+9YHeXP7tRUHVIo/0w4bq/V65pO4vPqnjE2YkzHtUAT1d+S\nPm961QzemZ+PCJloRkDBnDdhhjEIfPsRVm/zVuKG4xWw4adsACebfD/Rt9NlfAZS\nA5RWSaJDw2tS7QeQ0U7rlfHt99T0e7t5RqR0G65G3AJ4kxa1vH51HtkCG52mVrIF\nFtJ7quXiB54L47Kq+st7ZMG4m7vqD5Nzmi+C/XmUplUvRLipIPwWZUlYFw+EAZOi\nxZEwkKCpvjgGs9YF/hGjopx0PYSW8DyHo5m2siP/aiFLjCGat8s5T1YionicO6V2\nbefDRnmUMnY6G/hcbNiBxwpqCF/EnA40EN1cCjim+qtXUmifWqgHaPcDsVO8EHLG\nSiDGC0CWhjJRl+SaCxd0xarr2v/WWwftpE2Yjrc3WqOGjWlKH6EMM0kXXLIYi9Og\nkD4aIYU4UKtzVHrHTpCt\n=wzRo\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 21073d38d1928774c9e91fc1ec3d0fef4e99d0dd\nparent 2a7189d27cf6523b68e7bf9ea7c923969fb47d0d\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1772055857 +0100\ncommitter GitHub <noreply@github.com> 1772055857 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-25T21:44:18Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/ec853584a1008cee81dfb1d83586f5a2dfbca9c4",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/ec853584a1008cee81dfb1d83586f5a2dfbca9c4",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/ec853584a1008cee81dfb1d83586f5a2dfbca9c4/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d"
+      }
+    ]
+  },
+  {
+    "sha": "2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+    "node_id": "C_kwDOLlTP1toAKDJhNzE4OWQyN2NmNjUyM2I2OGU3YmY5ZWE3YzkyMzk2OWZiNDdkMGQ",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-25T21:43:56Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-25T21:43:56Z"
+      },
+      "message": "Update README.md",
+      "tree": {
+        "sha": "600bf823447f4e748ba4adfd3fc7af85d11b9f6a",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/600bf823447f4e748ba4adfd3fc7af85d11b9f6a"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpn20cCRC1aQ7uu5UhlAAA4oYQAHuC4TpqQYCAjQbO+ozxBu8r\n/EO/LJ7wvsnI4PUa1tLN78daypds0qmFoiUqOISrqhOAT2CTT2c1+PoJqJn2CKkb\nKigUlcoIzQrFgaembREnwAMIBIJ0ge8lbBmkGIbMVp1FwiRxdGA8LF7YU60WJCDS\niVZ6pyTstgTzRRWoRoMrnUuY1iGYao3Dri38dQC17CZuewggrj9lkvtq+f5u8e5K\npdSts9JhtjsBVU5BJJIxHnGf2lbKvi8mxJTrKMPyoRXTUMu7ajRShUQOxxUx5OS0\nNbZHw1KUIL0xOTmQapvmKIN1nMsDKGxD5BaJXHdYWN0J138CmkeTGU5teOD4QvTv\nI0sc0/AphwQRgRUzeusMO/tY1AaF5x8/VielPw3QsDWSNsfPMiVr/GDnqDrMawcY\nvYIMNVx7eH8o2XGAJ62umWnsnpYIoVoR4fvRc5KqQmDk9rFzbBhHtYFQSnwOTBVG\nXj9Y3KDAq29jyBScwrFoHBW423e7eWIEPl/YitoyjSbnNfcLB7gM1xjNE3t4zOpf\nn8jWBWNpF26u/GldEQL3PkU8GwXDpIedzCGjWIvPLQ9wkxJHIdLGOmYpmu2oorfe\nV2N4oqcH1HkuhhNM10lIHMhMZs0aBXYA+R51ZqqTIXKEiHZDSPS3IJIewbkdAC7A\nHnA9vHoYgTh+OCPS7Gfg\n=Be4J\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 600bf823447f4e748ba4adfd3fc7af85d11b9f6a\nparent f855fd985abd19303cdbeb38ef828697711a488a\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1772055836 +0100\ncommitter GitHub <noreply@github.com> 1772055836 +0100\n\nUpdate README.md",
+        "verified_at": "2026-02-25T21:43:57Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/2a7189d27cf6523b68e7bf9ea7c923969fb47d0d/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "f855fd985abd19303cdbeb38ef828697711a488a",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f855fd985abd19303cdbeb38ef828697711a488a",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/f855fd985abd19303cdbeb38ef828697711a488a"
+      }
+    ]
+  },
+  {
+    "sha": "f855fd985abd19303cdbeb38ef828697711a488a",
+    "node_id": "C_kwDOLlTP1toAKGY4NTVmZDk4NWFiZDE5MzAzY2RiZWIzOGVmODI4Njk3NzExYTQ4OGE",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:48:53Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:48:53Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "38144e4517c79f8774979a62c6e2b762ffc26e16",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/38144e4517c79f8774979a62c6e2b762ffc26e16"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/f855fd985abd19303cdbeb38ef828697711a488a",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnKEVCRC1aQ7uu5UhlAAAy5UQAKjw7UPihiTnNgOlY2H+PMrD\nSqIaMgH9gFW6pCsStjTdeapE8DseYoRRLPSBeEEvJdui6AIpP6yMcFg5O6nd+p21\nJGeQoKfnt2Uo2AQZSG2Fz9WydTP4QczHOuRvCXxUmXsigPIKcNaUR5HJ4t6Ff+NB\neytDX+UFPqcMvstC50nlR99Jyg0jyZ73YnU/3SPFcTa0EWEjCR1WH0cUprNu6vo1\nOTkOyzGi7kixJjNj0i55XHlCGvmS10nUIYXhMPDcPNE4Q8dZbeeAvlIXEDy0mW2+\nZcw4BHBaXlGTgsijIo8Jat6FBGU52wV1Yr8jXljTVfGaiMlkfUaOFmYTR2wX+1UC\n6GJ2uYRVt7AdroOC/VVKK8eaoCWvcDosiZKENxHAF+iWnGnAXp3/U8AghJSQcE5n\nT72NOaRKHXXhbon9iWeCYGQrID9hckYwgKe65gfQNgE5e+H3BD6pHlZb6eT+x7Fk\nTAk6lPfHbWEzEaEZpu4bMMuuWlHIAe8qwCTMbYnQo/hGWUO/BMKiSG8hpLMdJvo4\nap0tayEIVfN3wDlIzrRKFnaZ2S88d+qT520jPEBol5kZTiJLiS+vXDVqjyBKds85\n42yjhrPTrhvbLnPJlS2r7y8PuLJM9FAKRLcqsve43syvnlXzol9Cn7vUVlrEqrvw\nHzCRaw52SFwxxfFWME8L\n=F5+X\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 38144e4517c79f8774979a62c6e2b762ffc26e16\nparent 4912c8fdacce47bb870a5b16a558d6d491c6e8e5\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771872533 +0100\ncommitter GitHub <noreply@github.com> 1771872533 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-23T18:48:53Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f855fd985abd19303cdbeb38ef828697711a488a",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/f855fd985abd19303cdbeb38ef828697711a488a",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f855fd985abd19303cdbeb38ef828697711a488a/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/4912c8fdacce47bb870a5b16a558d6d491c6e8e5"
+      }
+    ]
+  },
+  {
+    "sha": "4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+    "node_id": "C_kwDOLlTP1toAKDQ5MTJjOGZkYWNjZTQ3YmI4NzBhNWIxNmE1NThkNmQ0OTFjNmU4ZTU",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:46:09Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:46:09Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "2a414dc01fbc21e19d72a69c33f5ba068d1c6800",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/2a414dc01fbc21e19d72a69c33f5ba068d1c6800"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnKByCRC1aQ7uu5UhlAAA7UoQAFzOdJQyxJ79R0iwfKhoG4b7\n9DoolKcol+LQFjkVcpqUki+9Y76HXL2e57Pn4YoDezFgW+42pgQQktM7ldkKYz8+\n2AwRObLZo+G5IKwSGGs7CgL/s6SU8Fzdb6rrGdOMQLVNVls542mKMjvBFUNrG9Ge\nltta5WLsUXWNEYBsZaMPFRGwKsSmB4pLGYhcmgSXcdXXkzLpik/GQLo2yN26KjyL\nObr5kIv5WCIkzkk1gY/UUvOQWoq4zYsHhB0TgcVzQ9J/bijsg3PAewwjkU06sRr7\nLm1xkrVok57HwN+jzeFnNdFK5rgsBtYKE5GR4BQbJrxj4Q6mqzP7BGuo5J0/zO6i\n+5aAcDGQesnCF9ATTqSqaHlb5uRJeyHUnniFFKuIKmfJY7EjU4/146Lbjo3piSCc\now821GCcM8ROnSXasISxIUaoW1/fP9mytN7ON+YkGpTMNjTixFJ/U2xqWgOTRxol\n3IuylupHI03SIx21mXt78Fn+JjKvFAnM3gAhCcZDlKJ/LUnj9DCUmUivYZRHZgys\nR5YIg4MVx2QPQXiORZ/bVnJlqCxFRJDbrDy7Lh+pxdOE+l1bmozEuZGd0V/6St84\n73YXJv3jIylKRJei3sMUoXZosmt+wAxcM+d00VPImBGeftDVynWO+zmVq+Tb2HXw\nNv/MrYYLr/dIaDY7b6/3\n=v3JL\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 2a414dc01fbc21e19d72a69c33f5ba068d1c6800\nparent 9f4753f41fc4f5c3dc90ee61f1e644338130cc18\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771872369 +0100\ncommitter GitHub <noreply@github.com> 1771872369 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-23T18:46:10Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/4912c8fdacce47bb870a5b16a558d6d491c6e8e5",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/4912c8fdacce47bb870a5b16a558d6d491c6e8e5/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/9f4753f41fc4f5c3dc90ee61f1e644338130cc18"
+      }
+    ]
+  },
+  {
+    "sha": "9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+    "node_id": "C_kwDOLlTP1toAKDlmNDc1M2Y0MWZjNGY1YzNkYzkwZWU2MWYxZTY0NDMzODEzMGNjMTg",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:45:06Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:45:06Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "b5f1b10c1502eb235e30dcb62a9bbd8bd3a00778",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/b5f1b10c1502eb235e30dcb62a9bbd8bd3a00778"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnKAyCRC1aQ7uu5UhlAAA+CkQAC/5do9k5I9c2XCPJ2bqxwnB\nze7/bqCw3NbfO78K4lXk5Y1D5w0sOj8sF9hnrw1xcjGCj5B+OHrleyiAuXId3xRw\nsBdxpYt0OLUcY79KFL3mccW2+Muklw1ftIJam9B65gA5gpGkvS/ED/oBZo9umJ1s\nRryIW2GArzlJKC1IwHDOKQfbAJj8nCmiC9EJqN6/SrVf+TaEurngg/z1U/pQcsFf\n8gwIBxEC1O93S0amm85KNyFRWZSagP/1/DARgOl4mzNMuKmnpepIoCBFhgSs3rbZ\nwKKjKtHmyfriLgsYvp3ENCdrSuGYSJ+amL+3koO3sw5yOiDAIp2/c24B0O4bA0Ie\nK4eWlIx18/JOKzkLz+tfacnvoRu6A2OGwjgLPqN2f6SDy4sQw9K0ed6lPW1Gt3XH\nNfDtxwXEEtGRr9C2gM5B+rdwPfZ422gKZdqnfsBRmwJzZSsz+baiQerBf+9GrBpC\nLpmxnkhBWebgVBC/MChdPez+Psxse1ZudSwDJBbnLZqOQ5FJZndQdrO8tNCBoUfy\n/S4kFuAsdwhuV96s5p3RV5jAgSQx+aCclvzy5zp6bnvuG+qexEIaSbhIjXSL2ScD\nxjA7RNf7C6mm2oAcrjGai36HKvipYHVVVZ3sLVAUjUaoarf7sd12Z66Bys7pFwTG\nWBZVNwlaCmz2//sY1910\n=2CYP\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree b5f1b10c1502eb235e30dcb62a9bbd8bd3a00778\nparent cf9675a98a00ca031319998573eaa6c0771ee7a0\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771872306 +0100\ncommitter GitHub <noreply@github.com> 1771872306 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-23T18:45:07Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/9f4753f41fc4f5c3dc90ee61f1e644338130cc18",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/9f4753f41fc4f5c3dc90ee61f1e644338130cc18/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "cf9675a98a00ca031319998573eaa6c0771ee7a0",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/cf9675a98a00ca031319998573eaa6c0771ee7a0",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/cf9675a98a00ca031319998573eaa6c0771ee7a0"
+      }
+    ]
+  },
+  {
+    "sha": "cf9675a98a00ca031319998573eaa6c0771ee7a0",
+    "node_id": "C_kwDOLlTP1toAKGNmOTY3NWE5OGEwMGNhMDMxMzE5OTk4NTczZWFhNmMwNzcxZWU3YTA",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:43:42Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:43:42Z"
+      },
+      "message": "Update README.md",
+      "tree": {
+        "sha": "4f7f749764725ccbda61cd0e9c72301a098dd07d",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/4f7f749764725ccbda61cd0e9c72301a098dd07d"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/cf9675a98a00ca031319998573eaa6c0771ee7a0",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnJ/eCRC1aQ7uu5UhlAAAlh0QAJR4+ptm5fEXAFOEf/MdI50c\nWwKCJB8koiCV1fTO+Q8AZquPiwhJfcuHhc54rr+Kak4M+zXYgofAtEuvg289gf4c\n3jr3DDTj1HBTBNw3a78hmr7a4MYriTZbtxHM1LUlwxNFJU23wn93JZs/1Mi1J8Vf\nm9Pp8K8W0JRS0w1ZKX1ssJhzyQR7S0kdltpA109+9q1Rr0GCXtAE/87cT988p5rB\nKpMAcYd94QaxEqUy7SucTxfvOKIDueCD+2Li4KwWpFrkWRKtXSQhEHtDEEJ8MSg/\niF+JH07FNg43ltDf886J4vKm9Gq5ZGEJS6daN6+aSn0cyopGUcjgQ5Bd7oqKQBvO\nJaLp9OTLysKRi4KqnGBGJT9ogsEcG0kEwVaAsQLoU7e8/5DUGf7EfM7n1J37P/8n\nETBxLZC3JBX5+HSeZzUIGojs/c7eSXch8EKHA+eOvNDsjkpKXMWFpwQzGXal6oro\nyxC13LlC7Z7boZrU4gxFl16adL91yUsJpqZHELG187JiELwWLMYtyYCVskjOd4Zh\npfsCAv7Dx/FRc3cb8zzVV22CiZWsSzvcbSgmh2t3EU2s14Ws+K8MO0y6X3Mk903r\nt1/YBharupzIGvS/PxFkjl1ibfHuxwpVbYSLsKmYwX7Xj7c3Grm+XxpCq0A9tfc5\n0eAmjNLrtgsKT5czOffH\n=iYJ+\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 4f7f749764725ccbda61cd0e9c72301a098dd07d\nparent 591e6cfe28ca5a286553f507d8db7cea7f2f978c\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771872222 +0100\ncommitter GitHub <noreply@github.com> 1771872222 +0100\n\nUpdate README.md",
+        "verified_at": "2026-02-23T18:43:42Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/cf9675a98a00ca031319998573eaa6c0771ee7a0",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/cf9675a98a00ca031319998573eaa6c0771ee7a0",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/cf9675a98a00ca031319998573eaa6c0771ee7a0/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/591e6cfe28ca5a286553f507d8db7cea7f2f978c"
+      }
+    ]
+  },
+  {
+    "sha": "591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+    "node_id": "C_kwDOLlTP1toAKDU5MWU2Y2ZlMjhjYTVhMjg2NTUzZjUwN2Q4ZGI3Y2VhN2YyZjk3OGM",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:38:44Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:38:44Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "38144e4517c79f8774979a62c6e2b762ffc26e16",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/38144e4517c79f8774979a62c6e2b762ffc26e16"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnJ60CRC1aQ7uu5UhlAAAzegQABod2/HvygRAwGPlpxj4rxDx\nu5W8LLqYFCflpLvqD1/oZSwrYN+E20YBRxq89Z8NYV5tneVLLEqyjjAm0fWx+C9G\n32tpVc3IGiCOtjTjpKfeTzEWQiMbiq1HLUGVR3v2MfxL4bJdBHbWHtGwof3spwUW\nSLyIyL565S3DbLQcZJQXk9bu0K2/qam1SL5sIx1REHQXDbQZk/73gbf7SFD1OMcb\nCBolcz9vTeP1LxcnV9Kz8pUZw73HigDG/L1BXYMT1ZGwvb7jgvRHMQfPiUJdPiDU\nJgyflC+U538mlu2ehDlacqRPgnXyp+CImgy1vV3bnGH4hE7Ipkm+FpypKAqOsZz4\nouZPS4f2sTjHxRp0MmiBZNO78+2c5LtKVC/zBQdktBl/uIm4pbqr2qpO4V4iIMoe\nIPQHT3N9SRg04WGfj9sz/Ifp8DPnvHsy3WaDUM7Z/bUI9DQpD5CKYtdQrNMWb8WS\n+Lc6JJLV+KdMatuMNOUfMZh9G2DsvbzlDNcNnYaEWxBKN0+DPpRmYNTdC5Cdh09a\n1SN7fsTXa3Jx/FHgd6T3E8Hw4xITYS3Rt83koS73XpCI7SUXNc9TTWbrQxPYG+6S\ntm5Z5rmO4JN4UFjofG9kEqtCnJupJopuYW4SG/ty6Y71dQ3KfmlV763FzYwZjUmK\n8bdLlWO+zDaBTDF1+Lc9\n=H4WX\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree 38144e4517c79f8774979a62c6e2b762ffc26e16\nparent 397a0680ef21f4c6aaa28433a1894ff8986dc82e\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771871924 +0100\ncommitter GitHub <noreply@github.com> 1771871924 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-23T18:38:45Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/591e6cfe28ca5a286553f507d8db7cea7f2f978c",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/591e6cfe28ca5a286553f507d8db7cea7f2f978c/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/397a0680ef21f4c6aaa28433a1894ff8986dc82e"
+      }
+    ]
+  },
+  {
+    "sha": "397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+    "node_id": "C_kwDOLlTP1toAKDM5N2EwNjgwZWYyMWY0YzZhYWEyODQzM2ExODk0ZmY4OTg2ZGM4MmU",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "extiverooo@proton.me",
+        "date": "2026-02-23T18:38:16Z"
+      },
+      "committer": {
+        "name": "r3ci",
+        "email": "extiverooo@proton.me",
+        "date": "2026-02-23T18:38:16Z"
+      },
+      "message": "Merge branch 'main' of https://github.com/R3CI/G4Raid-lite",
+      "tree": {
+        "sha": "6ed70f95aceb15b30b8b4e71cb8992d16b3b340d",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/6ed70f95aceb15b30b8b4e71cb8992d16b3b340d"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/397a0680ef21f4c6aaa28433a1894ff8986dc82e",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/397a0680ef21f4c6aaa28433a1894ff8986dc82e/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "f8fff2635c9483b58979f0a81aee163c372b67c2",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f8fff2635c9483b58979f0a81aee163c372b67c2",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/f8fff2635c9483b58979f0a81aee163c372b67c2"
+      },
+      {
+        "sha": "c69301646fdbc70193de00aea0bca3560b6765d8",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/c69301646fdbc70193de00aea0bca3560b6765d8",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/c69301646fdbc70193de00aea0bca3560b6765d8"
+      }
+    ]
+  },
+  {
+    "sha": "f8fff2635c9483b58979f0a81aee163c372b67c2",
+    "node_id": "C_kwDOLlTP1toAKGY4ZmZmMjYzNWM5NDgzYjU4OTc5ZjBhODFhZWUxNjNjMzcyYjY3YzI",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "extiverooo@proton.me",
+        "date": "2026-02-23T18:37:59Z"
+      },
+      "committer": {
+        "name": "r3ci",
+        "email": "extiverooo@proton.me",
+        "date": "2026-02-23T18:37:59Z"
+      },
+      "message": "well yep",
+      "tree": {
+        "sha": "dc2d644fab81f4dbaec9388fce680850b1ad8696",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/dc2d644fab81f4dbaec9388fce680850b1ad8696"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/f8fff2635c9483b58979f0a81aee163c372b67c2",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f8fff2635c9483b58979f0a81aee163c372b67c2",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/f8fff2635c9483b58979f0a81aee163c372b67c2",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/f8fff2635c9483b58979f0a81aee163c372b67c2/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "eba3cc877dc778057cfa1d04d0ec2b357b29b532",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/eba3cc877dc778057cfa1d04d0ec2b357b29b532",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/eba3cc877dc778057cfa1d04d0ec2b357b29b532"
+      }
+    ]
+  },
+  {
+    "sha": "c69301646fdbc70193de00aea0bca3560b6765d8",
+    "node_id": "C_kwDOLlTP1toAKGM2OTMwMTY0NmZkYmM3MDE5M2RlMDBhZWEwYmNhMzU2MGI2NzY1ZDg",
+    "commit": {
+      "author": {
+        "name": "r3ci",
+        "email": "139361332+R3CI@users.noreply.github.com",
+        "date": "2026-02-23T18:36:03Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-02-23T18:36:03Z"
+      },
+      "message": "🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+      "tree": {
+        "sha": "ad18f10c2cf5073d1cd796194d5ff06b18362228",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/trees/ad18f10c2cf5073d1cd796194d5ff06b18362228"
+      },
+      "url": "https://api.github.com/repos/R3CI/G4Raid-lite/git/commits/c69301646fdbc70193de00aea0bca3560b6765d8",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpnJ4TCRC1aQ7uu5UhlAAAjhYQAIZqP07vvYFruu619vtTKep7\n7ahtY7hjxa+og4QKZIc3PIPRVVNcKKU2CutSwoeFNM8jgcvMO00ca00czL8xCenq\nE/1wZLsKQM1x/CRsl/S+T+f8AcNIs63ZyON/fo4IdspQU+TijvwHNN+BFgXDqbMX\nmG3ubKk9Gh7I/Zh6M+z+rdhw+q3S0NRfHg4ADYk74oITlzdIJUnv2gJsV00v3UjC\nXJ2Z36NMuRSAjhrQwS4g9aOYYj6qYnYuwxBaCqxStC+PpsXa2VB6Us/IyptCSN7W\npUoVY4IMPqSj2+FMHyUgmCYiOsCb3T2tTwKOemR1DEpaKaXeOpXUbeylNfVW0FEI\n9yZ7RiRUJNfrQI/1kMIK62PeGfVte9uJm/CeNs+4Q9Zjt2hQ43kglBzX8REyzMlh\nhT6do3DGbxRBWMBd5arppkl4oxtXPz2PsLVxKiK/VMAPRO3A2N87810FiHBAuORz\nM9HhKJrjfGJ5m4lZTyhplvT7uzQPZx7UdcsFs/BXyc2bAakIQvpB8p1+HUhNqtny\nQhhVP2zl3L5gikZQRR7ugQuuiB3mezh+l6Uen2YPvambwL1KQFI72YmPB66GtwP/\n4y+ed0GWsXeY5m5WBPSpU6KhtGYc8ANhMUeptj+Fzo5DjIszSSM6ujyygGgmGiZP\nU2///rzz+N0Y+fQwafdr\n=BSJR\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree ad18f10c2cf5073d1cd796194d5ff06b18362228\nparent c44f7c186c7e4ba79ec5ae7983770c32a86df692\nauthor r3ci <139361332+R3CI@users.noreply.github.com> 1771871763 +0100\ncommitter GitHub <noreply@github.com> 1771871763 +0100\n\n🌐 DISCORD.GG/SPAMMING | G4TOOLS.CC 🌐",
+        "verified_at": "2026-02-23T18:36:04Z"
+      }
+    },
+    "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/c69301646fdbc70193de00aea0bca3560b6765d8",
+    "html_url": "https://github.com/R3CI/G4Raid-lite/commit/c69301646fdbc70193de00aea0bca3560b6765d8",
+    "comments_url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/c69301646fdbc70193de00aea0bca3560b6765d8/comments",
+    "author": {
+      "login": "R3CI",
+      "id": 139361332,
+      "node_id": "U_kgDOCE58NA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/139361332?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/R3CI",
+      "html_url": "https://github.com/R3CI",
+      "followers_url": "https://api.github.com/users/R3CI/followers",
+      "following_url": "https://api.github.com/users/R3CI/following{/other_user}",
+      "gists_url": "https://api.github.com/users/R3CI/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/R3CI/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/R3CI/subscriptions",
+      "organizations_url": "https://api.github.com/users/R3CI/orgs",
+      "repos_url": "https://api.github.com/users/R3CI/repos",
+      "events_url": "https://api.github.com/users/R3CI/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/R3CI/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "c44f7c186c7e4ba79ec5ae7983770c32a86df692",
+        "url": "https://api.github.com/repos/R3CI/G4Raid-lite/commits/c44f7c186c7e4ba79ec5ae7983770c32a86df692",
+        "html_url": "https://github.com/R3CI/G4Raid-lite/commit/c44f7c186c7e4ba79ec5ae7983770c32a86df692"
+      }
+    ]
+  }
+]
