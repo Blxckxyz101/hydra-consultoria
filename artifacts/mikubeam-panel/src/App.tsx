@@ -1754,56 +1754,57 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   /* ── Credential Bulk Checker helpers ── */
   interface CredTargetMeta { label: string; icon: string; category: string; logoUrl?: string; logoColor?: string; note?: string; }
+  function gf(domain: string) { return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`; }
   const CRED_TARGETS: Record<string, CredTargetMeta> = {
     // Gov / Saúde
-    datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo",           logoColor: "#1a6b3a", note: "user:pass" },
-    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo",           logoColor: "#1565c0", note: "user:pass" },
+    datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo",           logoUrl: gf("datasus.gov.br"),      logoColor: "#1a6b3a", note: "user:pass" },
+    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo",           logoUrl: gf("sipni.saude.gov.br"),  logoColor: "#1565c0", note: "user:pass" },
     consultcenter:{ label: "ConsultCenter",  icon: "📋", category: "Governo",           logoColor: "#4527a0", note: "user:pass" },
     mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo",           logoColor: "#283593", note: "user:pass" },
-    serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo",           logoColor: "#1a237e", note: "user:pass" },
-    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo",           logoColor: "#00695c", note: "user:pass" },
-    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo",           logoColor: "#1b5e20", note: "user:pass" },
+    serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo",           logoUrl: gf("serpro.gov.br"),       logoColor: "#1a237e", note: "user:pass" },
+    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo",           logoUrl: gf("sisregiii.saude.gov.br"), logoColor: "#00695c", note: "user:pass" },
+    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo",           logoUrl: gf("sinesp.gov.br"),       logoColor: "#1b5e20", note: "user:pass" },
     sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo",           logoColor: "#bf360c", note: "user:pass" },
     sigma:        { label: "SIGMA PC-MA",    icon: "🔵", category: "Governo",           logoColor: "#0d47a1", note: "user:pass" },
     // Finanças / Crédito
     credilink:    { label: "CrediLink",      icon: "💳", category: "Finanças",          logoColor: "#1976d2", note: "user:pass" },
-    serasa:       { label: "Serasa Empr.",   icon: "📊", category: "Finanças",          logoUrl: "https://logo.clearbit.com/serasa.com.br", logoColor: "#e53935", note: "user:pass" },
-    serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças",          logoUrl: "https://logo.clearbit.com/serasa.com.br", logoColor: "#c62828", note: "user:pass" },
-    iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças",          logoColor: "#6a1b9a", note: "user:pass" },
+    serasa:       { label: "Serasa Empr.",   icon: "📊", category: "Finanças",          logoUrl: gf("serasa.com.br"),       logoColor: "#e53935", note: "user:pass" },
+    serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças",          logoUrl: gf("serasa.com.br"),       logoColor: "#c62828", note: "user:pass" },
+    iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças",          logoUrl: gf("iseek.pro"),           logoColor: "#6a1b9a", note: "user:pass" },
     // Social / Redes
-    instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: "https://logo.clearbit.com/instagram.com", logoColor: "#c13584", note: "email:pass" },
+    instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: gf("instagram.com"),       logoColor: "#c13584", note: "email:pass" },
     // Streaming
-    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: "https://logo.clearbit.com/crunchyroll.com", logoColor: "#f47521", note: "email:pass" },
-    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: "https://logo.clearbit.com/netflix.com", logoColor: "#e50914", note: "email:pass" },
-    amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: "https://logo.clearbit.com/primevideo.com", logoColor: "#00a8e1", note: "email:pass" },
-    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: "https://logo.clearbit.com/max.com", logoColor: "#5f2d91", note: "email:pass" },
-    disney:       { label: "Disney+",        icon: "🏰", category: "Streaming",         logoUrl: "https://logo.clearbit.com/disneyplus.com", logoColor: "#0063e5", note: "email:pass" },
-    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: "https://logo.clearbit.com/paramountplus.com", logoColor: "#1a4cff", note: "email:pass" },
-    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: "https://logo.clearbit.com/spotify.com", logoColor: "#1db954", note: "user:pass" },
+    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: gf("crunchyroll.com"),     logoColor: "#f47521", note: "email:pass" },
+    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: gf("netflix.com"),         logoColor: "#e50914", note: "email:pass" },
+    amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: gf("primevideo.com"),      logoColor: "#00a8e1", note: "email:pass" },
+    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: gf("max.com"),             logoColor: "#5f2d91", note: "email:pass" },
+    disney:       { label: "Disney+",        icon: "🏰", category: "Streaming",         logoUrl: gf("disneyplus.com"),      logoColor: "#0063e5", note: "email:pass" },
+    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: gf("paramountplus.com"),   logoColor: "#1a4cff", note: "email:pass" },
+    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: gf("spotify.com"),         logoColor: "#1db954", note: "user:pass" },
     // Consultas (CPF/dados públicos)
-    receita:      { label: "Receita Federal",icon: "🧾", category: "Consultas",         logoColor: "#1a237e", note: "cpf:nasc" },
+    receita:      { label: "Receita Federal",icon: "🧾", category: "Consultas",         logoUrl: gf("receita.fazenda.gov.br"), logoColor: "#1a237e", note: "cpf:nasc" },
     // VPS / Hosting
     tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting",     logoColor: "#0d47a1", note: "user:pass" },
-    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/hostinger.com", logoColor: "#673fd7", note: "email:pass" },
-    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/vultr.com", logoColor: "#007bfc", note: "API Key" },
-    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/digitalocean.com", logoColor: "#0080ff", note: "API Key" },
-    linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/linode.com", logoColor: "#02b159", note: "API Key" },
-    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/hetzner.com", logoColor: "#d50c2d", note: "API Key" },
+    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: gf("hostinger.com"),       logoColor: "#673fd7", note: "email:pass" },
+    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: gf("vultr.com"),           logoColor: "#007bfc", note: "API Key" },
+    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: gf("digitalocean.com"),    logoColor: "#0080ff", note: "API Key" },
+    linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: gf("linode.com"),          logoColor: "#02b159", note: "API Key" },
+    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting",     logoUrl: gf("hetzner.com"),         logoColor: "#d50c2d", note: "API Key" },
     // Dev / Cloud
-    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud",       logoUrl: "https://logo.clearbit.com/github.com", logoColor: "#24292e", note: "user:PAT" },
-    aws:          { label: "AWS IAM",        icon: "☁️", category: "Dev / Cloud",       logoUrl: "https://logo.clearbit.com/aws.amazon.com", logoColor: "#ff9900", note: "key:secret" },
+    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud",       logoUrl: gf("github.com"),          logoColor: "#24292e", note: "user:PAT" },
+    aws:          { label: "AWS IAM",        icon: "☁️", category: "Dev / Cloud",       logoUrl: gf("aws.amazon.com"),      logoColor: "#ff9900", note: "key:secret" },
     // Financeiro BR
-    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: "https://logo.clearbit.com/mercadopago.com.br", logoColor: "#009ee3", note: "email:pass" },
-    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: "https://logo.clearbit.com/ifood.com.br", logoColor: "#ea1d2c", note: "email:pass" },
+    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: gf("mercadopago.com.br"),  logoColor: "#009ee3", note: "email:pass" },
+    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: gf("ifood.com.br"),        logoColor: "#ea1d2c", note: "email:pass" },
     // Financeiro Global
-    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: "https://logo.clearbit.com/paypal.com", logoColor: "#003087", note: "email:pass" },
+    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: gf("paypal.com"),          logoColor: "#003087", note: "email:pass" },
     // Gaming
-    riot:         { label: "Riot Games",     icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/riotgames.com", logoColor: "#d13639", note: "user:pass" },
-    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: "https://logo.clearbit.com/roblox.com", logoColor: "#e02020", note: "user:pass" },
-    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: "https://logo.clearbit.com/epicgames.com", logoColor: "#313131", note: "email:pass" },
-    steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: "https://logo.clearbit.com/steampowered.com", logoColor: "#1b2838", note: "user:pass" },
-    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/playstation.com", logoColor: "#003087", note: "email:pass" },
-    xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/xbox.com", logoColor: "#107c10", note: "email:pass" },
+    riot:         { label: "Riot Games",     icon: "🎮", category: "Gaming",            logoUrl: gf("riotgames.com"),       logoColor: "#d13639", note: "user:pass" },
+    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: gf("roblox.com"),          logoColor: "#e02020", note: "user:pass" },
+    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: gf("epicgames.com"),       logoColor: "#313131", note: "email:pass" },
+    steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: gf("steampowered.com"),    logoColor: "#1b2838", note: "user:pass" },
+    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: gf("playstation.com"),     logoColor: "#003087", note: "email:pass" },
+    xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: gf("xbox.com"),            logoColor: "#107c10", note: "email:pass" },
   };
   const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR", "Financeiro Global", "Gaming"];
 
@@ -3057,14 +3058,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                                     src={m.logoUrl}
                                     alt={m.label}
                                     className="lb-cred-logo-img"
-                                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; (e.currentTarget.nextSibling as HTMLElement).style.display = "flex"; }}
+                                    onError={e => {
+                                      const img = e.currentTarget as HTMLImageElement;
+                                      img.style.display = "none";
+                                      const fb = img.nextElementSibling as HTMLElement;
+                                      if (fb) fb.style.display = "flex";
+                                    }}
                                   />
                                 ) : null}
                                 <div
                                   className="lb-cred-logo-fallback"
-                                  style={{ background: `${logoColor}33`, border: `1px solid ${logoColor}55`, color: logoColor, display: m.logoUrl ? "none" : "flex" }}
+                                  style={{ background: `${logoColor}22`, border: `1px solid ${logoColor}44`, display: m.logoUrl ? "none" : "flex" }}
                                 >
-                                  {initials}
+                                  <span style={{ fontSize: "1.25rem", lineHeight: 1 }}>{m.icon}</span>
                                 </div>
                                 {isActive && <div className="lb-cred-logo-ring" />}
                               </div>

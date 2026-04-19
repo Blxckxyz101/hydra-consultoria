@@ -74,11 +74,34 @@ function homeKeyboard() {
       Markup.button.callback("📊 Estatísticas DB",   "home_stats"),
       Markup.button.callback("🎯 Ver HITs",           "home_hits"),
     ],
+    [
+      Markup.button.callback("📋 Status Sessão",      "home_status"),
+      Markup.button.callback("🗑 Limpar Sessão",      "home_clear"),
+    ],
   ];
   if (MINIAPP_URL) {
     rows.push([Markup.button.webApp("📲 Abrir Painel Geass", MINIAPP_URL)]);
   }
   return Markup.inlineKeyboard(rows);
+}
+
+function sessionStatusMsg(s: Session): string {
+  const credCount = s.credentials?.length ?? 0;
+  const lines = [
+    `${LINE}`,
+    `📋 <b>STATUS DA SESSÃO</b>`,
+    `${LINE2}`,
+    ``,
+    `🔑 Credenciais carregadas: <b>${credCount.toLocaleString("pt-BR")}</b>`,
+    `⚙️ Checker: <b>${s.running ? "🟢 ATIVO" : "🔴 Parado"}</b>`,
+    ``,
+    `✅ HITs:  <b>${s.hits.length}</b>`,
+    `❌ FAILs: <b>${s.fails.length}</b>`,
+    `⚡ Erros: <b>${s.errors.length}</b>`,
+    ``,
+    `${LINE}`,
+  ];
+  return lines.join("\n");
 }
 
 // ── Progress message ──────────────────────────────────────────────────────────
@@ -177,17 +200,25 @@ bot.command("help", async ctx => {
     `${GEASS} <b>ORDENS DO GEASS</b>`,
     `${LINE2}`,
     ``,
+    `<b>🔧 Controle:</b>`,
     `/start    — Painel de comando`,
-    `/checker  — Iniciar checker (envie um arquivo)`,
+    `/status   — Status da sessão atual`,
+    `/clear    — Limpar credenciais e resultados`,
+    `/stop     — Parar checker ativo`,
+    ``,
+    `<b>${SWORD} Checker:</b>`,
+    `/checker  — Iniciar checker (envie um arquivo .txt)`,
     `/url &lt;domínio&gt; — Buscar no DB e checar`,
     `/import   — Importar credenciais para o DB`,
-    `/stats    — Estatísticas do banco`,
+    ``,
+    `<b>📊 Resultados:</b>`,
     `/hits     — Ver HITs da última sessão`,
     `/fails    — Ver FAILs da última sessão`,
     `/errors   — Ver Erros da última sessão`,
-    `/stop     — Parar checker ativo`,
+    `/stats    — Estatísticas do banco`,
     ``,
     `${LINE}`,
+    `<i>💡 Tip: Envie um arquivo .txt com login:senha para carregar credenciais.</i>`,
   ].join("\n"));
 });
 
@@ -273,6 +304,54 @@ bot.command("errors", async ctx => {
   const text = s.errors.slice(0, 50).map(h => `⚡ ${h}`).join("\n");
   await ctx.replyWithHTML(
     `${LINE}\n⚡ <b>Erros (${s.errors.length})</b>\n${LINE2}\n\n<code>${esc(text)}</code>`,
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+});
+
+// ── /status ───────────────────────────────────────────────────────────────────
+bot.command("status", async ctx => {
+  const s = getSession(ctx.from!.id);
+  await ctx.replyWithHTML(sessionStatusMsg(s),
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+});
+
+bot.action("home_status", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  await ctx.replyWithHTML(sessionStatusMsg(s),
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+});
+
+// ── /clear ────────────────────────────────────────────────────────────────────
+bot.command("clear", async ctx => {
+  const s = getSession(ctx.from!.id);
+  if (s.running) {
+    await ctx.reply("⚠️ Pare o checker antes de limpar a sessão (/stop).");
+    return;
+  }
+  s.credentials = undefined;
+  s.hits = []; s.fails = []; s.errors = [];
+  s.activeJobId = undefined; s.waitingFor = null;
+  await ctx.replyWithHTML(
+    `${LINE}\n🗑 <b>SESSÃO LIMPA</b>\n${LINE2}\n\nCredenciais e resultados apagados.\n${LINE}`,
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+});
+
+bot.action("home_clear", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  if (s.running) {
+    await ctx.answerCbQuery("⚠️ Pare o checker primeiro!");
+    return;
+  }
+  s.credentials = undefined;
+  s.hits = []; s.fails = []; s.errors = [];
+  s.activeJobId = undefined; s.waitingFor = null;
+  await ctx.replyWithHTML(
+    `${LINE}\n🗑 <b>SESSÃO LIMPA</b>\n${LINE2}\n\nCredenciais e resultados apagados.\n${LINE}`,
     Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
   );
 });

@@ -2,11 +2,7 @@ export const BOT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN ?? "";
 export const API_BASE    = process.env.API_BASE ?? "http://localhost:8080";
 export const BOT_NAME    = "Geass Command Center";
 export const AUTHOR      = "LelouchBritannia";
-// URL of the Telegram Mini App served from the checker-panel public folder
-export const MINIAPP_URL = process.env.MINIAPP_URL
-  ?? (process.env.REPLIT_DEV_DOMAIN
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}/checker-panel/miniapp.html`
-    : "");
+export const MINIAPP_URL = process.env.MINIAPP_URL ?? "";
 
 // Checker targets available
 export const CHECKER_TARGETS = [
