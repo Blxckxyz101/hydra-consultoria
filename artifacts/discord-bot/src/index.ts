@@ -4824,8 +4824,9 @@ async function main(): Promise<void> {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent, // required to read attachments from guild messages
+      GatewayIntentBits.MessageContent,   // required to read attachments from guild messages
       GatewayIntentBits.GuildModeration,
+      GatewayIntentBits.GuildVoiceStates, // required for /voice join/sniff — member.voice.channel
       // NOTE: GuildMembers & GuildPresences are Privileged Intents.
       // To enable them: Discord Developer Portal → Bot → Privileged Gateway Intents
       // → toggle "Server Members Intent" and "Presence Intent" → Save → restart bot.

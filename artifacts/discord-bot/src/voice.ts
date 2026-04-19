@@ -378,8 +378,12 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
   // ── /voice join ────────────────────────────────────────────────────────────
   if (sub === "join") {
-    const member = await interaction.guild!.members.fetch(userId).catch(() => null);
-    const vc     = member?.voice?.channel;
+    // Primary: voice state cache (populated once GuildVoiceStates intent is on)
+    // Fallback: fresh member fetch (covers edge cases where cache lags)
+    const guild  = interaction.guild!;
+    const cached = guild.voiceStates.cache.get(userId);
+    const member = cached?.member ?? await guild.members.fetch(userId).catch(() => null);
+    const vc     = cached?.channel ?? member?.voice?.channel;
 
     if (!vc || (vc.type !== ChannelType.GuildVoice && vc.type !== ChannelType.GuildStageVoice)) {
       await interaction.reply({
