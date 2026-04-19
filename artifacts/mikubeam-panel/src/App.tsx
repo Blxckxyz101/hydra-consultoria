@@ -769,7 +769,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal" | "xbox";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -1753,57 +1753,57 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   }
 
   /* ── Credential Bulk Checker helpers ── */
-  interface CredTargetMeta { label: string; icon: string; category: string; }
+  interface CredTargetMeta { label: string; icon: string; category: string; logoUrl?: string; logoColor?: string; note?: string; }
   const CRED_TARGETS: Record<string, CredTargetMeta> = {
     // Gov / Saúde
-    datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo" },
-    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo" },
-    consultcenter:{ label: "ConsultCenter",  icon: "📋", category: "Governo" },
-    mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo" },
-    serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo" },
-    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo" },
-    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo" },
-    sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo" },
-    sigma:        { label: "SIGMA (PC-MA)",  icon: "🔵", category: "Governo" },
+    datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo",           logoColor: "#1a6b3a", note: "user:pass" },
+    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo",           logoColor: "#1565c0", note: "user:pass" },
+    consultcenter:{ label: "ConsultCenter",  icon: "📋", category: "Governo",           logoColor: "#4527a0", note: "user:pass" },
+    mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo",           logoColor: "#283593", note: "user:pass" },
+    serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo",           logoColor: "#1a237e", note: "user:pass" },
+    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo",           logoColor: "#00695c", note: "user:pass" },
+    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo",           logoColor: "#1b5e20", note: "user:pass" },
+    sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo",           logoColor: "#bf360c", note: "user:pass" },
+    sigma:        { label: "SIGMA PC-MA",    icon: "🔵", category: "Governo",           logoColor: "#0d47a1", note: "user:pass" },
     // Finanças / Crédito
-    credilink:    { label: "CrediLink",      icon: "💳", category: "Finanças" },
-    serasa:       { label: "Serasa Empr.",   icon: "📊", category: "Finanças" },
-    serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças" },
-    iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças" },
+    credilink:    { label: "CrediLink",      icon: "💳", category: "Finanças",          logoColor: "#1976d2", note: "user:pass" },
+    serasa:       { label: "Serasa Empr.",   icon: "📊", category: "Finanças",          logoUrl: "https://logo.clearbit.com/serasa.com.br", logoColor: "#e53935", note: "user:pass" },
+    serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças",          logoUrl: "https://logo.clearbit.com/serasa.com.br", logoColor: "#c62828", note: "user:pass" },
+    iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças",          logoColor: "#6a1b9a", note: "user:pass" },
     // Social / Redes
-    instagram:    { label: "Instagram",      icon: "📸", category: "Social" },
+    instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: "https://logo.clearbit.com/instagram.com", logoColor: "#c13584", note: "email:pass" },
     // Streaming
-    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming" },
-    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming" },
-    amazon:       { label: "Amazon Prime",   icon: "📦", category: "Streaming" },
-    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming" },
-    disney:       { label: "Disney+",        icon: "🏰", category: "Streaming" },
-    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming" },
-    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming" },
+    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: "https://logo.clearbit.com/crunchyroll.com", logoColor: "#f47521", note: "email:pass" },
+    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: "https://logo.clearbit.com/netflix.com", logoColor: "#e50914", note: "email:pass" },
+    amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: "https://logo.clearbit.com/primevideo.com", logoColor: "#00a8e1", note: "email:pass" },
+    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: "https://logo.clearbit.com/max.com", logoColor: "#5f2d91", note: "email:pass" },
+    disney:       { label: "Disney+",        icon: "🏰", category: "Streaming",         logoUrl: "https://logo.clearbit.com/disneyplus.com", logoColor: "#0063e5", note: "email:pass" },
+    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: "https://logo.clearbit.com/paramountplus.com", logoColor: "#1a4cff", note: "email:pass" },
+    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: "https://logo.clearbit.com/spotify.com", logoColor: "#1db954", note: "user:pass" },
     // Consultas (CPF/dados públicos)
-    receita:      { label: "Receita Federal", icon: "🧾", category: "Consultas" },
+    receita:      { label: "Receita Federal",icon: "🧾", category: "Consultas",         logoColor: "#1a237e", note: "cpf:nasc" },
     // VPS / Hosting
-    tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting" },
-    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting" },
-    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting" },
-    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting" },
-    linode:       { label: "Linode / Akamai",icon: "🟩", category: "VPS / Hosting" },
+    tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting",     logoColor: "#0d47a1", note: "user:pass" },
+    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/hostinger.com", logoColor: "#673fd7", note: "email:pass" },
+    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/vultr.com", logoColor: "#007bfc", note: "API Key" },
+    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/digitalocean.com", logoColor: "#0080ff", note: "API Key" },
+    linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/linode.com", logoColor: "#02b159", note: "API Key" },
+    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting",     logoUrl: "https://logo.clearbit.com/hetzner.com", logoColor: "#d50c2d", note: "API Key" },
     // Dev / Cloud
-    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud" },
-    aws:          { label: "AWS (IAM Key)",  icon: "☁️", category: "Dev / Cloud" },
+    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud",       logoUrl: "https://logo.clearbit.com/github.com", logoColor: "#24292e", note: "user:PAT" },
+    aws:          { label: "AWS IAM",        icon: "☁️", category: "Dev / Cloud",       logoUrl: "https://logo.clearbit.com/aws.amazon.com", logoColor: "#ff9900", note: "key:secret" },
     // Financeiro BR
-    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR" },
-    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR" },
-    // Gaming
-    riot:         { label: "Riot / Valorant",icon: "🎮", category: "Gaming" },
-    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming" },
-    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming" },
-    steam:        { label: "Steam",          icon: "🎲", category: "Gaming" },
-    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming" },
+    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: "https://logo.clearbit.com/mercadopago.com.br", logoColor: "#009ee3", note: "email:pass" },
+    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: "https://logo.clearbit.com/ifood.com.br", logoColor: "#ea1d2c", note: "email:pass" },
     // Financeiro Global
-    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global" },
-    // VPS / Hosting (extra)
-    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting" },
+    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: "https://logo.clearbit.com/paypal.com", logoColor: "#003087", note: "email:pass" },
+    // Gaming
+    riot:         { label: "Riot Games",     icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/riotgames.com", logoColor: "#d13639", note: "user:pass" },
+    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: "https://logo.clearbit.com/roblox.com", logoColor: "#e02020", note: "user:pass" },
+    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: "https://logo.clearbit.com/epicgames.com", logoColor: "#313131", note: "email:pass" },
+    steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: "https://logo.clearbit.com/steampowered.com", logoColor: "#1b2838", note: "user:pass" },
+    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/playstation.com", logoColor: "#003087", note: "email:pass" },
+    xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: "https://logo.clearbit.com/xbox.com", logoColor: "#107c10", note: "email:pass" },
   };
   const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR", "Financeiro Global", "Gaming"];
 
@@ -3036,21 +3036,43 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 {CRED_CATEGORIES.map(cat => (
                   <div key={cat} className="lb-cred-category">
                     <span className="lb-cred-category-label">{cat}</span>
-                    <div className="lb-cred-target-grid">
+                    <div className="lb-cred-target-grid lb-cred-target-grid--logos">
                       {Object.entries(CRED_TARGETS)
                         .filter(([, m]) => m.category === cat)
-                        .map(([k, m]) => (
-                          <button
-                            key={k}
-                            className={`lb-cred-target-btn ${credTarget === k ? "lb-cred-target-btn--active" : ""}`}
-                            onClick={() => setCredTarget(k as typeof credTarget)}
-                            disabled={credRunning}
-                            title={m.label}
-                          >
-                            <span className="lb-cred-target-icon">{m.icon}</span>
-                            <span className="lb-cred-target-name">{m.label}</span>
-                          </button>
-                        ))}
+                        .map(([k, m]) => {
+                          const isActive = credTarget === k;
+                          const initials = m.label.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase();
+                          const logoColor = m.logoColor ?? "#444";
+                          return (
+                            <button
+                              key={k}
+                              className={`lb-cred-target-btn lb-cred-target-btn--logo ${isActive ? "lb-cred-target-btn--active" : ""}`}
+                              onClick={() => setCredTarget(k as typeof credTarget)}
+                              disabled={credRunning}
+                              title={`${m.label}${m.note ? ` — ${m.note}` : ""}`}
+                            >
+                              <div className="lb-cred-logo-wrap">
+                                {m.logoUrl ? (
+                                  <img
+                                    src={m.logoUrl}
+                                    alt={m.label}
+                                    className="lb-cred-logo-img"
+                                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; (e.currentTarget.nextSibling as HTMLElement).style.display = "flex"; }}
+                                  />
+                                ) : null}
+                                <div
+                                  className="lb-cred-logo-fallback"
+                                  style={{ background: `${logoColor}33`, border: `1px solid ${logoColor}55`, color: logoColor, display: m.logoUrl ? "none" : "flex" }}
+                                >
+                                  {initials}
+                                </div>
+                                {isActive && <div className="lb-cred-logo-ring" />}
+                              </div>
+                              <span className="lb-cred-target-name">{m.label}</span>
+                              {m.note && <span className="lb-cred-target-note">{m.note}</span>}
+                            </button>
+                          );
+                        })}
                     </div>
                   </div>
                 ))}

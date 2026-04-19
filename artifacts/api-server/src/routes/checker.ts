@@ -2808,11 +2808,17 @@ async function checkHostinger(login: string, password: string): Promise<CheckRes
     if (loginRes.statusCode === 401 || loginRes.statusCode === 422) {
       return { credential, login, status: "FAIL", detail: "credenciais_invalidas" };
     }
+    if (loginRes.statusCode === 403 || loginRes.statusCode === 405 || loginRes.statusCode === 530) {
+      return { credential, login, status: "ERROR", detail: `DATACENTER_BLOCKED:HTTP_${loginRes.statusCode}` };
+    }
     if (loginRes.statusCode === 429) {
       return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
     }
     if (loginRes.statusCode !== 200) {
       return { credential, login, status: "ERROR", detail: `HTTP_${loginRes.statusCode}` };
+    }
+    if (!loginRes.body.trim().startsWith("{")) {
+      return { credential, login, status: "ERROR", detail: "DATACENTER_BLOCKED:non_json" };
     }
 
     const j    = JSON.parse(loginRes.body) as Record<string, unknown>;
@@ -4274,8 +4280,11 @@ async function checkPlayStation(login: string, password: string): Promise<CheckR
     ], 20_000);
 
     const tb = tokenRes.body;
+    if (tokenRes.statusCode === 403 || tokenRes.statusCode === 0 || !tb.trim().startsWith("{")) {
+      return { credential, login, status: "ERROR", detail: `DATACENTER_BLOCKED:HTTP_${tokenRes.statusCode}` };
+    }
     let tj: Record<string, unknown>;
-    try { tj = JSON.parse(tb); } catch { return { credential, login, status: "ERROR", detail: "parse_error" }; }
+    try { tj = JSON.parse(tb); } catch { return { credential, login, status: "ERROR", detail: `parse_error:HTTP_${tokenRes.statusCode}` }; }
 
     const errCode = (tj.error_code ?? tj.error) as string | number | undefined;
     if (errCode !== undefined) {
