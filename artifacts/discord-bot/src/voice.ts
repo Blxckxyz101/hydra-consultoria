@@ -47,23 +47,34 @@ interface ParticipantInfo {
 }
 
 interface SniffSession {
-  interval:    ReturnType<typeof setInterval> | null;
+  timer:       ReturnType<typeof setTimeout> | null;  // self-scheduling timer (not interval)
+  tickRunning: boolean;                               // guard against concurrent ticks
   ssrcMap:     Map<string, number>;   // userId → ssrc
   speakingSet: Set<string>;           // userId de quem está falando
   startedAt:   number;
   vcId:        string;
   vcName:      string;
   serverGeo:   ServerGeo | null;
+  pingHistory: number[];              // last 16 UDP ping samples (ms), -1 = no data
+  probeInfo:   ProbeInfo | null;      // HTTP probe result from voice server
 }
 
 interface ServerGeo {
   ip:       string;
-  hostname: string | null;   // via reverse-DNS: "brazil1-a.discord.gg" etc.
+  hostname: string | null;
   country:  string;
   region:   string;
   city:     string;
   org:      string;
   flag:     string;
+}
+
+interface ProbeInfo {
+  cfRay:      string | null;   // Cloudflare Ray ID (e.g. "8a2e3f78deadbeef-GRU")
+  cfPop:      string | null;   // PoP code extracted from cf-ray ("GRU", "LAX", etc.)
+  server:     string | null;   // Server header
+  statusCode: number;
+  probeMs:    number;          // time to connect
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -199,6 +210,83 @@ async function lookupServerGeo(hostnameOrIp: string): Promise<ServerGeo | null> 
     org:    String(geo["org"]    ?? ""),
     flag,
   };
+}
+
+// ── HTTP Probe ────────────────────────────────────────────────────────────────
+
+/**
+ * Send an HTTPS probe to the Discord voice server.
+ * Since these are Cloudflare-fronted, the response headers reveal:
+ *   - CF-Ray: {hex}-{POP_CODE}  → exact Cloudflare datacenter (GRU=São Paulo, LAX=Los Angeles, etc.)
+ *   - Server header
+ *   - Status code (usually 400/404 — the server exists but doesn't serve HTTP)
+ */
+async function probeVoiceServer(hostname: string): Promise<ProbeInfo | null> {
+  if (!hostname || hostname === "unknown") return null;
+  const t0 = Date.now();
+  try {
+    const resp = await fetch(`https://${hostname}/`, {
+      method:  "HEAD",
+      signal:  AbortSignal.timeout(5_000),
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; DiscordBot/1.0)",
+        "Accept":     "*/*",
+      },
+    });
+    const probeMs   = Date.now() - t0;
+    const cfRay     = resp.headers.get("cf-ray") ?? resp.headers.get("CF-Ray") ?? null;
+    const cfPop     = cfRay ? (cfRay.split("-")[1] ?? null) : null;
+    const server    = resp.headers.get("server") ?? resp.headers.get("Server") ?? null;
+    return { cfRay, cfPop, server, statusCode: resp.status, probeMs };
+  } catch {
+    return null;
+  }
+}
+
+// ── Voice Quality ─────────────────────────────────────────────────────────────
+
+/**
+ * Calculate ITU-T G.107 E-model MOS (Mean Opinion Score) approximation.
+ * Returns a value from 1.0 (worst) to 5.0 (best).
+ * Formula source: https://www.itu.int/rec/T-REC-G.107
+ */
+function calculateMOS(pingMs: number, jitterMs: number, lossPercent: number): number {
+  if (pingMs < 0) return 0; // unknown
+  const effectiveLatency = pingMs + jitterMs * 2 + 10;
+  let R = 93.2 - effectiveLatency / 40;
+  R -= lossPercent * 2.5;
+  if (R < 0)   R = 0;
+  if (R > 100) R = 100;
+  const mos = 1 + 0.035 * R + R * (R - 60) * (100 - R) * 7e-6;
+  return Math.max(1, Math.min(5, mos));
+}
+
+function mosLabel(mos: number): string {
+  if (mos <= 0)  return "—";
+  if (mos >= 4.3) return `${mos.toFixed(2)} 🟢 Excelente`;
+  if (mos >= 4.0) return `${mos.toFixed(2)} 🟢 Bom`;
+  if (mos >= 3.5) return `${mos.toFixed(2)} 🟡 Aceitável`;
+  if (mos >= 3.0) return `${mos.toFixed(2)} 🟠 Ruim`;
+  return                 `${mos.toFixed(2)} 🔴 Péssimo`;
+}
+
+/**
+ * Draw a compact sparkline from a ping history array.
+ * Uses block characters ▁▂▃▄▅▆▇█ to show relative trend.
+ * Values of -1 are treated as gaps (shown as ·).
+ */
+function sparkline(history: number[]): string {
+  const valid  = history.filter(v => v >= 0);
+  if (valid.length === 0) return "· · · · · · · ·";
+  const minV   = Math.min(...valid);
+  const maxV   = Math.max(...valid);
+  const range  = maxV - minV || 1;
+  const BARS   = "▁▂▃▄▅▆▇█";
+  return history.map(v => {
+    if (v < 0) return "·";
+    const idx = Math.round(((v - minV) / range) * (BARS.length - 1));
+    return BARS[idx] ?? "█";
+  }).join("");
 }
 
 // ── Internal state extractors ─────────────────────────────────────────────────
@@ -351,12 +439,14 @@ function buildSniffEmbed(
 
   const pingStr  = ns.ping >= 0 ? `${ns.ping}ms` : "N/A";
   const lossStr  = `${fmt(ns.lossPercent)}%`;
-  const jitterMs = ns.jitter > 0 ? `${fmt(ns.jitter * 1000)}ms` : "0.0ms";
+  const jitterRaw = ns.jitter > 1 ? ns.jitter : ns.jitter * 1000; // lib returns ms or s — normalise
+  const jitterMs = ns.jitter > 0 ? `${fmt(jitterRaw)}ms` : "0.0ms";
   const bitrate  = ns.bitrateKbps > 0 ? `${fmt(ns.bitrateKbps)} kbps` : "—";
+  // Bug fix: ns.encryption is already uppercase with spaces — strip prefix/suffix correctly
   const cryptoShort = ns.encryption
-    .replace(/^aead_/, "")
-    .replace(/_rtpsize$/, "")
-    .toUpperCase();
+    .replace(/^AEAD\s+/i, "")
+    .replace(/\s+RTPSIZE$/i, "")
+    .trim();
 
   const connIcon = ns.connStatus === VoiceConnectionStatus.Ready      ? "🟢" :
                    ns.connStatus === VoiceConnectionStatus.Connecting  ? "🟡" : "🔴";
@@ -380,12 +470,30 @@ function buildSniffEmbed(
 
   const totalPkts = ns.packetsRx + ns.packetsLost;
 
+  // MOS score (ITU-T G.107 E-model)
+  const jitterMsNum = ns.jitter > 1 ? ns.jitter : ns.jitter * 1000;
+  const mos         = calculateMOS(ns.ping, jitterMsNum, ns.lossPercent);
+  const mosStr      = mosLabel(mos);
+
+  // Ping sparkline (last 16 samples)
+  const spark = sparkline(session.pingHistory);
+
+  // Cloudflare probe info
+  const probe     = session.probeInfo;
+  const probeStr  = probe
+    ? [
+        probe.cfPop    ? `☁️ **CF-PoP:** \`${probe.cfPop}\`` : "",
+        probe.cfRay    ? `🔬 **CF-Ray:** \`${probe.cfRay}\`` : "",
+        probe.server   ? `🖥 **Server:** \`${probe.server}\`` : "",
+        `⚡ **HTTP RTT:** \`${probe.probeMs}ms\` (status \`${probe.statusCode}\`)`,
+      ].filter(Boolean).join("\n")
+    : "⏳ Probe em andamento...";
+
   const ipBlock = [
-    `${connIcon} **Status:** \`${ns.connStatus}\` · Fase: ${ns.networkingLabel}`,
+    `${connIcon} **Status:** \`${ns.connStatus}\` · ${ns.networkingLabel}`,
     `🔌 **Servidor:** ${ipLine}`,
     `📍 **Localização:** ${geoLine}`,
-    `🔐 **Criptografia:** \`${cryptoShort}\``,
-    `🆔 **SSRC do Bot:** \`${ns.ssrc ?? "—"}\``,
+    `🔐 **Cripto:** \`${cryptoShort}\` · 🆔 **SSRC:** \`${ns.ssrc ?? "—"}\``,
   ].join("\n");
 
   return new EmbedBuilder()
@@ -407,26 +515,29 @@ function buildSniffEmbed(
         name: "⚡ Qualidade da Conexão",
         value: [
           `**Ping UDP:** \`${pingStr}\` ${pingBar(ns.ping)}`,
-          `**Jitter:** \`${jitterMs}\``,
-          `**Packet Loss:** \`${lossStr}\``,
-          `**Bitrate Estimado:** \`${bitrate}\``,
+          `**Trend:** \`${spark}\``,
+          `**Jitter:** \`${jitterMs}\`   **Packet Loss:** \`${lossStr}\``,
+          `**Bitrate:** \`${bitrate}\`   **MOS:** ${mosStr}`,
         ].join("\n"),
-        inline: true,
+        inline: false,
       },
       {
         name: "📦 Tráfego RTP (cumulativo)",
         value: [
-          `**TX (enviado):** \`${ns.packetsTx.toLocaleString()} pkts\``,
-          `**RX (recebido):** \`${ns.packetsRx.toLocaleString()} pkts\``,
-          `**Perdidos:** \`${ns.packetsLost.toLocaleString()} pkts\``,
-          `**Total observado:** \`${totalPkts.toLocaleString()} pkts\``,
+          `**TX:** \`${ns.packetsTx.toLocaleString()} pkts\`  **RX:** \`${ns.packetsRx.toLocaleString()} pkts\``,
+          `**Perdidos:** \`${ns.packetsLost.toLocaleString()} pkts\`  **Total:** \`${totalPkts.toLocaleString()} pkts\``,
         ].join("\n"),
         inline: true,
       },
       {
-        name: `👥 Participantes na Call (${participants.length})`,
+        name: "☁️ Cloudflare Probe",
+        value: probeStr,
+        inline: true,
+      },
+      {
+        name: `👥 Participantes (${participants.length})`,
         value: participantLines.length > 0
-          ? participantLines.slice(0, 15).join("\n")
+          ? participantLines.slice(0, 10).join("\n")
           : "*Canal vazio*",
         inline: false,
       },
@@ -445,7 +556,7 @@ function buildSniffEmbed(
 function stopSession(guildId: string): void {
   const s = sniffSessions.get(guildId);
   if (!s) return;
-  if (s.interval !== null) clearInterval(s.interval);
+  if (s.timer !== null) clearTimeout(s.timer);
   sniffSessions.delete(guildId);
 }
 
@@ -676,59 +787,106 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     const serverGeo = await lookupServerGeo(geoTarget).catch(() => null);
 
     const session: SniffSession = {
-      interval:    null,
+      timer:       null,
+      tickRunning: false,
       ssrcMap:     new Map(),
       speakingSet: new Set(),
       startedAt:   Date.now(),
       vcId:        vc.id,
       vcName:      vc.name,
       serverGeo,
+      pingHistory: new Array(16).fill(-1) as number[],
+      probeInfo:   null,
     };
     sniffSessions.set(guildId, session);
+
+    // Kick off HTTP probe in background (fires once, stores result in session)
+    probeVoiceServer(geoTarget).then(p => {
+      const s = sniffSessions.get(guildId);
+      if (s) s.probeInfo = p;
+    }).catch(() => { /* ignore */ });
+
+    // Geo refresh every 30s in background (detects server migration)
+    const geoRefreshTimer = setInterval(async () => {
+      const s = sniffSessions.get(guildId);
+      if (!s) { clearInterval(geoRefreshTimer); return; }
+      const { hostname: h, ip: i } = extractVoiceServer(activeConns.get(guildId) ?? getVoiceConnection(guildId)!);
+      const target = h !== "unknown" ? h : i;
+      const fresh  = await lookupServerGeo(target).catch(() => null);
+      if (fresh && s) s.serverGeo = fresh;
+    }, 30_000);
 
     let sampleCount = 0;
 
     const tick = async (): Promise<void> => {
-      const currentConn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+      const s = sniffSessions.get(guildId);
+      if (!s) return;
 
-      // If connection was destroyed, stop session and update embed
-      if (!currentConn || currentConn.state.status === VoiceConnectionStatus.Destroyed) {
-        stopSession(guildId);
-        try {
-          await interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(COLORS.RED)
-                .setTitle("📡 Sniff encerrado — conexão perdida")
-                .setDescription("A conexão de voz foi encerrada ou destruída."),
-            ],
-          });
-        } catch { /**/ }
+      // Anti-concurrent guard — skip tick if previous one still running
+      if (s.tickRunning) {
+        s.timer = setTimeout(() => void tick(), 5_000);
         return;
       }
+      s.tickRunning = true;
 
-      // Refresh VC from cache to get latest member list
-      const vcFresh = interaction.guild?.channels.cache.get(session.vcId) as VoiceChannel | StageChannel | undefined;
-      if (!vcFresh) return;
-
-      sampleCount++;
       try {
-        const embed = buildSniffEmbed(currentConn, session, vcFresh, sampleCount);
-        await interaction.editReply({ embeds: [embed] });
-      } catch (err) {
-        // Interaction expired (Discord 15-min token limit) — stop silently
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("Unknown interaction") || msg.includes("10062") || msg.includes("expired")) {
+        const currentConn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+
+        // Connection gone — end session
+        if (!currentConn || currentConn.state.status === VoiceConnectionStatus.Destroyed) {
+          clearInterval(geoRefreshTimer);
           stopSession(guildId);
+          try {
+            await interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(COLORS.RED)
+                  .setTitle("📡 Sniff encerrado — conexão perdida")
+                  .setDescription("A conexão de voz foi encerrada ou destruída."),
+              ],
+            });
+          } catch { /**/ }
+          return;
+        }
+
+        // Track ping history (ring buffer, max 16)
+        const ns = getNetworkStats(currentConn);
+        s.pingHistory.push(ns.ping);
+        if (s.pingHistory.length > 16) s.pingHistory.shift();
+
+        // Resolve VC: cache first, API fetch fallback
+        let vcFresh = interaction.guild?.channels.cache.get(s.vcId) as VoiceChannel | StageChannel | undefined;
+        if (!vcFresh) {
+          const fetched = await interaction.guild?.channels.fetch(s.vcId).catch(() => null);
+          if (fetched?.type === ChannelType.GuildVoice || fetched?.type === ChannelType.GuildStageVoice) {
+            vcFresh = fetched as VoiceChannel | StageChannel;
+          }
+        }
+        if (!vcFresh) { s.tickRunning = false; return; }
+
+        sampleCount++;
+        try {
+          const embed = buildSniffEmbed(currentConn, s, vcFresh, sampleCount);
+          await interaction.editReply({ embeds: [embed] });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("Unknown interaction") || msg.includes("10062") || msg.includes("expired")) {
+            clearInterval(geoRefreshTimer);
+            stopSession(guildId);
+            return;
+          }
+        }
+      } finally {
+        const sAfter = sniffSessions.get(guildId);
+        if (sAfter) {
+          sAfter.tickRunning = false;
+          sAfter.timer = setTimeout(() => void tick(), 5_000);
         }
       }
     };
 
-    // First render immediately, then every 5 seconds
+    // First render immediately; subsequent ticks are self-scheduled in `finally`
     await tick();
-    if (sniffSessions.has(guildId)) {
-      session.interval = setInterval(() => void tick(), 5_000);
-    }
     return;
   }
 }
