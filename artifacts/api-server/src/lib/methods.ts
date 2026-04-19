@@ -44,6 +44,13 @@ export const ATTACK_METHODS = [
     protocol: "UDP" as const,
     description: "Real SSDP M-SEARCH flood to port 1900 — rotates ST targets (ssdp:all, rootdevice, WANDevice, InternetGatewayDevice, MediaServer, Chromecast). Forces UPnP stack to respond to each query. Random CPFN header defeats dedup filters. Real SSDP protocol via dgram UDP.",
   },
+  {
+    id: "cldap-amp",
+    name: "CLDAP Flood  [UDP/389 LDAP Exhaustion]",
+    layer: "L3" as const,
+    protocol: "UDP" as const,
+    description: "Connectionless LDAP (CLDAP) flood to port 389. Sends BER-encoded LDAP SearchRequest packets for rootDSE attributes — each 39-62 byte request forces the LDAP service to parse and execute a directory search. Against Windows Active Directory servers: exhausts the LDAP worker thread pool and triggers full directory lookups per packet. Alternates between minimal rootDSE query (all attributes) and supportedCapabilities request (~2KB response per query). Effective against any exposed OpenLDAP or Windows AD service.",
+  },
 
   // ── Layer 4 TCP ─────────────────────────────────────────
   {

@@ -13,7 +13,6 @@ const TARGETS = [
   { id: "hetzner",      label: "Hetzner",      emoji: "🟠", cat: "VPS/Hosting",  note: "API Key" },
   { id: "digitalocean", label: "DigitalOcean", emoji: "🌊", cat: "VPS/Hosting",  note: "API Key" },
   { id: "linode",       label: "Linode",       emoji: "🟢", cat: "VPS/Hosting",  note: "API Key" },
-  { id: "ovh",          label: "OVH",          emoji: "🔵", cat: "VPS/Hosting",  note: "user:pass" },
   { id: "hostinger",    label: "Hostinger",    emoji: "🌐", cat: "VPS/Hosting",  note: "email:pass" },
   { id: "netflix",      label: "Netflix",      emoji: "🎬", cat: "Streaming",    note: "email:pass" },
   { id: "crunchyroll",  label: "Crunchyroll",  emoji: "🍥", cat: "Streaming",    note: "email:pass" },

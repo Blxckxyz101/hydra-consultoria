@@ -4630,9 +4630,9 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
       signal: AbortSignal.timeout(8_000),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json() as { results: { login: string; password: string }[]; total: number };
-    totalFound   = data.total ?? data.results.length;
-    credentials  = data.results.map((e: { login: string; password: string }) => `${e.login}:${e.password}`);
+    const data = await r.json() as { credentials: { login: string; password: string }[]; count: number };
+    totalFound   = data.count ?? data.credentials.length;
+    credentials  = data.credentials.map((e: { login: string; password: string }) => `${e.login}:${e.password}`);
   } catch (err) {
     await interaction.editReply({
       embeds: [buildErrorEmbed("ERRO DE BUSCA", `Não foi possível buscar no banco de credenciais:\n\`${String(err)}\``)],

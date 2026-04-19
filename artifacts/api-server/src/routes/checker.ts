@@ -92,7 +92,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal" | "cpf";
 
 export interface CheckResult {
   credential: string;
@@ -4394,6 +4394,8 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   paypal:        2,   // web scraping PayPal — conservative
   // VPS / Hosting extra
   hetzner:       5,   // REST API key — very fast
+  // Governo BR — CPF lookup
+  cpf:           3,   // Receita Federal public lookup — moderate
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -4441,6 +4443,8 @@ function resolveChecker(target: CheckerTarget) {
     case "paypal":        return checkPayPal;
     // VPS / Hosting extra
     case "hetzner":       return checkHetzner;
+    // Governo BR — CPF/CNPJ via Receita Federal
+    case "cpf":           return checkReceita;
     default:              return checkIseek;
   }
 }
@@ -4692,7 +4696,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "paypal"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "paypal", "cpf"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
@@ -4706,9 +4710,9 @@ router.post("/checker/check", async (req, res): Promise<void> => {
     target?:      CheckerTarget;
   };
 
-  const validTargets: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita"];
+  const validTargets = VALID_CHECKER_TARGETS;
   if (!validTargets.includes(target as CheckerTarget)) {
-    res.status(400).json({ error: "target must be one of: iseek, datasus, sipni, consultcenter, mind7, serpro, sisreg, credilink, serasa, crunchyroll, netflix, amazon, hbomax, disney, paramount, spotify, receita" });
+    res.status(400).json({ error: `target must be one of: ${VALID_CHECKER_TARGETS.join(", ")}` });
     return;
   }
 

@@ -827,11 +827,15 @@ const METHODS_CATALOGUE = [
   // ── New vectors ───────────────────────────────────────────────────────────
   { id: "tls-session-exhaust",  name: "TLS Session Cache Exhaustion",          layer: "L4",   protocol: "TLS",                  tier: "A",      description: "Full TLS handshake per conn — no resumption — saturates server's RSA/ECDHE crypto thread pool. 5× more CPU-intensive than conn-flood" },
   { id: "cache-buster",         name: "Cache Busting — 100% Origin Hit Rate",  layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Unique cache keys + Cache-Control:no-cache + Vary bombs — forces CDN to miss 100% of requests, overwhelming the origin directly" },
+  // Previously missing from catalogue
+  { id: "udp-bypass",           name: "UDP Bypass",                            layer: "L4",   protocol: "UDP",                  tier: "B",      description: "UDP flood with bypass techniques to evade basic rate limiting and DDoS mitigation" },
+  { id: "tcp-ack",              name: "TCP ACK Flood",                         layer: "L4",   protocol: "TCP",                  tier: "B",      description: "Sends ACK packets without established connections, forcing the target to process each one" },
+  { id: "tcp-rst",              name: "TCP RST Flood",                         layer: "L4",   protocol: "TCP",                  tier: "B",      description: "Sends RST packets to disrupt existing TCP connections on the target" },
+  { id: "graphql-dos",          name: "GraphQL Introspection DoS",             layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Deep introspection fragment bombs — exponential type resolution; exhausts GraphQL executor thread pool" },
+  { id: "rudy",                 name: "R.U.D.Y — True SlowPOST",              layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "Content-Length:1GB then 1-2 bytes every 5-15s — Apache/IIS hold thread forever; 25K conns = full pool exhaustion" },
+  { id: "vercel-flood",         name: "Vercel Flood ∞ (Next.js 4-Vector)",     layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "RSC Bypass + Image Optimizer DoS + Edge API Cold Start + ISR Route Flood — saturates Vercel lambda concurrency limit" },
+  { id: "cldap-amp",            name: "CLDAP Flood [UDP/389 LDAP]",            layer: "L3",   protocol: "UDP",                  tier: "B",      description: "BER-encoded LDAP SearchRequest to UDP/389 — exhausts Windows AD/OpenLDAP worker thread pool; alternates rootDSE + supportedCapabilities" },
 ];
-
-router.get("/methods", (_req, res): void => {
-  res.json(METHODS_CATALOGUE);
-});
 
 // ── Routes ────────────────────────────────────────────────────────────────
 router.get("/attacks", async (_req, res): Promise<void> => {
