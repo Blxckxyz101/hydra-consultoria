@@ -665,6 +665,41 @@ const COMMANDS = [
         .setDescription("📡 Monitor de tráfego RTP/UDP em tempo real — Discord Wireshark")
     ),
 
+  // ── /nitro ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("nitro")
+    .setDescription("🎁 Discord Nitro Gift Code Generator & Checker")
+    .addSubcommand(sub =>
+      sub.setName("gen")
+        .setDescription("⚡ Gerar e verificar códigos Nitro aleatórios")
+        .addIntegerOption(opt =>
+          opt.setName("amount")
+            .setDescription("Quantidade de códigos para gerar e checar (1–50, padrão: 10)")
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(50)
+        )
+        .addStringOption(opt =>
+          opt.setName("type")
+            .setDescription("Tipo de código (padrão: ambos)")
+            .setRequired(false)
+            .addChoices(
+              { name: "🎮 Classic (16 chars)", value: "classic" },
+              { name: "💎 Boost (24 chars)",   value: "boost"   },
+              { name: "🔀 Ambos",               value: "both"    },
+            )
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("check")
+        .setDescription("🔍 Verificar se um código Nitro específico é válido")
+        .addStringOption(opt =>
+          opt.setName("code")
+            .setDescription("O código Nitro para verificar (ex: abc123def456ghij)")
+            .setRequired(true)
+        )
+    ),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -4898,6 +4933,191 @@ async function main(): Promise<void> {
     }, 5 * 60 * 1000); // check every 5 minutes
   });
 
+  // ── /nitro handler ──────────────────────────────────────────────────────────
+  async function handleNitro(interaction: ChatInputCommandInteraction): Promise<void> {
+    const sub = interaction.options.getSubcommand();
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    const CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    function genCode(length: 16 | 24): string {
+      let code = "";
+      for (let i = 0; i < length; i++) code += CHARS[Math.floor(Math.random() * CHARS.length)];
+      return code;
+    }
+
+    /** Check a single gift code against Discord's public API.
+     *  Returns: "valid" | "invalid" | "rate_limited" | "error" */
+    async function checkCode(code: string): Promise<{ status: "valid" | "invalid" | "rate_limited" | "error"; plan?: string }> {
+      try {
+        const res = await fetch(
+          `https://discordapp.com/api/v9/entitlements/gift-codes/${code}?with_application=false&with_subscription_plan=true`,
+          {
+            method: "GET",
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "application/json",
+            },
+            signal: AbortSignal.timeout(6_000),
+          }
+        );
+        if (res.status === 200) {
+          const data = await res.json() as { subscription_plan?: { name?: string } };
+          return { status: "valid", plan: data?.subscription_plan?.name ?? "Nitro" };
+        }
+        if (res.status === 404) return { status: "invalid" };
+        if (res.status === 429) return { status: "rate_limited" };
+        return { status: "error" };
+      } catch {
+        return { status: "error" };
+      }
+    }
+
+    // ── /nitro check — verify a specific code ─────────────────────────────────
+    if (sub === "check") {
+      const code = interaction.options.getString("code", true).trim();
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const result = await checkCode(code);
+
+      const embed = new EmbedBuilder()
+        .setTimestamp()
+        .setFooter({ text: `${AUTHOR} • Nitro Checker` });
+
+      if (result.status === "valid") {
+        embed
+          .setColor(COLORS.GREEN)
+          .setTitle("✅ CÓDIGO NITRO VÁLIDO!")
+          .setDescription(`🎁 O código **\`${code}\`** é **VÁLIDO**!\n\n💎 Plano: **${result.plan}**\n🔗 Link: https://discord.gift/${code}\n\n*"O Geass revelou um tesouro."*`);
+      } else if (result.status === "rate_limited") {
+        embed
+          .setColor(COLORS.ORANGE)
+          .setTitle("⏳ RATE LIMIT")
+          .setDescription(`A API do Discord está limitando as requisições.\nTente novamente em alguns segundos.\n\`\`\`${code}\`\`\``);
+      } else if (result.status === "invalid") {
+        embed
+          .setColor(COLORS.RED)
+          .setTitle("❌ CÓDIGO INVÁLIDO")
+          .setDescription(`O código **\`${code}\`** não é válido ou já foi resgatado.\n\n*"Nem todo Geass funciona."*`);
+      } else {
+        embed
+          .setColor(COLORS.ORANGE)
+          .setTitle("⚠️ ERRO AO VERIFICAR")
+          .setDescription(`Não foi possível verificar o código:\n\`\`\`${code}\`\`\`\nVerifique sua conexão ou tente novamente.`);
+      }
+
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    // ── /nitro gen — generate + check N codes ─────────────────────────────────
+    if (sub === "gen") {
+      const amount  = interaction.options.getInteger("amount") ?? 10;
+      const type    = (interaction.options.getString("type") ?? "both") as "classic" | "boost" | "both";
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      // ── Build code list ───────────────────────────────────────────────────
+      const codes: { code: string; length: 16 | 24 }[] = [];
+      for (let i = 0; i < amount; i++) {
+        if (type === "classic")      codes.push({ code: genCode(16), length: 16 });
+        else if (type === "boost")   codes.push({ code: genCode(24), length: 24 });
+        else codes.push({ code: genCode(i % 2 === 0 ? 16 : 24), length: i % 2 === 0 ? 16 : 24 });
+      }
+
+      // ── Progress embed ────────────────────────────────────────────────────
+      const progressEmbed = new EmbedBuilder()
+        .setColor(COLORS.ORANGE)
+        .setTitle("⚡ NITRO GENERATOR — Checando códigos...")
+        .setDescription(`Verificando **${amount}** código(s) contra a API do Discord...\n\n⏳ Aguarde, isso pode levar alguns segundos.`)
+        .setTimestamp()
+        .setFooter({ text: `${AUTHOR} • Nitro Generator` });
+
+      await interaction.editReply({ embeds: [progressEmbed] });
+
+      // ── Check codes with small delay to avoid rate limiting ──────────────
+      const valid:       { code: string; plan: string }[] = [];
+      const invalid:     string[] = [];
+      const rateLimited: number[] = [];
+      const errors:      number[] = [];
+
+      for (let i = 0; i < codes.length; i++) {
+        const { code } = codes[i];
+        const result   = await checkCode(code);
+
+        if (result.status === "valid")        valid.push({ code, plan: result.plan ?? "Nitro" });
+        else if (result.status === "invalid") invalid.push(code);
+        else if (result.status === "rate_limited") rateLimited.push(i + 1);
+        else errors.push(i + 1);
+
+        // Small delay between requests to reduce rate-limit probability
+        if (i < codes.length - 1) await new Promise(r => setTimeout(r, 350));
+      }
+
+      // ── Result embed ──────────────────────────────────────────────────────
+      const hasHit  = valid.length > 0;
+      const hitRate = ((valid.length / amount) * 100).toFixed(1);
+
+      const resultEmbed = new EmbedBuilder()
+        .setColor(hasHit ? COLORS.GREEN : COLORS.RED)
+        .setTitle(hasHit ? "🎉 NITRO ENCONTRADO!" : "🎁 NITRO GENERATOR — Resultado")
+        .setTimestamp()
+        .setFooter({ text: `${AUTHOR} • Nitro Generator` });
+
+      // ── Stats field ───────────────────────────────────────────────────────
+      const typeLabel = type === "classic" ? "Classic (16)" : type === "boost" ? "Boost (24)" : "Classic + Boost";
+      resultEmbed.addFields({
+        name: "📊 Estatísticas",
+        value: [
+          `🎯 **Gerados:** ${amount}   |   Tipo: ${typeLabel}`,
+          `✅ **Válidos:** ${valid.length}   ❌ **Inválidos:** ${invalid.length}`,
+          `⏳ **Rate-limited:** ${rateLimited.length}   ⚠️ **Erros:** ${errors.length}`,
+          `📈 **Hit rate:** ${hitRate}%`,
+        ].join("\n"),
+        inline: false,
+      });
+
+      // ── Valid codes field ─────────────────────────────────────────────────
+      if (valid.length > 0) {
+        const validLines = valid.map(v => `🎁 \`${v.code}\` — **${v.plan}**\n🔗 https://discord.gift/${v.code}`).join("\n");
+        resultEmbed.addFields({
+          name: "🏆 CÓDIGOS VÁLIDOS",
+          value: validLines.slice(0, 1024),
+          inline: false,
+        });
+      }
+
+      // ── Sample of checked codes ───────────────────────────────────────────
+      if (invalid.length > 0) {
+        const sample = codes
+          .filter(c => invalid.includes(c.code))
+          .slice(0, 10)
+          .map(c => `\`${c.code}\``)
+          .join("\n");
+        resultEmbed.addFields({
+          name: `❌ Amostra de Inválidos (${Math.min(10, invalid.length)}/${invalid.length})`,
+          value: sample,
+          inline: false,
+        });
+      }
+
+      if (rateLimited.length > 0) {
+        resultEmbed.addFields({
+          name: "⏳ Rate-limited",
+          value: `${rateLimited.length} código(s) não puderam ser verificados.\nTente gerar menos de uma vez ou aguarde alguns segundos.`,
+          inline: false,
+        });
+      }
+
+      if (!hasHit) {
+        resultEmbed.setDescription(`*"O Geass busca, mas nem sempre encontra. Tente novamente."*`);
+      } else {
+        resultEmbed.setDescription(`*"O poder do Geass revelou um presente!"*`);
+      }
+
+      await interaction.editReply({ embeds: [resultEmbed] });
+    }
+  }
+
   client.on(Events.InteractionCreate, async interaction => {
     try {
       if (interaction.isStringSelectMenu()) {
@@ -4963,6 +5183,8 @@ async function main(): Promise<void> {
         await handleUrl(interaction);
       } else if (commandName === "voice") {
         await handleVoice(interaction);
+      } else if (commandName === "nitro") {
+        await handleNitro(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
