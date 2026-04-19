@@ -69,7 +69,8 @@ interface ServerGeo {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-const sniffSessions = new Map<string, SniffSession>();
+const sniffSessions   = new Map<string, SniffSession>();
+const activeConns     = new Map<string, VoiceConnection>(); // guildId → our own conn ref
 
 // ── Permission helpers ─────────────────────────────────────────────────────────
 
@@ -414,6 +415,12 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
       await entersState(conn, VoiceConnectionStatus.Ready, 15_000);
 
+      // Store our own reference — used by /voice sniff and /voice leave
+      activeConns.set(guildId, conn);
+
+      // Auto-remove from our map when the connection is destroyed
+      conn.on(VoiceConnectionStatus.Destroyed, () => activeConns.delete(guildId));
+
       // Track SSRCs via speaking events (Discord sends {userId, ssrc} in SPEAKING gateway event)
       conn.receiver.speaking.on("start", (speakingUserId) => {
         const session = sniffSessions.get(guildId);
@@ -480,7 +487,9 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
   if (sub === "leave") {
     stopSession(guildId);
 
-    const conn = getVoiceConnection(guildId);
+    const conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+    activeConns.delete(guildId);
+
     if (!conn) {
       await interaction.reply({
         embeds: [
@@ -509,14 +518,26 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
 
   // ── /voice sniff ───────────────────────────────────────────────────────────
   if (sub === "sniff") {
-    const conn = getVoiceConnection(guildId);
-    if (!conn || conn.state.status !== VoiceConnectionStatus.Ready) {
+    // Use our own stored reference first — more reliable than getVoiceConnection()
+    let conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+
+    // If still connecting (e.g. user ran sniff right after join), wait up to 10s for Ready
+    if (conn && conn.state.status !== VoiceConnectionStatus.Ready &&
+                conn.state.status !== VoiceConnectionStatus.Destroyed) {
+      try { await entersState(conn, VoiceConnectionStatus.Ready, 10_000); }
+      catch { /* will be caught by the check below */ }
+      conn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
+    }
+
+    if (!conn || conn.state.status === VoiceConnectionStatus.Destroyed ||
+                 conn.state.status === VoiceConnectionStatus.Disconnected) {
+      console.log(`[VOICE SNIFF] No ready connection for guild ${guildId} — status: ${conn?.state.status ?? "null"}, activeConns has: ${activeConns.has(guildId)}`);
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
-            .setTitle("📡 Bot não está conectado")
-            .setDescription("Use `/voice join` primeiro para entrar em uma call antes de iniciar o sniff."),
+            .setTitle("📡 Bot não está em nenhuma call")
+            .setDescription("Use `/voice join` primeiro para entrar em um canal de voz."),
         ],
         flags: MessageFlags.Ephemeral,
       });
@@ -526,26 +547,36 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     // Stop any previous session for this guild
     stopSession(guildId);
 
-    // Resolve the voice channel the bot is currently in.
-    // Priority order (most reliable → least reliable):
-    //   1. conn.joinConfig.channelId — always set by joinVoiceChannel(), no cache dependency
-    //   2. guild.voiceStates.cache   — works when GuildVoiceStates intent is active
-    //   3. fetchMe()                 — last resort, may not include voice state
+    // Resolve the voice channel the bot is in.
+    // conn.joinConfig.channelId is set by joinVoiceChannel() and is always reliable.
     const joinedChannelId =
       conn.joinConfig.channelId ??
       interaction.guild!.voiceStates.cache.get(interaction.client.user!.id)?.channelId;
 
-    const vc = joinedChannelId
-      ? (interaction.guild!.channels.cache.get(joinedChannelId) as VoiceChannel | StageChannel | undefined) ?? null
-      : null;
+    console.log(`[VOICE SNIFF] joinedChannelId=${joinedChannelId}, connStatus=${conn.state.status}`);
+
+    // Try cache first, then fetch from API (in case channel isn't cached yet)
+    let vc: VoiceChannel | StageChannel | null = null;
+    if (joinedChannelId) {
+      const cached = interaction.guild!.channels.cache.get(joinedChannelId);
+      if (cached && (cached.type === ChannelType.GuildVoice || cached.type === ChannelType.GuildStageVoice)) {
+        vc = cached as VoiceChannel | StageChannel;
+      } else {
+        const fetched = await interaction.guild!.channels.fetch(joinedChannelId).catch(() => null);
+        if (fetched && (fetched.type === ChannelType.GuildVoice || fetched.type === ChannelType.GuildStageVoice)) {
+          vc = fetched as VoiceChannel | StageChannel;
+        }
+      }
+    }
 
     if (!vc) {
+      console.log(`[VOICE SNIFF] Could not resolve VC — joinedChannelId=${joinedChannelId}`);
       await interaction.reply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
             .setTitle("📡 Canal de voz não encontrado")
-            .setDescription("Não foi possível determinar em qual canal o bot está. Tente `/voice leave` e `/voice join` novamente."),
+            .setDescription("Não foi possível resolver o canal. Tente `/voice leave` e `/voice join` novamente."),
         ],
         flags: MessageFlags.Ephemeral,
       });
@@ -572,7 +603,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     let sampleCount = 0;
 
     const tick = async (): Promise<void> => {
-      const currentConn = getVoiceConnection(guildId);
+      const currentConn = activeConns.get(guildId) ?? getVoiceConnection(guildId);
 
       // If connection was destroyed, stop session and update embed
       if (!currentConn || currentConn.state.status === VoiceConnectionStatus.Destroyed) {
