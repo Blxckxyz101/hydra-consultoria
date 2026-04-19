@@ -27,8 +27,13 @@ let config: BotConfig = {
 export function loadBotConfig(): void {
   try {
     const raw = fs.readFileSync(CONFIG_PATH, "utf8");
-    config = { ...config, ...(JSON.parse(raw) as Partial<BotConfig>) };
-  } catch { /* no config yet */ }
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      config = { ...config, ...(parsed as Partial<BotConfig>) };
+    }
+  } catch (err) {
+    console.warn("[BOT-CONFIG] Failed to load config (using defaults):", err instanceof Error ? err.message : err);
+  }
 }
 
 export function saveBotConfig(): void {

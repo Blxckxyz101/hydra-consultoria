@@ -36,6 +36,7 @@ import {
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
+import { handleVoice } from "./voice.js";
 import {
   buildAttackEmbed,
   buildStartEmbed,
@@ -69,6 +70,17 @@ const methodsCache = new Map<string, { methods: Method[]; layer?: string; page: 
 type StatsCache = { stats: Parameters<typeof buildStatsEmbed>[0]; proxyStats?: Parameters<typeof buildStatsEmbed>[1] };
 const statsCache  = new Map<string, StatsCache>();
 const listCache   = new Map<string, Parameters<typeof buildListEmbed>[0]>();
+
+/** Evict the oldest entries if a cache Map grows beyond `maxSize`. */
+function trimMap<K, V>(map: Map<K, V>, maxSize = 200): void {
+  if (map.size <= maxSize) return;
+  const toDelete = map.size - maxSize;
+  const iter = map.keys();
+  for (let i = 0; i < toDelete; i++) {
+    const key = iter.next().value;
+    if (key !== undefined) map.delete(key);
+  }
+}
 
 if (!BOT_TOKEN) {
   console.error("❌ DISCORD_BOT_TOKEN is not set. Set it in the environment variables.");
@@ -633,6 +645,23 @@ const COMMANDS = [
           { name: "Disney+",      value: "disney"       },
           { name: "HBO Max",      value: "hbomax"       },
         )
+    ),
+
+  // ── /voice ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("voice")
+    .setDescription("🔊 Voice channel control + network sniffer — admin only")
+    .addSubcommand(sub =>
+      sub.setName("join")
+        .setDescription("🔊 Bot entra no canal de voz que você está (admin only)")
+    )
+    .addSubcommand(sub =>
+      sub.setName("leave")
+        .setDescription("🔇 Bot sai do canal de voz atual e para o sniff (admin only)")
+    )
+    .addSubcommand(sub =>
+      sub.setName("sniff")
+        .setDescription("📡 Monitor de tráfego RTP/UDP em tempo real — Discord Wireshark (admin only)")
     ),
 
 ].map(c => c.toJSON());
@@ -4930,6 +4959,8 @@ async function main(): Promise<void> {
         await handleConsulta(interaction);
       } else if (commandName === "url") {
         await handleUrl(interaction);
+      } else if (commandName === "voice") {
+        await handleVoice(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

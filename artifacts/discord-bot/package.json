@@ -9,10 +9,14 @@
     "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.mjs --format=esm --external:canvas"
   },
   "dependencies": {
+    "@discordjs/opus": "^0.10.0",
     "@discordjs/rest": "^2.4.2",
+    "@discordjs/voice": "^0.19.2",
     "discord-api-types": "^0.38.0",
     "discord.js": "^14.16.3",
-    "openai": "^6.34.0"
+    "openai": "^6.34.0",
+    "opusscript": "^0.1.1",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "catalog:",
