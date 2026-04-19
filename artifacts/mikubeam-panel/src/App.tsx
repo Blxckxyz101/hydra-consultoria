@@ -1755,6 +1755,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   /* ── Credential Bulk Checker helpers ── */
   interface CredTargetMeta { label: string; icon: string; category: string; logoUrl?: string; logoColor?: string; note?: string; }
   function gf(domain: string) { return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`; }
+  function si(slug: string, hex: string) { return `https://cdn.simpleicons.org/${slug}/${hex}`; }
   const CRED_TARGETS: Record<string, CredTargetMeta> = {
     // Gov / Saúde
     datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo",           logoUrl: gf("datasus.gov.br"),      logoColor: "#1a6b3a", note: "user:pass" },
@@ -1772,38 +1773,38 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     serasa_exp:   { label: "Serasa Exp.",    icon: "💼", category: "Finanças",          logoUrl: gf("serasa.com.br"),       logoColor: "#c62828", note: "user:pass" },
     iseek:        { label: "iSeek.pro",      icon: "🌐", category: "Finanças",          logoUrl: gf("iseek.pro"),           logoColor: "#6a1b9a", note: "user:pass" },
     // Social / Redes
-    instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: gf("instagram.com"),       logoColor: "#c13584", note: "email:pass" },
+    instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: si("instagram","E4405F"),  logoColor: "#c13584", note: "email:pass" },
     // Streaming
-    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: gf("crunchyroll.com"),     logoColor: "#f47521", note: "email:pass" },
-    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: gf("netflix.com"),         logoColor: "#e50914", note: "email:pass" },
+    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: si("crunchyroll","F47521"),logoColor: "#f47521", note: "email:pass" },
+    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: si("netflix","E50914"),    logoColor: "#e50914", note: "email:pass" },
     amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: gf("primevideo.com"),      logoColor: "#00a8e1", note: "email:pass" },
-    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: gf("max.com"),             logoColor: "#5f2d91", note: "email:pass" },
+    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: si("hbomax","5f2d91"),     logoColor: "#5f2d91", note: "email:pass" },
     disney:       { label: "Disney+",        icon: "🏰", category: "Streaming",         logoUrl: gf("disneyplus.com"),      logoColor: "#0063e5", note: "email:pass" },
-    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: gf("paramountplus.com"),   logoColor: "#1a4cff", note: "email:pass" },
-    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: gf("spotify.com"),         logoColor: "#1db954", note: "user:pass" },
+    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: si("paramountplus","1a4cff"), logoColor: "#1a4cff", note: "email:pass" },
+    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: si("spotify","1DB954"),    logoColor: "#1db954", note: "user:pass" },
     // Consultas (CPF/dados públicos)
     receita:      { label: "Receita Federal",icon: "🧾", category: "Consultas",         logoUrl: gf("receita.fazenda.gov.br"), logoColor: "#1a237e", note: "cpf:nasc" },
     // VPS / Hosting
     tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting",     logoColor: "#0d47a1", note: "user:pass" },
-    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: gf("hostinger.com"),       logoColor: "#673fd7", note: "email:pass" },
-    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: gf("vultr.com"),           logoColor: "#007bfc", note: "API Key" },
-    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: gf("digitalocean.com"),    logoColor: "#0080ff", note: "API Key" },
-    linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: gf("linode.com"),          logoColor: "#02b159", note: "API Key" },
-    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting",     logoUrl: gf("hetzner.com"),         logoColor: "#d50c2d", note: "API Key" },
+    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: si("hostinger","673fd7"),  logoColor: "#673fd7", note: "email:pass" },
+    vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: si("vultr","007BFC"),      logoColor: "#007bfc", note: "API Key" },
+    digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: si("digitalocean","0080FF"), logoColor: "#0080ff", note: "API Key" },
+    linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: si("akamai","009BDE"),     logoColor: "#02b159", note: "API Key" },
+    hetzner:      { label: "Hetzner",        icon: "🔴", category: "VPS / Hosting",     logoUrl: si("hetzner","D50C2D"),    logoColor: "#d50c2d", note: "API Key" },
     // Dev / Cloud
-    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud",       logoUrl: gf("github.com"),          logoColor: "#24292e", note: "user:PAT" },
+    github:       { label: "GitHub",         icon: "🐙", category: "Dev / Cloud",       logoUrl: si("github","ffffff"),     logoColor: "#24292e", note: "user:PAT" },
     aws:          { label: "AWS IAM",        icon: "☁️", category: "Dev / Cloud",       logoUrl: gf("aws.amazon.com"),      logoColor: "#ff9900", note: "key:secret" },
     // Financeiro BR
-    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: gf("mercadopago.com.br"),  logoColor: "#009ee3", note: "email:pass" },
-    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: gf("ifood.com.br"),        logoColor: "#ea1d2c", note: "email:pass" },
+    mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: si("mercadopago","009EE3"), logoColor: "#009ee3", note: "email:pass" },
+    ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: si("ifood","EA1D2C"),      logoColor: "#ea1d2c", note: "email:pass" },
     // Financeiro Global
-    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: gf("paypal.com"),          logoColor: "#003087", note: "email:pass" },
+    paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: si("paypal","009CDE"),     logoColor: "#003087", note: "email:pass" },
     // Gaming
-    riot:         { label: "Riot Games",     icon: "🎮", category: "Gaming",            logoUrl: gf("riotgames.com"),       logoColor: "#d13639", note: "user:pass" },
-    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: gf("roblox.com"),          logoColor: "#e02020", note: "user:pass" },
-    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: gf("epicgames.com"),       logoColor: "#313131", note: "email:pass" },
-    steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: gf("steampowered.com"),    logoColor: "#1b2838", note: "user:pass" },
-    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: gf("playstation.com"),     logoColor: "#003087", note: "email:pass" },
+    riot:         { label: "Riot Games",     icon: "🎮", category: "Gaming",            logoUrl: si("riotgames","D13639"),  logoColor: "#d13639", note: "user:pass" },
+    roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: si("roblox","E02020"),     logoColor: "#e02020", note: "user:pass" },
+    epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: si("epicgames","ffffff"),   logoColor: "#313131", note: "email:pass" },
+    steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: si("steam","C6D4DF"),      logoColor: "#1b2838", note: "user:pass" },
+    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: si("playstation","0070D1"), logoColor: "#003087", note: "email:pass" },
     xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: gf("xbox.com"),            logoColor: "#107c10", note: "email:pass" },
   };
   const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR", "Financeiro Global", "Gaming"];
