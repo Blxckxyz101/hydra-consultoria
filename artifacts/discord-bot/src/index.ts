@@ -5242,47 +5242,72 @@ async function main(): Promise<void> {
       );
 
       const buildGenEmbed = (gen: NitroGenerator, status: "running" | "stopped") => {
-        const elapsed  = Math.round((Date.now() - gen.stats.startTime) / 1000);
-        const rate     = gen.stats.total > 0 ? ((gen.stats.valid / gen.stats.total) * 100).toFixed(2) : "0.00";
-        const speed    = elapsed > 0 ? (gen.stats.total / elapsed).toFixed(1) : "0";
+        const elapsed   = Math.round((Date.now() - gen.stats.startTime) / 1000);
+        const mins      = Math.floor(elapsed / 60);
+        const secs      = elapsed % 60;
+        const timeStr   = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        const speedMin  = elapsed > 0 ? Math.round((gen.stats.total / elapsed) * 60) : 0;
+        const hitRate   = gen.stats.total > 0 ? ((gen.stats.valid / gen.stats.total) * 100).toFixed(3) : "0.000";
         const lastBatch = gen.stats.lastBatchAt > 0 ? `<t:${Math.floor(gen.stats.lastBatchAt / 1000)}:R>` : "—";
+        const checked   = gen.stats.total;
+        const invalid   = gen.stats.invalid;
+        const rl        = gen.stats.rateLimited;
+        const errs      = gen.stats.errors;
+        const hits      = gen.stats.valid;
+        const cycles    = gen.stats.batches;
 
-        const hitLines = gen.stats.hits.slice(-5).map(h =>
-          `🎁 \`${h.code}\` — **${h.plan}**\nhttps://discord.gift/${h.code}`
+        // Progress bar helpers (10 chars wide)
+        const bar = (val: number, total: number, len = 10): string => {
+          if (total === 0) return "░".repeat(len);
+          const filled = Math.round((val / total) * len);
+          return "▓".repeat(filled) + "░".repeat(len - filled);
+        };
+
+        const statusLine = status === "running"
+          ? (hits > 0 ? "🟢  **ATIVO — HIT ENCONTRADO**" : "🟣  **ATIVO — Rodando em background**")
+          : "🔴  **PARADO**";
+
+        const statsBlock = [
+          `\`\`\``,
+          `  Checados   ${String(checked).padStart(7)}    Ciclos    ${String(cycles).padStart(6)}`,
+          `  Válidos    ${String(hits).padStart(7)}    Inválidos ${String(invalid).padStart(6)}`,
+          `  RL         ${String(rl).padStart(7)}    Erros     ${String(errs).padStart(6)}`,
+          `\`\`\``,
+        ].join("\n");
+
+        const hitRateBar = bar(hits, checked, 12);
+        const metricsLine = [
+          `**Hit Rate** \`[${hitRateBar}] ${hitRate}%\``,
+          `**Velocidade** \`${speedMin} cod/min\`  **Tempo** \`${timeStr}\``,
+          `**Tipo** \`${typeLabel}\`  **Batch** \`${gen.batchSize} códigos\`  **Último ciclo** ${lastBatch}`,
+        ].join("\n");
+
+        const hitLines = gen.stats.hits.slice(-5).reverse().map((h, i) =>
+          `${i === 0 ? "✨" : "🎁"} \`${h.code}\` — **${h.plan}**\n> <https://discord.gift/${h.code}>`
         ).join("\n");
 
         const embed = new EmbedBuilder()
-          .setColor(status === "running" ? (gen.stats.valid > 0 ? COLORS.GREEN : COLORS.PURPLE) : COLORS.GRAY)
+          .setColor(status === "running" ? (hits > 0 ? COLORS.GREEN : COLORS.PURPLE) : COLORS.GRAY)
           .setTitle(
             status === "running"
-              ? (gen.stats.valid > 0 ? "🎉 NITRO GENERATOR — HIT ENCONTRADO!" : "⚡ NITRO GENERATOR — Rodando em background...")
-              : "⏹ NITRO GENERATOR — Parado"
+              ? (hits > 0 ? "🎉  NITRO GENERATOR — HIT ENCONTRADO!" : "⚡  NITRO GENERATOR")
+              : "⏹  NITRO GENERATOR — Parado"
           )
           .setDescription(
             status === "running"
-              ? `🔄 Gerando **${gen.batchSize}** códigos por ciclo — tipo: **${typeLabel}**\n*Rode em segundo plano — feche o Discord à vontade!*`
-              : `Gerador parado por <@${gen.userId}>. Use \`/nitro gen\` para reiniciar.`
-          )
-          .addFields(
-            {
-              name: "📊 Estatísticas Acumuladas",
-              value: [
-                `🔢 **Total checado:** ${gen.stats.total}   |   🔁 **Ciclos:** ${gen.stats.batches}`,
-                `✅ **Válidos:** ${gen.stats.valid}   ❌ **Inválidos:** ${gen.stats.invalid}`,
-                `⏳ **Rate-limited:** ${gen.stats.rateLimited}   ⚠️ **Erros:** ${gen.stats.errors}`,
-                `📈 **Hit rate:** ${rate}%   ⚡ **Velocidade:** ${speed} cod/s`,
-                `⏱️ **Tempo total:** ${elapsed}s   🕐 **Último ciclo:** ${lastBatch}`,
-              ].join("\n"),
-              inline: false,
-            },
-            ...(gen.stats.hits.length > 0 ? [{
-              name: `🏆 Últimos ${Math.min(5, gen.stats.hits.length)} Hit(s) (${gen.stats.hits.length} total)`,
-              value: hitLines.slice(0, 1024),
-              inline: false,
-            }] : []),
+              ? `${statusLine}\n${statsBlock}\n${metricsLine}`
+              : `🔴 Gerador parado por <@${gen.userId}>.\nUse \`/nitro gen\` para reiniciar.\n\n${statsBlock}`
           )
           .setTimestamp()
           .setFooter({ text: `${AUTHOR} • Nitro Generator • ${interaction.user.username}` });
+
+        if (hits > 0) {
+          embed.addFields({
+            name: `🏆  Últimos ${Math.min(5, hits)} Hit(s)  —  ${hits} total`,
+            value: hitLines.slice(0, 1024),
+            inline: false,
+          });
+        }
 
         return embed;
       };

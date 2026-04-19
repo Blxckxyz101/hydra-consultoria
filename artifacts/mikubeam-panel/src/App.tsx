@@ -2700,34 +2700,106 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   <div className="lb-cred-section-header">
                     <span className="lb-cred-section-icon">📊</span>
                     <h3 className="lb-cred-section-title">Estatísticas</h3>
+                    {nitroRunning && (
+                      <span style={{ marginLeft: "auto", fontSize: 10, color: "#9b59b6", fontFamily: "monospace" }}>
+                        {Math.round(Number(speed) * 60)}/min
+                      </span>
+                    )}
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+
+                  {/* Big hero numbers */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 10 }}>
                     {[
-                      { label: "Total checado", value: nitroTotal, color: "#ccc" },
-                      { label: "Ciclos", value: nitroCycles, color: "#7f8c8d" },
-                      { label: "Válidos", value: nitroValid, color: "#2ecc71" },
-                      { label: "Inválidos", value: nitroInvalid, color: "#e74c3c" },
-                      { label: "Rate-limited", value: nitroRL, color: "#f39c12" },
-                      { label: "Erros", value: nitroErrors, color: "#e67e22" },
+                      { label: "CHECADOS", value: nitroTotal, color: "#aaa", bg: "rgba(255,255,255,0.04)" },
+                      { label: "VÁLIDOS", value: nitroValid, color: "#2ecc71", bg: "rgba(46,204,113,0.08)", border: "rgba(46,204,113,0.25)" },
+                      { label: "CICLOS", value: nitroCycles, color: "#9b59b6", bg: "rgba(155,89,182,0.08)", border: "rgba(155,89,182,0.25)" },
                     ].map(s => (
-                      <div key={s.label} style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value.toLocaleString()}</div>
-                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{s.label}</div>
+                      <div key={s.label} style={{
+                        background: s.bg ?? "rgba(255,255,255,0.04)",
+                        borderRadius: 10, padding: "12px 8px", textAlign: "center",
+                        border: `1px solid ${s.border ?? "rgba(255,255,255,0.07)"}`,
+                      }}>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: s.color, letterSpacing: "-0.5px", lineHeight: 1 }}>
+                          {s.value.toLocaleString()}
+                        </div>
+                        <div style={{ fontSize: 9, color: "#555", marginTop: 4, fontWeight: 600, letterSpacing: 1 }}>{s.label}</div>
                       </div>
                     ))}
                   </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#9b59b6" }}>{hitRate}%</div>
-                      <div style={{ fontSize: 10, color: "#666" }}>Hit rate</div>
+
+                  {/* Distribution bar */}
+                  {nitroTotal > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", height: 8, gap: 1 }}>
+                        {[
+                          { val: nitroValid,   color: "#2ecc71" },
+                          { val: nitroInvalid, color: "#e74c3c" },
+                          { val: nitroRL,      color: "#f39c12" },
+                          { val: nitroErrors,  color: "#e67e22" },
+                        ].map((s, i) => (
+                          s.val > 0 ? (
+                            <div key={i} style={{
+                              flex: s.val, background: s.color, opacity: 0.8,
+                              transition: "flex 0.4s ease",
+                            }} />
+                          ) : null
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
+                        {[
+                          { label: "Válidos", val: nitroValid, color: "#2ecc71" },
+                          { label: "Inválidos", val: nitroInvalid, color: "#e74c3c" },
+                          { label: "Rate-ltd", val: nitroRL, color: "#f39c12" },
+                          { label: "Erros", val: nitroErrors, color: "#e67e22" },
+                        ].map(s => (
+                          <span key={s.label} style={{ fontSize: 10, color: "#888", display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: s.color, flexShrink: 0 }} />
+                            <span style={{ color: s.color, fontWeight: 700 }}>{s.val.toLocaleString()}</span>
+                            <span>{s.label}</span>
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#3498db" }}>{speed}/s</div>
-                      <div style={{ fontSize: 10, color: "#666" }}>Velocidade</div>
+                  )}
+
+                  {/* Hit rate bar */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, color: "#888" }}>Hit Rate</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: nitroValid > 0 ? "#2ecc71" : "#555", fontFamily: "monospace" }}>
+                        {hitRate}%
+                      </span>
                     </div>
-                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: "#7f8c8d" }}>{elapsed}s</div>
-                      <div style={{ fontSize: 10, color: "#666" }}>Tempo total</div>
+                    <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", borderRadius: 4,
+                        background: "linear-gradient(90deg, #9b59b6, #2ecc71)",
+                        width: `${Math.min(100, Number(hitRate))}%`,
+                        transition: "width 0.6s ease",
+                        minWidth: nitroValid > 0 ? 4 : 0,
+                      }} />
+                    </div>
+                  </div>
+
+                  {/* Speed + Time row */}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ flex: 1, background: "rgba(52,152,219,0.07)", borderRadius: 8, padding: "8px 10px", border: "1px solid rgba(52,152,219,0.2)", textAlign: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#3498db", fontFamily: "monospace" }}>
+                        {Math.round(Number(speed) * 60)}<span style={{ fontSize: 9, color: "#3498db99", marginLeft: 2 }}>/min</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: "#555", marginTop: 2, letterSpacing: 1 }}>VELOCIDADE</div>
+                    </div>
+                    <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "8px 10px", border: "1px solid rgba(255,255,255,0.06)", textAlign: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#7f8c8d", fontFamily: "monospace" }}>
+                        {elapsed >= 60 ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s` : `${elapsed}s`}
+                      </div>
+                      <div style={{ fontSize: 9, color: "#555", marginTop: 2, letterSpacing: 1 }}>TEMPO</div>
+                    </div>
+                    <div style={{ flex: 1, background: "rgba(155,89,182,0.07)", borderRadius: 8, padding: "8px 10px", border: "1px solid rgba(155,89,182,0.2)", textAlign: "center" }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#9b59b6", fontFamily: "monospace" }}>
+                        {nitroRL.toLocaleString()}<span style={{ fontSize: 9, color: "#9b59b699", marginLeft: 2 }}>rl</span>
+                      </div>
+                      <div style={{ fontSize: 9, color: "#555", marginTop: 2, letterSpacing: 1 }}>RATE-LTD</div>
                     </div>
                   </div>
                 </section>
