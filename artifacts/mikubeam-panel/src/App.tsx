@@ -639,8 +639,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord") ?? "attack"
   );
 
   /* DNS Recon */
@@ -648,6 +648,16 @@ function Panel() {
   const [dnsResult,  setDnsResult]  = useState<Record<string, unknown> | null>(null);
   const [dnsLoading, setDnsLoading] = useState(false);
   const [dnsError,   setDnsError]   = useState("");
+
+  /* Discord Guilds */
+  interface DiscordGuild { id: string; name: string; icon: string | null; }
+  const [discordGuilds,      setDiscordGuilds]      = useState<DiscordGuild[]>([]);
+  const [discordLoading,     setDiscordLoading]      = useState(false);
+  const [discordError,       setDiscordError]        = useState("");
+  const [discordInviteUrl,   setDiscordInviteUrl]    = useState("");
+  const [discordAppId,       setDiscordAppId]        = useState("");
+  const [discordLeavingId,   setDiscordLeavingId]    = useState<string | null>(null);
+  const [discordCopied,      setDiscordCopied]       = useState(false);
 
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
@@ -2433,6 +2443,30 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               🌐 DNS Recon
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "discord" ? "lb-page-tab--active" : ""}`}
+              onClick={() => {
+                setActivePage("discord");
+                if (discordGuilds.length === 0 && !discordLoading) {
+                  setDiscordLoading(true);
+                  setDiscordError("");
+                  Promise.all([
+                    fetch(`${BASE}/api/discord/guilds`).then(r => r.json()),
+                    fetch(`${BASE}/api/discord/invite-link`).then(r => r.json()),
+                  ]).then(([gData, iData]) => {
+                    const gd = gData as { guilds?: DiscordGuild[]; error?: string };
+                    const id = iData as { url?: string; applicationId?: string };
+                    if (gd.guilds) setDiscordGuilds(gd.guilds);
+                    else setDiscordError(gd.error ?? "Erro ao carregar servidores");
+                    if (id.url) setDiscordInviteUrl(id.url);
+                    if (id.applicationId) setDiscordAppId(id.applicationId);
+                    setDiscordLoading(false);
+                  }).catch(err => { setDiscordError(String(err)); setDiscordLoading(false); });
+                }
+              }}
+            >
+              🤖 Discord
+            </button>
           </div>
         </header>
 
@@ -3046,6 +3080,203 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════
+            DISCORD PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "discord" && (
+          <div className="lb-cred-page">
+            <div className="lb-cred-layout">
+
+              {/* LEFT: Invite link + refresh */}
+              <div className="lb-cred-left" style={{ maxWidth: 420 }}>
+
+                {/* Invite link generator */}
+                <section className="lb-cred-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🔗</span>
+                    <h3 className="lb-cred-section-title">Link de Convite</h3>
+                  </div>
+                  <p style={{ fontSize: 12, color: "#aaa", marginBottom: 10, lineHeight: 1.5 }}>
+                    Compartilhe este link com o administrador do servidor que deseja adicionar o bot. Bots do Discord não podem entrar em servidores automaticamente — um admin precisa autorizar.
+                  </p>
+                  {discordInviteUrl ? (
+                    <>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                        <input
+                          className="lb-input"
+                          style={{ flex: 1, fontSize: 11 }}
+                          readOnly
+                          value={discordInviteUrl}
+                          onClick={e => (e.target as HTMLInputElement).select()}
+                        />
+                        <button
+                          className={`lb-btn ${discordCopied ? "lb-btn--gold" : "lb-btn--gold"}`}
+                          style={{ minWidth: 90 }}
+                          onClick={() => {
+                            navigator.clipboard.writeText(discordInviteUrl).then(() => {
+                              setDiscordCopied(true);
+                              setTimeout(() => setDiscordCopied(false), 2000);
+                            }).catch(() => {});
+                          }}
+                        >
+                          {discordCopied ? "✓ Copiado!" : "📋 Copiar"}
+                        </button>
+                      </div>
+                      <a
+                        href={discordInviteUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", background: "rgba(88,101,242,0.15)", border: "1px solid rgba(88,101,242,0.4)", borderRadius: 8, color: "#7289da", fontSize: 12, fontWeight: 600, textDecoration: "none" }}
+                      >
+                        🌐 Abrir link de autorização
+                      </a>
+                    </>
+                  ) : discordLoading ? (
+                    <div style={{ color: "#d4af37", fontSize: 12 }}>⏳ Carregando...</div>
+                  ) : (
+                    <div style={{ color: "#888", fontSize: 12 }}>Clique em "Recarregar" para gerar o link.</div>
+                  )}
+                </section>
+
+                {/* Bot info / refresh */}
+                <section className="lb-cred-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🤖</span>
+                    <h3 className="lb-cred-section-title">Status do Bot</h3>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ flex: 1 }}>
+                      {discordAppId && (
+                        <div style={{ fontSize: 11, color: "#888" }}>
+                          Application ID: <code style={{ color: "#d4af37", background: "rgba(0,0,0,0.3)", padding: "1px 5px", borderRadius: 3 }}>{discordAppId}</code>
+                        </div>
+                      )}
+                      <div style={{ marginTop: 4, fontSize: 11, color: "#888" }}>
+                        Servidores: <span style={{ color: "#2ecc71", fontWeight: 700 }}>{discordGuilds.length}</span>
+                      </div>
+                    </div>
+                    <button
+                      className="lb-btn lb-btn--gold"
+                      style={{ padding: "6px 14px", fontSize: 12 }}
+                      disabled={discordLoading}
+                      onClick={() => {
+                        setDiscordLoading(true);
+                        setDiscordError("");
+                        Promise.all([
+                          fetch(`${BASE}/api/discord/guilds`).then(r => r.json()),
+                          fetch(`${BASE}/api/discord/invite-link`).then(r => r.json()),
+                        ]).then(([gData, iData]) => {
+                          const gd = gData as { guilds?: DiscordGuild[]; error?: string };
+                          const id = iData as { url?: string; applicationId?: string };
+                          if (gd.guilds) setDiscordGuilds(gd.guilds);
+                          else setDiscordError(gd.error ?? "Erro ao carregar servidores");
+                          if (id.url) setDiscordInviteUrl(id.url);
+                          if (id.applicationId) setDiscordAppId(id.applicationId);
+                          setDiscordLoading(false);
+                        }).catch(err => { setDiscordError(String(err)); setDiscordLoading(false); });
+                      }}
+                    >
+                      {discordLoading ? "⏳ Carregando..." : "↺ Recarregar"}
+                    </button>
+                  </div>
+                  {discordError && (
+                    <div style={{ color: "#e74c3c", fontSize: 12, padding: "8px 10px", background: "rgba(231,76,60,0.08)", borderRadius: 6, border: "1px solid rgba(231,76,60,0.2)" }}>
+                      ⚠ {discordError}
+                    </div>
+                  )}
+                </section>
+
+              </div>
+
+              {/* RIGHT: Guild list */}
+              <div className="lb-cred-right" style={{ flex: 1, minWidth: 0 }}>
+                <section className="lb-cred-section">
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">🏰</span>
+                    <h3 className="lb-cred-section-title">Servidores do Bot</h3>
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>
+                      {discordGuilds.length} servidor{discordGuilds.length !== 1 ? "es" : ""}
+                    </span>
+                  </div>
+
+                  {discordLoading && discordGuilds.length === 0 && (
+                    <div style={{ padding: "20px", textAlign: "center", color: "#d4af37", fontSize: 13 }}>
+                      ⏳ Carregando servidores...
+                    </div>
+                  )}
+
+                  {!discordLoading && discordGuilds.length === 0 && !discordError && (
+                    <div style={{ padding: "20px", textAlign: "center", color: "#666", fontSize: 13 }}>
+                      Nenhum servidor encontrado. O bot pode estar offline ou o token não está configurado.
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {discordGuilds.map(g => (
+                      <div
+                        key={g.id}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "10px 14px",
+                          background: "rgba(88,101,242,0.05)",
+                          border: "1px solid rgba(88,101,242,0.15)",
+                          borderRadius: 8,
+                        }}
+                      >
+                        {g.icon ? (
+                          <img
+                            src={g.icon}
+                            alt={g.name}
+                            style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(88,101,242,0.3)", flexShrink: 0 }}
+                          />
+                        ) : (
+                          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(88,101,242,0.2)", border: "2px solid rgba(88,101,242,0.3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+                            🏰
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, color: "#e8e8e8", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.name}</div>
+                          <div style={{ fontSize: 10, color: "#666", fontFamily: "var(--font-mono)" }}>{g.id}</div>
+                        </div>
+                        <button
+                          className="lb-btn"
+                          style={{
+                            padding: "5px 12px", fontSize: 11, flexShrink: 0,
+                            background: discordLeavingId === g.id ? "rgba(231,76,60,0.3)" : "rgba(231,76,60,0.1)",
+                            border: "1px solid rgba(231,76,60,0.4)",
+                            color: "#e74c3c",
+                            borderRadius: 6,
+                          }}
+                          disabled={discordLeavingId === g.id}
+                          onClick={() => {
+                            if (!confirm(`Sair do servidor "${g.name}"?`)) return;
+                            setDiscordLeavingId(g.id);
+                            fetch(`${BASE}/api/discord/guilds/${g.id}`, { method: "DELETE" })
+                              .then(r => r.json())
+                              .then((d: { ok?: boolean; error?: string }) => {
+                                if (d.ok) {
+                                  setDiscordGuilds(prev => prev.filter(x => x.id !== g.id));
+                                  addLog(`🤖 Bot saiu do servidor: ${g.name}`, "success");
+                                } else {
+                                  setDiscordError(d.error ?? "Erro ao sair do servidor");
+                                }
+                                setDiscordLeavingId(null);
+                              })
+                              .catch(err => { setDiscordError(String(err)); setDiscordLeavingId(null); });
+                          }}
+                        >
+                          {discordLeavingId === g.id ? "⏳ Saindo..." : "✕ Sair"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
             </div>
           </div>
         )}
