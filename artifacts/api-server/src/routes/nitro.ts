@@ -104,31 +104,11 @@ async function checkSingle(code: string): Promise<CodeResult> {
     }
     if (res.status === 404) return { code, status: "invalid" };
     if (res.status === 429) {
-      const retryAfterSec = parseInt(res.headers.get("retry-after") ?? "2", 10);
-      const waitMs = Math.min(retryAfterSec * 1000, 5_000);
-      if (proxy) markBadProxy(proxy); // this proxy is rate-limited
-      await new Promise(r => setTimeout(r, waitMs));
-
-      // One retry with a fresh proxy
-      const proxy2 = getNextNitroProxy();
-      const disp2  = makeDispatcher(proxy2);
-      try {
-        const res2 = await undiciFetch(url, {
-          method:     "GET",
-          headers:    { ...headers, "User-Agent": nextUA() },
-          dispatcher: disp2,
-          signal:     AbortSignal.timeout(5_000),
-        });
-        if (res2.status === 200) {
-          const data = await res2.json() as { subscription_plan?: { name?: string } };
-          return { code, status: "valid", plan: data?.subscription_plan?.name ?? "Nitro" };
-        }
-        if (res2.status === 404)  return { code, status: "invalid" };
-        if (res2.status === 429)  return { code, status: "rate_limited" };
-        return { code, status: "error" };
-      } catch {
-        return { code, status: "rate_limited" };
-      }
+      // Mark this proxy as temporarily bad and return immediately.
+      // The generator cycle (bot/panel) retries rate-limited codes in the next run —
+      // batching a retry here causes synchronized second-wave rate limits.
+      if (proxy) markBadProxy(proxy);
+      return { code, status: "rate_limited" };
     }
     return { code, status: "error" };
   };
@@ -166,20 +146,26 @@ router.post("/nitro/check", async (req, res): Promise<void> => {
     return;
   }
 
-  const CONCURRENCY = 8;
+  const CONCURRENCY = 4;
   const completed   = new Map<string, CodeResult>();
 
-  async function worker(queue: string[]): Promise<void> {
+  async function worker(queue: string[], startDelayMs: number): Promise<void> {
+    // Stagger worker starts so they don't all hit Discord simultaneously
+    if (startDelayMs > 0) await new Promise(r => setTimeout(r, startDelayMs));
     while (queue.length > 0) {
       const code = queue.shift();
       if (!code) break;
       const result = await checkSingle(code);
       completed.set(code, result);
+      // Small jitter between each check — reduces burst rate limiting
+      if (queue.length > 0) await new Promise(r => setTimeout(r, 600 + Math.random() * 400));
     }
   }
 
   const queue   = [...validCodes];
-  const workers = Array.from({ length: Math.min(CONCURRENCY, validCodes.length) }, () => worker(queue));
+  const workers = Array.from({ length: Math.min(CONCURRENCY, validCodes.length) }, (_, i) =>
+    worker(queue, i * 200), // stagger each worker by 200ms
+  );
   await Promise.all(workers);
 
   const ordered = validCodes.map(code => completed.get(code) ?? { code, status: "error" as CheckStatus });
