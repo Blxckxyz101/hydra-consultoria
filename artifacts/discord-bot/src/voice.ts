@@ -526,9 +526,19 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
     // Stop any previous session for this guild
     stopSession(guildId);
 
-    // Resolve voice channel from bot's current state
-    const botMember = await interaction.guild!.members.fetchMe().catch(() => null);
-    const vc        = botMember?.voice?.channel as VoiceChannel | StageChannel | null;
+    // Resolve the voice channel the bot is currently in.
+    // Priority order (most reliable → least reliable):
+    //   1. conn.joinConfig.channelId — always set by joinVoiceChannel(), no cache dependency
+    //   2. guild.voiceStates.cache   — works when GuildVoiceStates intent is active
+    //   3. fetchMe()                 — last resort, may not include voice state
+    const joinedChannelId =
+      conn.joinConfig.channelId ??
+      interaction.guild!.voiceStates.cache.get(interaction.client.user!.id)?.channelId;
+
+    const vc = joinedChannelId
+      ? (interaction.guild!.channels.cache.get(joinedChannelId) as VoiceChannel | StageChannel | undefined) ?? null
+      : null;
+
     if (!vc) {
       await interaction.reply({
         embeds: [
