@@ -30,7 +30,7 @@ function nextUA(): string {
 }
 
 async function checkSingle(code: string): Promise<CodeResult> {
-  const url = `https://discordapp.com/api/v9/entitlements/gift-codes/${code}?with_application=false&with_subscription_plan=true`;
+  const url = `https://discord.com/api/v9/entitlements/gift-codes/${code}?with_application=false&with_subscription_plan=true`;
   const headers: Record<string, string> = {
     "User-Agent":      nextUA(),
     "Accept":          "application/json",
@@ -40,7 +40,7 @@ async function checkSingle(code: string): Promise<CodeResult> {
 
   // ── First attempt ─────────────────────────────────────────────────────────
   try {
-    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(5_000) });
 
     if (res.status === 200) {
       const data = await res.json() as { subscription_plan?: { name?: string } };
@@ -50,14 +50,14 @@ async function checkSingle(code: string): Promise<CodeResult> {
     if (res.status === 404) return { code, status: "invalid" };
 
     if (res.status === 429) {
-      // ── Intelligent Retry-After backoff ─────────────────────────────────
-      const retryAfterSec = parseInt(res.headers.get("retry-after") ?? "5", 10);
-      const waitMs        = Math.min(retryAfterSec * 1000, 30_000); // max 30s wait
+      // ── Intelligent Retry-After backoff — cap at 5s so batch doesn't stall ─
+      const retryAfterSec = parseInt(res.headers.get("retry-after") ?? "2", 10);
+      const waitMs        = Math.min(retryAfterSec * 1000, 5_000);
       await new Promise(r => setTimeout(r, waitMs));
 
       // ── Retry once after waiting ─────────────────────────────────────────
       try {
-        const res2 = await fetch(url, { method: "GET", headers: { ...headers, "User-Agent": nextUA() }, signal: AbortSignal.timeout(10_000) });
+        const res2 = await fetch(url, { method: "GET", headers: { ...headers, "User-Agent": nextUA() }, signal: AbortSignal.timeout(5_000) });
         if (res2.status === 200) {
           const data = await res2.json() as { subscription_plan?: { name?: string } };
           return { code, status: "valid", plan: data?.subscription_plan?.name ?? "Nitro" };
@@ -96,8 +96,8 @@ router.post("/nitro/check", async (req, res): Promise<void> => {
     return;
   }
 
-  // ── Check codes with concurrency = 3 ─────────────────────────────────────
-  const CONCURRENCY = 3;
+  // ── Check codes with concurrency = 8 ─────────────────────────────────────
+  const CONCURRENCY = 8;
   const completed   = new Map<string, CodeResult>();
 
   async function worker(queue: string[]): Promise<void> {
@@ -106,8 +106,6 @@ router.post("/nitro/check", async (req, res): Promise<void> => {
       if (!code) break;
       const result = await checkSingle(code);
       completed.set(code, result);
-      // Respect Discord's gift-code API rate limit (~1 req/s per IP)
-      if (queue.length > 0) await new Promise(r => setTimeout(r, 900));
     }
   }
 

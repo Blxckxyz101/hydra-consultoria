@@ -645,7 +645,7 @@ function Panel() {
 
   /* ── Nitro Generator ── */
   const [nitroRunning,    setNitroRunning]    = useState(false);
-  const [nitroBatch,      setNitroBatch]      = useState(20);
+  const [nitroBatch,      setNitroBatch]      = useState(10);
   const [nitroType,       setNitroType]       = useState<"classic" | "boost" | "both">("both");
   const [nitroTotal,      setNitroTotal]      = useState(0);
   const [nitroValid,      setNitroValid]      = useState(0);
@@ -2642,14 +2642,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       <span style={{ color: "#9b59b6", fontWeight: 700 }}>{nitroBatch}</span>
                     </label>
                     <input
-                      type="range" min={10} max={100} step={10}
+                      type="range" min={5} max={20} step={5}
                       value={nitroBatch}
                       disabled={nitroRunning}
                       onChange={e => setNitroBatch(Number(e.target.value))}
                       style={{ width: "100%", accentColor: "#9b59b6" }}
                     />
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#666" }}>
-                      <span>10</span><span>100</span>
+                      <span>5</span><span>20</span>
                     </div>
                   </div>
 
