@@ -422,20 +422,28 @@ interface CreateResult {
 }
 
 async function createOneAccount(
-  captchaService: string, captchaApiKey: string, proxyUrl?: string
+  captchaService: string, captchaApiKey: string, proxyUrl?: string, proxyPool?: string[]
 ): Promise<CreateResult> {
-  const pf = makeFetch(proxyUrl);
-
-  // 2. Get fingerprint (through same proxy so Discord sees consistent IP)
-  const fingerprint = await getDiscordFingerprint(pf);
-  if (!fingerprint) return { status: "error", detail: "Falha ao obter fingerprint do Discord" };
+  // Build an array of proxy URLs to rotate through on email-retry
+  // If proxyPool provided, rotate through it; otherwise stay on single proxyUrl
+  const pool = proxyPool && proxyPool.length > 1 ? proxyPool : (proxyUrl ? [proxyUrl] : [undefined as unknown as string]);
 
   const username = randomUsername();
   const password = randomPassword();
   const dob      = randomDOB();
 
-  // Try up to 3 different emails if one is already registered
+  // Try up to 3 different emails — rotate proxy on each try to avoid 120s rate-limit reuse
   for (let emailTry = 0; emailTry < 3; emailTry++) {
+    const currentProxy = pool[emailTry % pool.length];
+    const pf = makeFetch(currentProxy || undefined);
+
+    // Get fingerprint through current proxy (Discord sees consistent IP per attempt)
+    const fingerprint = await getDiscordFingerprint(pf);
+    if (!fingerprint) {
+      if (emailTry === 0) return { status: "error", detail: "Falha ao obter fingerprint do Discord" };
+      continue; // try next proxy
+    }
+
     // 1. Get temp email
     const mail = await getTempEmail();
     if (!mail) return { status: "error", detail: "Falha ao obter email temporário" };
@@ -456,17 +464,17 @@ async function createOneAccount(
     });
 
     const body1 = await attempt1.json() as Record<string, unknown>;
-    console.log(`[register] attempt1 status=${attempt1.status} body=${JSON.stringify(body1).slice(0, 250)}`);
+    console.log(`[register] attempt1 status=${attempt1.status} proxy=${currentProxy ?? "none"} body=${JSON.stringify(body1).slice(0, 250)}`);
 
     // Token returned on first try (clean residential IP)
     if (body1.token && typeof body1.token === "string") {
       return { status: "ok", token: body1.token as string, username, email: mail.full, password, detail: "Conta criada (sem captcha)" };
     }
 
-    // Retry with new email if this one is already registered
+    // Retry with new email AND new proxy if this email is already registered
     const errCheck = extractDiscordError(body1, attempt1.status);
     if (errCheck.includes("EMAIL_ALREADY_REGISTERED")) {
-      console.log(`[register] email ${mail.full} already registered, retrying with new email (try ${emailTry + 1}/3)`);
+      console.log(`[register] email ${mail.full} already registered, rotating proxy and retrying (try ${emailTry + 1}/3)`);
       continue;
     }
 
@@ -679,16 +687,37 @@ router.get("/discord/accounts/free-proxy", async (_req, res) => {
       return;
     }
 
-    // Deduplicate and limit to 50 for testing (more sources = more candidates)
-    const candidates = [...new Set(allProxies)].slice(0, 50);
+    // Deduplicate and limit to 100 candidates
+    const candidates = [...new Set(allProxies)].slice(0, 100);
 
-    // Test all concurrently against Discord's gateway
+    // Step 1: Batch classify all IPs via ip-api.com to find non-datacenter (residential) IPs
+    // Only IPs with hosting:false have a chance of creating Discord accounts
+    let residentialCandidates = candidates;
+    try {
+      const ipList = candidates.map(p => p.split(":")[0]);
+      const batchResp = await fetch("http://ip-api.com/batch?fields=query,hosting,proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ipList.slice(0, 100)),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (batchResp.ok) {
+        const ipData = await batchResp.json() as Array<{ query: string; hosting: boolean; proxy: boolean }>;
+        // Require hosting:false AND proxy:false for truly residential IPs
+        const nonHostingIPs = new Set(ipData.filter(d => !d.hosting && !d.proxy).map(d => d.query));
+        const filtered = candidates.filter(p => nonHostingIPs.has(p.split(":")[0]));
+        if (filtered.length > 0) residentialCandidates = filtered;
+        console.log(`[free-proxy] IP classify: ${candidates.length} total, ${filtered.length} non-datacenter`);
+      }
+    } catch { /* fallback: test all */ }
+
+    // Step 2: Test residential candidates against Discord gateway for basic connectivity
     const testProxy = async (proxy: string): Promise<string | null> => {
       const pf = makeFetch(`http://${proxy}`);
       try {
-        const r = await pf("https://discord.com/api/v9/gateway", {
+        const r = await pf("https://discord.com/api/v10/gateway", {
           headers: { "User-Agent": DISCORD_UA, "Accept": "application/json" },
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(10000),
         } as RequestInit);
         if (!r.ok) return null;
         const d = await r.json() as { url?: string };
@@ -696,11 +725,11 @@ router.get("/discord/accounts/free-proxy", async (_req, res) => {
       } catch { return null; }
     };
 
-    const results = await Promise.all(candidates.map(testProxy));
+    const results = await Promise.all(residentialCandidates.map(testProxy));
     const working = results.filter(Boolean) as string[];
 
     if (!working.length) {
-      res.json({ ok: false, error: `Testados ${candidates.length} proxies — nenhum passou no teste do Discord` });
+      res.json({ ok: false, error: `Testados ${candidates.length} proxies (${residentialCandidates.length} não-datacenter) — nenhum passou no teste de conectividade do Discord. Proxies gratuitos raramente são residenciais.` });
       return;
     }
 
@@ -796,7 +825,9 @@ router.post("/discord/accounts/create", async (req, res) => {
     send("progress", { index: i, total: safeCount, status: "creating" });
 
     const proxyUrl = proxyPool[i % proxyPool.length];
-    const result = await createOneAccount(captchaService, captchaApiKey.trim(), proxyUrl);
+    // Pass the full proxyPool so createOneAccount can rotate IPs on email-retry
+    const fullPool = proxyPool.filter(Boolean) as string[];
+    const result = await createOneAccount(captchaService, captchaApiKey.trim(), proxyUrl ?? undefined, fullPool.length > 1 ? fullPool : undefined);
     let saved = false;
 
     if (result.status === "ok" && result.token) {
