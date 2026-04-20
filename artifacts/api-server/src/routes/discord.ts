@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import fs   from "fs";
 import path from "path";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { solveHCaptchaWithAI } from "../services/hcaptcha-ai-solver.js";
 
 const router: IRouter = Router();
 
@@ -50,6 +51,18 @@ function makeFetch(proxyUrl?: string): FetchLike {
 // ── Generic helpers ────────────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+const DISCORD_UA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+const SUPER_PROPS  = Buffer.from(JSON.stringify({
+  os: "Windows", browser: "Chrome", device: "",
+  system_locale: "en-US",
+  browser_user_agent: DISCORD_UA,
+  browser_version: "136.0.0.0",
+  os_version: "10",
+  release_channel: "stable",
+  client_build_number: 531702,
+  client_event_source: null,
+})).toString("base64");
+
 function botHeaders() {
   return { Authorization: `Bot ${BOT_TOKEN}`, "Content-Type": "application/json" };
 }
@@ -58,37 +71,30 @@ function userHeaders(token: string) {
   return {
     Authorization: token,
     "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "X-Super-Properties": Buffer.from(JSON.stringify({
-      os: "Windows", browser: "Chrome", device: "",
-      system_locale: "en-US", browser_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      browser_version: "124.0.0.0", os_version: "10",
-      release_channel: "stable", client_build_number: 300000,
-    })).toString("base64"),
+    "User-Agent": DISCORD_UA,
+    "X-Super-Properties": SUPER_PROPS,
     "X-Discord-Locale": "en-US",
     "X-Discord-Timezone": "America/Sao_Paulo",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://discord.com",
-    "Referer": "https://discord.com/register",
+    "Referer": "https://discord.com/channels/@me",
   };
 }
 
 function registerHeaders(fingerprint: string) {
   return {
     "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "X-Super-Properties": Buffer.from(JSON.stringify({
-      os: "Windows", browser: "Chrome", device: "",
-      system_locale: "en-US", browser_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      browser_version: "124.0.0.0", os_version: "10",
-      release_channel: "stable", client_build_number: 300000,
-    })).toString("base64"),
+    "User-Agent": DISCORD_UA,
+    "X-Super-Properties": SUPER_PROPS,
     "X-Fingerprint": fingerprint,
     "X-Discord-Locale": "en-US",
     "X-Discord-Timezone": "America/Sao_Paulo",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://discord.com",
     "Referer": "https://discord.com/register",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
   };
 }
 
@@ -221,8 +227,13 @@ async function solveCaptchaCapmonster(
 }
 
 async function solveCaptcha(
-  service: string, apiKey: string, sitekey: string, pageUrl: string, rqdata?: string
+  service: string, apiKey: string, sitekey: string, pageUrl: string, rqdata?: string,
+  proxyFetch?: FetchLike
 ): Promise<string | null> {
+  if (service === "builtin") {
+    const result = await solveHCaptchaWithAI(sitekey, pageUrl, rqdata, proxyFetch, 3);
+    return result.token;
+  }
   if (service === "capmonster") return solveCaptchaCapmonster(apiKey, sitekey, pageUrl, rqdata);
   return solveCaptcha2captcha(apiKey, sitekey, pageUrl, rqdata);
 }
@@ -277,6 +288,12 @@ function randomDOB(): string {
 
 // ── Error extraction from Discord API responses ───────────────────────────────
 function extractDiscordError(body: Record<string, unknown>, httpStatus: number): string {
+  // Rate limited
+  if (httpStatus === 429 || body.retry_after !== undefined) {
+    const retryAfter = typeof body.retry_after === "number" ? ` (aguarde ${Math.ceil(body.retry_after)}s)` : "";
+    return `Rate limit de registro — IP bloqueado pelo Discord${retryAfter}. Use um proxy residencial.`;
+  }
+
   // Field-specific errors like { "email": { "_errors": [{ "message": "..." }] } }
   const fieldErrors: string[] = [];
   for (const key of ["email", "username", "password", "date_of_birth"]) {
@@ -286,7 +303,12 @@ function extractDiscordError(body: Record<string, unknown>, httpStatus: number):
   if (fieldErrors.length) return fieldErrors.join(", ");
 
   // Top-level message
-  if (typeof body.message === "string") return body.message;
+  if (typeof body.message === "string") {
+    if (body.message === "Invalid Form Body") {
+      return "Formulário inválido — IP bloqueado ou build desatualizado. Configure um proxy residencial.";
+    }
+    return body.message;
+  }
 
   // captcha info
   if (body.captcha_key) return "captcha-required";
@@ -354,15 +376,15 @@ async function createOneAccount(
     : typeof captchaKeys === "string" && captchaKeys.includes("captcha");
 
   if (isCaptchaNeeded || body1.captcha_sitekey) {
-    if (!captchaApiKey) {
-      return { status: "captcha_needed", username, email: mail.full, detail: "Captcha necessário — configure a API key de captcha" };
+    if (!captchaApiKey && captchaService !== "builtin") {
+      return { status: "captcha_needed", username, email: mail.full, detail: "Captcha necessário — configure a API key de captcha ou use o solver de IA" };
     }
 
     const sitekey  = (body1.captcha_sitekey  as string | undefined) ?? DISCORD_HCAPTCHA_SITEKEY;
     const rqdata   = body1.captcha_rqdata    as string | undefined;
     const rqtoken  = body1.captcha_rqtoken   as string | undefined;
 
-    const captchaSolution = await solveCaptcha(captchaService, captchaApiKey, sitekey, "https://discord.com/register", rqdata);
+    const captchaSolution = await solveCaptcha(captchaService, captchaApiKey, sitekey, "https://discord.com/register", rqdata, pf);
     if (!captchaSolution) return { status: "error", username, email: mail.full, detail: "Falha ao resolver captcha" };
 
     // 4. Retry registration with captcha solution + rqtoken
@@ -491,6 +513,26 @@ router.post("/discord/accounts/verify", async (_req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 //  AUTO ACCOUNT CREATION
 // ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/discord/accounts/proxy-test
+// body: { proxy }
+router.post("/discord/accounts/proxy-test", async (req, res) => {
+  const { proxy = "" } = req.body as { proxy?: string };
+  const proxyUrl = proxy.trim() || undefined;
+  const pf = makeFetch(proxyUrl);
+  try {
+    const start = Date.now();
+    const r = await pf("https://discord.com/api/v9/gateway", {
+      headers: { "User-Agent": DISCORD_UA, "Accept": "application/json" },
+    });
+    const ms = Date.now() - start;
+    if (!r.ok) { res.json({ ok: false, error: `HTTP ${r.status}` }); return; }
+    const data = await r.json() as { url?: string };
+    res.json({ ok: true, ms, gateway: data.url, usingProxy: !!proxyUrl });
+  } catch (e) {
+    res.json({ ok: false, error: String(e) });
+  }
+});
 
 // POST /api/discord/accounts/create
 // body: { count, captchaService, captchaApiKey, delay, proxy }

@@ -808,7 +808,7 @@ function Panel() {
   /* Auto account creation */
   interface CreateAccResult { status: string; username?: string; email?: string; detail: string; saved: boolean; }
   const [dCreateCount,      setDCreateCount]      = useState(1);
-  const [dCreateService,    setDCreateService]    = useState<"2captcha" | "capmonster">("2captcha");
+  const [dCreateService,    setDCreateService]    = useState<"builtin" | "2captcha" | "capmonster">("builtin");
   const [dCreateApiKey,     setDCreateApiKey]     = useState("");
   const [dCreateProxy,      setDCreateProxy]      = useState("");
   const [dCreateDelay,      setDCreateDelay]      = useState(3000);
@@ -3822,7 +3822,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     Registra contas reais no Discord usando emails temporários.
                   </p>
                   <div style={{ background: "rgba(255,193,7,0.06)", border: "1px solid rgba(255,193,7,0.25)", borderRadius: 6, padding: "7px 10px", marginBottom: 12, fontSize: 11, color: "#cca300", lineHeight: 1.6 }}>
-                    ⚠️ <strong>Requisitos:</strong> (1) <strong>API key de captcha</strong> — 2captcha (~$3/1000) ou CapMonster (~$0.50/1000). (2) <strong>Proxy HTTP residencial</strong> — evita bloqueio de IP de datacenter. Sem proxy, Discord pode rejeitar mesmo com captcha resolvido.
+                    ⚠️ Selecione <strong>🤖 IA (Grátis)</strong> para usar o solver embutido sem custo extra. Configure um <strong>proxy residencial</strong> para evitar bloqueio de IP de datacenter.
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
@@ -3848,47 +3848,81 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     </div>
                   </div>
 
-                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>Serviço de Captcha</label>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>Solver de Captcha</label>
                   <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                    {(["2captcha", "capmonster"] as const).map(s => (
+                    {([
+                      { id: "builtin",    label: "🤖 IA (Grátis)" },
+                      { id: "2captcha",   label: "2Captcha" },
+                      { id: "capmonster", label: "CapMonster" },
+                    ] as const).map(s => (
                       <button
-                        key={s}
-                        onClick={() => setDCreateService(s)}
+                        key={s.id}
+                        onClick={() => setDCreateService(s.id)}
                         style={{
                           flex: 1, padding: "6px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                          border: dCreateService === s ? "1.5px solid rgba(88,101,242,0.7)" : "1px solid rgba(255,255,255,0.08)",
-                          background: dCreateService === s ? "rgba(88,101,242,0.15)" : "rgba(255,255,255,0.03)",
-                          color: dCreateService === s ? "#7289da" : "#666",
+                          border: dCreateService === s.id ? "1.5px solid rgba(88,101,242,0.7)" : "1px solid rgba(255,255,255,0.08)",
+                          background: dCreateService === s.id ? "rgba(88,101,242,0.15)" : "rgba(255,255,255,0.03)",
+                          color: dCreateService === s.id ? "#7289da" : "#666",
                         }}
                       >
-                        {s === "2captcha" ? "2Captcha" : "CapMonster"}
+                        {s.label}
                       </button>
                     ))}
                   </div>
+                  {dCreateService === "builtin" && (
+                    <div style={{ background: "rgba(88,101,242,0.06)", border: "1px solid rgba(88,101,242,0.2)", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 11, color: "#7289da", lineHeight: 1.5 }}>
+                      🤖 Solver de IA usa GPT-4o vision para resolver os captchas automaticamente. Nenhuma API key necessária.
+                    </div>
+                  )}
+
+                  {dCreateService !== "builtin" && (
+                    <>
+                      <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
+                        API Key do captcha
+                      </label>
+                      <input
+                        className="lb-input"
+                        type="password"
+                        style={{ width: "100%", marginBottom: 8, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                        placeholder="Sua API key do 2captcha / capmonster..."
+                        value={dCreateApiKey}
+                        onChange={e => setDCreateApiKey(e.target.value)}
+                      />
+                    </>
+                  )}
 
                   <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
-                    API Key do captcha <span style={{ color: "#666" }}>(necessária em IPs de datacenter)</span>
+                    Proxy HTTP/S residencial <span style={{ color: "#666" }}>(necessário — Discord bloqueia IPs de datacenter)</span>
                   </label>
-                  <input
-                    className="lb-input"
-                    type="password"
-                    style={{ width: "100%", marginBottom: 8, fontFamily: "var(--font-mono)", fontSize: 11 }}
-                    placeholder="Sua API key do 2captcha / capmonster..."
-                    value={dCreateApiKey}
-                    onChange={e => setDCreateApiKey(e.target.value)}
-                  />
-
-                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
-                    Proxy HTTP/S residencial <span style={{ color: "#666" }}>(recomendado para evitar bloqueio)</span>
-                  </label>
-                  <input
-                    className="lb-input"
-                    type="text"
-                    style={{ width: "100%", marginBottom: 10, fontFamily: "var(--font-mono)", fontSize: 11 }}
-                    placeholder="http://user:pass@host:port"
-                    value={dCreateProxy}
-                    onChange={e => setDCreateProxy(e.target.value)}
-                  />
+                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                    <input
+                      className="lb-input"
+                      type="text"
+                      style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                      placeholder="http://user:pass@host:port"
+                      value={dCreateProxy}
+                      onChange={e => setDCreateProxy(e.target.value)}
+                    />
+                    <button
+                      className="lb-btn"
+                      style={{ padding: "0 10px", fontSize: 11, whiteSpace: "nowrap", background: "rgba(46,204,113,0.08)", borderColor: "rgba(46,204,113,0.3)", color: "#2ecc71" }}
+                      onClick={() => {
+                        fetch(`${BASE}/api/discord/accounts/proxy-test`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ proxy: dCreateProxy }),
+                        })
+                          .then(r => r.json())
+                          .then((d: { ok?: boolean; ms?: number; gateway?: string; error?: string; usingProxy?: boolean }) => {
+                            if (d.ok) addLog(`✅ Proxy OK — gateway: ${d.gateway} (${d.ms}ms)${d.usingProxy ? " via proxy" : " (sem proxy)"}`, "success");
+                            else addLog(`❌ Proxy falhou: ${d.error}`, "error");
+                          })
+                          .catch(e => addLog(`❌ ${String(e)}`, "error"));
+                      }}
+                    >
+                      🔍 Testar
+                    </button>
+                  </div>
 
                   {/* Progress bar */}
                   {dCreateLoading && (
