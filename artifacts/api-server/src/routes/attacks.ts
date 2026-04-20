@@ -231,7 +231,7 @@ async function groqAdvisor(attack: typeof attacksTable.$inferSelect, pps: number
   if (!apiKey) return { error: "GROQ_API_KEY not set" };
   const msg = `LIVE METRICS — Target:${attack.target} Method:${attack.method} PPS:${pps} BPS:${bps} Conns:${conns} HTTP:${targetStatus} Latency:${targetLatencyMs}ms
 
-Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read
+Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read, h2-dep-bomb, h2-data-flood, h2-storm, bypass-storm, h2-rst-burst, grpc-flood
 
 Respond with JSON: {"analysis":"brief tactical assessment","primaryRecommendation":"specific next action","boostVector":"method_name","reduceVector":"method_name or null","severity":"low|medium|high|critical","estimatedDownIn":"time estimate or null","tip":"one advanced tip","effectiveness":0-100}`;
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -263,7 +263,7 @@ async function groqAdvisorTarget(target: string): Promise<Record<string, unknown
     targetLatencyMs = Date.now() - t0; targetStatus = String(pr.status);
   } catch { targetStatus = "offline"; }
   const msg = `PRE-ATTACK RECON — Target:${target} HTTP:${targetStatus} Latency:${targetLatencyMs}ms
-Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read
+Available methods: geass-override, waf-bypass, http2-flood, http-pipeline, h2-settings-storm, app-smart-flood, large-header-bomb, http2-continuation, tls-renego, ssl-death, graphql-dos, ws-flood, cache-poison, rudy-v2, dns-amp, quic-flood, hpack-bomb, doh-flood, xml-bomb, range-flood, slow-read, h2-dep-bomb, h2-data-flood, h2-storm, bypass-storm, h2-rst-burst, grpc-flood
 Respond with JSON: {"analysis":"brief target assessment","primaryRecommendation":"best starting vector","boostVector":"method_name","severity":"low|medium|high|critical","estimatedDownIn":"rough estimate","tip":"one advanced tip","effectiveness":0-100,"targetStatus":"${targetStatus}","latencyMs":${targetLatencyMs}}`;
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -354,6 +354,8 @@ const HTTP_PROXY_METHODS = new Set([
   "bypass-storm",
   // New vectors — benefit from IP rotation
   "tls-session-exhaust", "cache-buster",
+  // New H2 vector methods (2025)
+  "h2-dep-bomb", "h2-data-flood",
 ]);
 
 function spawnPool(

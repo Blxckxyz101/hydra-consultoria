@@ -57,6 +57,7 @@ const L7_PROXY_OK = new Set([
   "conn-flood","ws-flood","h2-settings-storm",
   "h2-rst-burst","grpc-flood","http-pipeline","http-smuggling",
   "geass-override","cf-bypass","nginx-killer","slowloris",
+  "h2-dep-bomb","h2-data-flood","h2-storm","pipeline-flood",
 ]);
 const methodInfo = (m: string) => {
   if (m === "geass-override")       return { badge: "ARES ∞ [35V]",  cls: "geass",     color: "#C0392B" };
@@ -96,6 +97,9 @@ const methodInfo = (m: string) => {
   if (m === "cache-buster")        return { badge: "CACHE BUST",    cls: "real-http", color: "#10b981" };
   if (m === "vercel-flood")        return { badge: "VERCEL 4V",     cls: "geass",     color: "#6366f1" };
   if (m === "cldap-amp")           return { badge: "CLDAP/389",     cls: "real-udp",  color: "#f43f5e" };
+  if (m === "h2-dep-bomb")         return { badge: "DEP BOMB O(N²)",cls: "geass",     color: "#dc2626" };
+  if (m === "h2-data-flood")       return { badge: "DATA EXHAUST",  cls: "real-http", color: "#7c3aed" };
+  if (m === "h2-storm")            return { badge: "H2 STORM 6V",   cls: "geass",     color: "#0ea5e9" };
   if (L7_HTTP_FE.has(m))           return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
   if (L4_TCP_FE.has(m))            return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
   if (L4_UDP_FE.has(m))            return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
@@ -130,6 +134,9 @@ const PRESETS: Preset[] = [
   { label: "TLS Exhaust",    method: "tls-session-exhaust", packetSize: 64,  duration: 180, delay: 0, threads: 500,  icon: "🔒"  },
   { label: "Cache Bust",     method: "cache-buster",        packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💨"  },
   { label: "Vercel Nuke",    method: "vercel-flood",        packetSize: 512, duration: 180, delay: 0, threads: 500,  icon: "▲"   },
+  { label: "Dep Bomb",       method: "h2-dep-bomb",         packetSize: 64,  duration: 180, delay: 0, threads: 800,  icon: "💣"  },
+  { label: "Data Exhaust",   method: "h2-data-flood",       packetSize: 64,  duration: 180, delay: 0, threads: 600,  icon: "🌊"  },
+  { label: "H2 Storm 6V",    method: "h2-storm",            packetSize: 64,  duration: 300, delay: 0, threads: 2000, icon: "⚡"  },
 ];
 
 /* ── Log counter ── */
@@ -142,7 +149,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","bypass-storm","dns-amp","ntp-amp","mem-amp","ssdp-amp","cldap-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust","tls-session-exhaust","cache-buster","vercel-flood"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","bypass-storm","dns-amp","ntp-amp","mem-amp","ssdp-amp","cldap-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust","tls-session-exhaust","cache-buster","vercel-flood","h2-storm","h2-dep-bomb","h2-data-flood","pipeline-flood"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
