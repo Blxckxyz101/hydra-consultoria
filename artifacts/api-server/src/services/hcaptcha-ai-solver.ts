@@ -9,11 +9,46 @@ const openai = new OpenAI({
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 // ── Proof-of-Work solvers ──────────────────────────────────────────────────────
-function solveHsw(req: string): string {
+// hCaptcha JWT PoW: hsw type — iterate sha256 `c` times on decoded `d` field
+function solveJwtHsw(jwtReq: string): string {
   try {
-    const decoded = Buffer.from(req, "base64").toString("utf8");
+    // Decode JWT payload (URL-safe base64)
+    const parts = jwtReq.split(".");
+    if (parts.length < 2) return "";
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = Buffer.from(payload, "base64").toString("utf8");
+    const j = JSON.parse(decoded) as {
+      d?: string; // base64 data to hash
+      c?: number; // iteration count
+      n?: string; // type
+    };
+
+    if (!j.d || !j.c) return "";
+
+    // Decode the data bytes
+    const dataBytes = Buffer.from(j.d, "base64");
+
+    // Iterate sha256 c times
+    let hash = dataBytes;
+    for (let i = 0; i < j.c; i++) {
+      hash = Buffer.from(crypto.createHash("sha256").update(hash).digest());
+    }
+
+    // Return as base64
+    return hash.toString("base64");
+  } catch (e) {
+    console.error("[hsw] JWT PoW error:", e);
+    return "";
+  }
+}
+
+// Legacy simple PoW (leading-zeros search) — kept for fallback
+function solveHswSimple(req: string): string {
+  try {
+    const decoded = Buffer.from(req.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
     const arr = JSON.parse(decoded) as [string, number, ...unknown[]];
     const [prefix, difficulty] = arr;
+    if (typeof prefix !== "string" || typeof difficulty !== "number") return "";
     const target = "0".repeat(difficulty);
     for (let i = 0; i < 2_000_000; i++) {
       const h = crypto.createHash("sha256").update(prefix + i).digest("hex");
@@ -25,7 +60,7 @@ function solveHsw(req: string): string {
 
 function solveHsl(req: string): string {
   try {
-    const decoded = Buffer.from(req, "base64").toString("utf8");
+    const decoded = Buffer.from(req.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
     const arr = JSON.parse(decoded) as [string, number, number, ...unknown[]];
     const [key, difficulty, expires] = arr;
     const target = "0".repeat(difficulty);
@@ -41,8 +76,13 @@ function solveHsl(req: string): string {
 
 function computeN(c: { type?: string; req?: string } | undefined): string {
   if (!c?.req) return "";
-  if (c.type === "hsw") return solveHsw(c.req);
+  if (!c.type) return "";
   if (c.type === "hsl") return solveHsl(c.req);
+  if (c.type === "hsw") {
+    // Check if it's a JWT (has dots) or legacy format (plain base64 array)
+    const isJwt = c.req.includes(".");
+    return isJwt ? solveJwtHsw(c.req) : solveHswSimple(c.req);
+  }
   return "";
 }
 
@@ -95,7 +135,6 @@ async function classifyImages(
 ): Promise<Record<string, string>> {
   const answers: Record<string, string> = {};
 
-  // Classify in batches of 4 to reduce API calls
   const BATCH = 4;
   for (let i = 0; i < tasks.length; i += BATCH) {
     const batch = tasks.slice(i, i + BATCH);
@@ -135,6 +174,94 @@ async function classifyImages(
   return answers;
 }
 
+// ── Challenge response type ─────────────────────────────────────────────────────
+interface ChallengeResp {
+  pass?: boolean;
+  generated_pass_UUID?: string;
+  c?: { type?: string; req?: string };
+  key?: string;
+  request_type?: string;
+  requester_question?: { en?: string; [k: string]: string | undefined };
+  tasklist?: Array<{ datapoint_uri: string; task_key: string }>;
+  success?: boolean;
+  error?: string;
+}
+
+type FetchLike = (url: string, opts?: RequestInit) => Promise<Response>;
+
+// ── Challenge fetcher with PoW loop ───────────────────────────────────────────
+async function fetchChallenge(
+  sitekey: string,
+  host: string,
+  rqdata: string | undefined,
+  doFetch: FetchLike,
+  pageUrl: string,
+  maxPowRounds = 3,
+): Promise<ChallengeResp | null> {
+  let lastC: { type?: string; req?: string } | undefined;
+
+  for (let round = 0; round < maxPowRounds; round++) {
+    // Compute PoW from previous round if needed
+    const n = lastC ? computeN(lastC) : undefined;
+
+    const params = new URLSearchParams({
+      v:          "b0f2fa0",
+      host,
+      sitekey,
+      sc:         "1",
+      swa:        "1",
+      motionData: makeMotionData(sitekey, host),
+    });
+    if (rqdata) params.set("rqdata", rqdata);
+    if (n)     params.set("n", n);
+    if (lastC) params.set("c", JSON.stringify(lastC));
+
+    const challengeResp = await doFetch(
+      `https://api2.hcaptcha.com/getcaptcha/${sitekey}`,
+      {
+        method: "POST",
+        headers: {
+          "User-Agent": UA,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Referer": pageUrl,
+          "Origin": "https://newassets.hcaptcha.com",
+          "Accept": "application/json",
+        },
+        body: params.toString(),
+      }
+    );
+
+    if (!challengeResp.ok) {
+      console.error(`[hcaptcha] getcaptcha failed HTTP ${challengeResp.status}`);
+      return null;
+    }
+
+    const challenge = await challengeResp.json() as ChallengeResp;
+    console.log(`[hcaptcha] round ${round}: pass=${challenge.pass} key=${challenge.key?.slice(0,8)} success=${challenge.success} type=${challenge.request_type} tasks=${challenge.tasklist?.length}`);
+
+    // Already passed
+    if (challenge.pass && challenge.generated_pass_UUID) {
+      return challenge;
+    }
+
+    // Has task list — proceed to image classification
+    if (challenge.key && challenge.tasklist?.length) {
+      return challenge;
+    }
+
+    // Has PoW challenge → solve and retry
+    if (challenge.c?.req) {
+      lastC = challenge.c;
+      continue;
+    }
+
+    // Empty response or unknown state
+    return null;
+  }
+
+  return null;
+}
+
 // ── Main solver ────────────────────────────────────────────────────────────────
 export interface SolveResult {
   token: string | null;
@@ -146,81 +273,50 @@ export async function solveHCaptchaWithAI(
   sitekey: string,
   pageUrl: string,
   rqdata?: string,
-  proxyFetch?: (url: string, opts?: RequestInit) => Promise<Response>,
+  proxyFetch?: FetchLike,
   maxAttempts = 3,
 ): Promise<SolveResult> {
-  const doFetch = proxyFetch ?? ((u: string, o?: RequestInit) => fetch(u, o));
+  const doFetch: FetchLike = proxyFetch ?? ((u: string, o?: RequestInit) => fetch(u, o));
   const host = new URL(pageUrl).hostname;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // ── 1. Get challenge ────────────────────────────────────────────────────
-      const challengeParams = new URLSearchParams({
-        v: "b0f2fa0",
-        host,
-        sitekey,
-        sc: "1",
-        swa: "1",
-        motionData: makeMotionData(sitekey, host),
-        ...(rqdata ? { rqdata } : {}),
-      });
-
-      const challengeResp = await doFetch(
-        `https://api2.hcaptcha.com/getcaptcha/${sitekey}`,
-        {
-          method: "POST",
-          headers: {
-            "User-Agent": UA,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Referer": pageUrl,
-            "Origin": "https://newassets.hcaptcha.com",
-            "Accept": "application/json",
-          },
-          body: challengeParams.toString(),
-        }
-      );
-
-      if (!challengeResp.ok) {
+      // ── 1. Get challenge (with PoW auto-solving) ────────────────────────────
+      const challenge = await fetchChallenge(sitekey, host, rqdata, doFetch, pageUrl);
+      if (!challenge) {
+        console.error(`[hcaptcha] attempt ${attempt}: no challenge received`);
         continue;
       }
 
-      const challenge = await challengeResp.json() as {
-        pass?: boolean;
-        generated_pass_UUID?: string;
-        c?: { type?: string; req?: string };
-        key?: string;
-        request_type?: string;
-        requester_question?: { en?: string; [k: string]: string | undefined };
-        tasklist?: Array<{ datapoint_uri: string; task_key: string }>;
-      };
-
-      // Already passed (rare, happens on clean IPs)
+      // Already passed
       if (challenge.pass && challenge.generated_pass_UUID) {
         return { token: challenge.generated_pass_UUID, attempts: attempt };
       }
 
       if (!challenge.key || !challenge.tasklist?.length) {
+        console.error(`[hcaptcha] attempt ${attempt}: no task list`);
         continue;
       }
 
       // ── 2. Classify images with GPT-4o ─────────────────────────────────────
       const question = challenge.requester_question?.en ?? "Please select matching images";
+      console.log(`[hcaptcha] classifying ${challenge.tasklist.length} images for: "${question}"`);
       const answers = await classifyImages(question, challenge.tasklist);
 
-      // ── 3. Compute PoW ─────────────────────────────────────────────────────
+      // ── 3. Compute PoW for submission ─────────────────────────────────────
       const n = computeN(challenge.c);
 
       // ── 4. Submit answers ──────────────────────────────────────────────────
-      const checkBody = {
-        v: "b0f2fa0",
-        job_mode: challenge.request_type ?? "image_label_binary",
+      const checkBody: Record<string, unknown> = {
+        v:          "b0f2fa0",
+        job_mode:   challenge.request_type ?? "image_label_binary",
         answers,
         serverdomain: host,
         sitekey,
         motionData: makeMotionData(sitekey, host),
-        n: n || undefined,
-        c: challenge.c ? JSON.stringify(challenge.c) : undefined,
       };
+      if (n)          checkBody.n = n;
+      if (challenge.c) checkBody.c = JSON.stringify(challenge.c);
 
       const checkResp = await doFetch(
         `https://api2.hcaptcha.com/checkcaptcha/${sitekey}/${challenge.key}`,
@@ -242,13 +338,14 @@ export async function solveHCaptchaWithAI(
         pass?: boolean;
         error?: string;
       };
+      console.log(`[hcaptcha] check result: pass=${result.pass} uuid=${result.generated_pass_UUID?.slice(0,20)} error=${result.error}`);
 
       if (result.generated_pass_UUID) {
         return { token: result.generated_pass_UUID, attempts: attempt };
       }
 
-      // If wrong answers, retry
     } catch (e) {
+      console.error(`[hcaptcha] attempt ${attempt} error:`, e);
       if (attempt === maxAttempts) {
         return { token: null, error: String(e), attempts: attempt };
       }

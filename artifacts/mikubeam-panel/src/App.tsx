@@ -768,6 +768,7 @@ function Panel() {
   interface DiscordAccount {
     id: string; username: string; discriminator: string;
     avatar: string | null; token: string; addedAt: number; status: "ok" | "invalid" | "unknown";
+    email?: string; password?: string; createdAuto?: boolean;
   }
   interface AccActionResult { id?: string; username: string; status?: string; detail?: string; sent?: number; errors?: number; lastError?: string; }
   const [dAccounts,       setDAccounts]       = useState<DiscordAccount[]>([]);
@@ -806,13 +807,16 @@ function Panel() {
   };
 
   /* Auto account creation */
-  interface CreateAccResult { status: string; username?: string; email?: string; detail: string; saved: boolean; }
+  interface CreateAccResult { status: string; username?: string; email?: string; password?: string; detail: string; saved: boolean; }
   const [dCreateCount,      setDCreateCount]      = useState(1);
   const [dCreateService,    setDCreateService]    = useState<"builtin" | "2captcha" | "capmonster">("builtin");
   const [dCreateApiKey,     setDCreateApiKey]     = useState("");
   const [dCreateProxy,      setDCreateProxy]      = useState("");
+  const [dAutoProxies,      setDAutoProxies]      = useState<string[]>([]);
+  const [dUseResidential,   setDUseResidential]   = useState(false);
   const [dCreateDelay,      setDCreateDelay]      = useState(3000);
   const [dCreateLoading,    setDCreateLoading]    = useState(false);
+  const [dFetchingProxy,    setDFetchingProxy]    = useState(false);
   const [dCreateResults,    setDCreateResults]    = useState<CreateAccResult[]>([]);
   const [dCreateProgress,   setDCreateProgress]   = useState(0);
 
@@ -3822,7 +3826,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     Registra contas reais no Discord usando emails temporários.
                   </p>
                   <div style={{ background: "rgba(255,193,7,0.06)", border: "1px solid rgba(255,193,7,0.25)", borderRadius: 6, padding: "7px 10px", marginBottom: 12, fontSize: 11, color: "#cca300", lineHeight: 1.6 }}>
-                    ⚠️ Selecione <strong>🤖 IA (Grátis)</strong> para usar o solver embutido sem custo extra. Configure um <strong>proxy residencial</strong> para evitar bloqueio de IP de datacenter.
+                    ⚠️ IPs de datacenter são bloqueados pelo Discord. Use um <strong>proxy residencial</strong> para melhor taxa de sucesso. Para captcha garantido, use <strong>2Captcha</strong> ou <strong>CapMonster</strong> (~$0.001/conta).
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
@@ -3871,7 +3875,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   </div>
                   {dCreateService === "builtin" && (
                     <div style={{ background: "rgba(88,101,242,0.06)", border: "1px solid rgba(88,101,242,0.2)", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 11, color: "#7289da", lineHeight: 1.5 }}>
-                      🤖 Solver de IA usa GPT-4o vision para resolver os captchas automaticamente. Nenhuma API key necessária.
+                      🤖 Solver de IA funciona melhor quando o Discord não exige captcha (IPs residenciais confiáveis). Para IPs de datacenter, use 2Captcha ou CapMonster para garantia.
                     </div>
                   )}
 
@@ -3892,16 +3896,29 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   )}
 
                   <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
-                    Proxy HTTP/S residencial <span style={{ color: "#666" }}>(necessário — Discord bloqueia IPs de datacenter)</span>
+                    Proxy HTTP/S <span style={{ color: "#666" }}>(residencial recomendado — Discord bloqueia datacenter)</span>
                   </label>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <button
+                      onClick={() => setDUseResidential(!dUseResidential)}
+                      style={{
+                        padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        border: dUseResidential ? "1.5px solid rgba(46,204,113,0.6)" : "1px solid rgba(255,255,255,0.08)",
+                        background: dUseResidential ? "rgba(46,204,113,0.12)" : "rgba(255,255,255,0.03)",
+                        color: dUseResidential ? "#2ecc71" : "#666",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      🏠 {dUseResidential ? "Residencial ✓" : "Residencial"}
+                    </button>
                     <input
                       className="lb-input"
                       type="text"
-                      style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 11 }}
-                      placeholder="http://user:pass@host:port"
+                      style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 11, opacity: dUseResidential ? 0.4 : 1 }}
+                      placeholder="http://user:pass@host:port  (ou use 🏠 Residencial)"
                       value={dCreateProxy}
-                      onChange={e => setDCreateProxy(e.target.value)}
+                      onChange={e => { setDCreateProxy(e.target.value); if (e.target.value) setDUseResidential(false); }}
+                      disabled={dUseResidential}
                     />
                     <button
                       className="lb-btn"
@@ -3922,14 +3939,45 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     >
                       🔍 Testar
                     </button>
+                    <button
+                      className="lb-btn"
+                      style={{ padding: "0 10px", fontSize: 11, whiteSpace: "nowrap", background: "rgba(255,200,0,0.08)", borderColor: "rgba(255,200,0,0.3)", color: dFetchingProxy ? "#888" : "#ffc800" }}
+                      disabled={dFetchingProxy || dCreateLoading}
+                      onClick={() => {
+                        setDFetchingProxy(true);
+                        addLog("🔍 Buscando proxy gratuito que funcione com Discord...", "info");
+                        fetch(`${BASE}/api/discord/accounts/free-proxy`)
+                          .then(r => r.json())
+                          .then((d: { ok?: boolean; proxy?: string; all_proxies?: string[]; total_tested?: number; total_working?: number; error?: string }) => {
+                            if (d.ok && d.proxy) {
+                              setDCreateProxy(d.proxy);
+                              setDAutoProxies(d.all_proxies ?? [d.proxy]);
+                              addLog(`✅ ${d.total_working} proxies gratuitos encontrados (${d.total_tested} testados) — ${d.total_working! > 1 ? "rotação automática ativada" : "usando " + d.proxy}`, "success");
+                            } else {
+                              addLog(`❌ Auto-proxy falhou: ${d.error}`, "error");
+                            }
+                          })
+                          .catch(e => addLog(`❌ ${String(e)}`, "error"))
+                          .finally(() => setDFetchingProxy(false));
+                      }}
+                    >
+                      {dFetchingProxy ? "⏳..." : "🆓 Auto"}
+                    </button>
                   </div>
+
+                  {/* Residential proxy status */}
+                  {dUseResidential && (
+                    <div style={{ background: "rgba(46,204,113,0.06)", border: "1px solid rgba(46,204,113,0.2)", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 11, color: "#2ecc71", lineHeight: 1.5 }}>
+                      🏠 Usando proxy residencial configurado (proxy.proxying.io) — IPs residenciais têm maior chance de passar sem captcha.
+                    </div>
+                  )}
 
                   {/* Progress bar */}
                   {dCreateLoading && (
                     <div style={{ marginBottom: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 11, color: "#888" }}>
-                        <span>⏳ Criando contas...</span>
-                        <span>{dCreateProgress}/{dCreateCount}</span>
+                        <span>⏳ Conta {Math.min(dCreateProgress + 1, dCreateCount)}/{dCreateCount} — aguardando Discord...</span>
+                        <span>{dCreateProgress}/{dCreateCount} ✅</span>
                       </div>
                       <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
                         <div style={{ height: "100%", width: `${dCreateCount > 0 ? (dCreateProgress / dCreateCount) * 100 : 0}%`, background: "linear-gradient(90deg, #5865f2, #7289da)", borderRadius: 2, transition: "width 0.4s" }} />
@@ -3941,33 +3989,63 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     className="lb-btn lb-btn--gold"
                     style={{ width: "100%", padding: "9px", background: "linear-gradient(135deg, rgba(88,101,242,0.3), rgba(114,137,218,0.2))", borderColor: "rgba(88,101,242,0.5)", color: "#7289da" }}
                     disabled={dCreateLoading}
-                    onClick={() => {
+                    onClick={async () => {
                       setDCreateLoading(true);
                       setDCreateResults([]);
                       setDCreateProgress(0);
-
-                      fetch(`${BASE}/api/discord/accounts/create`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          count: dCreateCount,
-                          captchaService: dCreateService,
-                          captchaApiKey: dCreateApiKey,
-                          delay: dCreateDelay,
-                          proxy: dCreateProxy,
-                        }),
-                      })
-                        .then(r => r.json())
-                        .then((d: { created?: number; total?: number; results?: CreateAccResult[]; error?: string }) => {
-                          if (d.error) { addLog(`❌ Criação falhou: ${d.error}`, "error"); return; }
-                          setDCreateResults(d.results ?? []);
-                          setDCreateProgress(d.total ?? 0);
-                          const ok = d.created ?? 0;
-                          addLog(`⚡ ${ok}/${d.total} conta(s) criada(s) com sucesso`, ok > 0 ? "success" : "error");
-                          if (ok > 0) loadDAccounts();
-                        })
-                        .catch(e => addLog(`❌ ${String(e)}`, "error"))
-                        .finally(() => setDCreateLoading(false));
+                      try {
+                        const resp = await fetch(`${BASE}/api/discord/accounts/create`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            count: dCreateCount,
+                            captchaService: dCreateService,
+                            captchaApiKey: dCreateApiKey,
+                            delay: dCreateDelay,
+                            proxy: dUseResidential ? undefined : dCreateProxy,
+                            proxies: !dUseResidential && dAutoProxies.length > 1 ? dAutoProxies : undefined,
+                            useResidential: dUseResidential,
+                          }),
+                        });
+                        if (!resp.body) throw new Error("sem stream");
+                        const reader = resp.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buf = "";
+                        while (true) {
+                          const { done, value } = await reader.read();
+                          if (done) break;
+                          buf += decoder.decode(value, { stream: true });
+                          const lines = buf.split("\n");
+                          buf = lines.pop() ?? "";
+                          let pendingData: string | null = null;
+                          let pendingEvent = "message";
+                          for (const line of lines) {
+                            if (line.startsWith("event: ")) { pendingEvent = line.slice(7).trim(); }
+                            else if (line.startsWith("data: ")) { pendingData = line.slice(6).trim(); }
+                            else if (line === "" && pendingData !== null) {
+                              try {
+                                const ev = JSON.parse(pendingData) as Record<string, unknown>;
+                                if (pendingEvent === "result") {
+                                  const r = ev.result as CreateAccResult;
+                                  setDCreateProgress(ev.done as number);
+                                  setDCreateResults(prev => [...prev, r]);
+                                } else if (pendingEvent === "done") {
+                                  addLog(`⚡ ${ev.created}/${ev.total} conta(s) criada(s) com sucesso`, (ev.created as number) > 0 ? "success" : "error");
+                                  if ((ev.created as number) > 0) loadDAccounts();
+                                } else if (pendingEvent === "start") {
+                                  addLog(`⚡ Iniciando criação de ${ev.total} conta(s)...`, "info");
+                                }
+                              } catch { /* ignore parse error */ }
+                              pendingData = null;
+                              pendingEvent = "message";
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        addLog(`❌ ${String(e)}`, "error");
+                      } finally {
+                        setDCreateLoading(false);
+                      }
                     }}
                   >
                     {dCreateLoading ? `⏳ Criando ${dCreateCount} conta(s)...` : `⚡ Criar ${dCreateCount} Conta(s)`}
@@ -3988,7 +4066,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                           <div style={{ flex: 1, minWidth: 0 }}>
                             {r.username && <span style={{ fontWeight: 700, color: "#e8e8e8" }}>{r.username} </span>}
                             <span style={{ color: "#888" }}>{r.detail}</span>
-                            {r.email && <div style={{ color: "#666", fontSize: 10, fontFamily: "var(--font-mono)" }}>{r.email}</div>}
+                            {r.email && (
+                              <div style={{ color: "#666", fontSize: 10, fontFamily: "var(--font-mono)", marginTop: 2 }}>
+                                📧 {r.email}
+                                {r.password && <span style={{ color: "#555" }}> · 🔑 {r.password}</span>}
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -4050,7 +4133,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     <span className="lb-cred-section-icon">👥</span>
                     <h3 className="lb-cred-section-title">Contas</h3>
                     <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-                      <span style={{ fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{dAccounts.filter(a => a.status === "ok").length} válidas</span>
+                      <span style={{ fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{dAccounts.filter(a => a.status === "ok").length} ok</span>
+                      {dAccounts.filter(a => a.status === "unknown").length > 0 && (
+                        <span style={{ fontSize: 11, color: "#d4af37", fontWeight: 700 }}>{dAccounts.filter(a => a.status === "unknown").length} pendente</span>
+                      )}
                       <button
                         className="lb-btn"
                         style={{ padding: "3px 10px", fontSize: 11, background: "rgba(88,101,242,0.15)", border: "1px solid rgba(88,101,242,0.3)", color: "#7289da", borderRadius: 5 }}
@@ -4073,6 +4159,29 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       >
                         {dAccLoading ? "⏳" : "↺"}
                       </button>
+                      {dAccounts.length > 0 && (
+                        <button
+                          className="lb-btn"
+                          style={{ padding: "3px 10px", fontSize: 11, background: "rgba(46,204,113,0.08)", border: "1px solid rgba(46,204,113,0.25)", color: "#2ecc71", borderRadius: 5 }}
+                          title="Exportar tokens como arquivo de texto"
+                          onClick={() => {
+                            const lines = dAccounts.filter(a => a.status !== "invalid").map(a => {
+                              const parts = [a.token.replace("…", "")];
+                              if (a.email) parts.push(a.email);
+                              if (a.password) parts.push(a.password);
+                              return parts.join(":");
+                            });
+                            const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url; a.download = `discord-tokens-${Date.now()}.txt`; a.click();
+                            URL.revokeObjectURL(url);
+                            addLog(`📥 Exportados ${lines.length} token(s)`, "success");
+                          }}
+                        >
+                          📥
+                        </button>
+                      )}
                     </span>
                   </div>
 
@@ -4082,7 +4191,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       <button
                         className="lb-btn"
                         style={{ fontSize: 11, padding: "3px 10px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 5, color: "#ccc" }}
-                        onClick={() => setDAccSelected(new Set(dAccounts.filter(a => a.status === "ok").map(a => a.id)))}
+                        onClick={() => setDAccSelected(new Set(dAccounts.filter(a => a.status !== "invalid").map(a => a.id)))}
                       >
                         ✓ Selecionar válidas
                       </button>
@@ -4122,33 +4231,37 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                         }}
                       >
                         {/* Avatar / initial */}
-                        <div style={{
-                          width: 32, height: 32, borderRadius: "50%", flexShrink: 0, overflow: "hidden",
-                          background: acc.status === "ok" ? "rgba(88,101,242,0.3)" : "rgba(231,76,60,0.2)",
-                          border: `2px solid ${acc.status === "ok" ? "rgba(88,101,242,0.5)" : "rgba(231,76,60,0.4)"}`,
-                          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
-                        }}>
-                          {acc.avatar
-                            ? <img src={`https://cdn.discordapp.com/avatars/${acc.id}/${acc.avatar}.png?size=64`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                            : acc.username[0]?.toUpperCase() ?? "?"}
-                        </div>
+                        {(() => {
+                          const avatarBg = acc.status === "ok" ? "rgba(88,101,242,0.3)" : acc.status === "unknown" ? "rgba(212,175,55,0.2)" : "rgba(231,76,60,0.2)";
+                          const avatarBorder = acc.status === "ok" ? "rgba(88,101,242,0.5)" : acc.status === "unknown" ? "rgba(212,175,55,0.4)" : "rgba(231,76,60,0.4)";
+                          return (
+                            <div style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0, overflow: "hidden", background: avatarBg, border: `2px solid ${avatarBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+                              {acc.avatar ? <img src={`https://cdn.discordapp.com/avatars/${acc.id}/${acc.avatar}.png?size=64`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : acc.username[0]?.toUpperCase() ?? "?"}
+                            </div>
+                          );
+                        })()}
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 12, color: acc.status === "ok" ? "#e8e8e8" : "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <div style={{ fontWeight: 700, fontSize: 12, color: acc.status === "invalid" ? "#888" : "#e8e8e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {acc.username}
                             {acc.discriminator !== "0" && acc.discriminator !== "0000" && (
                               <span style={{ color: "#666", fontWeight: 400 }}>#{acc.discriminator}</span>
                             )}
                           </div>
                           <div style={{ fontSize: 10, color: "#555", fontFamily: "var(--font-mono)" }}>{acc.id}</div>
+                          {acc.createdAuto && acc.email && (
+                            <div style={{ fontSize: 9, color: "#666", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              📧 {acc.email}{acc.password ? ` · 🔑 ${acc.password}` : ""}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                           <span style={{
                             fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
-                            background: acc.status === "ok" ? "rgba(46,204,113,0.15)" : "rgba(231,76,60,0.15)",
-                            color: acc.status === "ok" ? "#2ecc71" : "#e74c3c",
-                            border: `1px solid ${acc.status === "ok" ? "rgba(46,204,113,0.3)" : "rgba(231,76,60,0.3)"}`,
+                            background: acc.status === "ok" ? "rgba(46,204,113,0.15)" : acc.status === "unknown" ? "rgba(212,175,55,0.15)" : "rgba(231,76,60,0.15)",
+                            color: acc.status === "ok" ? "#2ecc71" : acc.status === "unknown" ? "#d4af37" : "#e74c3c",
+                            border: `1px solid ${acc.status === "ok" ? "rgba(46,204,113,0.3)" : acc.status === "unknown" ? "rgba(212,175,55,0.3)" : "rgba(231,76,60,0.3)"}`,
                           }}>
-                            {acc.status === "ok" ? "✓ válida" : "✗ inválida"}
+                            {acc.status === "ok" ? "✓ válida" : acc.status === "unknown" ? "? pendente" : "✗ inválida"}
                           </span>
                           <button
                             className="lb-btn"
