@@ -805,6 +805,16 @@ function Panel() {
       .finally(() => setDAccLoading(false));
   };
 
+  /* Auto account creation */
+  interface CreateAccResult { status: string; username?: string; email?: string; detail: string; saved: boolean; }
+  const [dCreateCount,      setDCreateCount]      = useState(1);
+  const [dCreateService,    setDCreateService]    = useState<"2captcha" | "capmonster">("2captcha");
+  const [dCreateApiKey,     setDCreateApiKey]     = useState("");
+  const [dCreateDelay,      setDCreateDelay]      = useState(3000);
+  const [dCreateLoading,    setDCreateLoading]    = useState(false);
+  const [dCreateResults,    setDCreateResults]    = useState<CreateAccResult[]>([]);
+  const [dCreateProgress,   setDCreateProgress]   = useState(0);
+
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
   const [checkerResult, setCheckerResult] = useState<CheckResult | null>(null);
@@ -3497,18 +3507,18 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   })()}
 
                   {/* Subdomains */}
-                  {Array.isArray(dnsResult.subdomains) && (dnsResult.subdomains as string[]).length > 0 ? (
+                  {(Array.isArray(dnsResult.subdomains) ? (dnsResult.subdomains as string[]) : []).length > 0 && (
                     <section className="lb-cred-section" style={{ marginBottom: 8 }}>
                       <div className="lb-cred-section-header">
                         <span className="lb-cred-section-icon">🔭</span>
                         <h3 className="lb-cred-section-title">Subdomínios Encontrados</h3>
                         <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{(dnsResult.subdomains as string[]).length} hit{(dnsResult.subdomains as string[]).length !== 1 ? "s" : ""}</span>
                       </div>
-                      {(dnsResult.subdomains as string[]).map((s, i) => (
+                      {(dnsResult.subdomains as string[]).map((s: string, i: number) => (
                         <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
                       ))}
                     </section>
-                  ) : null}
+                  )}
 
                   {/* AXFR */}
                   {(() => {
@@ -3800,6 +3810,140 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
               {/* LEFT — account list + add */}
               <div className="lb-cred-left" style={{ maxWidth: 420 }}>
+
+                {/* ── AUTO CREATE ── */}
+                <section className="lb-cred-section" style={{ borderColor: "rgba(88,101,242,0.35)" }}>
+                  <div className="lb-cred-section-header">
+                    <span className="lb-cred-section-icon">⚡</span>
+                    <h3 className="lb-cred-section-title" style={{ color: "#7289da" }}>Criar Contas Automaticamente</h3>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#999", marginBottom: 12, lineHeight: 1.5 }}>
+                    Registra contas reais no Discord usando emails temporários. Requer API key de captcha (2captcha ou capmonster) para funcionar em IPs de datacenter.
+                  </p>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>Quantidade (máx. 20)</label>
+                      <input
+                        type="number" min={1} max={20}
+                        className="lb-input"
+                        style={{ width: "100%", fontSize: 12 }}
+                        value={dCreateCount}
+                        onChange={e => setDCreateCount(Math.max(1, Math.min(20, Number(e.target.value))))}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>Delay entre contas (ms)</label>
+                      <input
+                        type="number" min={2000} max={30000} step={500}
+                        className="lb-input"
+                        style={{ width: "100%", fontSize: 12 }}
+                        value={dCreateDelay}
+                        onChange={e => setDCreateDelay(Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>Serviço de Captcha</label>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    {(["2captcha", "capmonster"] as const).map(s => (
+                      <button
+                        key={s}
+                        onClick={() => setDCreateService(s)}
+                        style={{
+                          flex: 1, padding: "6px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          border: dCreateService === s ? "1.5px solid rgba(88,101,242,0.7)" : "1px solid rgba(255,255,255,0.08)",
+                          background: dCreateService === s ? "rgba(88,101,242,0.15)" : "rgba(255,255,255,0.03)",
+                          color: dCreateService === s ? "#7289da" : "#666",
+                        }}
+                      >
+                        {s === "2captcha" ? "2Captcha" : "CapMonster"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
+                    API Key do captcha <span style={{ color: "#666" }}>(opcional — tenta sem se vazio)</span>
+                  </label>
+                  <input
+                    className="lb-input"
+                    type="password"
+                    style={{ width: "100%", marginBottom: 10, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                    placeholder="Sua API key..."
+                    value={dCreateApiKey}
+                    onChange={e => setDCreateApiKey(e.target.value)}
+                  />
+
+                  {/* Progress bar */}
+                  {dCreateLoading && (
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: 11, color: "#888" }}>
+                        <span>⏳ Criando contas...</span>
+                        <span>{dCreateProgress}/{dCreateCount}</span>
+                      </div>
+                      <div style={{ height: 4, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${dCreateCount > 0 ? (dCreateProgress / dCreateCount) * 100 : 0}%`, background: "linear-gradient(90deg, #5865f2, #7289da)", borderRadius: 2, transition: "width 0.4s" }} />
+                      </div>
+                    </div>
+                  )}
+
+                  <button
+                    className="lb-btn lb-btn--gold"
+                    style={{ width: "100%", padding: "9px", background: "linear-gradient(135deg, rgba(88,101,242,0.3), rgba(114,137,218,0.2))", borderColor: "rgba(88,101,242,0.5)", color: "#7289da" }}
+                    disabled={dCreateLoading}
+                    onClick={() => {
+                      setDCreateLoading(true);
+                      setDCreateResults([]);
+                      setDCreateProgress(0);
+
+                      fetch(`${BASE}/api/discord/accounts/create`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          count: dCreateCount,
+                          captchaService: dCreateService,
+                          captchaApiKey: dCreateApiKey,
+                          delay: dCreateDelay,
+                        }),
+                      })
+                        .then(r => r.json())
+                        .then((d: { created?: number; total?: number; results?: CreateAccResult[]; error?: string }) => {
+                          if (d.error) { addLog(`❌ Criação falhou: ${d.error}`, "error"); return; }
+                          setDCreateResults(d.results ?? []);
+                          setDCreateProgress(d.total ?? 0);
+                          const ok = d.created ?? 0;
+                          addLog(`⚡ ${ok}/${d.total} conta(s) criada(s) com sucesso`, ok > 0 ? "success" : "error");
+                          if (ok > 0) loadDAccounts();
+                        })
+                        .catch(e => addLog(`❌ ${String(e)}`, "error"))
+                        .finally(() => setDCreateLoading(false));
+                    }}
+                  >
+                    {dCreateLoading ? `⏳ Criando ${dCreateCount} conta(s)...` : `⚡ Criar ${dCreateCount} Conta(s)`}
+                  </button>
+
+                  {/* Creation results */}
+                  {dCreateResults.length > 0 && (
+                    <div style={{ marginTop: 10, maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                      {dCreateResults.map((r, i) => (
+                        <div key={i} style={{
+                          display: "flex", alignItems: "flex-start", gap: 7,
+                          padding: "6px 10px", borderRadius: 6,
+                          background: r.saved ? "rgba(46,204,113,0.07)" : r.status === "captcha_needed" ? "rgba(212,175,55,0.07)" : "rgba(231,76,60,0.07)",
+                          border: `1px solid ${r.saved ? "rgba(46,204,113,0.2)" : r.status === "captcha_needed" ? "rgba(212,175,55,0.3)" : "rgba(231,76,60,0.2)"}`,
+                          fontSize: 11,
+                        }}>
+                          <span style={{ flexShrink: 0, marginTop: 1 }}>{r.saved ? "✅" : r.status === "captcha_needed" ? "🔑" : "❌"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {r.username && <span style={{ fontWeight: 700, color: "#e8e8e8" }}>{r.username} </span>}
+                            <span style={{ color: "#888" }}>{r.detail}</span>
+                            {r.email && <div style={{ color: "#666", fontSize: 10, fontFamily: "var(--font-mono)" }}>{r.email}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
 
                 {/* Add tokens */}
                 <section className="lb-cred-section">

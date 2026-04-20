@@ -1,0 +1,11 @@
+[
+  {
+    "id": "inv_1776645315988_o22awsfxvkj",
+    "username": "Token inválido",
+    "discriminator": "0000",
+    "avatar": null,
+    "token": "invalidtoken123",
+    "addedAt": 1776645315988,
+    "status": "invalid"
+  }
+]
