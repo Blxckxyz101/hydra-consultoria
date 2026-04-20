@@ -58,10 +58,10 @@ const L7_PROXY_OK = new Set([
   "h2-rst-burst","grpc-flood","http-pipeline","http-smuggling",
   "geass-override","cf-bypass","nginx-killer","slowloris",
   "h2-dep-bomb","h2-data-flood","h2-storm","pipeline-flood",
-  "rapid-reset","ws-compression-bomb","h2-goaway-loop","sse-exhaust",
+  "rapid-reset","ws-compression-bomb","h2-goaway-loop","sse-exhaust","h3-rapid-reset",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")       return { badge: "ARES ∞ [39V]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-override")       return { badge: "ARES ∞ [40V]",  cls: "geass",     color: "#C0392B" };
   if (m === "bypass-storm")         return { badge: "BYPASS STORM",  cls: "geass",     color: "#5B2C6F" };
   if (m === "waf-bypass")           return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")          return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
@@ -105,6 +105,7 @@ const methodInfo = (m: string) => {
   if (m === "ws-compression-bomb")  return { badge: "WS BOMB 1820×",    cls: "geass",     color: "#f59e0b" };
   if (m === "h2-goaway-loop")       return { badge: "GOAWAY LOOP",      cls: "real-http", color: "#8b5cf6" };
   if (m === "sse-exhaust")          return { badge: "SSE EXHAUST",      cls: "real-http", color: "#06b6d4" };
+  if (m === "h3-rapid-reset")       return { badge: "H3 QUIC RST",       cls: "geass",     color: "#ef4444" };
   if (L7_HTTP_FE.has(m))           return { badge: "REAL HTTP",     cls: "real-http", color: "#2ecc71" };
   if (L4_TCP_FE.has(m))            return { badge: "REAL TCP",      cls: "real-tcp",  color: "#3498db" };
   if (L4_UDP_FE.has(m))            return { badge: "REAL UDP",      cls: "real-udp",  color: "#e67e22" };
@@ -146,6 +147,7 @@ const PRESETS: Preset[] = [
   { label: "WS Bomb",        method: "ws-compression-bomb", packetSize: 64,  duration: 180, delay: 0, threads: 400,  icon: "💣"  },
   { label: "GOAWAY Loop",    method: "h2-goaway-loop",      packetSize: 64,  duration: 180, delay: 0, threads: 600,  icon: "🔄"  },
   { label: "SSE Exhaust",    method: "sse-exhaust",         packetSize: 64,  duration: 300, delay: 0, threads: 300,  icon: "📡"  },
+  { label: "H3 QUIC RST",   method: "h3-rapid-reset",      packetSize: 64,  duration: 300, delay: 0, threads: 800,  icon: "⚡"  },
 ];
 
 /* ── Log counter ── */

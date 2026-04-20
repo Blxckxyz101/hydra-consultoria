@@ -92,7 +92,7 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 35v]",    description: "MAX POWER — 35 vectors: ConnFlood+Slow+H2RST+H2CONT+HPACK+WAF+WS+GQL+RUDY2+Cache+HTTPBypass+KAExhaust+H2Storm+Pipeline+H2Ping+Smuggling+TLSRenego+SSLDeath+QUIC+XMLBomb+SlowRead+RangeFlood+AppSmart+LHBomb+H2Prio+SYN+ICMP+DNS+NTP+Mem+SSDP+UDP+DoH+gRPC+H2Pri", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 40v]",    description: "MAX POWER — 40 vectors: +RapidReset0-RTT+WSBomb+GoawayLoop+SSEExhaust+H3RapidReset(QUIC) on top of all 35 originals", emoji: "👁️" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -131,6 +131,12 @@ const METHOD_OPTIONS = [
   { value: "app-smart-flood",     label: "🎯 App Smart Flood — DB Query Exhaust",     description: "POSTs to /login /search /checkout with random data — forces uncacheable DB query per request",   emoji: "🎯" },
   { value: "large-header-bomb",   label: "💣 Large Header Bomb — 16KB Overflow",      description: "16KB of randomized headers per request — exhausts HTTP parser buffer allocation on server",       emoji: "💣" },
   { value: "http2-priority-storm",label: "🌀 H2 PRIORITY Storm — Stream Reorder",     description: "PRIORITY frames force server to rebuild stream dependency tree per frame — CPU + heap OOM",       emoji: "🌀" },
+  // ── 2026 New Vectors ───────────────────────────────────────────────────
+  { value: "rapid-reset",         label: "💥 Rapid Reset Ultra [0-RTT, 2000s/burst]",  description: "CVE-2023-44487 Ultra: 2000 streams/burst, single write(), TLS 0-RTT session reuse — max RST throughput", emoji: "💥" },
+  { value: "ws-compression-bomb", label: "💣 WS Compression Bomb [1820× amp]",         description: "permessage-deflate bomb: 36 bytes → 65535 bytes server alloc per frame (1820× amplification)",          emoji: "💣" },
+  { value: "h2-goaway-loop",      label: "🔄 H2 GOAWAY Loop [5000 cycles/s]",          description: "5000 TLS+H2 teardown/setup cycles/s — forces goroutine alloc+free storm on Go/Java servers",            emoji: "🔄" },
+  { value: "sse-exhaust",         label: "📡 SSE Exhaust [18K goroutine hold]",         description: "Opens 18K Server-Sent Events connections simultaneously — holds server threads indefinitely",              emoji: "📡" },
+  { value: "h3-rapid-reset",      label: "⚡ H3 Rapid Reset [QUIC RESET_STREAM]",       description: "CVE-2023-44487 via HTTP/3 QUIC (UDP): 3-packet DCID burst → DCID alloc+stream alloc+RST in one dgram",  emoji: "⚡" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────

