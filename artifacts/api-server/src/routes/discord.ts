@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import fs   from "fs";
 import path from "path";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const router: IRouter = Router();
 
@@ -35,6 +36,15 @@ function readAccounts(): StoredAccount[] {
 function writeAccounts(list: StoredAccount[]): void {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(list, null, 2));
+}
+
+// ── Proxy-aware fetch ──────────────────────────────────────────────────────────
+type FetchLike = (url: string, opts?: RequestInit) => Promise<Response>;
+
+function makeFetch(proxyUrl?: string): FetchLike {
+  if (!proxyUrl) return (u, o) => fetch(u, o);
+  const agent = new ProxyAgent(proxyUrl);
+  return (u, o) => undiciFetch(u, { ...(o as object), dispatcher: agent }) as Promise<Response>;
 }
 
 // ── Generic helpers ────────────────────────────────────────────────────────────
@@ -220,9 +230,10 @@ async function solveCaptcha(
 // ══════════════════════════════════════════════════════════════════════════════
 //  DISCORD FINGERPRINT
 // ══════════════════════════════════════════════════════════════════════════════
-async function getDiscordFingerprint(): Promise<string | null> {
+async function getDiscordFingerprint(pf?: FetchLike): Promise<string | null> {
+  const doFetch = pf ?? fetch;
   try {
-    const r = await fetch(`${DISCORD_API_V9}/experiments`, {
+    const r = await doFetch(`${DISCORD_API_V9}/experiments`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "*/*",
@@ -298,14 +309,16 @@ interface CreateResult {
 }
 
 async function createOneAccount(
-  captchaService: string, captchaApiKey: string
+  captchaService: string, captchaApiKey: string, proxyUrl?: string
 ): Promise<CreateResult> {
+  const pf = makeFetch(proxyUrl);
+
   // 1. Get temp email
   const mail = await getTempEmail();
   if (!mail) return { status: "error", detail: "Falha ao obter email temporário" };
 
-  // 2. Get fingerprint
-  const fingerprint = await getDiscordFingerprint();
+  // 2. Get fingerprint (through same proxy so Discord sees consistent IP)
+  const fingerprint = await getDiscordFingerprint(pf);
   if (!fingerprint) return { status: "error", detail: "Falha ao obter fingerprint do Discord" };
 
   const username = randomUsername();
@@ -321,7 +334,7 @@ async function createOneAccount(
   };
 
   // 3. First registration attempt (may trigger captcha)
-  const attempt1 = await fetch(`${DISCORD_API_V9}/auth/register`, {
+  const attempt1 = await pf(`${DISCORD_API_V9}/auth/register`, {
     method: "POST",
     headers: registerHeaders(fingerprint),
     body: JSON.stringify(registerPayload),
@@ -345,17 +358,25 @@ async function createOneAccount(
       return { status: "captcha_needed", username, email: mail.full, detail: "Captcha necessário — configure a API key de captcha" };
     }
 
-    const sitekey = (body1.captcha_sitekey as string | undefined) ?? DISCORD_HCAPTCHA_SITEKEY;
-    const rqdata  = body1.captcha_rqdata as string | undefined;
+    const sitekey  = (body1.captcha_sitekey  as string | undefined) ?? DISCORD_HCAPTCHA_SITEKEY;
+    const rqdata   = body1.captcha_rqdata    as string | undefined;
+    const rqtoken  = body1.captcha_rqtoken   as string | undefined;
 
     const captchaSolution = await solveCaptcha(captchaService, captchaApiKey, sitekey, "https://discord.com/register", rqdata);
     if (!captchaSolution) return { status: "error", username, email: mail.full, detail: "Falha ao resolver captcha" };
 
-    // 4. Retry registration with captcha solution
-    const attempt2 = await fetch(`${DISCORD_API_V9}/auth/register`, {
+    // 4. Retry registration with captcha solution + rqtoken
+    const retryPayload: Record<string, unknown> = {
+      ...registerPayload,
+      captcha_key:     captchaSolution,
+      captcha_rqtoken: rqtoken ?? undefined,
+    };
+    if (!rqtoken) delete retryPayload.captcha_rqtoken;
+
+    const attempt2 = await pf(`${DISCORD_API_V9}/auth/register`, {
       method: "POST",
       headers: registerHeaders(fingerprint),
-      body: JSON.stringify({ ...registerPayload, captcha_key: captchaSolution }),
+      body: JSON.stringify(retryPayload),
     });
 
     const body2 = await attempt2.json() as Record<string, unknown>;
@@ -365,7 +386,7 @@ async function createOneAccount(
     }
 
     const errMsg2 = extractDiscordError(body2, attempt2.status);
-    return { status: "error", username, email: mail.full, detail: `Registro falhou: ${errMsg2}` };
+    return { status: "error", username, email: mail.full, detail: `Registro falhou (pós-captcha): ${errMsg2}` };
   }
 
   // Other error (username taken, rate limit, etc.)
@@ -472,23 +493,25 @@ router.post("/discord/accounts/verify", async (_req, res) => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // POST /api/discord/accounts/create
-// body: { count, captchaService, captchaApiKey, delay }
+// body: { count, captchaService, captchaApiKey, delay, proxy }
 router.post("/discord/accounts/create", async (req, res) => {
   const {
     count          = 1,
     captchaService = "2captcha",
     captchaApiKey  = "",
     delay          = 3000,
-  } = req.body as { count?: number; captchaService?: string; captchaApiKey?: string; delay?: number };
+    proxy          = "",
+  } = req.body as { count?: number; captchaService?: string; captchaApiKey?: string; delay?: number; proxy?: string };
 
   const safeCount = Math.max(1, Math.min(count, 20));
   const safeDelay = Math.max(2000, delay);
+  const proxyUrl  = proxy.trim() || undefined;
 
   const existing = readAccounts();
   const results: Array<CreateResult & { saved: boolean }> = [];
 
   for (let i = 0; i < safeCount; i++) {
-    const result = await createOneAccount(captchaService, captchaApiKey.trim());
+    const result = await createOneAccount(captchaService, captchaApiKey.trim(), proxyUrl);
     let saved = false;
 
     if (result.status === "ok" && result.token) {

@@ -810,6 +810,7 @@ function Panel() {
   const [dCreateCount,      setDCreateCount]      = useState(1);
   const [dCreateService,    setDCreateService]    = useState<"2captcha" | "capmonster">("2captcha");
   const [dCreateApiKey,     setDCreateApiKey]     = useState("");
+  const [dCreateProxy,      setDCreateProxy]      = useState("");
   const [dCreateDelay,      setDCreateDelay]      = useState(3000);
   const [dCreateLoading,    setDCreateLoading]    = useState(false);
   const [dCreateResults,    setDCreateResults]    = useState<CreateAccResult[]>([]);
@@ -3817,9 +3818,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     <span className="lb-cred-section-icon">⚡</span>
                     <h3 className="lb-cred-section-title" style={{ color: "#7289da" }}>Criar Contas Automaticamente</h3>
                   </div>
-                  <p style={{ fontSize: 11, color: "#999", marginBottom: 12, lineHeight: 1.5 }}>
-                    Registra contas reais no Discord usando emails temporários. Requer API key de captcha (2captcha ou capmonster) para funcionar em IPs de datacenter.
+                  <p style={{ fontSize: 11, color: "#999", marginBottom: 8, lineHeight: 1.5 }}>
+                    Registra contas reais no Discord usando emails temporários.
                   </p>
+                  <div style={{ background: "rgba(255,193,7,0.06)", border: "1px solid rgba(255,193,7,0.25)", borderRadius: 6, padding: "7px 10px", marginBottom: 12, fontSize: 11, color: "#cca300", lineHeight: 1.6 }}>
+                    ⚠️ <strong>Requisitos:</strong> (1) <strong>API key de captcha</strong> — 2captcha (~$3/1000) ou CapMonster (~$0.50/1000). (2) <strong>Proxy HTTP residencial</strong> — evita bloqueio de IP de datacenter. Sem proxy, Discord pode rejeitar mesmo com captcha resolvido.
+                  </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                     <div>
@@ -3863,15 +3867,27 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   </div>
 
                   <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
-                    API Key do captcha <span style={{ color: "#666" }}>(opcional — tenta sem se vazio)</span>
+                    API Key do captcha <span style={{ color: "#666" }}>(necessária em IPs de datacenter)</span>
                   </label>
                   <input
                     className="lb-input"
                     type="password"
-                    style={{ width: "100%", marginBottom: 10, fontFamily: "var(--font-mono)", fontSize: 11 }}
-                    placeholder="Sua API key..."
+                    style={{ width: "100%", marginBottom: 8, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                    placeholder="Sua API key do 2captcha / capmonster..."
                     value={dCreateApiKey}
                     onChange={e => setDCreateApiKey(e.target.value)}
+                  />
+
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 3 }}>
+                    Proxy HTTP/S residencial <span style={{ color: "#666" }}>(recomendado para evitar bloqueio)</span>
+                  </label>
+                  <input
+                    className="lb-input"
+                    type="text"
+                    style={{ width: "100%", marginBottom: 10, fontFamily: "var(--font-mono)", fontSize: 11 }}
+                    placeholder="http://user:pass@host:port"
+                    value={dCreateProxy}
+                    onChange={e => setDCreateProxy(e.target.value)}
                   />
 
                   {/* Progress bar */}
@@ -3904,6 +3920,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                           captchaService: dCreateService,
                           captchaApiKey: dCreateApiKey,
                           delay: dCreateDelay,
+                          proxy: dCreateProxy,
                         }),
                       })
                         .then(r => r.json())
