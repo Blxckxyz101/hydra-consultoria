@@ -817,6 +817,7 @@ function Panel() {
   const [dCreateDelay,      setDCreateDelay]      = useState(3000);
   const [dCreateLoading,    setDCreateLoading]    = useState(false);
   const [dFetchingProxy,    setDFetchingProxy]    = useState(false);
+  const [dShowMyIPGuide,   setDShowMyIPGuide]   = useState(false);
   const [dCreateResults,    setDCreateResults]    = useState<CreateAccResult[]>([]);
   const [dCreateProgress,   setDCreateProgress]   = useState(0);
 
@@ -3969,6 +3970,67 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   {dUseResidential && (
                     <div style={{ background: "rgba(46,204,113,0.06)", border: "1px solid rgba(46,204,113,0.2)", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 11, color: "#2ecc71", lineHeight: 1.5 }}>
                       🏠 Usando proxy residencial configurado (proxy.proxying.io) — IPs residenciais têm maior chance de passar sem captcha.
+                    </div>
+                  )}
+
+                  {/* "Use My IP" guide toggle */}
+                  <button
+                    onClick={() => setDShowMyIPGuide(v => !v)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#5865f2", fontSize: 11, padding: "2px 0", marginBottom: dShowMyIPGuide ? 6 : 4, display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    {dShowMyIPGuide ? "▼" : "▶"} 🏠 Como usar meu próprio IP para criar contas?
+                  </button>
+
+                  {dShowMyIPGuide && (
+                    <div style={{ background: "rgba(88,101,242,0.06)", border: "1px solid rgba(88,101,242,0.25)", borderRadius: 8, padding: "12px 14px", marginBottom: 10, fontSize: 11, lineHeight: 1.8 }}>
+                      <div style={{ color: "#7289da", fontWeight: 700, marginBottom: 8, fontSize: 12 }}>🏠 Usar seu IP residencial (grátis)</div>
+                      <div style={{ color: "#aaa", marginBottom: 10 }}>
+                        Seu IP de casa é residencial e o Discord aceita. Precisamos rodar um mini-proxy na sua máquina e expor com ngrok para o servidor conseguir rotear as requisições pelo seu IP.
+                      </div>
+
+                      <div style={{ color: "#ccc", fontWeight: 600, marginBottom: 4 }}>Passo 1 — Instalar o proxy (Python):</div>
+                      {(["pip install proxy.py", "proxy --port 8899 --log-level ERROR"] as string[]).map((cmd, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <code style={{ flex: 1, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "3px 8px", fontFamily: "var(--font-mono)", color: "#98c379", fontSize: 11 }}>
+                            {cmd}
+                          </code>
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(cmd); addLog(`📋 Copiado: ${cmd}`, "info"); }}
+                            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, color: "#888", cursor: "pointer", padding: "2px 7px", fontSize: 10, whiteSpace: "nowrap" }}
+                          >
+                            📋
+                          </button>
+                        </div>
+                      ))}
+
+                      <div style={{ color: "#ccc", fontWeight: 600, margin: "10px 0 4px" }}>Passo 2 — Expor com ngrok <span style={{ color: "#666", fontWeight: 400 }}>(outro terminal)</span>:</div>
+                      {(["ngrok tcp 8899"] as string[]).map((cmd, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <code style={{ flex: 1, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, padding: "3px 8px", fontFamily: "var(--font-mono)", color: "#98c379", fontSize: 11 }}>
+                            {cmd}
+                          </code>
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(cmd); addLog(`📋 Copiado: ${cmd}`, "info"); }}
+                            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, color: "#888", cursor: "pointer", padding: "2px 7px", fontSize: 10, whiteSpace: "nowrap" }}
+                          >
+                            📋
+                          </button>
+                        </div>
+                      ))}
+
+                      <div style={{ color: "#aaa", marginTop: 8 }}>
+                        O ngrok vai mostrar algo como <code style={{ color: "#e5c07b", background: "rgba(0,0,0,0.3)", padding: "1px 5px", borderRadius: 3 }}>tcp://0.tcp.ngrok.io:12345</code><br/>
+                        Cole no campo Proxy acima como: <code style={{ color: "#e5c07b", background: "rgba(0,0,0,0.3)", padding: "1px 5px", borderRadius: 3 }}>http://0.tcp.ngrok.io:12345</code><br/>
+                        Depois clique em <b style={{ color: "#2ecc71" }}>🔍 Testar</b> para confirmar que funciona.
+                      </div>
+
+                      <div style={{ marginTop: 10, padding: "6px 10px", background: "rgba(255,200,0,0.07)", border: "1px solid rgba(255,200,0,0.2)", borderRadius: 5, color: "#ffc800" }}>
+                        ⚠️ <b>Python</b>: python.org &nbsp;|&nbsp; <b>ngrok</b>: ngrok.com (grátis, requer conta) &nbsp;|&nbsp; Use <code>ngrok tcp</code> (não <code>http</code>) para HTTPS funcionar.
+                      </div>
+
+                      <div style={{ marginTop: 8, color: "#666", fontSize: 10 }}>
+                        Sem Python? Alternativa Node.js: <code style={{ color: "#98c379" }}>npx hoxy --port 8899</code> &nbsp;|&nbsp; Ou qualquer proxy HTTP/SOCKS5 local (Fiddler, Charles, etc.)
+                      </div>
                     </div>
                   )}
 
