@@ -607,6 +607,30 @@ router.post("/discord/accounts", async (req, res) => {
   res.json({ added: results.filter(r => r.status !== "duplicate").length, results });
 });
 
+// POST /api/discord/accounts/save-browser — saves a token created by the browser (with email+password)
+router.post("/discord/accounts/save-browser", async (req, res) => {
+  const { token, email, password } = req.body as { token?: string; email?: string; password?: string };
+  if (!token?.trim()) { res.status(400).json({ error: "token obrigatório" }); return; }
+  const existing = readAccounts();
+  if (existing.find(a => a.token === token)) { res.json({ ok: true, status: "duplicate" }); return; }
+  const info = await fetchUserInfo(token);
+  const acc: StoredAccount = {
+    id:            info?.id ?? `browser_${Date.now()}`,
+    username:      info?.username ?? "unknown",
+    discriminator: info?.discriminator ?? "0",
+    avatar:        info?.avatar ?? null,
+    token,
+    email:         email ?? undefined,
+    password:      password ?? undefined,
+    addedAt:       Date.now(),
+    status:        info ? "ok" : "unknown",
+    createdAuto:   true,
+  };
+  existing.push(acc);
+  writeAccounts(existing);
+  res.json({ ok: true, status: info ? "ok" : "unknown", username: acc.username });
+});
+
 // DELETE /api/discord/accounts/:id
 router.delete("/discord/accounts/:id", (req, res) => {
   writeAccounts(readAccounts().filter(a => a.id !== req.params.id));

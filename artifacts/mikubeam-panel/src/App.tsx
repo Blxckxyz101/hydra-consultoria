@@ -820,6 +820,9 @@ function Panel() {
   const [dShowMyIPGuide,   setDShowMyIPGuide]   = useState(false);
   const [dCreateResults,    setDCreateResults]    = useState<CreateAccResult[]>([]);
   const [dCreateProgress,   setDCreateProgress]   = useState(0);
+  const [dBrowserMode,      setDBrowserMode]      = useState(false);
+  const [dHCaptchaModal,    setDHCaptchaModal]    = useState<{ sitekey: string; rqdata?: string } | null>(null);
+  const dHCaptchaResolveRef = useRef<((token: string | null) => void) | null>(null);
 
   /* Site checker */
   const [checkerUrl, setCheckerUrl] = useState("");
@@ -1027,6 +1030,109 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     setToasts(prev => [...prev.slice(-3), { id, type, title, msg }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4200);
   }, []);
+
+  /* ── Browser-side Discord account creation ── */
+  // Runs entirely in the user's browser → uses their residential IP
+  const DISCORD_SUPER_PROPS_B64 = btoa(JSON.stringify({
+    os: "Windows", browser: "Chrome", device: "", system_locale: "en-US",
+    browser_user_agent: navigator.userAgent,
+    browser_version: "136.0.0.0", os_version: "10",
+    referrer: "", referring_domain: "", referrer_current: "", referring_domain_current: "",
+    release_channel: "stable", client_build_number: 531702, client_event_source: null,
+  }));
+
+  const solveCaptchaInBrowser = useCallback((sitekey: string, rqdata?: string): Promise<string | null> => {
+    return new Promise(resolve => {
+      dHCaptchaResolveRef.current = resolve;
+      setDHCaptchaModal({ sitekey, rqdata });
+    });
+  }, []);
+
+  const browserCreateOneAccount = useCallback(async (): Promise<CreateAccResult> => {
+    try {
+      // 1. Get temp email directly from GuerrillaEmail (CORS: *)
+      const emResp = await fetch("https://api.guerrillamail.com/ajax.php?f=get_email_address");
+      if (!emResp.ok) return { status: "error", detail: "Falha ao obter email temporário", saved: false };
+      const emData = await emResp.json() as { email_addr?: string; sid_token?: string };
+      const email = emData.email_addr ?? "";
+      if (!email) return { status: "error", detail: "GuerrillaEmail não retornou endereço", saved: false };
+
+      // 2. Get Discord fingerprint (CORS: allow-origin: origin)
+      const fpResp = await fetch("https://discord.com/api/v10/experiments", {
+        headers: { "User-Agent": navigator.userAgent, "X-Super-Properties": DISCORD_SUPER_PROPS_B64 },
+      });
+      const fingerprint = fpResp.headers.get("x-fingerprint") ?? "";
+
+      // 3. Generate credentials
+      const adj = ["Shadow","Storm","Night","Dark","Blade","Iron","Ghost","Silver","Void","Ember"];
+      const noun = ["Knight","Reaper","Wolf","Hawk","Fox","Raven","Dragon","Titan","Specter","Phantom"];
+      const username = adj[Math.floor(Math.random()*adj.length)] + noun[Math.floor(Math.random()*noun.length)] + Math.floor(Math.random()*9999);
+      const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%";
+      const password = Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+      const year = 1990 + Math.floor(Math.random() * 20);
+      const dob = `${year}-${String(Math.floor(Math.random()*12)+1).padStart(2,"0")}-${String(Math.floor(Math.random()*27)+1).padStart(2,"0")}`;
+
+      const basePayload: Record<string, unknown> = {
+        username, email, password, date_of_birth: dob, consent: true, fingerprint,
+        gift_code_sku_id: null, promotional_email_opt_in: false,
+      };
+      const baseHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "User-Agent": navigator.userAgent,
+        "X-Super-Properties": DISCORD_SUPER_PROPS_B64,
+        "X-Fingerprint": fingerprint,
+        "X-Discord-Locale": "en-US",
+      };
+
+      // 4. First registration attempt
+      const attempt1 = await fetch("https://discord.com/api/v10/auth/register", {
+        method: "POST", headers: baseHeaders, body: JSON.stringify(basePayload),
+      });
+      const body1 = await attempt1.json() as Record<string, unknown>;
+
+      if (body1.token) {
+        const token = body1.token as string;
+        await fetch(`${BASE}/api/discord/accounts/save-browser`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, email, password }) });
+        return { status: "ok", username, email, password, detail: "✅ Conta criada via browser (sem captcha)!", saved: true };
+      }
+
+      if (attempt1.status === 429) {
+        const retry = (body1.retry_after as number) ?? 120;
+        return { status: "error", detail: `Seu IP foi rate-limitado pelo Discord (${Math.ceil(retry)}s). Aguarde e tente novamente.`, saved: false };
+      }
+
+      const captchaKeys = body1.captcha_key as string[] | string | undefined;
+      const needCaptcha = Array.isArray(captchaKeys)
+        ? captchaKeys.some((k: string) => k.includes("captcha"))
+        : typeof captchaKeys === "string" && captchaKeys.includes("captcha");
+
+      if (needCaptcha || body1.captcha_sitekey) {
+        const sitekey = (body1.captcha_sitekey as string) ?? "a9b5fb07-92ff-493f-86fe-352a2803b3df";
+        const rqdata = body1.captcha_rqdata as string | undefined;
+        addLog(`🔐 Captcha necessário — resolva o hCaptcha abaixo`, "warn");
+        const solution = await solveCaptchaInBrowser(sitekey, rqdata);
+        if (!solution) return { status: "error", detail: "Captcha cancelado pelo usuário", saved: false };
+
+        const attempt2 = await fetch("https://discord.com/api/v10/auth/register", {
+          method: "POST",
+          headers: { ...baseHeaders, "X-Captcha-Key": solution, ...(rqdata ? { "X-Captcha-Rqtoken": rqdata } : {}) },
+          body: JSON.stringify({ ...basePayload, captcha_key: solution }),
+        });
+        const body2 = await attempt2.json() as Record<string, unknown>;
+        if (body2.token) {
+          const token = body2.token as string;
+          await fetch(`${BASE}/api/discord/accounts/save-browser`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, email, password }) });
+          return { status: "ok", username, email, password, detail: "✅ Conta criada via browser (captcha manual)!", saved: true };
+        }
+        return { status: "error", detail: `Falha após captcha: ${body2.message ?? JSON.stringify(body2).slice(0, 80)}`, saved: false };
+      }
+
+      const errMsg = body1.message ?? (Array.isArray(body1.email) ? (body1.email as string[])[0] : undefined) ?? JSON.stringify(body1).slice(0, 100);
+      return { status: "error", detail: `Registro falhou: ${errMsg}`, saved: false };
+    } catch (e) {
+      return { status: "error", detail: `Erro: ${String(e)}`, saved: false };
+    }
+  }, [BASE, DISCORD_SUPER_PROPS_B64, addLog, solveCaptchaInBrowser]);
 
   /* ── Domain score helper ── */
   const recordDomainScore = useCallback((targetUrl: string, attackMethod: string, success: boolean) => {
@@ -2527,6 +2633,51 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       <GeassEye intensity={eyeIntensity} />
       {geassFlash && <div className="lb-geass-flash" aria-hidden="true" />}
       {isRunning && method === "geass-override" && <GeassParticles />}
+
+      {/* ── hCaptcha modal for browser-side account creation ── */}
+      {dHCaptchaModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <div style={{ background: "#1a1a2e", border: "1px solid rgba(88,101,242,0.4)", borderRadius: 12, padding: "24px 28px", maxWidth: 420, width: "90%", textAlign: "center" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#7289da", marginBottom: 8 }}>🔐 Verificação hCaptcha</div>
+            <div style={{ fontSize: 12, color: "#aaa", marginBottom: 16 }}>
+              O Discord exigiu um captcha. Resolva abaixo usando <b style={{ color: "#ccc" }}>seu IP</b> — assim o token vai funcionar.
+            </div>
+            <div
+              id="hcaptcha-container"
+              ref={el => {
+                if (!el || el.childElementCount > 0) return;
+                const script = document.createElement("script");
+                script.src = "https://js.hcaptcha.com/1/api.js?render=explicit";
+                script.async = true;
+                script.onload = () => {
+                  (window as unknown as { hcaptcha: { render: (el: HTMLElement, opts: Record<string,unknown>) => void } }).hcaptcha.render(el, {
+                    sitekey: dHCaptchaModal.sitekey,
+                    ...(dHCaptchaModal.rqdata ? { rqdata: dHCaptchaModal.rqdata } : {}),
+                    callback: (token: string) => {
+                      setDHCaptchaModal(null);
+                      if (dHCaptchaResolveRef.current) { dHCaptchaResolveRef.current(token); dHCaptchaResolveRef.current = null; }
+                    },
+                    "error-callback": () => {
+                      setDHCaptchaModal(null);
+                      if (dHCaptchaResolveRef.current) { dHCaptchaResolveRef.current(null); dHCaptchaResolveRef.current = null; }
+                    },
+                    theme: "dark",
+                    size: "normal",
+                  });
+                };
+                document.head.appendChild(script);
+              }}
+              style={{ display: "flex", justifyContent: "center", minHeight: 78 }}
+            />
+            <button
+              onClick={() => { setDHCaptchaModal(null); if (dHCaptchaResolveRef.current) { dHCaptchaResolveRef.current(null); dHCaptchaResolveRef.current = null; } }}
+              style={{ marginTop: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 6, color: "#888", cursor: "pointer", padding: "6px 18px", fontSize: 12 }}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Toast container ── */}
       {toasts.length > 0 && (
@@ -4046,6 +4197,37 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       </div>
                     </div>
                   )}
+
+                  {/* Browser mode button — uses user's IP directly */}
+                  <button
+                    className="lb-btn lb-btn--gold"
+                    style={{ width: "100%", padding: "9px", marginBottom: 6, background: "linear-gradient(135deg, rgba(46,204,113,0.25), rgba(46,204,113,0.12))", borderColor: "rgba(46,204,113,0.5)", color: "#2ecc71" }}
+                    disabled={dCreateLoading}
+                    onClick={async () => {
+                      setDCreateLoading(true);
+                      setDCreateResults([]);
+                      setDCreateProgress(0);
+                      addLog(`🌐 Iniciando criação de ${dCreateCount} conta(s) via browser (seu IP)...`, "info");
+                      let created = 0;
+                      for (let i = 0; i < dCreateCount; i++) {
+                        const r = await browserCreateOneAccount();
+                        setDCreateProgress(i + 1);
+                        setDCreateResults(prev => [...prev, r]);
+                        if (r.status === "ok") {
+                          created++;
+                          addLog(`✅ Conta ${i + 1}/${dCreateCount}: ${r.username} — ${r.email}`, "success");
+                          loadDAccounts();
+                        } else {
+                          addLog(`❌ Conta ${i + 1}/${dCreateCount}: ${r.detail}`, "error");
+                        }
+                        if (i < dCreateCount - 1) await new Promise(res => setTimeout(res, dCreateDelay));
+                      }
+                      addLog(`🌐 Criação via browser: ${created}/${dCreateCount} conta(s) criada(s)`, created > 0 ? "success" : "error");
+                      setDCreateLoading(false);
+                    }}
+                  >
+                    {dCreateLoading ? `⏳ Criando...` : `🌐 Via Browser (Seu IP) — ${dCreateCount} Conta(s)`}
+                  </button>
 
                   <button
                     className="lb-btn lb-btn--gold"
