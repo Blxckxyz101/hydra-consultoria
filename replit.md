@@ -291,21 +291,19 @@ New route (`artifacts/api-server/src/routes/dns.ts`):
 - API-level errors shown in orange embed; network errors shown in red embed
 - Token stored in `DARKFLOW_TOKEN` shared env var
 
-#### v5.0 — SKYNETchat Integration + Checker Bug Fix
+#### v5.0 — `/sky` Command (SKYNETchat) + Checker Bug Fix
 
-**Discord Bot — Lelouch AI v5 (SKYNETchat Provider):**
-- **`artifacts/discord-bot/src/skynetchat.ts`** — New client for SKYNETchat (`https://skynetchat.net/api/chat-V3`).
-  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var (user copies cookie from browser after login).
-  - How to get cookie: Log into skynetchat.net → DevTools → Application → Cookies → copy all pairs as `name=value; name2=value2`.
-  - Parses Vercel AI SDK Data Stream Protocol SSE: `data: 0:"text chunk"` (new format) and `data: {"type":"text-delta","textDelta":"..."}` (legacy).
-  - Handles both `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking` endpoints.
-  - Returns `null` on auth failure / network error (triggers Groq fallback automatically).
-- **`lelouch-ai.ts` upgraded to v5** — 3-provider priority chain in `askLelouch()`:
-  1. SKYNETchat (if `SKYNETCHAT_COOKIE` is set) — tried first, falls back if null/error
-  2. Groq `llama-3.3-70b-versatile` — primary Groq model
-  3. Groq `llama-3.1-8b-instant` — fallback on model errors only
-  - New helper `buildSkynetMessages()` wraps history + systemPrompt into `SkynetMessage[]`.
-  - `askLelouch()` now works if only `SKYNETCHAT_COOKIE` is set (no `GROQ_API_KEY` needed).
+**Discord Bot — `/sky` Slash Command:**
+- **`artifacts/discord-bot/src/skynetchat.ts`** — Dedicated client for SKYNETchat (`https://skynetchat.net/api/chat-V3`).
+  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var (copy from browser after login to skynetchat.net → DevTools → Application → Cookies).
+  - Parses Vercel AI SDK Data Stream Protocol SSE: `data: 0:"text chunk"` (new format) + `data: {"type":"text-delta","textDelta":"..."}` (legacy).
+  - Endpoints supported: `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking`.
+  - Returns `null` on missing cookie, auth failure, or network error.
+- **`/sky` slash command** added to `artifacts/discord-bot/src/index.ts`:
+  - `/sky ask message:<text> [model:<endpoint>]` — sends a message and streams the reply into embeds.
+  - `/sky status` — checks if `SKYNETCHAT_COOKIE` is configured and runs a connectivity test.
+  - Supports multi-chunk replies (splits at 4000 chars, max 10 Discord embeds per message).
+  - **`lelouch-ai.ts` remains at v4** — SKYNETchat is intentionally kept separate, not merged into `/lelouch ask`.
 
 **Checker Bug Fix (`artifacts/api-server/src/routes/checker.ts`):**
 - **`sseSubscribe` paused-job bug fixed**: Previously `if (job.status !== "running") return` was applied unconditionally — clients reconnecting to a **paused** job would receive the buffer replay but never register as subscribers, missing all events after resume/completion. Fixed: only returns early for terminal states (`done`/`stopped`), not for `paused`.

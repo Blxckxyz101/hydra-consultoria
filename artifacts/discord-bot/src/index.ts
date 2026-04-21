@@ -38,6 +38,7 @@ import {
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
+import { askSkynet, isSkynetConfigured } from "./skynetchat.js";
 import { handleVoice } from "./voice.js";
 import {
   buildAttackEmbed,
@@ -736,6 +737,35 @@ const COMMANDS = [
             .setDescription("Filtrar por usuário (padrão: você mesmo)")
             .setRequired(false)
         )
+    ),
+
+  // ── /sky ──────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("sky")
+    .setDescription("🛰️ SKYNETchat — IA alternativa via skynetchat.net (requer SKYNETCHAT_COOKIE)")
+    .addSubcommand(sub =>
+      sub.setName("ask")
+        .setDescription("💬 Enviar uma mensagem ao SKYNETchat")
+        .addStringOption(opt =>
+          opt.setName("message")
+            .setDescription("Sua mensagem / pergunta")
+            .setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("model")
+            .setDescription("Endpoint / modelo a usar (padrão: chat-V3)")
+            .setRequired(false)
+            .addChoices(
+              { name: "⚡ chat-V3 (padrão)",         value: "chat-V3"          },
+              { name: "🚀 chat-V2-fast (rápido)",     value: "chat-V2-fast"     },
+              { name: "🧠 chat-V2-thinking",          value: "chat-V2-thinking" },
+              { name: "🔭 chat-V3-thinking (lento)",  value: "chat-V3-thinking" },
+            )
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("status")
+        .setDescription("🔍 Verificar se SKYNETCHAT_COOKIE está configurado e testar conexão")
     ),
 
 ].map(c => c.toJSON());
@@ -4814,6 +4844,156 @@ async function handleConsulta(interaction: ChatInputCommandInteraction): Promise
   await interaction.editReply({ embeds: embeds.slice(0, 10) });
 }
 
+// ── /sky — SKYNETchat direct interface ────────────────────────────────────────
+async function handleSky(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+
+  // ── /sky status ─────────────────────────────────────────────────────────────
+  if (sub === "status") {
+    const configured = isSkynetConfigured();
+
+    if (!configured) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.RED)
+            .setTitle("🛰️ SKYNETCHAT — NÃO CONFIGURADO")
+            .setDescription(
+              "**`SKYNETCHAT_COOKIE` não está definido no ambiente.**\n\n" +
+              "Para ativar:\n" +
+              "1. Faça login em https://skynetchat.net no seu navegador\n" +
+              "2. Abra DevTools → Application → Cookies → `skynetchat.net`\n" +
+              "3. Copie todos os pares `nome=valor; nome2=valor2`\n" +
+              "4. Defina como segredo `SKYNETCHAT_COOKIE` no painel do Replit"
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Quick connectivity test with a minimal message
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const start = Date.now();
+    const testReply = await askSkynet([{ role: "user", content: "Diga apenas: online" }]);
+    const elapsed = Date.now() - start;
+
+    if (!testReply) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.ORANGE)
+            .setTitle("🛰️ SKYNETCHAT — COOKIE EXPIRADO OU ERRO")
+            .setDescription(
+              "O `SKYNETCHAT_COOKIE` está definido mas a API não respondeu.\n\n" +
+              "**Possíveis causas:**\n" +
+              "• Cookie de sessão expirado (faça login novamente)\n" +
+              "• Cloudflare bloqueando requisições do servidor\n" +
+              "• SKYNETchat offline / em manutenção"
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.GREEN)
+          .setTitle("🛰️ SKYNETCHAT — ONLINE ✅")
+          .setDescription(`**Cookie:** configurado\n**Latência:** \`${elapsed}ms\`\n**Resposta de teste:** ${testReply.slice(0, 200)}`)
+          .addFields(
+            { name: "📡 Endpoints disponíveis", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`", inline: false },
+            { name: "💬 Como usar", value: "`/sky ask message:<sua pergunta>`", inline: false },
+          )
+          .setFooter({ text: AUTHOR })
+          .setTimestamp(),
+      ],
+    });
+    return;
+  }
+
+  // ── /sky ask ─────────────────────────────────────────────────────────────────
+  if (sub === "ask") {
+    if (!isSkynetConfigured()) {
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.RED)
+            .setTitle("🛰️ SKYNETCHAT — NÃO CONFIGURADO")
+            .setDescription("O segredo `SKYNETCHAT_COOKIE` não está definido.\nUse `/sky status` para ver as instruções de configuração.")
+            .setFooter({ text: AUTHOR }),
+        ],
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    const message  = interaction.options.getString("message", true);
+    const endpoint = (interaction.options.getString("model") ?? "chat-V3") as Parameters<typeof askSkynet>[1];
+
+    await interaction.deferReply();
+
+    const start = Date.now();
+    let reply: string | null = null;
+    let errorMsg = "";
+
+    try {
+      reply = await askSkynet([{ role: "user", content: message }], endpoint);
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : String(e);
+    }
+
+    const elapsed = Date.now() - start;
+
+    if (!reply) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.RED)
+            .setTitle("🛰️ SKYNETCHAT — FALHA")
+            .setDescription(
+              errorMsg
+                ? `**Erro:** \`${errorMsg.slice(0, 300)}\``
+                : "SKYNETchat não retornou resposta. O cookie pode estar expirado ou a API offline.\nUse `/sky status` para diagnosticar."
+            )
+            .setFooter({ text: `${AUTHOR} • Endpoint: ${endpoint} • ${elapsed}ms` })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
+
+    // Split long replies (Discord embed limit 4096)
+    const chunks: string[] = [];
+    let remaining = reply;
+    while (remaining.length > 0) {
+      chunks.push(remaining.slice(0, 4000));
+      remaining = remaining.slice(4000);
+    }
+
+    const embeds = chunks.map((chunk, i) =>
+      new EmbedBuilder()
+        .setColor(0x1a1a2e) // dark navy
+        .setTitle(i === 0 ? "🛰️ SKYNETCHAT" : null)
+        .setDescription(chunk)
+        .setFooter(i === chunks.length - 1 ? { text: `${AUTHOR} • ${endpoint} • ${elapsed}ms` } : null)
+        .setTimestamp(i === chunks.length - 1 ? new Date() : undefined)
+    );
+
+    // Add user question as first embed field (only on first embed)
+    if (embeds[0]) {
+      embeds[0].addFields({ name: "💬 Pergunta", value: message.slice(0, 1024), inline: false });
+    }
+
+    await interaction.editReply({ embeds });
+  }
+}
+
 // ── /url — Credential DB domain search + auto-checker ─────────────────────────
 async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void> {
   const callerId   = interaction.user.id;
@@ -5584,6 +5764,8 @@ async function main(): Promise<void> {
         await handleVoice(interaction);
       } else if (commandName === "nitro") {
         await handleNitro(interaction);
+      } else if (commandName === "sky") {
+        await handleSky(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
