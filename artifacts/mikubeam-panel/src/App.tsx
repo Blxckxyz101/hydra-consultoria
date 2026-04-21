@@ -3656,6 +3656,26 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     );
                   })}
 
+                  {/* Subdomains */}
+                  {(() => {
+                    const subs = dnsResult.subdomains as string[] ?? [];
+                    if (!Array.isArray(subs) || subs.length === 0) return null;
+                    return (
+                      <section className="lb-cred-section" style={{ marginBottom: 8 }}>
+                        <div className="lb-cred-section-header">
+                          <span className="lb-cred-section-icon">&#x1F52D;</span>
+                          <h3 className="lb-cred-section-title">Subdom{"\u00ED"}nios Encontrados</h3>
+                          <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{subs.length} hit{subs.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        {subs.map((s, i) => (
+                          <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
+                        ))}
+                      </section>
+                    );
+                  })()}
+
+                  {/* Secondary DNS sections — wrapped in Fragment to avoid TS depth-limit on 3rd direct child */}
+                  <>
                   {/* NS Details with IPs */}
                   {(() => {
                     const nsDetails = dnsResult.nsDetails as Array<{ name: string; ips: string[]; providers: string[] }> ?? [];
@@ -3663,8 +3683,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     return (
                       <section className="lb-cred-section" style={{ marginBottom: 8 }}>
                         <div className="lb-cred-section-header">
-                          <span className="lb-cred-section-icon">🖧</span>
-                          <h3 className="lb-cred-section-title">NS Servers — Todos IPs</h3>
+                          <span className="lb-cred-section-icon">&#x1F5A7;</span>
+                          <h3 className="lb-cred-section-title">NS Servers &mdash; Todos IPs</h3>
                         </div>
                         {nsDetails.map((ns, i) => (
                           <div key={i} style={{ marginBottom: 6, padding: "8px 10px", background: "rgba(0,0,0,0.25)", borderRadius: 6 }}>
@@ -3680,20 +3700,6 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       </section>
                     );
                   })()}
-
-                  {/* Subdomains */}
-                  {(Array.isArray(dnsResult.subdomains) ? (dnsResult.subdomains as string[]) : []).length > 0 && (
-                    <section className="lb-cred-section" style={{ marginBottom: 8 }}>
-                      <div className="lb-cred-section-header">
-                        <span className="lb-cred-section-icon">🔭</span>
-                        <h3 className="lb-cred-section-title">Subdomínios Encontrados</h3>
-                        <span style={{ marginLeft: "auto", fontSize: 11, color: "#2ecc71", fontWeight: 700 }}>{(dnsResult.subdomains as string[]).length} hit{(dnsResult.subdomains as string[]).length !== 1 ? "s" : ""}</span>
-                      </div>
-                      {(dnsResult.subdomains as string[]).map((s: string, i: number) => (
-                        <code key={i} style={{ display: "block", padding: "4px 8px", background: "rgba(46,204,113,0.07)", borderLeft: "2px solid rgba(46,204,113,0.4)", borderRadius: 4, fontSize: 11, color: "#e8e8e8", marginBottom: 3 }}>{s}</code>
-                      ))}
-                    </section>
-                  )}
 
                   {/* AXFR */}
                   {(() => {
@@ -3752,6 +3758,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       </code>
                     </section>
                   )}
+                  </>
                 </div>
               )}
             </div>

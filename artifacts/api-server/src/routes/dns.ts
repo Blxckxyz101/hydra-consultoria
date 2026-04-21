@@ -84,7 +84,7 @@ async function attemptAXFR(nsIP: string, domain: string): Promise<string[]> {
 
     socket.on("data", (chunk) => {
       // Parse minimal response — check ANCOUNT > 0 (zone transfer allowed)
-      if (chunk.length > 5 && chunk.readUInt16BE(4) > 0) {
+      if (chunk.length > 5 && Buffer.isBuffer(chunk) && chunk.readUInt16BE(4) > 0) {
         results.push("Zone transfer ALLOWED — AXFR succeeded!");
       } else {
         results.push("AXFR refused (RCODE=5) or empty zone");
