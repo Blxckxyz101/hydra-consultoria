@@ -1,16 +1,17 @@
 /**
- * LELOUCH VI BRITANNIA — AI PERSONALITY MODULE v4
+ * LELOUCH VI BRITANNIA — AI PERSONALITY MODULE v5
  *
- * Model: Groq llama-3.3-70b-versatile (primary) + llama-3.1-8b-instant (fallback)
- * Universal knowledge — handles any topic with Lelouch's exact personality.
- * Persistent global memory — learns topics across all conversations.
- * Multi-pattern topic extraction — learns from questions, discussions, code snippets.
- * Chain-of-thought prompting — Lelouch thinks before speaking, always strategically.
- * Adaptive personality — adjusts tone based on server context.
- * TTL-based session expiry — history auto-cleared after 30 min of inactivity.
- * Moderation AI — evaluates evidence and issues verdicts.
+ * Providers (in order of priority):
+ *   1. SKYNETchat  — if SKYNETCHAT_COOKIE is set (cookie-based session auth)
+ *   2. Groq llama-3.3-70b-versatile — primary fallback
+ *   3. Groq llama-3.1-8b-instant    — secondary fallback (model errors only)
+ *
+ * Features: persistent global memory, multi-pattern topic extraction,
+ * chain-of-thought prompting, adaptive personality, TTL sessions, tool-calling,
+ * moderation AI verdicts.
  */
 import OpenAI from "openai";
+import { askSkynet, isSkynetConfigured, type SkynetMessage } from "./skynetchat.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -379,50 +380,94 @@ async function callGroq(model: string, history: HistoryEntry[], systemPrompt: st
   return msg.content?.trim() ?? "...silêncio estratégico.";
 }
 
+/**
+ * Builds an array of SkynetMessage objects from history + system prompt,
+ * suitable for sending to SKYNETchat's API.
+ */
+function buildSkynetMessages(
+  history:      HistoryEntry[],
+  systemPrompt: string,
+): SkynetMessage[] {
+  return [
+    { role: "system", content: systemPrompt },
+    ...history.map(h => ({ role: h.role, content: h.content })),
+  ] as SkynetMessage[];
+}
+
 export async function askLelouch(
   userId: string,
   question: string,
   serverContext?: string,
 ): Promise<string> {
-  if (!process.env.GROQ_API_KEY) {
-    return "❌ **GROQ_API_KEY** não configurada. Configure o segredo no ambiente.";
+  const hasGroq    = Boolean(process.env.GROQ_API_KEY);
+  const hasSkynet  = isSkynetConfigured();
+
+  if (!hasGroq && !hasSkynet) {
+    return "❌ Nenhum provider de IA configurado. Defina `GROQ_API_KEY` ou `SKYNETCHAT_COOKIE` no ambiente.";
   }
 
   const session = getSession(userId);
   session.history.push({ role: "user", content: question });
   while (session.history.length > MAX_HISTORY) session.history.shift();
 
-  const memCtx = getMemoryContext();
+  const memCtx      = getMemoryContext();
   const systemPrompt = buildSystemPrompt(serverContext) + (memCtx ? "\n" + memCtx : "");
 
-  let reply: string;
-  try {
-    reply = await callGroq("llama-3.3-70b-versatile", session.history, systemPrompt);
-  } catch (primaryErr: unknown) {
-    const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-    const isModelError = msg.includes("model") || msg.includes("not found") || msg.includes("404");
+  let reply: string | null = null;
 
-    if (isModelError) {
-      try {
-        reply = await callGroq("llama-3.1-8b-instant", session.history, systemPrompt);
-      } catch (fallbackErr: unknown) {
-        session.history.pop();
-        const fMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-        console.error("[LELOUCH AI FALLBACK ERROR]", fMsg);
-        return `⚠️ *O Geass encontrou resistência...* \`${fMsg.slice(0, 120)}\``;
-      }
-    } else {
-      session.history.pop();
-      console.error("[LELOUCH AI ERROR]", msg);
-
-      if (msg.includes("401") || msg.includes("invalid_api_key") || msg.includes("Unauthorized")) {
-        return "❌ **Chave Groq inválida.** Verifique o segredo `GROQ_API_KEY` no ambiente.";
-      }
-      if (msg.includes("429") || msg.includes("rate_limit")) {
-        return "⏳ *O Geass precisa de um momento...* Rate limit atingido. Tente novamente em alguns segundos.";
-      }
-      return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
+  // ── Provider 1: SKYNETchat ─────────────────────────────────────────────────
+  if (hasSkynet) {
+    try {
+      const skynetMsgs = buildSkynetMessages(session.history, systemPrompt);
+      reply = await askSkynet(skynetMsgs);
+      if (reply) console.log(`[LELOUCH AI] SKYNETchat responded (${reply.length} chars)`);
+    } catch (skyErr) {
+      console.error("[LELOUCH AI] SKYNETchat error:", skyErr);
+      reply = null;
     }
+  }
+
+  // ── Provider 2: Groq (primary) — used if SKYNETchat is not set or failed ──
+  if (reply === null) {
+    if (!hasGroq) {
+      session.history.pop();
+      return "⚠️ *SKYNETchat indisponível e GROQ_API_KEY não configurada.* Verifique os segredos do ambiente.";
+    }
+
+    try {
+      reply = await callGroq("llama-3.3-70b-versatile", session.history, systemPrompt);
+    } catch (primaryErr: unknown) {
+      const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      const isModelError = msg.includes("model") || msg.includes("not found") || msg.includes("404");
+
+      if (isModelError) {
+        // ── Provider 3: Groq fallback model ─────────────────────────────────
+        try {
+          reply = await callGroq("llama-3.1-8b-instant", session.history, systemPrompt);
+        } catch (fallbackErr: unknown) {
+          session.history.pop();
+          const fMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          console.error("[LELOUCH AI FALLBACK ERROR]", fMsg);
+          return `⚠️ *O Geass encontrou resistência...* \`${fMsg.slice(0, 120)}\``;
+        }
+      } else {
+        session.history.pop();
+        console.error("[LELOUCH AI ERROR]", msg);
+
+        if (msg.includes("401") || msg.includes("invalid_api_key") || msg.includes("Unauthorized")) {
+          return "❌ **Chave Groq inválida.** Verifique o segredo `GROQ_API_KEY` no ambiente.";
+        }
+        if (msg.includes("429") || msg.includes("rate_limit")) {
+          return "⏳ *O Geass precisa de um momento...* Rate limit atingido. Tente novamente em alguns segundos.";
+        }
+        return `⚠️ *O Geass falhou momentaneamente...* \`${msg.slice(0, 120)}\``;
+      }
+    }
+  }
+
+  if (reply === null) {
+    session.history.pop();
+    return "⚠️ *Todos os providers falharam.* Tente novamente em alguns instantes.";
   }
 
   session.history.push({ role: "assistant", content: reply });

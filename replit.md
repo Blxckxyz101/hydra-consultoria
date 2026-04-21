@@ -291,4 +291,23 @@ New route (`artifacts/api-server/src/routes/dns.ts`):
 - API-level errors shown in orange embed; network errors shown in red embed
 - Token stored in `DARKFLOW_TOKEN` shared env var
 
+#### v5.0 — SKYNETchat Integration + Checker Bug Fix
+
+**Discord Bot — Lelouch AI v5 (SKYNETchat Provider):**
+- **`artifacts/discord-bot/src/skynetchat.ts`** — New client for SKYNETchat (`https://skynetchat.net/api/chat-V3`).
+  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var (user copies cookie from browser after login).
+  - How to get cookie: Log into skynetchat.net → DevTools → Application → Cookies → copy all pairs as `name=value; name2=value2`.
+  - Parses Vercel AI SDK Data Stream Protocol SSE: `data: 0:"text chunk"` (new format) and `data: {"type":"text-delta","textDelta":"..."}` (legacy).
+  - Handles both `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking` endpoints.
+  - Returns `null` on auth failure / network error (triggers Groq fallback automatically).
+- **`lelouch-ai.ts` upgraded to v5** — 3-provider priority chain in `askLelouch()`:
+  1. SKYNETchat (if `SKYNETCHAT_COOKIE` is set) — tried first, falls back if null/error
+  2. Groq `llama-3.3-70b-versatile` — primary Groq model
+  3. Groq `llama-3.1-8b-instant` — fallback on model errors only
+  - New helper `buildSkynetMessages()` wraps history + systemPrompt into `SkynetMessage[]`.
+  - `askLelouch()` now works if only `SKYNETCHAT_COOKIE` is set (no `GROQ_API_KEY` needed).
+
+**Checker Bug Fix (`artifacts/api-server/src/routes/checker.ts`):**
+- **`sseSubscribe` paused-job bug fixed**: Previously `if (job.status !== "running") return` was applied unconditionally — clients reconnecting to a **paused** job would receive the buffer replay but never register as subscribers, missing all events after resume/completion. Fixed: only returns early for terminal states (`done`/`stopped`), not for `paused`.
+
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

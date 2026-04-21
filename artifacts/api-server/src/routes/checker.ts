@@ -4931,7 +4931,10 @@ function sseSubscribe(job: CheckerJob, res: import("express").Response): void {
 
   // Replay all buffered events (catches up a reconnecting client)
   for (const ev of job.buffer) write(ev);
-  if (res.writableEnded || job.status !== "running") return;
+  // Stop here only if the response already ended (done event was in the buffer)
+  // or if the job has fully completed/stopped (not just paused — paused jobs
+  // can resume, so subscribers should stay registered to receive future events).
+  if (res.writableEnded || (job.status !== "running" && job.status !== "paused")) return;
 
   const hb = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 20_000);
   job.subs.add(write);
