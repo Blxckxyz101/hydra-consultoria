@@ -38,7 +38,7 @@ import {
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
-import { askSkynet, isSkynetConfigured } from "./skynetchat.js";
+import { askSkynet, isSkynetConfigured, SkynetRateLimitError } from "./skynetchat.js";
 import { handleVoice } from "./voice.js";
 import {
   buildAttackEmbed,
@@ -4877,8 +4877,36 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     // Quick connectivity test with a minimal message
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const start = Date.now();
-    const testReply = await askSkynet([{ role: "user", content: "Diga apenas: online" }]);
+    let testReply: string | null = null;
+    let testRateLimit = false;
+    try {
+      testReply = await askSkynet([{ role: "user", content: "Diga apenas: online" }]);
+    } catch (e) {
+      if (e instanceof SkynetRateLimitError) testRateLimit = true;
+    }
     const elapsed = Date.now() - start;
+
+    // Rate limited = cookie works, just quota exhausted
+    if (testRateLimit) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GOLD)
+            .setTitle("🛰️ SKYNETCHAT — ONLINE ✅ (limite atingido)")
+            .setDescription(
+              "**Cookie:** válido e autenticado\n**Quota:** conta gratuita esgotada\n\n" +
+              "O cookie funciona — a conta só atingiu o limite de mensagens gratuitas.\n" +
+              "Aguarde o reset diário ou assine o PRO em https://skynetchat.net."
+            )
+            .addFields(
+              { name: "📡 Endpoints", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`", inline: false },
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
 
     if (!testReply) {
       await interaction.editReply({
@@ -4941,14 +4969,39 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     const start = Date.now();
     let reply: string | null = null;
     let errorMsg = "";
+    let isRateLimit = false;
 
     try {
       reply = await askSkynet([{ role: "user", content: message }], endpoint);
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : String(e);
+      if (e instanceof SkynetRateLimitError) {
+        isRateLimit = true;
+      } else {
+        errorMsg = e instanceof Error ? e.message : String(e);
+      }
     }
 
     const elapsed = Date.now() - start;
+
+    if (isRateLimit) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.ORANGE)
+            .setTitle("🛰️ SKYNETCHAT — LIMITE ATINGIDO")
+            .setDescription(
+              "**A conta gratuita do SKYNETchat esgotou o limite de mensagens.**\n\n" +
+              "**O que fazer:**\n" +
+              "• Aguarde o reset do limite (geralmente diário)\n" +
+              "• Ou assine o plano PRO em https://skynetchat.net\n\n" +
+              "> O cookie continua válido — nenhuma reconfiguração necessária."
+            )
+            .setFooter({ text: `${AUTHOR} • ${endpoint} • ${elapsed}ms` })
+            .setTimestamp(),
+        ],
+      });
+      return;
+    }
 
     if (!reply) {
       await interaction.editReply({

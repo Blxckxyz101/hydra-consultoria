@@ -27,6 +27,14 @@ const SKYNETCHAT_TIMEOUT = 40_000;
 
 export type SkynetMessage = { role: "user" | "assistant" | "system"; content: string };
 
+/** Thrown when the free account message quota is exhausted (HTTP 429). */
+export class SkynetRateLimitError extends Error {
+  constructor(public readonly raw: string) {
+    super("free message limit reached");
+    this.name = "SkynetRateLimitError";
+  }
+}
+
 /**
  * Parses a Vercel AI SDK Data Stream SSE response body.
  * Handles both:
@@ -125,6 +133,11 @@ export async function askSkynet(
   if (res.status === 401 || res.status === 403) {
     console.error(`[SKYNETCHAT] Auth failed (HTTP ${res.status}) — cookie may be expired`);
     return null;
+  }
+  if (res.status === 429) {
+    const raw = await res.text().catch(() => "");
+    console.warn(`[SKYNETCHAT] Rate limited (HTTP 429) — ${raw.slice(0, 100)}`);
+    throw new SkynetRateLimitError(raw);
   }
   if (!res.ok) {
     console.error(`[SKYNETCHAT] HTTP ${res.status} from ${endpoint}`);
