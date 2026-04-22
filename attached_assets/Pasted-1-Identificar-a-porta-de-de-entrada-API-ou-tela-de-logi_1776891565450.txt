@@ -1,0 +1,95 @@
+1. Identificar a porta de de entrada (API ou tela de login)
+Abra o DevTools (F12) → Rede (Network) → marque "Preserve log" e "Ativar preservação do HAR (HTTP Archive)". Recarregue a página (F5) e filtre por XHR ou Fetch.
+
+Ação: Clique em qualquer requisição à API do Skynetchat e copie o URL completo (ex: https://api.skynetchat.com/v1/auth/login).
+Tempo: 15 segundos.
+2. Copiar o fluxo de requisição (headers + cookies)
+No painel Headers, copie tudo:
+
+Método: POST/GET (verifique no primeiro filtro).
+
+Headers: Copie todos os cabeçalhos (especialmente Authorization, Content-Type, Cookie).
+
+Payload: Clique em Request Payload (se houver) e copie o JSON ou form-data.
+
+Ação: Abra um arquivo .txt ou use Bloco de Notas/Notes no smartphone e cole os dados.
+
+Tempo: 20 segundos.
+
+3. Automatizar com Python + Requests (bypass básico)
+Instale o Python e a biblioteca requests (se ainda não tiver):
+
+bash
+
+pip install requests
+Código pronto para colar:
+
+python
+
+import requests
+
+url = "https://api.skynetchat.com/v1/auth/login"  # Coloque o URL copiado aqui
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.122 Safari/537.36",
+    "Content-Type": "application/json",
+    "Authorization": "Bearer TOKEN_AQUI",  # Se tiver, senão apague
+    "Cookie": "nome_cookie=valor; outro_cookie=valor"  # Cole os cookies aqui
+}
+data = {
+    "email": "seu_email@exemplo.com",  # Ou o payload copiado
+    "password": "sua_senha"            # Ou o payload copiado
+}
+
+response = requests.post(url, headers=headers, json=data)
+print(response.text)  # Salve o output em um .json
+Ação: Substitua URL, headers, data pelos seus valores copiados.
+Tempo: 30 segundos.
+4. Bypass de restrições (IP rotation + headers fake)
+Se o Skynetchat bloquear por IP:
+
+Rotação de IP: Use Tor ou proxies gratuitos (ex: http://45.76.123.45:8080) no script:
+python
+
+proxies = {"http": "http://45.76.123.45:8080", "https": "http://45.76.123.45:8080"}
+response = requests.post(url, headers=headers, json=data, proxies=proxies)
+Headers falsos: Modifique o User-Agent para um navegador real:
+Ex: "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+Ação: Insira os proxies e atualize os headers no código.
+Tempo: 40 segundos.
+5. Contornar CAPTCHA (se aplicável)
+Se a API exigir CAPTCHA:
+
+Manualmente: Abra a página de login no navegador, resolva o CAPTCHA e copie os cookies gerados.
+
+Automaticamente: Use bibliotecas como 2captcha ou anti-captcha (pago, mas efetivo para bypass):
+
+python
+
+from twocaptcha import TwoCaptcha
+
+solver = TwoCaptcha('SUA_CHAVE_API_2CAPTCHA')  # Cadastre em 2captcha.com
+result = solver.normal('https://2captcha.com/img/captcha-normal.jpg')
+code = result['code']
+# Insira `code` no campo do formulário ou na API antes de enviar.
+Ação: Inscreva-se no 2captcha e substitua SUA_CHAVE_API_2CAPTCHA.
+Tempo: 5 minutos (1ª vez), depois 1 minuto por requisição.
+6. Extrair dados da resposta (JSON → TXT)
+Se a resposta vier em JSON:
+
+python
+
+import json
+
+response_data = response.json()  # Converta para dicionário Python
+with open("dados_skynetchat.txt", "w", encoding="utf-8") as f:
+    f.write(json.dumps(response_data, indent=2, ensure_ascii=False))
+Ação: Salve os dados em um arquivo .txt para análise posterior.
+Tempo: 10 segundos.
+Checklist final
+#	Ação	Status
+1	Copiar URL da API	✅
+2	Salvar Headers + Payload	✅
+3	Criar script Python	✅
+4	Inserir proxies (se bloqueio)	⬜
+5	Resolver CAPTCHA (se houver)	⬜
+6	Salvar resposta em arquivo
