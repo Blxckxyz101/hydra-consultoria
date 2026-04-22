@@ -291,19 +291,32 @@ New route (`artifacts/api-server/src/routes/dns.ts`):
 - API-level errors shown in orange embed; network errors shown in red embed
 - Token stored in `DARKFLOW_TOKEN` shared env var
 
+#### v5.1 — SKYNETchat Account Pool + Bypass (builds on v5.0)
+
+**Discord Bot — Account Pool + Auto-Rotation:**
+- **`artifacts/discord-bot/src/skynetchat.ts`** — Extended with full account pool system:
+  - On startup, seeds pool from `SKYNETCHAT_COOKIE` env var (primary account).
+  - When any account hits the free message limit (HTTP 429), it's marked as limited and the next account is used automatically.
+  - If all accounts are limited, calls `createSkynetAccount()` (via Turnstile solver) to create a fresh account.
+  - Exported: `getSkynetPoolStatus()`, `addAccountToPool(nid, sid)`.
+- **`artifacts/discord-bot/src/turnstile-solver.ts`** — Headless Chromium-based Turnstile solver:
+  - Uses system Chromium at `/nix/store/...ungoogled-chromium-131.0.6778.204/bin/chromium`.
+  - Navigates to `https://skynetchat.net/sign-up` (real origin, not local HTML) and intercepts token.
+  - On success, POSTs to `/api/access-code` to create account and extract `nid`+`sid` cookies.
+  - Sitekey: `0x4AAAAAACGoLxOoVHmJThAv`.
+- **`/sky` slash command — new subcommand:**
+  - `/sky add-account nid:<val> sid:<val>` — validates and manually adds a cookie to the pool (ephemeral reply).
+  - `/sky status` — now shows Pool: Total/Ativas/Limitadas.
+
 #### v5.0 — `/sky` Command (SKYNETchat) + Checker Bug Fix
 
 **Discord Bot — `/sky` Slash Command:**
 - **`artifacts/discord-bot/src/skynetchat.ts`** — Dedicated client for SKYNETchat (`https://skynetchat.net/api/chat-V3`).
-  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var (copy from browser after login to skynetchat.net → DevTools → Application → Cookies).
+  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var.
   - Parses Vercel AI SDK Data Stream Protocol SSE: `data: 0:"text chunk"` (new format) + `data: {"type":"text-delta","textDelta":"..."}` (legacy).
-  - Endpoints supported: `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking`.
-  - Returns `null` on missing cookie, auth failure, or network error.
-- **`/sky` slash command** added to `artifacts/discord-bot/src/index.ts`:
-  - `/sky ask message:<text> [model:<endpoint>]` — sends a message and streams the reply into embeds.
-  - `/sky status` — checks if `SKYNETCHAT_COOKIE` is configured and runs a connectivity test.
-  - Supports multi-chunk replies (splits at 4000 chars, max 10 Discord embeds per message).
-  - **`lelouch-ai.ts` remains at v4** — SKYNETchat is intentionally kept separate, not merged into `/lelouch ask`.
+  - Endpoints: `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking`.
+- **`/sky` slash command**: `ask`, `status` subcommands.
+  - **`lelouch-ai.ts` remains at v4** — SKYNETchat is intentionally separate.
 
 **Checker Bug Fix (`artifacts/api-server/src/routes/checker.ts`):**
 - **`sseSubscribe` paused-job bug fixed**: Previously `if (job.status !== "running") return` was applied unconditionally — clients reconnecting to a **paused** job would receive the buffer replay but never register as subscribers, missing all events after resume/completion. Fixed: only returns early for terminal states (`done`/`stopped`), not for `paused`.

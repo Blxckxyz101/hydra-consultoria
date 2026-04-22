@@ -38,7 +38,7 @@ import {
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
-import { askSkynet, isSkynetConfigured, SkynetRateLimitError } from "./skynetchat.js";
+import { askSkynet, isSkynetConfigured, getSkynetPoolStatus, addAccountToPool, SkynetRateLimitError } from "./skynetchat.js";
 import { handleVoice } from "./voice.js";
 import {
   buildAttackEmbed,
@@ -766,6 +766,20 @@ const COMMANDS = [
     .addSubcommand(sub =>
       sub.setName("status")
         .setDescription("🔍 Verificar se SKYNETCHAT_COOKIE está configurado e testar conexão")
+    )
+    .addSubcommand(sub =>
+      sub.setName("add-account")
+        .setDescription("➕ Adicionar conta ao pool (nid + sid do cookie do navegador)")
+        .addStringOption(opt =>
+          opt.setName("nid")
+            .setDescription("Valor do cookie 'nid' do skynetchat.net")
+            .setRequired(true)
+        )
+        .addStringOption(opt =>
+          opt.setName("sid")
+            .setDescription("Valor do cookie 'sid' do skynetchat.net")
+            .setRequired(true)
+        )
     ),
 
 ].map(c => c.toJSON());
@@ -4886,19 +4900,20 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     }
     const elapsed = Date.now() - start;
 
-    // Rate limited = cookie works, just quota exhausted
+    // Rate limited = all accounts exhausted
     if (testRateLimit) {
+      const pool = getSkynetPoolStatus();
       await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.GOLD)
-            .setTitle("🛰️ SKYNETCHAT — ONLINE ✅ (limite atingido)")
+            .setTitle("🛰️ SKYNETCHAT — LIMITE ATINGIDO (rotação em curso)")
             .setDescription(
-              "**Cookie:** válido e autenticado\n**Quota:** conta gratuita esgotada\n\n" +
-              "O cookie funciona — a conta só atingiu o limite de mensagens gratuitas.\n" +
-              "Aguarde o reset diário ou assine o PRO em https://skynetchat.net."
+              "Todas as contas ativas atingiram o limite de mensagens gratuitas.\n" +
+              "O bot vai criar uma nova conta automaticamente na próxima pergunta."
             )
             .addFields(
+              { name: "📦 Pool de contas", value: `Total: **${pool.total}** | Ativas: **${pool.active}** | Limitadas: **${pool.limited}**`, inline: false },
               { name: "📡 Endpoints", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`", inline: false },
             )
             .setFooter({ text: AUTHOR })
@@ -4928,13 +4943,15 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       return;
     }
 
+    const pool = getSkynetPoolStatus();
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.GREEN)
           .setTitle("🛰️ SKYNETCHAT — ONLINE ✅")
-          .setDescription(`**Cookie:** configurado\n**Latência:** \`${elapsed}ms\`\n**Resposta de teste:** ${testReply.slice(0, 200)}`)
+          .setDescription(`**Latência:** \`${elapsed}ms\`\n**Resposta de teste:** ${testReply.slice(0, 200)}`)
           .addFields(
+            { name: "📦 Pool de contas", value: `Total: **${pool.total}** | Ativas: **${pool.active}** | Limitadas: **${pool.limited}**`, inline: false },
             { name: "📡 Endpoints disponíveis", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`", inline: false },
             { name: "💬 Como usar", value: "`/sky ask message:<sua pergunta>`", inline: false },
           )
@@ -4942,6 +4959,50 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
           .setTimestamp(),
       ],
     });
+    return;
+  }
+
+  // ── /sky add-account ─────────────────────────────────────────────────────────
+  if (sub === "add-account") {
+    const nid = interaction.options.getString("nid", true).trim();
+    const sid = interaction.options.getString("sid", true).trim();
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const result = await addAccountToPool(nid, sid);
+    const pool   = getSkynetPoolStatus();
+
+    if (result.ok) {
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GREEN)
+            .setTitle("🛰️ SKYNETCHAT — Conta adicionada ✅")
+            .setDescription("Cookie validado com sucesso e conta adicionada ao pool!")
+            .addFields(
+              { name: "📦 Pool de contas", value: `Total: **${pool.total}** | Ativas: **${pool.active}** | Limitadas: **${pool.limited}**`, inline: false },
+              { name: "💡 Como criar mais contas", value: "1. Acesse https://skynetchat.net/sign-up\n2. Crie uma conta\n3. Abra DevTools → Application → Cookies\n4. Copie `nid` e `sid`\n5. Use `/sky add-account`", inline: false },
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+      });
+    } else {
+      const reasons: Record<string, string> = {
+        already_exists: "Essa conta já está no pool.",
+        invalid_cookie: "Cookie inválido — `nid` ou `sid` incorretos ou expirados.",
+        no_user: "Sessão não retornou usuário. Cookie pode estar expirado.",
+      };
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.RED)
+            .setTitle("🛰️ SKYNETCHAT — Erro ao adicionar conta")
+            .setDescription(reasons[result.reason ?? ""] ?? `Falha: \`${result.reason}\``)
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+      });
+    }
     return;
   }
 

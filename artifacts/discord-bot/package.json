@@ -16,6 +16,9 @@
     "discord.js": "^14.16.3",
     "openai": "^6.34.0",
     "opusscript": "^0.1.1",
+    "puppeteer-core": "^24.42.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
