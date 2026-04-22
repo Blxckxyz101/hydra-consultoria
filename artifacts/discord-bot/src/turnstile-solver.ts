@@ -1,30 +1,46 @@
-import puppeteer, { type Browser } from "puppeteer-core";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const puppeteerExtra = require("puppeteer-extra") as any;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+import type { Browser } from "puppeteer-core";
 import { randomUUID } from "crypto";
+
+puppeteerExtra.use(StealthPlugin());
 
 const CHROMIUM_PATH =
   "/nix/store/43y6k6fj85l4kcd1yan43hpdld6nmjmp-ungoogled-chromium-131.0.6778.204/bin/chromium";
 
-const TURNSTILE_SITEKEY = "0x4AAAAAACGoLxOoVHmJThAv";
 const SITE_URL = "https://skynetchat.net";
 
-const STEALTH_SCRIPT = `
-  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-  Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-  Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR','pt','en-US','en'] });
+const EXTRA_STEALTH = `
+  // Patch hardwareConcurrency
   Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-  window.chrome = { runtime: {} };
-  Object.defineProperty(navigator, 'permissions', {
-    get: () => ({ query: (p) => Promise.resolve({ state: 'granted', onchange: null }) })
+  // Patch deviceMemory
+  try { Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 }); } catch(_) {}
+  // Patch platform
+  Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+  // Patch languages
+  Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR','pt','en-US','en'] });
+  // Ensure chrome runtime exists
+  if (!window.chrome) window.chrome = {};
+  if (!window.chrome.runtime) window.chrome.runtime = {};
+  // Patch screen
+  Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+  Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+  // Remove headless from appVersion
+  Object.defineProperty(navigator, 'appVersion', {
+    get: () => '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
   });
 `;
 
 let browserInstance: Browser | null = null;
 
 async function getBrowser(): Promise<Browser> {
-  if (browserInstance && browserInstance.connected) return browserInstance;
-  browserInstance = await puppeteer.launch({
+  if (browserInstance && (browserInstance as any).connected) return browserInstance;
+
+  browserInstance = (await (puppeteerExtra as any).launch({
     executablePath: CHROMIUM_PATH,
-    headless: true,
+    headless: "new",
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -32,64 +48,86 @@ async function getBrowser(): Promise<Browser> {
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--window-size=1920,1080",
-      "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "--lang=pt-BR",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--flag-switches-begin",
+      "--disable-site-isolation-trials",
+      "--flag-switches-end",
     ],
-  });
+    ignoreDefaultArgs: ["--enable-automation"],
+  })) as Browser;
+
   return browserInstance;
 }
 
-export async function solveTurnstile(timeoutMs = 45_000): Promise<string | null> {
+export async function solveTurnstile(timeoutMs = 60_000): Promise<string | null> {
   const browser = await getBrowser();
   const page = await browser.newPage();
 
   try {
-    await page.setViewport({ width: 1920, height: 1080 });
-    await page.evaluateOnNewDocument(STEALTH_SCRIPT);
+    await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+
+    await page.evaluateOnNewDocument(EXTRA_STEALTH);
+
     await page.setExtraHTTPHeaders({
       "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     });
 
-    // Navigate to the real sign-up page so the origin matches the sitekey
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    );
+
     await page.goto(`${SITE_URL}/sign-up`, {
-      waitUntil: "networkidle0",
-      timeout: 20_000,
+      waitUntil: "networkidle2",
+      timeout: 30_000,
     });
 
-    // Intercept the Turnstile token via hidden input polling + callback hook
-    const token = await page.evaluate((timeout: number) => {
+    // Wait a bit for scripts to settle
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const waitMs = Math.max(timeoutMs - 35_000, 20_000);
+
+    const token = await page.evaluate((wait: number) => {
       return new Promise<string | null>((resolve) => {
+        // Hook Turnstile render callback before widget initializes
         const w = window as any;
-        // Hook Turnstile render if it hasn't rendered yet
-        if (w.turnstile) {
+
+        const hookTurnstile = () => {
+          if (!w.turnstile) return false;
           const orig = w.turnstile.render?.bind(w.turnstile);
-          if (orig) {
-            w.turnstile.render = (el: Element, opts: any) => {
-              const cb = opts.callback;
-              opts.callback = (t: string) => {
-                resolve(t);
-                if (cb) cb(t);
-              };
-              const errCb = opts["error-callback"];
-              opts["error-callback"] = (e: unknown) => {
-                resolve(null);
-                if (errCb) (errCb as (e: unknown) => void)(e);
-              };
-              return orig(el, opts);
-            };
-          }
-        }
+          if (!orig || (w.turnstile as any).__hooked) return false;
+          (w.turnstile as any).__hooked = true;
+          w.turnstile.render = (el: Element, opts: any) => {
+            const origCb = opts.callback;
+            opts.callback = (t: string) => { resolve(t); if (origCb) origCb(t); };
+            const origErr = opts["error-callback"];
+            opts["error-callback"] = (e: unknown) => { resolve(null); if (origErr) (origErr as any)(e); };
+            return orig(el, opts);
+          };
+          return true;
+        };
 
-        // Also poll the hidden input (for already-rendered widgets)
+        // Poll for turnstile object + input value
+        let attempts = 0;
         const poll = setInterval(() => {
-          const input = document.querySelector("input[name='cf-turnstile-response']") as HTMLInputElement | null;
-          const svelte = document.querySelector("input[name='turnstileToken']") as HTMLInputElement | null;
-          const val = input?.value || svelte?.value;
-          if (val) { clearInterval(poll); resolve(val); }
-        }, 300);
+          attempts++;
+          if (!hookTurnstile()) hookTurnstile();
 
-        setTimeout(() => { clearInterval(poll); resolve(null); }, timeout);
+          // Check hidden input
+          const input = document.querySelector<HTMLInputElement>(
+            "input[name='cf-turnstile-response'], input[name='turnstileToken']"
+          );
+          if (input?.value) {
+            clearInterval(poll);
+            resolve(input.value);
+            return;
+          }
+        }, 400);
+
+        setTimeout(() => { clearInterval(poll); resolve(null); }, wait);
       });
-    }, Math.max(timeoutMs - 25_000, 15_000));
+    }, waitMs);
 
     return token;
   } finally {
@@ -107,7 +145,7 @@ export interface SkynetAccount {
 
 export async function createSkynetAccount(): Promise<SkynetAccount | null> {
   console.log("[turnstile] Solving Turnstile for new account...");
-  const token = await solveTurnstile(45_000);
+  const token = await solveTurnstile(60_000);
   if (!token) {
     console.error("[turnstile] Failed to get Turnstile token");
     return null;
@@ -122,7 +160,8 @@ export async function createSkynetAccount(): Promise<SkynetAccount | null> {
       "Content-Type": "application/json",
       "Origin": SITE_URL,
       "Referer": `${SITE_URL}/sign-up`,
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     },
     body: JSON.stringify({ turnstileToken: token, visitorId, webrtcIps: [] }),
   });
@@ -148,13 +187,15 @@ export async function createSkynetAccount(): Promise<SkynetAccount | null> {
     return null;
   }
 
-  console.log(`[turnstile] New account created! code=${data.code.slice(0, 8)}... nid=${nid.slice(0, 10)}...`);
+  console.log(
+    `[turnstile] New account created! code=${data.code.slice(0, 8)}... nid=${nid.slice(0, 10)}...`
+  );
   return { nid, sid, code: data.code, createdAt: Date.now(), messagesUsed: 0 };
 }
 
 export async function closeBrowser(): Promise<void> {
   if (browserInstance) {
-    await browserInstance.close().catch(() => {});
+    await (browserInstance as any).close().catch(() => {});
     browserInstance = null;
   }
 }
