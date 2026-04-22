@@ -425,6 +425,9 @@ importers:
 
   artifacts/discord-bot:
     dependencies:
+      2captcha-ts:
+        specifier: ^2.4.1
+        version: 2.4.1
       '@discordjs/opus':
         specifier: ^0.10.0
         version: 0.10.0
@@ -922,6 +925,9 @@ importers:
         version: 4.21.0
 
 packages:
+
+  2captcha-ts@2.4.1:
+    resolution: {integrity: sha512-xYQhm0ft3YlnRVghdPrGRQaXPodcQ5lIs3Yaob7SH0RUAolPx1fAm5cS/Bzel8YEHVqQnV+Xjrua/1ql51xGpg==}
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -4327,6 +4333,12 @@ packages:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
+
+  2captcha-ts@2.4.1:
+    dependencies:
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
 
   '@babel/code-frame@7.29.0':
     dependencies:
