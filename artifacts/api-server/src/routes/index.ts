@@ -15,6 +15,7 @@ import credentialsRouter from "./credentials";
 import dnsRouter from "./dns";
 import discordRouter from "./discord";
 import nitroRouter from "./nitro";
+import skynetchatRouter from "./skynetchat";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use("/credentials", credentialsRouter);
 router.use(dnsRouter);
 router.use(discordRouter);
 router.use(nitroRouter);
+router.use(skynetchatRouter);
 
 export default router;

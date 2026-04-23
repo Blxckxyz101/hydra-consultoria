@@ -657,9 +657,77 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky") ?? "attack"
   );
+
+  /* ── SKYNETchat Login ── */
+  const [skyCode,      setSkyCode]      = useState("872140801116");
+  const [skyLoading,   setSkyLoading]   = useState(false);
+  const [skyStatus,    setSkyStatus]    = useState<{ ok: boolean; msg: string } | null>(null);
+  const [skyTsToken,   setSkyTsToken]   = useState<string>("");
+  const skyTsRef = useRef<HTMLDivElement | null>(null);
+  const skyTsWidgetId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (activePage !== "sky") return;
+    const existing = document.getElementById("cf-ts-script");
+    const render = () => {
+      const w = window as unknown as { turnstile?: { render: (el: HTMLElement, opts: Record<string, unknown>) => string; remove: (id: string) => void } };
+      if (!w.turnstile || !skyTsRef.current) return;
+      if (skyTsWidgetId.current) {
+        try { w.turnstile.remove(skyTsWidgetId.current); } catch { /* ok */ }
+        skyTsWidgetId.current = null;
+      }
+      setSkyTsToken("");
+      skyTsWidgetId.current = w.turnstile.render(skyTsRef.current, {
+        sitekey: "0x4AAAAAACGoLxOoVHmJThAv",
+        theme: "dark",
+        callback: (t: string) => setSkyTsToken(t),
+        "error-callback": () => setSkyTsToken(""),
+        "expired-callback": () => setSkyTsToken(""),
+      });
+    };
+    if (!existing) {
+      const s = document.createElement("script");
+      s.id = "cf-ts-script";
+      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
+      s.async = true; s.defer = true;
+      s.onload = () => setTimeout(render, 300);
+      document.head.appendChild(s);
+    } else {
+      setTimeout(render, 300);
+    }
+  }, [activePage]);
+
+  const handleSkyLogin = async () => {
+    if (!skyTsToken) { setSkyStatus({ ok: false, msg: "Aguarde o widget de segurança carregar e resolver." }); return; }
+    if (!skyCode.trim()) { setSkyStatus({ ok: false, msg: "Digite o código de acesso." }); return; }
+    setSkyLoading(true); setSkyStatus(null);
+    try {
+      const r = await fetch(`${BASE}/api/skynetchat/proxy-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: skyCode.trim(), turnstileToken: skyTsToken, visitorId: crypto.randomUUID() }),
+      });
+      const d = await r.json() as { success: boolean; message?: string; error?: string };
+      if (d.success) {
+        setSkyStatus({ ok: true, msg: d.message ?? "Login realizado com sucesso!" });
+        setSkyTsToken("");
+        // Reset widget
+        const w = window as unknown as { turnstile?: { reset: (id: string) => void } };
+        if (w.turnstile && skyTsWidgetId.current) {
+          try { w.turnstile.reset(skyTsWidgetId.current); } catch { /* ok */ }
+        }
+      } else {
+        setSkyStatus({ ok: false, msg: d.error ?? "Falha no login." });
+      }
+    } catch (e) {
+      setSkyStatus({ ok: false, msg: String(e) });
+    } finally {
+      setSkyLoading(false);
+    }
+  };
 
   /* ── Nitro Generator ── */
   const [nitroRunning,    setNitroRunning]    = useState(false);
@@ -2823,6 +2891,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               🤖 Discord
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "sky" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("sky")}
+            >
+              🌐 SKY Login
+            </button>
           </div>
         </header>
 
@@ -4758,6 +4832,89 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             </div>
             )}
 
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════
+            SKY LOGIN PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "sky" && (
+          <div style={{ padding: "32px 16px", maxWidth: 480, margin: "0 auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🌐</div>
+              <h2 style={{ color: "#D4AF37", fontFamily: "monospace", margin: 0, letterSpacing: 2 }}>
+                SKYNETCHAT LOGIN
+              </h2>
+              <p style={{ color: "#888", fontSize: 13, marginTop: 8 }}>
+                Faça login com seu código Pro — a conta é adicionada ao pool do Discord automaticamente.
+              </p>
+            </div>
+
+            <label style={{ color: "#aaa", fontSize: 11, fontFamily: "monospace", letterSpacing: 1, display: "block", marginBottom: 6 }}>
+              CÓDIGO DE ACESSO (12 dígitos)
+            </label>
+            <input
+              value={skyCode}
+              onChange={e => setSkyCode(e.target.value.replace(/\D/g, "").slice(0, 12))}
+              placeholder="000000000000"
+              maxLength={12}
+              style={{
+                width: "100%", boxSizing: "border-box",
+                background: "#1a0a1a", border: "1px solid #4a1040",
+                borderRadius: 6, padding: "10px 14px",
+                color: "#fff", fontFamily: "monospace", fontSize: 18,
+                letterSpacing: 4, outline: "none", marginBottom: 20,
+              }}
+            />
+
+            <label style={{ color: "#aaa", fontSize: 11, fontFamily: "monospace", letterSpacing: 1, display: "block", marginBottom: 8 }}>
+              VERIFICAÇÃO DE SEGURANÇA
+            </label>
+            <div ref={skyTsRef} style={{ marginBottom: 20, minHeight: 65 }} />
+
+            {skyTsToken && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, color: "#2ecc71", fontSize: 12, fontFamily: "monospace" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#2ecc71", flexShrink: 0 }} />
+                TURNSTILE RESOLVIDO ✓
+              </div>
+            )}
+
+            <button
+              onClick={handleSkyLogin}
+              disabled={skyLoading || !skyTsToken || skyCode.length < 12}
+              style={{
+                width: "100%", padding: "12px 0",
+                background: skyLoading ? "#2d1a2d" : "linear-gradient(135deg, #6a0dad, #C0392B)",
+                border: "none", borderRadius: 6, cursor: skyLoading ? "not-allowed" : "pointer",
+                color: "#fff", fontFamily: "monospace", fontWeight: 700,
+                fontSize: 14, letterSpacing: 2, opacity: (!skyTsToken || skyCode.length < 12) ? 0.5 : 1,
+                transition: "opacity 0.2s",
+              }}
+            >
+              {skyLoading ? "⏳ AUTENTICANDO..." : "▶ ENTRAR"}
+            </button>
+
+            {skyStatus && (
+              <div style={{
+                marginTop: 16, padding: "12px 16px", borderRadius: 6,
+                background: skyStatus.ok ? "rgba(46,204,113,0.1)" : "rgba(231,76,60,0.1)",
+                border: `1px solid ${skyStatus.ok ? "rgba(46,204,113,0.4)" : "rgba(231,76,60,0.4)"}`,
+                color: skyStatus.ok ? "#2ecc71" : "#e74c3c",
+                fontFamily: "monospace", fontSize: 13,
+              }}>
+                {skyStatus.msg}
+              </div>
+            )}
+
+            <div style={{ marginTop: 28, padding: "14px 16px", background: "rgba(212,175,55,0.06)", border: "1px solid rgba(212,175,55,0.2)", borderRadius: 6 }}>
+              <p style={{ color: "#d4af37", fontFamily: "monospace", fontSize: 11, margin: 0, lineHeight: 1.8 }}>
+                ℹ️ Como funciona:<br/>
+                1. O Turnstile acima resolve automaticamente no seu browser real<br/>
+                2. O token é enviado ao servidor que faz o login no SKYNETchat<br/>
+                3. A sessão é adicionada ao pool do bot Discord automaticamente<br/>
+                4. Pode adicionar quantas contas quiser
+              </p>
+            </div>
           </div>
         )}
 

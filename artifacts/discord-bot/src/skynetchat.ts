@@ -60,6 +60,29 @@ function initPool() {
     accountPool.push({ cookie: envCookie, limited: false, source: "env" });
     console.log("[SKYNETCHAT] Pool initialized with 1 env account");
   }
+  // Async: also load accounts from API server pool (accounts added via panel login)
+  void loadPoolFromApiServer();
+}
+
+async function loadPoolFromApiServer() {
+  try {
+    const res = await fetch("http://localhost:8080/api/skynetchat/pool");
+    if (!res.ok) return;
+    const accounts = await res.json() as Array<{ nid: string; sid: string }>;
+    let added = 0;
+    for (const acc of accounts) {
+      if (!acc.nid || !acc.sid) continue;
+      const cookie = `nid=${acc.nid}; sid=${acc.sid}`;
+      if (!accountPool.some(a => a.cookie === cookie)) {
+        accountPool.push({ cookie, limited: false, source: "auto" });
+        added++;
+      }
+    }
+    if (added > 0)
+      console.log(`[SKYNETCHAT] Loaded ${added} extra account(s) from API server pool`);
+  } catch {
+    // API server not yet up, ignore
+  }
 }
 
 function getActiveCookie(): string | null {
