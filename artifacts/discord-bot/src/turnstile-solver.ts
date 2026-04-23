@@ -23,24 +23,68 @@ const CHROMIUM_PATH =
 const SITE_URL = "https://skynetchat.net";
 
 const EXTRA_STEALTH = `
-  // Patch hardwareConcurrency
   Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-  // Patch deviceMemory
   try { Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 }); } catch(_) {}
-  // Patch platform
   Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-  // Patch languages
   Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR','pt','en-US','en'] });
-  // Ensure chrome runtime exists
   if (!window.chrome) window.chrome = {};
   if (!window.chrome.runtime) window.chrome.runtime = {};
-  // Patch screen
   Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
   Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
-  // Remove headless from appVersion
   Object.defineProperty(navigator, 'appVersion', {
     get: () => '5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
   });
+`;
+
+// Captures token AND sitekey from Turnstile widget
+const TURNSTILE_HOOK = `
+(function() {
+  window.__tsToken    = null;
+  window.__tsError    = false;
+  window.__tsSitekey  = null;
+
+  function hookRender(ts) {
+    if (!ts || !ts.render || ts.__hooked) return;
+    ts.__hooked = true;
+    var orig = ts.render.bind(ts);
+    ts.render = function(el, opts) {
+      if (opts && typeof opts === 'object') {
+        if (opts.sitekey) window.__tsSitekey = opts.sitekey;
+        var cb = opts.callback;
+        opts.callback = function(token) {
+          window.__tsToken = token;
+          if (cb) cb(token);
+        };
+        var errCb = opts['error-callback'];
+        opts['error-callback'] = function(e) {
+          window.__tsError = true;
+          if (errCb) errCb(e);
+        };
+      } else {
+        // opts may be inline via data- attributes on the element
+        try {
+          var sk = (el && el.dataset && el.dataset.sitekey) || null;
+          if (sk) window.__tsSitekey = sk;
+        } catch(_) {}
+      }
+      return orig(el, opts);
+    };
+  }
+
+  var attempts = 0;
+  var check = setInterval(function() {
+    attempts++;
+    if (window.turnstile && window.turnstile.render && !window.turnstile.__hooked) {
+      hookRender(window.turnstile);
+    }
+    // Also scan DOM for data-sitekey attribute
+    if (!window.__tsSitekey) {
+      var el = document.querySelector('[data-sitekey]');
+      if (el) window.__tsSitekey = el.getAttribute('data-sitekey');
+    }
+    if (attempts > 200) clearInterval(check);
+  }, 100);
+})();
 `;
 
 let browserInstance: Browser | null = null;
@@ -60,7 +104,6 @@ async function getBrowser(): Promise<Browser> {
       "--disable-gpu",
       "--window-size=1920,1080",
       "--lang=pt-BR",
-      // Disable Private Access Token / Private State Token (causes 401 in Turnstile PAT challenge)
       "--disable-features=PrivateStateTokens,TrustTokens,PrivacySandboxAdsAPIs,FedCm",
       "--disable-features=IsolateOrigins,site-per-process",
     ],
@@ -70,120 +113,147 @@ async function getBrowser(): Promise<Browser> {
   return browserInstance;
 }
 
-// Injected BEFORE page load to intercept turnstile callbacks
-const TURNSTILE_HOOK = `
-(function() {
-  window.__tsToken = null;
-  window.__tsError = false;
+// ── 2captcha Turnstile solver ─────────────────────────────────────────────────
 
-  function hookRender(ts) {
-    if (!ts || !ts.render || ts.__hooked) return;
-    ts.__hooked = true;
-    var orig = ts.render.bind(ts);
-    ts.render = function(el, opts) {
-      if (opts && typeof opts === 'object') {
-        var cb = opts.callback;
-        opts.callback = function(token) {
-          window.__tsToken = token;
-          if (cb) cb(token);
-        };
-        var errCb = opts['error-callback'];
-        opts['error-callback'] = function(e) {
-          window.__tsError = true;
-          if (errCb) errCb(e);
-        };
-      }
-      return orig(el, opts);
-    };
+async function solveTurnstileWith2captcha(
+  sitekey: string,
+  pageUrl: string,
+): Promise<string | null> {
+  const apiKey = process.env.TWOCAPTCHA_API_KEY?.trim();
+  if (!apiKey) return null;
+
+  console.log(`[2captcha] Submitting Turnstile task — sitekey=${sitekey.slice(0, 12)}...`);
+
+  const submitResp = await fetch(
+    `https://2captcha.com/in.php?key=${apiKey}&method=turnstile&sitekey=${encodeURIComponent(sitekey)}&pageurl=${encodeURIComponent(pageUrl)}&json=1`,
+  );
+  const submitData = (await submitResp.json()) as { status: number; request: string };
+
+  if (submitData.status !== 1) {
+    console.error(`[2captcha] Submit failed: ${JSON.stringify(submitData)}`);
+    return null;
   }
 
-  // Poll for window.turnstile to appear and hook it
-  var attempts = 0;
-  var check = setInterval(function() {
-    attempts++;
-    if (window.turnstile && window.turnstile.render && !window.turnstile.__hooked) {
-      hookRender(window.turnstile);
-    }
-    if (attempts > 200) clearInterval(check);
-  }, 100);
-})();
-`;
+  const taskId = submitData.request;
+  console.log(`[2captcha] Task submitted (id=${taskId}) — polling...`);
 
-export async function solveTurnstile(timeoutMs = 60_000): Promise<string | null> {
+  for (let i = 0; i < 36; i++) {
+    await new Promise((r) => setTimeout(r, 5_000));
+    const resultResp = await fetch(
+      `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${taskId}&json=1`,
+    );
+    const resultData = (await resultResp.json()) as { status: number; request: string };
+    if (resultData.status === 1) {
+      console.log(`[2captcha] Solved! token=${resultData.request.slice(0, 20)}...`);
+      return resultData.request;
+    }
+    if (resultData.request !== "CAPCHA_NOT_READY") {
+      console.error(`[2captcha] Error: ${JSON.stringify(resultData)}`);
+      return null;
+    }
+  }
+
+  console.error("[2captcha] Timeout waiting for solution");
+  return null;
+}
+
+// ── Shared: get sitekey + wait for auto-solve or inject 2captcha token ────────
+
+async function getTurnstileTokenFromPage(
+  page: import("puppeteer-core").Page,
+  pageUrl: string,
+  autoSolveTimeoutMs = 20_000,
+): Promise<string | null> {
+  // First, wait a bit for the widget to render and capture the sitekey
+  await new Promise((r) => setTimeout(r, 2_000));
+
+  const sitekey: string | null = await page.evaluate(() => (window as any).__tsSitekey).catch(() => null);
+
+  // If 2captcha is available, use it (most reliable)
+  if (sitekey && process.env.TWOCAPTCHA_API_KEY) {
+    const token = await solveTurnstileWith2captcha(sitekey, pageUrl);
+    if (token) {
+      // Inject the token into the page so form submission works
+      await page.evaluate((t: string) => {
+        (window as any).__tsToken = t;
+        // Also set hidden inputs
+        const inputs = document.querySelectorAll("input[name='cf-turnstile-response'], input[name='turnstileToken']");
+        inputs.forEach((inp) => { (inp as HTMLInputElement).value = t; });
+        // Trigger any callback registered by the page
+        if ((window as any).turnstile && (window as any).turnstile.__resolveCallback) {
+          (window as any).turnstile.__resolveCallback(t);
+        }
+      }, token);
+      return token;
+    }
+  }
+
+  // Fallback: wait for Turnstile to auto-solve
+  console.log("[turnstile] Waiting for Turnstile auto-solve...");
+  const deadline = Date.now() + autoSolveTimeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 600));
+    const result = await page.evaluate(() => {
+      const t = (window as any).__tsToken;
+      const inp =
+        (document.querySelector("input[name='cf-turnstile-response']") as HTMLInputElement) ||
+        (document.querySelector("input[name='turnstileToken']") as HTMLInputElement);
+      return { token: t || (inp?.value) || null, error: (window as any).__tsError };
+    });
+    if (result.token) return result.token as string;
+    if (result.error) {
+      console.error("[turnstile] Widget reported error");
+      break;
+    }
+  }
+
+  return null;
+}
+
+// ── Public: solve Turnstile on sign-up page (used by createSkynetAccount) ─────
+
+export async function solveTurnstile(timeoutMs = 90_000): Promise<string | null> {
   const browser = await getBrowser();
   const page = await browser.newPage();
+  const pageUrl = `${SITE_URL}/sign-up`;
 
   try {
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-
-    // Inject both stealth patches AND the turnstile hook before any page script runs
     await page.evaluateOnNewDocument(EXTRA_STEALTH + "\n" + TURNSTILE_HOOK);
-
     await page.setExtraHTTPHeaders({
       "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     });
-
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     );
-
-    // Intercept PAT (Private Access Token) challenge requests and fake a 200 response
-    // so Turnstile thinks the browser passed the real-device check
     await page.setRequestInterception(true);
     page.on("request", (req) => {
       const url = req.url();
       if (url.includes("/pat/") && url.includes("challenge-platform")) {
-        // Fake success — Turnstile checks status code, not the cryptographic body
         req.respond({ status: 200, contentType: "application/private-token-response", body: "" });
       } else {
         req.continue();
       }
     });
 
-    await page.goto(`${SITE_URL}/sign-up`, {
-      waitUntil: "networkidle2",
-      timeout: 30_000,
-    });
-
-    // Give scripts a moment to settle, then click the generate button to trigger Turnstile
+    await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30_000 });
     await new Promise((r) => setTimeout(r, 1500));
-    await page.evaluate(function() {
-      // Click the "GERAR CÓDIGO DE ACESSO" button
-      var btns = Array.from(document.querySelectorAll("button"));
-      var btn = btns.find(function(b) {
-        return b.textContent && (
-          b.textContent.includes("GERAR") ||
-          b.textContent.includes("CÓDIGO") ||
-          b.textContent.includes("ACESSO") ||
-          b.textContent.includes("CRIAR")
-        );
-      });
-      if (btn) { btn.click(); console.log("[solver] Clicked:", btn.textContent); }
-      else { console.log("[solver] Button not found, buttons:", btns.map(function(b){ return b.textContent?.trim().slice(0,30); }).join(" | ")); }
+
+    // Click the "GERAR CÓDIGO" button to trigger Turnstile widget render
+    await page.evaluate(() => {
+      const btn = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).find(
+        (b) =>
+          b.textContent &&
+          (b.textContent.includes("GERAR") ||
+            b.textContent.includes("CÓDIGO") ||
+            b.textContent.includes("ACESSO") ||
+            b.textContent.includes("CRIAR")),
+      );
+      if (btn) btn.click();
     });
 
-    // Poll for token set by our hook, up to remaining timeout
-    const deadline = Date.now() + Math.max(timeoutMs - 35_000, 20_000);
-    let token: string | null = null;
-
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 500));
-
-      const result = await page.evaluate(function() {
-        var t = (window as any).__tsToken;
-        var err = (window as any).__tsError;
-        // Also check hidden inputs as fallback
-        var inp = document.querySelector("input[name='cf-turnstile-response']") as HTMLInputElement
-               || document.querySelector("input[name='turnstileToken']") as HTMLInputElement;
-        return { token: t || (inp && inp.value) || null, error: err };
-      });
-
-      if (result.token) { token = result.token; break; }
-      if (result.error) { console.error("[turnstile] Widget reported error"); break; }
-    }
-
-    return token;
+    return await getTurnstileTokenFromPage(page, pageUrl, Math.max(timeoutMs - 35_000, 20_000));
   } finally {
     await page.close().catch(() => {});
   }
@@ -199,7 +269,7 @@ export interface SkynetAccount {
 
 export async function createSkynetAccount(): Promise<SkynetAccount | null> {
   console.log("[turnstile] Solving Turnstile for new account...");
-  const token = await solveTurnstile(60_000);
+  const token = await solveTurnstile(90_000);
   if (!token) {
     console.error("[turnstile] Failed to get Turnstile token");
     return null;
@@ -212,8 +282,8 @@ export async function createSkynetAccount(): Promise<SkynetAccount | null> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Origin": SITE_URL,
-      "Referer": `${SITE_URL}/sign-up`,
+      Origin: SITE_URL,
+      Referer: `${SITE_URL}/sign-up`,
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     },
@@ -242,29 +312,30 @@ export async function createSkynetAccount(): Promise<SkynetAccount | null> {
   }
 
   console.log(
-    `[turnstile] New account created! code=${data.code.slice(0, 8)}... nid=${nid.slice(0, 10)}...`
+    `[turnstile] New account created! code=${data.code.slice(0, 8)}... nid=${nid.slice(0, 10)}...`,
   );
   return { nid, sid, code: data.code, createdAt: Date.now(), messagesUsed: 0 };
 }
 
 /**
- * Logs into skynetchat.net using a Pro code via headless Chromium.
- * Cookies are created on the same server IP — so they work for API calls.
+ * Logs into skynetchat.net with a Pro code via headless Chromium + 2captcha.
+ * Cookies are generated on this server IP, so they work for direct API calls.
  */
 export async function loginWithProCode(code: string): Promise<SkynetAccount | null> {
   console.log(`[turnstile] Logging into SKYNETchat with Pro code ${code.slice(0, 6)}...`);
   const browser = await getBrowser();
-  const page    = await browser.newPage();
+  const page = await browser.newPage();
+  const pageUrl = `${SITE_URL}/login`;
 
   try {
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
     await page.evaluateOnNewDocument(EXTRA_STEALTH + "\n" + TURNSTILE_HOOK);
     await page.setExtraHTTPHeaders({
       "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     });
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     );
     await page.setRequestInterception(true);
     page.on("request", (req) => {
@@ -276,18 +347,26 @@ export async function loginWithProCode(code: string): Promise<SkynetAccount | nu
       }
     });
 
-    await page.goto(`${SITE_URL}/login`, { waitUntil: "networkidle2", timeout: 30_000 });
+    await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30_000 });
     await new Promise((r) => setTimeout(r, 1500));
 
     // Fill the code input
     const filled = await page.evaluate((proCode: string) => {
       const inputs = Array.from(document.querySelectorAll("input"));
-      const codeInput = inputs.find(i =>
-        i.type === "text" || i.type === "number" ||
-        (i.placeholder && (i.placeholder.includes("código") || i.placeholder.includes("code") || /\d{6,}/.test(i.placeholder)))
-      ) ?? inputs[0];
+      const codeInput =
+        inputs.find(
+          (i) =>
+            i.type === "text" ||
+            i.type === "number" ||
+            (i.placeholder &&
+              (i.placeholder.includes("código") ||
+                i.placeholder.includes("code") ||
+                /\d{6,}/.test(i.placeholder))),
+        ) ?? inputs[0];
       if (!codeInput) return false;
-      const nativeSetter = (Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value") as any)?.set;
+      const nativeSetter = (
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value") as any
+      )?.set;
       if (nativeSetter) nativeSetter.call(codeInput, proCode);
       codeInput.dispatchEvent(new Event("input", { bubbles: true }));
       codeInput.dispatchEvent(new Event("change", { bubbles: true }));
@@ -299,50 +378,48 @@ export async function loginWithProCode(code: string): Promise<SkynetAccount | nu
       return null;
     }
 
-    // Wait for Turnstile to auto-solve
-    const deadline = Date.now() + 45_000;
-    let tsToken: string | null = null;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 600));
-      const result = await page.evaluate(() => {
-        const t = (window as any).__tsToken;
-        const inp = document.querySelector("input[name='cf-turnstile-response']") as HTMLInputElement
-                 || document.querySelector("input[name='turnstileToken']") as HTMLInputElement;
-        return { token: t || (inp && inp.value) || null, error: (window as any).__tsError };
-      });
-      if (result.token) { tsToken = result.token; break; }
-      if (result.error) { console.error("[turnstile] Turnstile error on login page"); break; }
-    }
+    // Get the Turnstile token (via 2captcha if available, else auto-solve)
+    const tsToken = await getTurnstileTokenFromPage(page, pageUrl, 45_000);
 
     if (!tsToken) {
-      console.error("[turnstile] No Turnstile token — Turnstile did not auto-solve");
+      console.error("[turnstile] No Turnstile token — trying direct POST fallback...");
       return null;
     }
-    console.log(`[turnstile] Got token on login page: ${tsToken.slice(0, 30)}...`);
+    console.log(`[turnstile] Got token: ${tsToken.slice(0, 30)}...`);
 
     // Submit the form
     await page.evaluate(() => {
-      const btn = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).find(b =>
-        b.type === "submit" || (b.textContent && (b.textContent.toLowerCase().includes("enter") || b.textContent.toLowerCase().includes("entrar") || b.textContent.toLowerCase().includes("login")))
+      const btn = (
+        Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]
+      ).find(
+        (b) =>
+          b.type === "submit" ||
+          (b.textContent &&
+            (b.textContent.toLowerCase().includes("enter") ||
+              b.textContent.toLowerCase().includes("entrar") ||
+              b.textContent.toLowerCase().includes("login"))),
       );
       if (btn) btn.click();
-      else { const form = document.querySelector("form"); if (form) form.submit(); }
+      else {
+        const form = document.querySelector("form");
+        if (form) form.submit();
+      }
     });
 
     // Wait for navigation / cookie set
     await Promise.race([
       page.waitForNavigation({ timeout: 15_000 }),
-      new Promise(r => setTimeout(r, 8_000)),
+      new Promise((r) => setTimeout(r, 8_000)),
     ]).catch(() => {});
 
-    // Extract cookies
+    // Extract cookies from browser session
     const cookies = await page.cookies();
-    const nid = cookies.find(c => c.name === "nid")?.value ?? "";
-    const sid = cookies.find(c => c.name === "sid")?.value ?? "";
+    let nid = cookies.find((c) => c.name === "nid")?.value ?? "";
+    let sid = cookies.find((c) => c.name === "sid")?.value ?? "";
 
     if (!sid) {
-      // Fallback: POST directly using the token we got
-      console.log("[turnstile] No cookies from navigation — trying direct API POST...");
+      // Fallback: POST directly using the Turnstile token
+      console.log("[turnstile] No cookies from browser — trying direct API POST...");
       const visitorId = randomUUID();
       const formBody = new URLSearchParams({
         code,
@@ -355,27 +432,27 @@ export async function loginWithProCode(code: string): Promise<SkynetAccount | nu
         headers: {
           "Content-Type":       "application/x-www-form-urlencoded",
           "x-sveltekit-action": "true",
-          "Origin":             SITE_URL,
-          "Referer":            `${SITE_URL}/login`,
-          "User-Agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+          Origin:               SITE_URL,
+          Referer:              pageUrl,
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         },
         body: formBody.toString(),
       });
       const setCookie = resp.headers.get("set-cookie") ?? "";
-      const nidM = setCookie.match(/nid=([^;]+)/)?.[1] ?? "";
-      const sidM = setCookie.match(/sid=([^;]+)/)?.[1] ?? "";
-      if (!sidM) {
+      nid = setCookie.match(/nid=([^;]+)/)?.[1] ?? "";
+      sid = setCookie.match(/sid=([^;]+)/)?.[1] ?? "";
+      if (!sid) {
         const body = await resp.text().catch(() => "");
-        console.error(`[turnstile] Direct POST also failed (${resp.status}): ${body.slice(0, 200)}`);
+        console.error(`[turnstile] Direct POST also failed (${resp.status}): ${body.slice(0, 300)}`);
         return null;
       }
-      console.log(`[turnstile] Pro login SUCCESS via direct POST! nid=${nidM.slice(0, 10)}... sid=${sidM.slice(0, 10)}...`);
-      return { nid: nidM, sid: sidM, code, createdAt: Date.now(), messagesUsed: 0 };
+      console.log(`[turnstile] Pro login SUCCESS via direct POST! nid=${nid.slice(0,10)}... sid=${sid.slice(0,10)}...`);
+    } else {
+      console.log(`[turnstile] Pro login SUCCESS! nid=${nid.slice(0,10)}... sid=${sid.slice(0,10)}...`);
     }
 
-    console.log(`[turnstile] Pro login SUCCESS! nid=${nid.slice(0, 10)}... sid=${sid.slice(0, 10)}...`);
     return { nid, sid, code, createdAt: Date.now(), messagesUsed: 0 };
-
   } catch (err) {
     console.error("[turnstile] loginWithProCode error:", err);
     return null;
