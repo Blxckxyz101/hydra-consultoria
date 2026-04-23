@@ -656,6 +656,16 @@ const COMMANDS = [
         )
     ),
 
+  // ── /cpf ──────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("cpf")
+    .setDescription("🪪 Consulta de CPF — nome, nascimento, mãe, renda e mais")
+    .addStringOption(opt =>
+      opt.setName("cpf")
+        .setDescription("CPF (somente números ou formatado: 000.000.000-00)")
+        .setRequired(true)
+    ),
+
   // ── /voice ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("voice")
@@ -4763,6 +4773,75 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
 }
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
+// ── /cpf handler ──────────────────────────────────────────────────────────────
+async function handleCpf(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const rawInput = interaction.options.getString("cpf", true).replace(/\D/g, "");
+  if (rawInput.length !== 11) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("CPF INVÁLIDO", "Digite um CPF com 11 dígitos — pode ser formatado (`000.000.000-00`) ou só números.")] });
+    return;
+  }
+
+  // Format CPF: 000.000.000-00
+  const fmtCpf = `${rawInput.slice(0,3)}.${rawInput.slice(3,6)}.${rawInput.slice(6,9)}-${rawInput.slice(9)}`;
+
+  let json: Record<string, unknown>;
+  try {
+    const r = await fetch(`${API_BASE}/api/cpf/${rawInput}`, { signal: AbortSignal.timeout(16_000) });
+    json = await r.json() as Record<string, unknown>;
+  } catch (e) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DE CONSULTA", `Falha ao consultar o CPF: ${String(e).slice(0, 100)}`)] });
+    return;
+  }
+
+  // API returned error
+  if (json.error || (json.statusCode && json.statusCode !== 200)) {
+    const msg = String(json.message ?? json.error ?? "CPF não encontrado ou inválido");
+    await interaction.editReply({ embeds: [buildErrorEmbed("❌ CPF NÃO ENCONTRADO", msg)] });
+    return;
+  }
+
+  if (json.status !== "success" || !json.resultado) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("⚠️ SEM DADOS", "Nenhuma informação disponível para este CPF.")] });
+    return;
+  }
+
+  const dados = (json.resultado as Record<string, unknown>).dados as Record<string, unknown> ?? {};
+
+  // ── Format helpers ──────────────────────────────────────────────────────────
+  const v = (val: unknown, fallback = "—") => (val && String(val).trim() ? String(val).trim() : fallback);
+
+  const sexoRaw = v(dados.SEXO, "");
+  const sexo = sexoRaw === "F" ? "♀️ Feminino" : sexoRaw === "M" ? "♂️ Masculino" : "—";
+
+  const rendaRaw = parseFloat(String(dados.RENDA ?? "0").replace(",", ".")) || 0;
+  const rendaFmt = rendaRaw > 0
+    ? `R$ ${rendaRaw.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : "—";
+
+  // ── Build embed ─────────────────────────────────────────────────────────────
+  const embed = new EmbedBuilder()
+    .setColor(0x6366f1)
+    .setTitle("🪪 CONSULTA DE CPF")
+    .setDescription(
+      `> \`\`\`${fmtCpf}\`\`\`\n` +
+      `> **${v(dados.NOME)}**`
+    )
+    .addFields(
+      { name: "📅 Nascimento",     value: v(dados.NASC),           inline: true  },
+      { name: "🚻 Sexo",           value: sexo,                    inline: true  },
+      { name: "💰 Renda Estimada", value: rendaFmt,               inline: true  },
+      { name: "👩 Nome da Mãe",    value: v(dados.NOME_MAE),       inline: false },
+      { name: "🪪 RG",             value: v(dados.RG),             inline: true  },
+      { name: "🗳️ Título Eleitor", value: v(dados.TITULO_ELEITOR), inline: true  },
+    )
+    .setFooter({ text: `${AUTHOR} • via Lyzed Consulta` })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 async function handleConsulta(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
@@ -5886,6 +5965,8 @@ async function main(): Promise<void> {
         await handleAdmins(interaction);
       } else if (commandName === "checker") {
         await handleChecker(interaction);
+      } else if (commandName === "cpf") {
+        await handleCpf(interaction);
       } else if (commandName === "consulta") {
         await handleConsulta(interaction);
       } else if (commandName === "url") {

