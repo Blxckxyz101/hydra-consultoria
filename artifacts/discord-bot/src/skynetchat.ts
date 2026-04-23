@@ -71,8 +71,8 @@ async function loadPoolFromApiServer() {
     const accounts = await res.json() as Array<{ nid: string; sid: string }>;
     let added = 0;
     for (const acc of accounts) {
-      if (!acc.nid || !acc.sid) continue;
-      const cookie = `nid=${acc.nid}; sid=${acc.sid}`;
+      if (!acc.sid) continue;
+      const cookie = acc.nid ? `nid=${acc.nid}; sid=${acc.sid}` : `sid=${acc.sid}`;
       if (!accountPool.some(a => a.cookie === cookie)) {
         accountPool.push({ cookie, limited: false, source: "auto" });
         added++;
