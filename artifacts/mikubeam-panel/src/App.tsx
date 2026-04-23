@@ -669,8 +669,9 @@ function Panel() {
   const [skyManualNid, setSkyManualNid] = useState("");
   const [skyManualSid, setSkyManualSid] = useState("");
   const [skyManualLoading, setSkyManualLoading] = useState(false);
-  interface SkyPoolEntry { nid: string; sid: string; addedAt: number; source: string; }
+  interface SkyPoolEntry { nid: string; sid: string; addedAt: number; lastSeen?: number; expired?: boolean; source: string; }
   const [skyPoolAccounts, setSkyPoolAccounts] = useState<SkyPoolEntry[]>([]);
+  const [skyKeepaliveLoading, setSkyKeepaliveLoading] = useState(false);
   const skyTsRef = useRef<HTMLDivElement | null>(null);
   const skyTsWidgetId = useRef<string | null>(null);
 
@@ -5022,40 +5023,64 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
             {/* ── Pool Status ── */}
             <div style={{ marginTop: 28, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                 <span style={{ color: "#888", fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
                   POOL ATUAL ({skyPoolAccounts.length} conta{skyPoolAccounts.length !== 1 ? "s" : ""})
                 </span>
-                <button onClick={refreshSkyPool} style={{ background: "none", border: "1px solid #333", borderRadius: 4, color: "#888", fontFamily: "monospace", fontSize: 10, padding: "3px 8px", cursor: "pointer" }}>
-                  🔄 Atualizar
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={async () => {
+                      setSkyKeepaliveLoading(true);
+                      try {
+                        await fetch(`${BASE}/api/skynetchat/keepalive`, { method: "POST" });
+                        await refreshSkyPool();
+                        setSkyStatus({ ok: true, msg: "✅ Keepalive enviado — sessões renovadas." });
+                      } catch { setSkyStatus({ ok: false, msg: "Erro ao fazer keepalive." }); }
+                      finally { setSkyKeepaliveLoading(false); }
+                    }}
+                    disabled={skyKeepaliveLoading}
+                    style={{ background: "none", border: "1px solid #1a3a1a", borderRadius: 4, color: "#2ecc71", fontFamily: "monospace", fontSize: 10, padding: "3px 8px", cursor: "pointer" }}
+                  >
+                    {skyKeepaliveLoading ? "⏳" : "💓 Keepalive"}
+                  </button>
+                  <button onClick={refreshSkyPool} style={{ background: "none", border: "1px solid #333", borderRadius: 4, color: "#888", fontFamily: "monospace", fontSize: 10, padding: "3px 8px", cursor: "pointer" }}>
+                    🔄
+                  </button>
+                </div>
               </div>
+              <p style={{ color: "#555", fontFamily: "monospace", fontSize: 10, marginBottom: 10, lineHeight: 1.5 }}>
+                O servidor renova automaticamente a sessão a cada 25 min. Se o cookie expirar, cole um novo abaixo.
+              </p>
               {skyPoolAccounts.length === 0 ? (
                 <p style={{ color: "#555", fontFamily: "monospace", fontSize: 11, textAlign: "center", margin: "8px 0" }}>
-                  Pool vazio
+                  Pool vazio — cole os cookies nid+sid abaixo
                 </p>
               ) : (
                 skyPoolAccounts.map((acc, i) => {
-                  const ageMs   = Date.now() - acc.addedAt;
-                  const ageHrs  = Math.floor(ageMs / 3600000);
-                  const fresh   = ageHrs < 24;
+                  const isValid = !acc.expired;
+                  const lastSeenMs = acc.lastSeen ? Date.now() - acc.lastSeen : null;
+                  const lastSeenLabel = lastSeenMs !== null
+                    ? lastSeenMs < 60000 ? "agora" : `${Math.floor(lastSeenMs / 60000)}min atrás`
+                    : "nunca verificado";
                   return (
                     <div key={i} style={{
                       display: "flex", alignItems: "center", justifyContent: "space-between",
                       padding: "8px 12px", marginBottom: 6,
-                      background: fresh ? "rgba(46,204,113,0.06)" : "rgba(231,76,60,0.06)",
-                      border: `1px solid ${fresh ? "rgba(46,204,113,0.2)" : "rgba(231,76,60,0.2)"}`,
+                      background: isValid ? "rgba(46,204,113,0.06)" : "rgba(231,76,60,0.08)",
+                      border: `1px solid ${isValid ? "rgba(46,204,113,0.2)" : "rgba(231,76,60,0.3)"}`,
                       borderRadius: 6,
                     }}>
-                      <div style={{ fontFamily: "monospace", fontSize: 10 }}>
-                        <span style={{ color: fresh ? "#2ecc71" : "#e74c3c" }}>●</span>
+                      <div style={{ fontFamily: "monospace", fontSize: 10, flex: 1, minWidth: 0 }}>
+                        <span style={{ color: isValid ? "#2ecc71" : "#e74c3c" }}>●</span>
                         <span style={{ color: "#aaa", marginLeft: 6 }}>sid: {acc.sid.slice(0, 14)}...</span>
-                        <span style={{ color: "#555", marginLeft: 8 }}>({ageHrs}h atrás, {acc.source})</span>
-                        {!fresh && <span style={{ color: "#e74c3c", marginLeft: 6 }}>⚠ pode ter expirado</span>}
+                        <span style={{ color: "#555", marginLeft: 8 }}>({acc.source})</span>
+                        <span style={{ color: isValid ? "#2ecc71" : "#e74c3c", marginLeft: 8 }}>
+                          {isValid ? `✓ ativo · visto ${lastSeenLabel}` : "✗ expirado — cole novos cookies"}
+                        </span>
                       </div>
                       <button
                         onClick={() => handleSkyRemove(acc.sid)}
-                        style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
+                        style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 14, padding: "0 4px", flexShrink: 0 }}
                         title="Remover"
                       >✕</button>
                     </div>

@@ -65,12 +65,8 @@ function initPool() {
   }
   // Async: load accounts from API server pool (accounts added via panel login)
   void loadPoolFromApiServer();
-  // If a Pro code is configured, always kick off a fresh Pro login in the background.
-  // This ensures the bot has a valid, IP-matched session from the start.
-  if (SKYNETCHAT_PRO_CODE) {
-    console.log("[SKYNETCHAT] Pro code configured — starting background Pro login...");
-    setTimeout(() => { void acquireFreshAccount(); }, 3_000);
-  }
+  // Note: Turnstile auto-solve is blocked on datacenter IPs (Cloudflare detects them).
+  // To use the Pro code, log in manually at skynetchat.net and add cookies via the panel.
   // Refresh pool from API server every 5 minutes — picks up new cookies added via panel
   // Also resets "limited" flag on existing accounts (session may have been renewed)
   setInterval(() => {
@@ -138,12 +134,12 @@ async function acquireFreshAccount(): Promise<string | null> {
   try {
     let account: SkynetAccount | null = null;
 
-    // Try Pro login first (unlimited messages) — falls back to free account creation
-    if (SKYNETCHAT_PRO_CODE) {
-      console.log("[SKYNETCHAT] Attempting Pro login via headless browser...");
+    // Pro login via headless browser only works when 2captcha is configured.
+    // On datacenter IPs (Replit), Cloudflare blocks Turnstile auto-solve.
+    if (SKYNETCHAT_PRO_CODE && process.env.TWOCAPTCHA_API_KEY) {
+      console.log("[SKYNETCHAT] Attempting Pro login via headless browser + 2captcha...");
       account = await loginWithProCode(SKYNETCHAT_PRO_CODE);
       if (account) {
-        // Also persist to API server pool so panel and Telegram bot see it
         void fetch("http://localhost:8080/api/skynetchat/add-manual", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -152,13 +148,16 @@ async function acquireFreshAccount(): Promise<string | null> {
       }
     }
 
-    if (!account) {
-      console.log("[SKYNETCHAT] Falling back to free account creation...");
+    if (!account && process.env.TWOCAPTCHA_API_KEY) {
+      console.log("[SKYNETCHAT] Falling back to free account creation via 2captcha...");
       account = await createSkynetAccount();
     }
 
     if (!account) {
-      console.error("[SKYNETCHAT] Failed to acquire any account");
+      console.warn(
+        "[SKYNETCHAT] ⚠️  Pool vazio e sem 2captcha configurado.\n" +
+        "    → Acesse o painel → aba SKY Login → cole os cookies nid+sid do skynetchat.net"
+      );
       return null;
     }
     const cookie = skynetAccountToCookie(account);
