@@ -895,6 +895,12 @@ async function sendFinalReport(
 bot.launch(() => {
   console.log("🤖 Geass Command Center bot running...");
 }).catch(err => {
+  const msg = String(err?.message ?? err);
+  if (msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other")) {
+    console.warn("⚠️  Another Telegram bot instance is already running (production deployment).");
+    console.warn("    This dev instance will exit — the production bot is handling requests.");
+    process.exit(0); // Clean exit — not a failure
+  }
   console.error("Bot launch error:", err);
   process.exit(1);
 });

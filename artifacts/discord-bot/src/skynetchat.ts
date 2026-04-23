@@ -25,7 +25,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createSkynetAccount, type SkynetAccount } from "./turnstile-solver.js";
+import { createSkynetAccount, loginWithProCode, type SkynetAccount } from "./turnstile-solver.js";
+
+// Pro code for unlimited messages — read from env or fallback
+const SKYNETCHAT_PRO_CODE = process.env["SKYNETCHAT_PRO_CODE"]?.trim() || "";
 
 const SKYNETCHAT_BASE    = "https://skynetchat.net";
 const SKYNETCHAT_TIMEOUT = 40_000;
@@ -45,7 +48,7 @@ export class SkynetRateLimitError extends Error {
 interface PoolEntry {
   cookie: string;   // full cookie string for the request
   limited: boolean; // true if this account has hit the 429
-  source: "env" | "auto";
+  source: "env" | "auto" | "pro";
 }
 
 const accountPool: PoolEntry[] = [];
@@ -62,13 +65,18 @@ function initPool() {
   }
   // Async: load accounts from API server pool (accounts added via panel login)
   void loadPoolFromApiServer();
+  // If a Pro code is configured, always kick off a fresh Pro login in the background.
+  // This ensures the bot has a valid, IP-matched session from the start.
+  if (SKYNETCHAT_PRO_CODE) {
+    console.log("[SKYNETCHAT] Pro code configured — starting background Pro login...");
+    setTimeout(() => { void acquireFreshAccount(); }, 3_000);
+  }
   // Refresh pool from API server every 5 minutes — picks up new cookies added via panel
   // Also resets "limited" flag on existing accounts (session may have been renewed)
   setInterval(() => {
     void loadPoolFromApiServer().then(() => {
-      // Unmark limited on "auto" accounts — panel may have refreshed the session
       for (const acc of accountPool) {
-        if (acc.source === "auto" && acc.limited) {
+        if ((acc.source === "auto" || acc.source === "pro") && acc.limited) {
           acc.limited = false;
           console.log("[SKYNETCHAT] Reset limited flag on pool account (periodic refresh)");
         }
@@ -128,15 +136,34 @@ async function acquireFreshAccount(): Promise<string | null> {
 
   creatingAccount = true;
   try {
-    console.log("[SKYNETCHAT] Creating new account via Turnstile solver...");
-    const account = await createSkynetAccount();
+    let account: SkynetAccount | null = null;
+
+    // Try Pro login first (unlimited messages) — falls back to free account creation
+    if (SKYNETCHAT_PRO_CODE) {
+      console.log("[SKYNETCHAT] Attempting Pro login via headless browser...");
+      account = await loginWithProCode(SKYNETCHAT_PRO_CODE);
+      if (account) {
+        // Also persist to API server pool so panel and Telegram bot see it
+        void fetch("http://localhost:8080/api/skynetchat/add-manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nid: account.nid, sid: account.sid }),
+        }).catch(() => {});
+      }
+    }
+
     if (!account) {
-      console.error("[SKYNETCHAT] Failed to create new account");
+      console.log("[SKYNETCHAT] Falling back to free account creation...");
+      account = await createSkynetAccount();
+    }
+
+    if (!account) {
+      console.error("[SKYNETCHAT] Failed to acquire any account");
       return null;
     }
     const cookie = skynetAccountToCookie(account);
-    accountPool.push({ cookie, limited: false, source: "auto" });
-    console.log(`[SKYNETCHAT] New account added to pool (total: ${accountPool.length})`);
+    accountPool.push({ cookie, limited: false, source: SKYNETCHAT_PRO_CODE ? "pro" : "auto" });
+    console.log(`[SKYNETCHAT] Account added to pool (total: ${accountPool.length})`);
     return cookie;
   } finally {
     creatingAccount = false;

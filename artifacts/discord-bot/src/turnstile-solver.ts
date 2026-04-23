@@ -247,6 +247,143 @@ export async function createSkynetAccount(): Promise<SkynetAccount | null> {
   return { nid, sid, code: data.code, createdAt: Date.now(), messagesUsed: 0 };
 }
 
+/**
+ * Logs into skynetchat.net using a Pro code via headless Chromium.
+ * Cookies are created on the same server IP — so they work for API calls.
+ */
+export async function loginWithProCode(code: string): Promise<SkynetAccount | null> {
+  console.log(`[turnstile] Logging into SKYNETchat with Pro code ${code.slice(0, 6)}...`);
+  const browser = await getBrowser();
+  const page    = await browser.newPage();
+
+  try {
+    await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    await page.evaluateOnNewDocument(EXTRA_STEALTH + "\n" + TURNSTILE_HOOK);
+    await page.setExtraHTTPHeaders({
+      "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    );
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.includes("/pat/") && url.includes("challenge-platform")) {
+        req.respond({ status: 200, contentType: "application/private-token-response", body: "" });
+      } else {
+        req.continue();
+      }
+    });
+
+    await page.goto(`${SITE_URL}/login`, { waitUntil: "networkidle2", timeout: 30_000 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Fill the code input
+    const filled = await page.evaluate((proCode: string) => {
+      const inputs = Array.from(document.querySelectorAll("input"));
+      const codeInput = inputs.find(i =>
+        i.type === "text" || i.type === "number" ||
+        (i.placeholder && (i.placeholder.includes("código") || i.placeholder.includes("code") || /\d{6,}/.test(i.placeholder)))
+      ) ?? inputs[0];
+      if (!codeInput) return false;
+      const nativeSetter = (Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value") as any)?.set;
+      if (nativeSetter) nativeSetter.call(codeInput, proCode);
+      codeInput.dispatchEvent(new Event("input", { bubbles: true }));
+      codeInput.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    }, code);
+
+    if (!filled) {
+      console.error("[turnstile] Could not find code input on login page");
+      return null;
+    }
+
+    // Wait for Turnstile to auto-solve
+    const deadline = Date.now() + 45_000;
+    let tsToken: string | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 600));
+      const result = await page.evaluate(() => {
+        const t = (window as any).__tsToken;
+        const inp = document.querySelector("input[name='cf-turnstile-response']") as HTMLInputElement
+                 || document.querySelector("input[name='turnstileToken']") as HTMLInputElement;
+        return { token: t || (inp && inp.value) || null, error: (window as any).__tsError };
+      });
+      if (result.token) { tsToken = result.token; break; }
+      if (result.error) { console.error("[turnstile] Turnstile error on login page"); break; }
+    }
+
+    if (!tsToken) {
+      console.error("[turnstile] No Turnstile token — Turnstile did not auto-solve");
+      return null;
+    }
+    console.log(`[turnstile] Got token on login page: ${tsToken.slice(0, 30)}...`);
+
+    // Submit the form
+    await page.evaluate(() => {
+      const btn = (Array.from(document.querySelectorAll("button")) as HTMLButtonElement[]).find(b =>
+        b.type === "submit" || (b.textContent && (b.textContent.toLowerCase().includes("enter") || b.textContent.toLowerCase().includes("entrar") || b.textContent.toLowerCase().includes("login")))
+      );
+      if (btn) btn.click();
+      else { const form = document.querySelector("form"); if (form) form.submit(); }
+    });
+
+    // Wait for navigation / cookie set
+    await Promise.race([
+      page.waitForNavigation({ timeout: 15_000 }),
+      new Promise(r => setTimeout(r, 8_000)),
+    ]).catch(() => {});
+
+    // Extract cookies
+    const cookies = await page.cookies();
+    const nid = cookies.find(c => c.name === "nid")?.value ?? "";
+    const sid = cookies.find(c => c.name === "sid")?.value ?? "";
+
+    if (!sid) {
+      // Fallback: POST directly using the token we got
+      console.log("[turnstile] No cookies from navigation — trying direct API POST...");
+      const visitorId = randomUUID();
+      const formBody = new URLSearchParams({
+        code,
+        "cf-turnstile-response": tsToken,
+        turnstileToken: tsToken,
+        visitorId,
+      });
+      const resp = await fetch(`${SITE_URL}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type":       "application/x-www-form-urlencoded",
+          "x-sveltekit-action": "true",
+          "Origin":             SITE_URL,
+          "Referer":            `${SITE_URL}/login`,
+          "User-Agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        },
+        body: formBody.toString(),
+      });
+      const setCookie = resp.headers.get("set-cookie") ?? "";
+      const nidM = setCookie.match(/nid=([^;]+)/)?.[1] ?? "";
+      const sidM = setCookie.match(/sid=([^;]+)/)?.[1] ?? "";
+      if (!sidM) {
+        const body = await resp.text().catch(() => "");
+        console.error(`[turnstile] Direct POST also failed (${resp.status}): ${body.slice(0, 200)}`);
+        return null;
+      }
+      console.log(`[turnstile] Pro login SUCCESS via direct POST! nid=${nidM.slice(0, 10)}... sid=${sidM.slice(0, 10)}...`);
+      return { nid: nidM, sid: sidM, code, createdAt: Date.now(), messagesUsed: 0 };
+    }
+
+    console.log(`[turnstile] Pro login SUCCESS! nid=${nid.slice(0, 10)}... sid=${sid.slice(0, 10)}...`);
+    return { nid, sid, code, createdAt: Date.now(), messagesUsed: 0 };
+
+  } catch (err) {
+    console.error("[turnstile] loginWithProCode error:", err);
+    return null;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 export async function closeBrowser(): Promise<void> {
   if (browserInstance) {
     await (browserInstance as any).close().catch(() => {});
