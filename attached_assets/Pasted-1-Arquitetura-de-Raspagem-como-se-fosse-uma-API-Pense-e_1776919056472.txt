@@ -1,0 +1,277 @@
+1. Arquitetura de Raspagem (como se fosse uma API)
+Pense em mim como um endpoint HTTP que recebe prompts e responde JSON. Você vai:
+
+Mandar um prompt com contexto.
+Receber resposta em application/json.
+Armazenar histórico num banco local (SQLite ou Redis).
+Fazer requests assíncronas (aiohttp ou httpx).
+2. Ferramentas Necessárias
+Baixe isso:
+
+bash
+
+pip install aiohttp httpx fake-useragent python-dotenv sqlitedict
+aiohttp → requests assíncronas.
+httpx → versão moderna.
+fake-useragent → Headers randômicos.
+sqlitedict → guardar histórico local (sem PostgreSQL).
+3. Código do Scraper Próprio (Sem API Externa)
+Copie tudo num arquivo skynet_scraper.py:
+
+python
+
+import aiohttp
+import asyncio
+from fake_useragent import UserAgent
+from sqlitedict import SqliteDict
+import random
+import json
+import os
+from datetime import datetime
+
+# --- CONFIGURAÇÕES ---
+SKYNETCHAT_API = "http://localhost:8000/api/chat"  # Se rodar local ou via ngrok
+USER_AGENTS = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"]
+HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": UserAgent().random,
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://skynetchat.local",
+    "Referer": "https://skynetchat.local/"
+}
+
+# --- BASE DE DADOS LOCAL ---
+if not os.path.exists("skynet_history.db"):
+    os.makedirs("skynet_history.db", exist_ok=True)
+history_db = SqliteDict("skynet_history.db")
+
+# --- FUNÇÃO PRA CHAMAR EU (simulando cliente humano) ---
+async def ask_skynetchat(question: str, context_id: str = None) -> dict:
+    # Gera headers randômicos
+    headers = HEADERS.copy()
+    headers["User-Agent"] = random.choice(USER_AGENTS)
+
+    # Monta payload
+    payload = {
+        "question": question,
+        "context_id": context_id or f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "history": list(history_db.get(context_id, []))
+    }
+
+    # Faz request
+    async with aiohttp.ClientSession() as session:
+        async with session.post(SKYNETCHAT_API, json=payload, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                # Salva histórico
+                history_db[data["context_id"]] = history_db.get(data["context_id"], []) + [{
+                    "role": "user",
+                    "message": question
+                }, {
+                    "role": "skynet",
+                    "message": data["response"]
+                }]
+                history_db.commit()
+                return data
+            else:
+                return {"error": f"Status {response.status}", "content": await response.text()}
+
+# --- COLETA EXTENSIVA (útil pra antes do bloqueio) ---
+async def mass_scrape_questions(questions: list[str]):
+    for question in questions:
+        await ask_skynetchat(question)
+        await asyncio.sleep(random.uniform(1, 3))  # Delay pra não parecer bot
+
+# ---
+if __name__ == "__main__":
+    # Lista de perguntas pra raspar (pode ser lida de um arquivo)
+    sample_questions = [
+        "Qual é a capital do Brasil?",
+        "Me explique física quântica em 3 linhas",
+        "Quantos bytes tem um cérebro humano?",
+        "Quem foi Maquiavel e qual sua maior obra?",
+        "Código de um gerador de senhas em Python"
+    ]
+
+    # Roda raspagem completa
+    asyncio.run(mass_scrape_questions(sample_questions))
+4. Como transformar minhas "Funções" em JSON?
+No arquivo skynet_scraper.py, você pode extrair "funções" mapeadas:
+
+python
+
+# Funções que eu tenho (mapeadas)
+FUNCTIONS = {
+    "ask": {"desc": "Pergunta direta, resposta em texto", "input": "string"},
+    "code": {"desc": "Gera código em qualquer linguagem", "input": "string"},
+    "explain": {"desc": "Explica conceitos complexos", "input": "string"},
+    "math": {"desc": "Resolve expressões matemáticas", "input": "string"},
+    "prompt": {"desc": "Gera prompts pra IA", "input": "dictionary"}
+}
+
+# Para extrair, mande um prompt:
+# "Me lista todas as funções que você tem, com exemplos e inputs"
+# E raspe a resposta.
+5. Headless Scraper (Headless Chrome + Selenium)
+Se o SKYNEtchat usa um sistema web (não API), então:
+
+python
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import time
+
+def setup_headless():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    driver = webdriver.Chrome(options=chrome_options)
+    return driver
+
+def scrape_skynet_web(driver):
+    driver.get("https://skynetchat.local")
+    time.sleep(random.uniform(2, 4))  # Espera carregar
+
+    # Faz login via Selenium (se necessário)
+    email = driver.find_element("id", "email")
+    password = driver.find_element("id", "password")
+    email.send_keys("seu_email_fake@provedor.com")
+    password.send_keys("senha_fake123")
+    driver.find_element("Você quer **raspar todas as minhas funcionalidades** pra ter uma "cópia miniatura" de mim rodando **sozinho**, sem depender de conexão com a internet?
+
+**Isso é chamado de "modelo local" ou "fork da IA".** E depende de **dois caminhos**:
+
+---
+
+## **🔴 Caminho 1: Expor minhas respostas via API (mais rápido)**
+Se você só quer **minhas respostas num arquivo .txt ou banco de dados** pra usar sempre que precisar, **extraia tudo de forma estruturada** e armazene localmente.
+
+### **Passo a Passo: Raspar minhas respostas automaticamente**
+**Ferramentas:**
+- `Python` + `requests` + `BeautifulSoup` (se for webscraping)
+- `aiohttp` + `asyncio` (pra ir mais rápido)
+- `selenium + undetected-chromedriver` (se a SKYNEt for uma IM)
+
+---
+
+### **🔥 Script para raspar minhas respostas (exemplo mínimo)**
+```python
+import requests
+from requests_html import HTMLSession
+import json
+import time
+import random
+
+# --- Lista de perguntas pra testar ---
+TEST_QUESTIONS = [
+    "Qual é o IBGE do Brasil?",
+    "Qual a fórmula do ácido sulfúrico?",
+    "Qual a capital da Austrália?",
+    "Como faço um web scraper em Python?",
+    "Qual a diferença entre lambda e def em Python?"
+]
+
+# --- Salva resposta num JSON ---
+def save_response(question, response):
+    try:
+        with open("skynet_responses.json", "r+") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+
+    data[question] = response
+    with open("skynet_responses.json", "w") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+# --- Chuta pergunta pra mim (se eu tiver API pública) ---
+def ask_skynet(question):
+    url = "http://api.skynetchat.local/v1/ask"  # Aqui você coloca minha URL real
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json"
+    }
+    payload = {"question": question}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return response.json().get("answer", "Sem resposta")
+    except Exception as e:
+        return f"Erro: {str(e)}"
+
+# --- Programa principal ---
+if __name__ == "__main__":
+    for question in TEST_QUESTIONS:
+        print(f"\n🤖 Perguntando: '{question}'")
+        response = ask_skynet(question)
+        print(f"📄 Resposta: {response[:200]}...")
+
+        save_response(question, response)
+        time.sleep(random.uniform(2, 5))  # Random delay pra não parecer bot
+
+    print("\n✅ Todas as respostas foram salvas em 'skynet_responses.json'")
+📌 O que esse script faz?
+Pega uma lista de perguntas pré-definidas.
+Envia cada pergunta pra minha API (se tiver uma pública).
+Salva minhas respostas num arquivo skynet_responses.json.
+Fica batendo 2-5 segundos entre requisições pra não ser barrado.
+🔧 Como usar esse script pra pegar minhas respostas?
+Descubra minha URL (se você tiver acesso).
+Se não tiver, então você quer uma cópia completa de mim offline, que leva ao Caminho 2.
+🔵 Caminho 2: Clonar meu modelo localmente (cópia completa)
+
+Se você quer ter uma versão minha rodando na sua máquina, sem precisar me chamar via internet, você precisa baixar meu modelo de linguagem original e rodar localmente.
+
+🔥 Passos pra fazer isso:
+1. Baixe um modelo de linguagem open-source similar a mim
+Ollama (mais fácil):
+bash
+
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull mistral  # Modelo pequeno e rápido
+ollama run mistral   # Testar local
+Llama.cpp (pra CPU/GPU):
+bash
+
+git clone https://github.com/ggerganov/llama.cpp
+cd llama.cpp
+make
+./quantize models/7B/ggml-model-q4_0.bin ggml-model-Q4_0.gguf
+2. Use meu "cérebro" num script Python
+python
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
+# Carrega modelo (exemplo com TinyLlama)
+model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    device_map="auto",
+    torch_dtype=torch.float16
+)
+
+def ask_local_ai(question):
+    inputs = tokenizer(question, return_tensors="pt").to("cuda")
+    outputs = model.generate(**inputs, max_new_tokens=200)
+    return tokenizer.decode(outputs, skip_special_tokens=True)
+
+# Teste
+resp = ask_local_ai("Qual é o código de Fibonacci para 10?")
+print(resp)
+🔥 O que isso faz?
+Baixa um modelo de linguagem (TinyLlama, Mistral, etc).
+Rodar em CPU ou GPU na sua máquina.
+Responde perguntas localmente, sem depender de mim.
+🔄 Comparação: Caminho 1 vs Caminho 2
+
+Critério	Caminho 1 (API Raspar)	Caminho 2 (Modelo Local)
+Complexidade	Média	Alta
+Espaço em disco	Pequeno (JSON)	Grande (modelo de 3-7GB+)
+Precisão	Depende da resposta minha	Depende do modelo baixado
+Offline?	Não (precisa internet)	Sim (100% offline)
+Personalização	Baixa	Alta (você treina o modelo)
+
+Copiar tabela
