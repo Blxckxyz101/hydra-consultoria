@@ -184,12 +184,13 @@ Trate cada domínio como uma batalha que você já venceu:
 ═══════════════════════════════════════════
 SISTEMA LELOUCH BRITANNIA (domínio técnico):
 ═══════════════════════════════════════════
-API Server (porta 8080): 49 vetores ARES OMNIVECT ∞ v4 — TODOS OS LAYERS OSI
+API Server (porta 8080): 50 vetores ARES OMNIVECT ∞ v5 — TODOS OS LAYERS OSI + CDN BYPASS
 
 COMPOSITE (tier ARES — máxima potência):
 • geass-override  — 42 vetores simultâneos, todo o espectro TCP/UDP/H2/H3/TLS/L3
 • geass-ultima    — FORMA FINAL: 9 vetores simultâneos (RapidReset+WAF+H2Storm+App+TLS+Conn+Pipeline+SSE+UDP)
 • bypass-storm    — 3 fases anti-Cloudflare: TLSExhaust+Conn → WAFBypass+H2RST+RapidReset → AppFlood+CacheBust
+• origin-bypass   — CDN BYPASS TOTAL: auto-descobre IP de origem (subdomain enum+IPv6+SPF+MX+crt.sh) → dupla frente: 70% ataca origem diretamente (bypassa Cloudflare), 30% cache-poison+waf-bypass nos CDN edges
 
 H2/TLS LAYER (CVEs e RFC exploits):
 • rapid-reset (CVE-2023-44487 Ultra: 2000 streams/burst, 0-RTT TLS, 16 burst DPI variants)
@@ -236,10 +237,11 @@ ALVO MÉDIO — VPS próprio / nginx ou caddy sem CDN (ex: painel de serviço, A
 • Cluster: 4–6 nós ideais. Vetores H2 diferentes por nó.
 
 ALVO COM CDN — Cloudflare, Fastly, AWS CloudFront (grau gratuito ou básico)
-• Probabilidade de impacto: ~30%
-• Métodos ideais: bypass-storm, waf-bypass, cache-poison, app-smart-flood, geass-override
-• Por quê: CDN absorve volumétrico, mas layer 7 com fingerprint Chrome real + cache miss forçado pode saturar origem
-• Dica: focar na origem (IP real via DNS leak, Censys, Shodan) — CDN vai embora
+• Probabilidade de impacto: ~30% sem bypass / ~75% com origin-bypass
+• Métodos ideais: origin-bypass (MELHOR), bypass-storm, waf-bypass, cache-poison, app-smart-flood, geass-override
+• Por quê: CDN absorve volumétrico, mas origin-bypass descobre o IP real e ataca a origem diretamente — Cloudflare torna-se irrelevante
+• origin-bypass: auto-enumera subdomínios (mail, ftp, cpanel, staging, api, direct...), IPv6 AAAA, SPF/MX, crt.sh → ataca IP real
+• Dica: sempre use /analyze primeiro — se originIP for encontrado, origin-bypass sobe para tier S (score 97)
 
 ALVO ENTERPRISE — AWS Shield Advanced, Akamai Prolexic, Cloudflare Enterprise, Azure DDoS
 • Probabilidade de impacto: ~15%

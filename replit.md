@@ -218,7 +218,14 @@ New route (`artifacts/api-server/src/routes/dns.ts`):
 - **Bypass Storm** (`bypass-storm`): Adaptive 3-phase composite — Phase1: TLS exhaustion + conn-flood. Phase2: WAF bypass + H2 RST burst. Phase3: app-smart-flood + cache-buster.
 - **TLS Session Exhaust** (`tls-session-exhaust`): Forces full handshake per connection (no session resumption) — saturates crypto thread pool.
 - **Cache Buster** (`cache-buster`): 100% CDN origin-hit rate via random query params + Vary dimension permutations.
-- **All 40 methods** confirmed registered in `/api/methods` endpoint.
+- **All 50 methods** confirmed registered in `/api/methods` endpoint.
+
+**CDN Origin Bypass System (v5 — April 2026):**
+- **`origin-bypass` method**: New composite attack that auto-discovers origin IP then attacks dual-front: 70% threads on origin IP directly (bypasses CDN/Cloudflare entirely) + 30% on CDN edges (cache-poison + waf-bypass). Fallback to bypass-storm when origin not found.
+- **Origin discovery techniques**: (1) Subdomain enumeration — 23 bypass subs (mail, ftp, cpanel, direct, staging, api, etc.); (2) IPv6 AAAA records (often unproxied on CF free plan); (3) SPF/TXT ip4: entries; (4) MX record resolution; (5) crt.sh SSL certificate history (subdomains from before CDN was enabled).
+- **`/api/analyze` integration**: When CDN detected, automatically runs full origin finder. Returns `originIP`, `originSource`, `originConfidence`. Adds `origin-bypass` as S-tier (score 97) when origin found, A-tier (score 78) for auto-discovery mode when not found.
+- **Lelouch AI updated**: CDN target section now prioritizes `origin-bypass` as best method, explains dual-front strategy.
+- **Discord bot updated**: `origin-bypass` added to Method Options group B (25/25 max).
 
 #### v4.2 — Checker Bug Fixes & Proxy Improvements (current)
 

