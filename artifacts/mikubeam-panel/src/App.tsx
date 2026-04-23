@@ -62,6 +62,8 @@ const L7_PROXY_OK = new Set([
 ]);
 const methodInfo = (m: string) => {
   if (m === "geass-override")       return { badge: "ARES ∞ [40V]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-ultima")         return { badge: "ULTIMA [9V]",   cls: "geass",     color: "#8B0000" };
+  if (m === "origin-bypass")        return { badge: "ORIGIN BYPASS", cls: "geass",     color: "#7B2D8B" };
   if (m === "bypass-storm")         return { badge: "BYPASS STORM",  cls: "geass",     color: "#5B2C6F" };
   if (m === "waf-bypass")           return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
   if (m === "http2-flood")          return { badge: "CVE-2023",      cls: "real-http", color: "#1abc9c" };
@@ -123,6 +125,8 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
   { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "👁"  },
+  { label: "Geass Ultima",   method: "geass-ultima",        packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "🔱"  },
+  { label: "Origin Bypass",  method: "origin-bypass",       packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🎯"  },
   { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🌪"  },
   { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
   { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
@@ -578,6 +582,8 @@ function Panel() {
   const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const [lastAtkPkts,  setLastAtkPkts]  = useState(0);
   const [lastAtkBytes, setLastAtkBytes] = useState(0);
+  const [liveCodes, setLiveCodes] = useState({ ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
+  const [threadsEffective, setThreadsEffective] = useState<number | null>(null);
   const peakPpsRef = useRef(0);
   const peakBpsRef = useRef(0);
   const lastPacketsRef = useRef(0);
@@ -1533,7 +1539,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       try {
         const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
         if (!r.ok) return;
-        const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean };
+        const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean; codes?: { ok: number; redir: number; client: number; server: number; timeout: number }; latAvgMs?: number };
 
         // Sync accumulator refs so progress bar + final count stay accurate
         if (live.totalPackets > currentPacketsRef.current) currentPacketsRef.current = live.totalPackets;
@@ -1575,6 +1581,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         setBpsHistory(prev => [...prev.slice(-59), displayBps]);
         if (displayPps > peakPpsRef.current) { peakPpsRef.current = displayPps; setPeakPps(displayPps); }
         if (displayBps > peakBpsRef.current) { peakBpsRef.current = displayBps; setPeakBps(displayBps); }
+
+        // Update live response codes (T003 telemetry)
+        if (live.codes) setLiveCodes(live.codes);
 
         // Log at most once per 2s
         const now = Date.now();
@@ -1845,6 +1854,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       });
       setCurrentAttackId(result.id);
       setIsRunning(true); isRunningRef.current = true;
+      setLiveCodes({ ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
+      setThreadsEffective((result as unknown as { threadsEffective?: number }).threadsEffective ?? null);
       if (method === "geass-override") { setGeassFlash(true); setTimeout(() => setGeassFlash(false), 1600); }
       targetRef.current = target.trim();
       startTimeRef.current = Date.now();
@@ -5992,6 +6003,84 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                           ? residentialCount > 0 ? `${residentialCount.toLocaleString()} residential` : "auto-refresh 10m"
                           : "click FETCH PROXIES"}
                     </div>
+                  </div>
+                );
+              })()}
+
+              {/* Response codes breakdown — shown when there are any tracked codes */}
+              {(() => {
+                const codesTotal = liveCodes.ok + liveCodes.redir + liveCodes.client + liveCodes.server + liveCodes.timeout;
+                const hasTrackedCodes = isRunning && codesTotal > 0;
+                // Also show persisted codes from finished attack
+                const finishedCodes = !isRunning && currentAttack && (currentAttack as unknown as { codesOk?: number; codesServer?: number }).codesOk !== null;
+                const finC = finishedCodes ? {
+                  ok: (currentAttack as unknown as { codesOk?: number }).codesOk ?? 0,
+                  redir: (currentAttack as unknown as { codesRedir?: number }).codesRedir ?? 0,
+                  client: (currentAttack as unknown as { codesClient?: number }).codesClient ?? 0,
+                  server: (currentAttack as unknown as { codesServer?: number }).codesServer ?? 0,
+                  timeout: (currentAttack as unknown as { codesTimeout?: number }).codesTimeout ?? 0,
+                } : null;
+                const dispCodes = hasTrackedCodes ? liveCodes : finC;
+                if (!dispCodes) return null;
+                const total = dispCodes.ok + dispCodes.redir + dispCodes.client + dispCodes.server + dispCodes.timeout;
+                if (total === 0) return null;
+                const pct = (n: number) => total > 0 ? ((n / total) * 100).toFixed(1) : "0.0";
+                const passRate  = parseFloat(pct(dispCodes.ok + dispCodes.redir));
+                const blockRate = parseFloat(pct(dispCodes.client));
+                const errorRate = parseFloat(pct(dispCodes.server));
+                const toRate    = parseFloat(pct(dispCodes.timeout));
+                return (
+                  <div className="lb-codes-row">
+                    <div className="lb-codes-header">
+                      <span className="lb-codes-title">RESPONSE BREAKDOWN</span>
+                      <span className="lb-codes-total">{total.toLocaleString()} rastreados {isRunning ? <span className="lb-stat-live">LIVE</span> : <span className="lb-stat-live" style={{color:"#666"}}>FINAL</span>}</span>
+                    </div>
+                    <div className="lb-codes-bar">
+                      {dispCodes.ok > 0    && <div className="lb-codes-seg lb-codes-seg--ok"    style={{width: pct(dispCodes.ok)   +'%'}} title={`2xx OK: ${dispCodes.ok.toLocaleString()}`}/>}
+                      {dispCodes.redir > 0 && <div className="lb-codes-seg lb-codes-seg--redir" style={{width: pct(dispCodes.redir)+'%'}} title={`3xx Redir: ${dispCodes.redir.toLocaleString()}`}/>}
+                      {dispCodes.client > 0&& <div className="lb-codes-seg lb-codes-seg--4xx"   style={{width: pct(dispCodes.client)+'%'}} title={`4xx Block: ${dispCodes.client.toLocaleString()}`}/>}
+                      {dispCodes.server > 0&& <div className="lb-codes-seg lb-codes-seg--5xx"   style={{width: pct(dispCodes.server)+'%'}} title={`5xx Error: ${dispCodes.server.toLocaleString()}`}/>}
+                      {dispCodes.timeout > 0&&<div className="lb-codes-seg lb-codes-seg--to"    style={{width: pct(dispCodes.timeout)+'%'}} title={`Timeout: ${dispCodes.timeout.toLocaleString()}`}/>}
+                    </div>
+                    <div className="lb-codes-pills">
+                      {(dispCodes.ok + dispCodes.redir) > 0 && (
+                        <div className="lb-codes-pill lb-codes-pill--ok">
+                          <span className="lb-codes-pill-icon">✓</span>
+                          <span className="lb-codes-pill-pct">{passRate}%</span>
+                          <span className="lb-codes-pill-lbl">Passou</span>
+                          <span className="lb-codes-pill-n">{(dispCodes.ok + dispCodes.redir).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {dispCodes.client > 0 && (
+                        <div className="lb-codes-pill lb-codes-pill--4xx">
+                          <span className="lb-codes-pill-icon">⊘</span>
+                          <span className="lb-codes-pill-pct">{blockRate}%</span>
+                          <span className="lb-codes-pill-lbl">WAF Block</span>
+                          <span className="lb-codes-pill-n">{dispCodes.client.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {dispCodes.server > 0 && (
+                        <div className="lb-codes-pill lb-codes-pill--5xx">
+                          <span className="lb-codes-pill-icon">✕</span>
+                          <span className="lb-codes-pill-pct">{errorRate}%</span>
+                          <span className="lb-codes-pill-lbl">Server Err</span>
+                          <span className="lb-codes-pill-n">{dispCodes.server.toLocaleString()}</span>
+                        </div>
+                      )}
+                      {dispCodes.timeout > 0 && (
+                        <div className="lb-codes-pill lb-codes-pill--to">
+                          <span className="lb-codes-pill-icon">⏱</span>
+                          <span className="lb-codes-pill-pct">{toRate}%</span>
+                          <span className="lb-codes-pill-lbl">Timeout</span>
+                          <span className="lb-codes-pill-n">{dispCodes.timeout.toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+                    {threadsEffective !== null && threadsEffective < threads && (
+                      <div className="lb-codes-devwarn">
+                        ⚠ Dev mode: {threads} threads → {threadsEffective} efetivos (deploy para poder máximo)
+                      </div>
+                    )}
                   </div>
                 );
               })()}

@@ -536,6 +536,84 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   border:1px solid rgba(230,126,34,.32);
 }
 
+/* ── Response Codes Breakdown ── */
+.lb-codes-row {
+  grid-column: 1 / -1;
+  background: rgba(5,1,12,.7);
+  border: 1px solid rgba(212,175,55,.12);
+  border-radius: var(--r-input);
+  padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  animation: fadeUp .3s ease;
+}
+.lb-codes-header {
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--f-display); letter-spacing: .08em;
+}
+.lb-codes-title {
+  font-size: .57rem; color: var(--text-dim);
+}
+.lb-codes-total {
+  font-size: .6rem; color: var(--text-muted);
+  display: flex; align-items: center; gap: 6px;
+}
+/* Stacked bar */
+.lb-codes-bar {
+  width: 100%; height: 8px; border-radius: 999px;
+  overflow: hidden; display: flex; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.05);
+}
+.lb-codes-seg {
+  height: 100%; min-width: 2px; transition: width .6s ease;
+}
+.lb-codes-seg--ok    { background: #2ecc71; }
+.lb-codes-seg--redir { background: #3498db; }
+.lb-codes-seg--4xx   { background: var(--crimson); }
+.lb-codes-seg--5xx   { background: #e67e22; }
+.lb-codes-seg--to    { background: #7f8c8d; }
+/* Pills row */
+.lb-codes-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.lb-codes-pill {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 6px; border: 1px solid;
+  font-family: var(--f-display); font-size: .62rem; letter-spacing: .04em;
+}
+.lb-codes-pill--ok {
+  background: rgba(46,204,113,.07); border-color: rgba(46,204,113,.2); color: #4ed884;
+}
+.lb-codes-pill--4xx {
+  background: rgba(192,57,43,.08); border-color: rgba(192,57,43,.3); color: #FF9090;
+}
+.lb-codes-pill--5xx {
+  background: rgba(230,126,34,.08); border-color: rgba(230,126,34,.3); color: #f0a045;
+}
+.lb-codes-pill--to {
+  background: rgba(127,140,141,.07); border-color: rgba(127,140,141,.2); color: #95a5a6;
+}
+.lb-codes-pill-icon { font-size: .7rem; }
+.lb-codes-pill-pct  { font-size: .75rem; font-weight: 700; }
+.lb-codes-pill-lbl  { color: inherit; opacity: .7; font-size: .57rem; letter-spacing: .06em; }
+.lb-codes-pill-n    { font-size: .58rem; opacity: .55; font-family: var(--f-mono); }
+/* Live badge */
+.lb-stat-live {
+  display: inline-block;
+  font-size: .5rem; font-family: var(--f-display); letter-spacing: .1em;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(192,57,43,.15); color: var(--crimson);
+  border: 1px solid rgba(192,57,43,.25);
+  animation: pulseDot .8s ease-in-out infinite;
+}
+
+/* Dev mode warning */
+.lb-codes-devwarn {
+  font-family: var(--f-display); font-size: .58rem; letter-spacing: .04em;
+  color: #c9a84c; background: rgba(201,168,76,.07);
+  border: 1px solid rgba(201,168,76,.15); border-radius: 5px;
+  padding: 4px 9px;
+}
+
 /* ── Target Status Banner ── */
 .lb-target-status {
   display:flex; align-items:center; gap:9px;
