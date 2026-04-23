@@ -97,6 +97,32 @@ router.post("/skynetchat/proxy-login", async (req, res) => {
   }
 });
 
+// Manually add nid+sid (from browser DevTools, no Turnstile required)
+router.post("/skynetchat/add-manual", (req, res) => {
+  const { nid, sid } = (req.body ?? {}) as Record<string, string>;
+  if (!sid) {
+    res.status(400).json({ success: false, error: "sid is required" });
+    return;
+  }
+  pool = pool.filter(a => a.sid !== sid);
+  pool.push({ nid: nid ?? "", sid, addedAt: Date.now(), source: "manual" });
+  savePool(pool);
+  res.json({
+    success: true,
+    message: `✅ Cookies salvos no pool! Total: ${pool.length}`,
+    preview: { nid: nid ? nid.slice(0, 16) + "..." : "(none)", sid: sid.slice(0, 16) + "..." },
+  });
+});
+
+// Remove one account from pool by sid
+router.delete("/skynetchat/pool/:sid", (req, res) => {
+  const { sid } = req.params;
+  const before = pool.length;
+  pool = pool.filter(a => a.sid !== sid);
+  savePool(pool);
+  res.json({ success: true, removed: before - pool.length, total: pool.length });
+});
+
 // Discord bot polls this to get extra accounts beyond SKYNETCHAT_COOKIE
 router.get("/skynetchat/pool", (_req, res) => {
   res.json(pool);

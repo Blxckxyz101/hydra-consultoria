@@ -666,6 +666,11 @@ function Panel() {
   const [skyLoading,   setSkyLoading]   = useState(false);
   const [skyStatus,    setSkyStatus]    = useState<{ ok: boolean; msg: string } | null>(null);
   const [skyTsToken,   setSkyTsToken]   = useState<string>("");
+  const [skyManualNid, setSkyManualNid] = useState("");
+  const [skyManualSid, setSkyManualSid] = useState("");
+  const [skyManualLoading, setSkyManualLoading] = useState(false);
+  interface SkyPoolEntry { nid: string; sid: string; addedAt: number; source: string; }
+  const [skyPoolAccounts, setSkyPoolAccounts] = useState<SkyPoolEntry[]>([]);
   const skyTsRef = useRef<HTMLDivElement | null>(null);
   const skyTsWidgetId = useRef<string | null>(null);
 
@@ -698,6 +703,8 @@ function Panel() {
     } else {
       setTimeout(render, 300);
     }
+    // Also refresh pool when entering the tab
+    if (activePage === "sky") refreshSkyPool();
   }, [activePage]);
 
   const handleSkyLogin = async () => {
@@ -727,6 +734,45 @@ function Panel() {
     } finally {
       setSkyLoading(false);
     }
+  };
+
+  const refreshSkyPool = async () => {
+    try {
+      const r = await fetch(`${BASE}/api/skynetchat/pool`);
+      const d = await r.json() as SkyPoolEntry[];
+      setSkyPoolAccounts(Array.isArray(d) ? d : []);
+    } catch { /* ignore */ }
+  };
+
+  const handleSkyManualAdd = async () => {
+    if (!skyManualSid.trim()) { setSkyStatus({ ok: false, msg: "Cole o valor do sid." }); return; }
+    setSkyManualLoading(true); setSkyStatus(null);
+    try {
+      const r = await fetch(`${BASE}/api/skynetchat/add-manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nid: skyManualNid.trim(), sid: skyManualSid.trim() }),
+      });
+      const d = await r.json() as { success: boolean; message?: string; error?: string };
+      if (d.success) {
+        setSkyStatus({ ok: true, msg: d.message ?? "Cookies salvos!" });
+        setSkyManualNid(""); setSkyManualSid("");
+        await refreshSkyPool();
+      } else {
+        setSkyStatus({ ok: false, msg: d.error ?? "Falha." });
+      }
+    } catch (e) {
+      setSkyStatus({ ok: false, msg: String(e) });
+    } finally {
+      setSkyManualLoading(false);
+    }
+  };
+
+  const handleSkyRemove = async (sid: string) => {
+    try {
+      await fetch(`${BASE}/api/skynetchat/pool/${encodeURIComponent(sid)}`, { method: "DELETE" });
+      await refreshSkyPool();
+    } catch { /* ignore */ }
   };
 
   /* ── Nitro Generator ── */
@@ -4914,6 +4960,108 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 3. A sessão é adicionada ao pool do bot Discord automaticamente<br/>
                 4. Pode adicionar quantas contas quiser
               </p>
+            </div>
+
+            {/* ── Manual Cookie Paste ── */}
+            <div style={{ marginTop: 32, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 24 }}>
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
+                <span style={{ color: "#888", fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
+                  OU — COLAR COOKIES MANUALMENTE
+                </span>
+              </div>
+              <p style={{ color: "#666", fontSize: 11, fontFamily: "monospace", marginBottom: 14, lineHeight: 1.6 }}>
+                Abra o skynetchat.net → F12 → Application → Cookies → copie <b style={{ color: "#aaa" }}>nid</b> e <b style={{ color: "#aaa" }}>sid</b>
+              </p>
+
+              <label style={{ color: "#aaa", fontSize: 11, fontFamily: "monospace", letterSpacing: 1, display: "block", marginBottom: 4 }}>
+                NID (opcional)
+              </label>
+              <input
+                value={skyManualNid}
+                onChange={e => setSkyManualNid(e.target.value)}
+                placeholder="dvxfMFJN1exQzws8..."
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: "#1a0a1a", border: "1px solid #2a1a2a",
+                  borderRadius: 6, padding: "8px 12px",
+                  color: "#fff", fontFamily: "monospace", fontSize: 11,
+                  outline: "none", marginBottom: 10,
+                }}
+              />
+
+              <label style={{ color: "#aaa", fontSize: 11, fontFamily: "monospace", letterSpacing: 1, display: "block", marginBottom: 4 }}>
+                SID (obrigatório)
+              </label>
+              <input
+                value={skyManualSid}
+                onChange={e => setSkyManualSid(e.target.value)}
+                placeholder="IlXGQahrsE0vZALE..."
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: "#1a0a1a", border: "1px solid #2a1a2a",
+                  borderRadius: 6, padding: "8px 12px",
+                  color: "#fff", fontFamily: "monospace", fontSize: 11,
+                  outline: "none", marginBottom: 14,
+                }}
+              />
+
+              <button
+                onClick={handleSkyManualAdd}
+                disabled={skyManualLoading || !skyManualSid.trim()}
+                style={{
+                  width: "100%", padding: "10px 0",
+                  background: skyManualLoading ? "#1a1a1a" : "linear-gradient(135deg, #1a3a1a, #2ecc71)",
+                  border: "none", borderRadius: 6, cursor: skyManualLoading ? "not-allowed" : "pointer",
+                  color: "#fff", fontFamily: "monospace", fontWeight: 700,
+                  fontSize: 13, letterSpacing: 2, opacity: !skyManualSid.trim() ? 0.4 : 1,
+                }}
+              >
+                {skyManualLoading ? "⏳ SALVANDO..." : "💾 SALVAR COOKIES"}
+              </button>
+            </div>
+
+            {/* ── Pool Status ── */}
+            <div style={{ marginTop: 28, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <span style={{ color: "#888", fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>
+                  POOL ATUAL ({skyPoolAccounts.length} conta{skyPoolAccounts.length !== 1 ? "s" : ""})
+                </span>
+                <button onClick={refreshSkyPool} style={{ background: "none", border: "1px solid #333", borderRadius: 4, color: "#888", fontFamily: "monospace", fontSize: 10, padding: "3px 8px", cursor: "pointer" }}>
+                  🔄 Atualizar
+                </button>
+              </div>
+              {skyPoolAccounts.length === 0 ? (
+                <p style={{ color: "#555", fontFamily: "monospace", fontSize: 11, textAlign: "center", margin: "8px 0" }}>
+                  Pool vazio
+                </p>
+              ) : (
+                skyPoolAccounts.map((acc, i) => {
+                  const ageMs   = Date.now() - acc.addedAt;
+                  const ageHrs  = Math.floor(ageMs / 3600000);
+                  const fresh   = ageHrs < 24;
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "8px 12px", marginBottom: 6,
+                      background: fresh ? "rgba(46,204,113,0.06)" : "rgba(231,76,60,0.06)",
+                      border: `1px solid ${fresh ? "rgba(46,204,113,0.2)" : "rgba(231,76,60,0.2)"}`,
+                      borderRadius: 6,
+                    }}>
+                      <div style={{ fontFamily: "monospace", fontSize: 10 }}>
+                        <span style={{ color: fresh ? "#2ecc71" : "#e74c3c" }}>●</span>
+                        <span style={{ color: "#aaa", marginLeft: 6 }}>sid: {acc.sid.slice(0, 14)}...</span>
+                        <span style={{ color: "#555", marginLeft: 8 }}>({ageHrs}h atrás, {acc.source})</span>
+                        {!fresh && <span style={{ color: "#e74c3c", marginLeft: 6 }}>⚠ pode ter expirado</span>}
+                      </div>
+                      <button
+                        onClick={() => handleSkyRemove(acc.sid)}
+                        style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 14, padding: "0 4px" }}
+                        title="Remover"
+                      >✕</button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
