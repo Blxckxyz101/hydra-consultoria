@@ -4542,6 +4542,9 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
           new ButtonBuilder().setCustomId("chk_instagram").setLabel("📸 Instagram").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_sispes").setLabel("🏛️ SISP-ES").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_sigma").setLabel("🔵 SIGMA").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("chk_privacy").setLabel("🔒 Privacy.com.br").setStyle(ButtonStyle.Secondary),
+        ),
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
         ),
       ];
@@ -4570,6 +4573,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
         { name: "📸 Instagram",     value: "Meta Basic Display API",                 inline: true },
         { name: "🏛️ SISP-ES",      value: "Portal ES — JSF + curl",                inline: true },
         { name: "🔵 SIGMA",         value: "PC-MA — curl form login",               inline: true },
+        { name: "🔒 Privacy.com.br", value: "service.privacy.com.br — CPF ou email", inline: true },
       ];
 
   await catInteraction.update({
@@ -4601,7 +4605,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "privacy";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
@@ -4623,6 +4627,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     chk_instagram:     "instagram",
     chk_sispes:        "sispes",
     chk_sigma:         "sigma",
+    chk_privacy:       "privacy",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
   const targetLabel   = {
@@ -4633,6 +4638,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     hbomax: "HBO Max", disney: "Disney+", paramount: "Paramount+",
     sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
     instagram: "Instagram", sispes: "SISP-ES", sigma: "SIGMA (PC-MA)",
+    privacy: "Privacy.com.br",
   }[target]!;
   const targetIcon    = {
     iseek: "🌐", datasus: "🏥", sipni: "💉",
@@ -4642,6 +4648,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     hbomax: "👑", disney: "🏰", paramount: "⭐",
     sinesp: "🚔", serasa_exp: "💼",
     instagram: "📸", sispes: "🏛️", sigma: "🔵",
+    privacy: "🔒",
   }[target]!;
   const concurrency   = {
     iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
@@ -4649,6 +4656,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     crunchyroll: 4, netflix: 2, amazon: 2, hbomax: 4, disney: 3, paramount: 4,
     sinesp: 3, serasa_exp: 3,
     instagram: 2, sispes: 2, sigma: 3,
+    privacy: 3,
   }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────

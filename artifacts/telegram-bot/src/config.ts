@@ -41,6 +41,8 @@ export const CHECKER_TARGETS = [
   { id: "iseek",        label: "🌐 iSeek",             cat: "Governo BR"     },
   { id: "serpro",       label: "🛡️ SERPRO",            cat: "Governo BR"     },
   { id: "sinesp",       label: "🚔 SINESP",            cat: "Governo BR"     },
+  // Financeiro BR
+  { id: "privacy",      label: "🔒 Privacy.com.br",    cat: "Financeiro"     },
 ] as const;
 
 export type CheckerTargetId = (typeof CHECKER_TARGETS)[number]["id"];

