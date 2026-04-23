@@ -601,9 +601,8 @@ body { font-family:var(--f-body); background:var(--bg); color:var(--text); overf
   display: inline-block;
   font-size: .5rem; font-family: var(--f-display); letter-spacing: .1em;
   padding: 1px 5px; border-radius: 3px;
-  background: rgba(192,57,43,.15); color: var(--crimson);
-  border: 1px solid rgba(192,57,43,.25);
-  animation: pulseDot .8s ease-in-out infinite;
+  background: rgba(192,57,43,.12); color: rgba(192,57,43,.7);
+  border: 1px solid rgba(192,57,43,.18);
 }
 
 /* Dev mode warning */
