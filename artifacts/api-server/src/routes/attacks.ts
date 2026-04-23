@@ -1128,8 +1128,11 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const { target, port, method, duration, threads, webhookUrl } = p.data;
 
+  // Show effective thread count (dev mode caps to DEV_MAX_THREADS)
+  const threadsEffective = IS_DEPLOYED ? threads : Math.min(threads, DEV_MAX_THREADS);
+
   const [attack] = await db.insert(attacksTable).values({
-    target, port, method, duration, threads,
+    target, port, method, duration, threads, threadsEffective,
     status: "running", packetsSent: 0, bytesSent: 0,
     webhookUrl: webhookUrl ?? null,
   }).returning();
@@ -1197,8 +1200,17 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
     try {
       const [cur] = await db.select().from(attacksTable).where(eq(attacksTable.id, id));
       if (cur?.status === "running") {
+        // Persist final response code breakdown so panel/API keeps them after memory cleanup
+        const finalCodes = liveResponseCodes.get(id) ?? { ok: 0, redir: 0, client: 0, server: 0, timeout: 0 };
         const [fin] = await db.update(attacksTable)
-          .set({ status: "finished", stoppedAt: new Date() })
+          .set({
+            status: "finished", stoppedAt: new Date(),
+            codesOk: finalCodes.ok,
+            codesRedir: finalCodes.redir,
+            codesClient: finalCodes.client,
+            codesServer: finalCodes.server,
+            codesTimeout: finalCodes.timeout,
+          })
           .where(eq(attacksTable.id, id)).returning();
         if (fin?.webhookUrl) await fireWebhook(fin.webhookUrl, fin);
       }

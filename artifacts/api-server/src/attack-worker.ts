@@ -2587,6 +2587,7 @@ async function runWAFBypass(
               stream.on("response", (resHdrs: Record<string, string | string[]>) => {
                 localPkts++; localBytes += 2048;
                 const status = Number(resHdrs[":status"] ?? 0);
+                workerTrackCode(status);
                 if (status === 403 || status === 429) {
                   consec4xx++;
                   if (consec4xx >= 3 && !blocked) {

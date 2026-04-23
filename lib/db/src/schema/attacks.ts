@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,9 +9,15 @@ export const attacksTable = pgTable("attacks", {
   method: text("method").notNull(),
   duration: integer("duration").notNull(),
   threads: integer("threads").notNull(),
+  threadsEffective: integer("threads_effective"),
   status: text("status").notNull().default("running"),
-  packetsSent: integer("packets_sent"),
-  bytesSent: integer("bytes_sent"),
+  packetsSent: bigint("packets_sent", { mode: "number" }),
+  bytesSent: bigint("bytes_sent", { mode: "number" }),
+  codesOk: integer("codes_ok"),
+  codesRedir: integer("codes_redir"),
+  codesClient: integer("codes_client"),
+  codesServer: integer("codes_server"),
+  codesTimeout: integer("codes_timeout"),
   webhookUrl: text("webhook_url"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   stoppedAt: timestamp("stopped_at", { withTimezone: true }),
