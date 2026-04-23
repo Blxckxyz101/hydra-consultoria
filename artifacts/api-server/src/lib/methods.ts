@@ -358,6 +358,15 @@ export const ATTACK_METHODS = [
     description: "Sends GET requests with unique cache-busting parameters on every request: random query strings (?_cb=...), randomized Vary headers (Accept-Language, Accept-Encoding permutations), and Cache-Control: no-cache / Pragma: no-cache. Forces a 100% origin miss rate — every request bypasses CDN edge cache and hits the origin server directly. Extremely effective against Cloudflare/Akamai/Fastly-cached sites where 95%+ of traffic normally hits edge nodes. Combined with high concurrency, overwhelms the origin that was previously shielded by CDN caching.",
   },
 
+  // ── NEW: CDN Purge Flood ───────────────────────────────────────────────────
+  {
+    id: "cdn-purge-flood",
+    name: "CDN Purge Flood ∞ (Cache Invalidation via Proxies)",
+    layer: "L7" as const,
+    protocol: "HTTP" as const,
+    description: "Floods GoCache and generic CDN purge endpoints (POST /cdn-cgi/purge, /cdn-cgi/cache-purge, PURGE/BAN methods) via 1000 rotating residential proxies. Each purge request instructs the CDN to invalidate its cached copy, forcing every subsequent visitor request to hit the origin server directly — bypassing edge cache completely. Carries GoCache-specific bypass headers (X-GoCache-Bypass, Surrogate-Control: no-store, Edge-Control: no-store) to prevent purge calls from being served from cache themselves. 90% of requests via residential proxies: CDN cannot rate-limit by IP without blocking legitimate cache management traffic. Combined with waf-bypass, forces 100% origin hit rate.",
+  },
+
   // ── NEW: Bypass Storm (Composite Multi-Phase) ─────────────────────────────
   {
     id: "bypass-storm",

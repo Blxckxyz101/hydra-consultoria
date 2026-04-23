@@ -194,6 +194,39 @@ async function fetchAndTest(limit = 400): Promise<Proxy[]> {
   return live.sort((a, b) => a.responseMs - b.responseMs);
 }
 
+// ── Healthy proxy cache — TCP-verified subset of proxyCache ──────────────
+// Background health-check tests a random sample every 5 min and keeps only
+// confirmed-live proxies here. spawnPool prefers this over raw proxyCache.
+export let healthyProxyCache: Proxy[] = [];
+let _healthCheckRunning = false;
+
+async function runHealthCheck(): Promise<void> {
+  if (_healthCheckRunning || proxyCache.length === 0) return;
+  _healthCheckRunning = true;
+  try {
+    // Always keep residential (authenticated) proxies — they rotate internally
+    const residential = proxyCache.filter(p => p.username && p.password);
+
+    // TCP-test a random sample of the non-residential pool
+    const nonRes  = proxyCache.filter(p => !p.username);
+    const sample  = [...nonRes].sort(() => Math.random() - 0.5).slice(0, 200);
+    const results = await Promise.allSettled(sample.map(testProxy));
+    const live    = results
+      .filter((r): r is PromiseFulfilledResult<Proxy | null> => r.status === "fulfilled" && r.value !== null)
+      .map(r => r.value!);
+
+    // Merge: residential first, then confirmed-live non-residential, deduped
+    const merged = new Map<string, Proxy>();
+    for (const p of [...residential, ...live]) merged.set(`${p.host}:${p.port}`, p);
+    healthyProxyCache = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs);
+    console.log(`[PROXIES] Health-check done — ${healthyProxyCache.length} live (${residential.length} residential + ${live.length} free)`);
+  } catch { /* keep stale */ } finally { _healthCheckRunning = false; }
+}
+
+// First health-check 20s after startup; repeat every 5 min
+setTimeout(() => { void runHealthCheck(); }, 20_000);
+setInterval(() => { void runHealthCheck(); }, 5 * 60 * 1000);
+
 // ── Auto-harvest on startup (30s delay) + every 5 minutes ────────────────
 // v3: faster first harvest (30s was 90s), shorter cycle (5min was 10min),
 //     larger batch size (600 was 400) → more proxies available for attacks

