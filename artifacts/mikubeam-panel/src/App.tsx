@@ -63,7 +63,7 @@ const L7_PROXY_OK = new Set([
 const methodInfo = (m: string) => {
   if (m === "geass-absolutum")      return { badge: "ABSOLUTUM ∞",  cls: "geass",     color: "#500000" };
   if (m === "geass-override")       return { badge: "ARES ∞ [42V]",  cls: "geass",     color: "#C0392B" };
-  if (m === "geass-ultima")         return { badge: "ULTIMA [10V]",  cls: "geass",     color: "#8B0000" };
+  if (m === "geass-ultima")         return { badge: "ULTIMA [11V]",  cls: "geass",     color: "#8B0000" };
   if (m === "dns-ns-flood")         return { badge: "NS KILLER",     cls: "real-udp",  color: "#e67e22" };
   if (m === "origin-bypass")        return { badge: "ORIGIN BYPASS", cls: "geass",     color: "#7B2D8B" };
   if (m === "bypass-storm")         return { badge: "BYPASS STORM",  cls: "geass",     color: "#5B2C6F" };
