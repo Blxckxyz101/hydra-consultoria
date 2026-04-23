@@ -1820,7 +1820,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
           .setTitle("👁️ CLUSTER BROADCAST — GEASS OVERRIDE FIRING...")
           .setDescription(
             `> *"By the power of Geass, I command ALL nodes — submit to my absolute authority!"*\n\n` +
-            `🌐 Broadcasting **ARES OMNIVECT ∞** to **all cluster nodes** — 33 vectors × 10 machines`
+            `🌐 Broadcasting **ARES OMNIVECT ∞** to **all cluster nodes** — 42 vectors × 10 machines`
           )
           .addFields(
             { name: "🎯 Target",  value: `\`${target}\``,        inline: true },
@@ -1857,7 +1857,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
               { name: "⏱ Duration",        value: `**${duration}s**`,        inline: true },
               { name: "🧵 Threads/Node",   value: `**${threads}**`,          inline: true },
               { name: "🌐 Nodes Online",   value: `**${nodesOnline}**`,      inline: true },
-              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 30}** simultaneous`, inline: true },
+              { name: "⚡ Total Vectors",  value: `**${nodesOnline * 42}** simultaneous`, inline: true },
               { name: "📊 Status",         value: "🔴 **ALL NODES INITIALIZING...**", inline: true },
             )
             .setFooter({ text: AUTHOR })

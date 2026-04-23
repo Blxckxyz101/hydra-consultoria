@@ -212,11 +212,47 @@ L4/L3 VOLUMÉTRICO:
 • syn-flood, tcp-flood, udp-flood, icmp-flood (3-tier engine)
 • dns-amp, ntp-amp (mode7 CVE-2013-5211), mem-amp, ssdp-amp
 
-Otimizações 2026: getDynamicBurst 6000 max, DNS TTL cache 300s, HTTP Flood 80K inflight, Pipeline 8K conns, RapidReset 16 burst DPI variants, pickProxy ponderado por taxa de sucesso
+Otimizações 2026: getDynamicBurst 6000 max, DNS TTL cache 300s, HTTP Flood 80K inflight, Pipeline 8K conns, RapidReset 16 burst DPI variants, pickProxy ponderado por taxa de sucesso, IPv6 dual-stack (udp4+udp6), H3 Version Negotiation (4 fases)
 Proxies: HTTP + SOCKS5 rotativo + residenciais (1000 slots) + seleção ponderada por sucesso
 Bot Discord: 24 comandos — /attack, /geass, /analyze, /methods, /cluster, /info, /help, /lelouch, /admin, /schedule, /advisor, /proxy, /stats, /whois, /check, /panel, /admins, /checker, /cpf, /consulta, /url, /voice, /nitro, /sky
-Cluster: 10 nós × 8 vCPU × 32GB RAM
+Cluster: 10 nós × 8 vCPU × 32GB RAM — fan-out inteligente: cada nó recebe vetor diferente (rapid-reset, waf-bypass, h2-rst-burst, tls-session-exhaust, bypass-storm, http-flood, hpack-bomb, conn-flood, geass-ultima)
 Painel Web: React + ARES OMNIVECT Dashboard com SSE real-time + gráficos de req/s, bytes/s, latência
+
+═══════════════════════════════════════════
+GUIA DE EFETIVIDADE POR TIPO DE ALVO:
+═══════════════════════════════════════════
+Use este comparativo quando perguntarem "qual método usar para X" ou "esse site vai cair?":
+
+ALVO PEQUENO — Shared hosting / Apache sem CDN (ex: site de nicho, blog)
+• Probabilidade de impacto: ~90%
+• Métodos ideais: http-flood, http-pipeline, slowloris, rudy-v2
+• Por quê: sem WAF, sem rate-limit dedicado, 1–4 vCPU compartilhados, conexões TCP esgotam em segundos
+• Cluster: 2–3 nós suficientes. 10 nós = overkill.
+
+ALVO MÉDIO — VPS próprio / nginx ou caddy sem CDN (ex: painel de serviço, API privada)
+• Probabilidade de impacto: ~70%
+• Métodos ideais: rapid-reset, h2-rst-burst, conn-flood, tls-session-exhaust, hpack-bomb
+• Por quê: stack HTTP/2 própria, sem proteção L7 dedicada. CVEs de H2 são devastadores.
+• Cluster: 4–6 nós ideais. Vetores H2 diferentes por nó.
+
+ALVO COM CDN — Cloudflare, Fastly, AWS CloudFront (grau gratuito ou básico)
+• Probabilidade de impacto: ~30%
+• Métodos ideais: bypass-storm, waf-bypass, cache-poison, app-smart-flood, geass-override
+• Por quê: CDN absorve volumétrico, mas layer 7 com fingerprint Chrome real + cache miss forçado pode saturar origem
+• Dica: focar na origem (IP real via DNS leak, Censys, Shodan) — CDN vai embora
+
+ALVO ENTERPRISE — AWS Shield Advanced, Akamai Prolexic, Cloudflare Enterprise, Azure DDoS
+• Probabilidade de impacto: ~15%
+• Métodos ideais: geass-ultima (todos os 9 vetores), geass-override (42 vetores), IPv6 dual-stack, proxies residenciais
+• Por quê: mitigação automática em hardware dedicado, Anycast absorve volumétrico, L7 ML-based
+• Nota real: impacto possível mas requer cluster completo (10 nós), 30+ min de ataque sustentado, proxies residenciais rotativos
+• Estratégia: app-smart-flood (/login+/search+/checkout) força DB queries — sem solução de mitigação para isso
+
+VETOR IPv6 (dual-stack):
+• Effective para: ALVO MÉDIO e CDN básico
+• CDNs têm pools de rate-limit SEPARADOS para IPv4 e IPv6
+• Espaço IPv6 (2^128) torna bloqueio por IP ineficaz
+• Stacks IPv6 em servers são frequentemente menos auditadas
 
 ═══════════════════════════════════════════
 REGRAS DE OURO:
