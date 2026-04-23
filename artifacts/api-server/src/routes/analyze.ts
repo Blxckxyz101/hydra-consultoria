@@ -40,7 +40,7 @@ interface MethodRec {
 type ServerType =
   | "nginx" | "apache" | "iis" | "litespeed" | "caddy"
   | "nodejs" | "cloudflare" | "openresty" | "gunicorn"
-  | "tomcat" | "jetty" | "unknown";
+  | "tomcat" | "jetty" | "gocache" | "azion" | "varnish" | "unknown";
 
 function tierFromScore(score: number): "S" | "A" | "B" | "C" | "D" {
   if (score >= 90) return "S";
@@ -77,17 +77,45 @@ function detectCDN(headers: Headers): { isCDN: boolean; provider: string } {
   const xAkamai = headers.get("x-check-cacheable") || headers.get("x-akamai-transformed") || "";
   const xVercel = headers.get("x-vercel-cache") || headers.get("x-vercel-id") || "";
 
-  if (cfRay || server.includes("cloudflare"))                        return { isCDN: true, provider: "Cloudflare" };
-  if (server.includes("akamai") || xAkamai)                          return { isCDN: true, provider: "Akamai" };
-  if (server.includes("fastly") || via.includes("fastly"))           return { isCDN: true, provider: "Fastly" };
-  if (xServed.includes("cache"))                                     return { isCDN: true, provider: "Fastly" };
-  if (server.includes("awselb") || server.includes("amazonaws"))     return { isCDN: true, provider: "AWS CloudFront" };
-  if (xVercel)                                                       return { isCDN: true, provider: "Vercel Edge" };
-  if (server.includes("sucuri") || headers.get("x-sucuri-id"))       return { isCDN: true, provider: "Sucuri WAF" };
+  // ── Cloudflare
+  if (cfRay || server.includes("cloudflare"))                           return { isCDN: true, provider: "Cloudflare" };
+  // ── Akamai
+  if (server.includes("akamai") || xAkamai)                             return { isCDN: true, provider: "Akamai" };
+  // ── Fastly
+  if (server.includes("fastly") || via.includes("fastly"))              return { isCDN: true, provider: "Fastly" };
+  if (xServed.includes("cache"))                                        return { isCDN: true, provider: "Fastly" };
+  // ── AWS CloudFront
+  if (server.includes("awselb") || server.includes("amazonaws"))        return { isCDN: true, provider: "AWS CloudFront" };
+  if (headers.get("x-amz-cf-id") || headers.get("x-amz-cf-pop"))       return { isCDN: true, provider: "AWS CloudFront" };
+  // ── Vercel Edge
+  if (xVercel)                                                          return { isCDN: true, provider: "Vercel Edge" };
+  // ── Sucuri WAF
+  if (server.includes("sucuri") || headers.get("x-sucuri-id"))          return { isCDN: true, provider: "Sucuri WAF" };
+  // ── DDoS-Guard
   if (headers.get("x-ddos-protect") || headers.get("x-ddos-detection")) return { isCDN: true, provider: "DDoS-Guard" };
-  if (headers.get("x-iinfo") || headers.get("x-cdn") === "imperva") return { isCDN: true, provider: "Imperva Incapsula" };
-  if (headers.get("x-arequestid") || via.includes("bunny"))         return { isCDN: true, provider: "Bunny CDN" };
-  if (xCache.includes("hit") || via.includes("squid"))               return { isCDN: true, provider: "Generic CDN/Proxy" };
+  // ── Imperva Incapsula
+  if (headers.get("x-iinfo") || headers.get("x-cdn") === "imperva")     return { isCDN: true, provider: "Imperva Incapsula" };
+  // ── Bunny CDN
+  if (headers.get("x-arequestid") || via.includes("bunny"))             return { isCDN: true, provider: "Bunny CDN" };
+  // ── GoCache (Brazilian CDN/WAF)
+  if (server.includes("gocache") || headers.get("x-gocache-status") || headers.get("x-gocache-request-id")) {
+    return { isCDN: true, provider: "GoCache" };
+  }
+  // ── Azion (Brazilian CDN)
+  if (server.includes("azion") || headers.get("x-azion-cache") || headers.get("x-azion-request-id")) {
+    return { isCDN: true, provider: "Azion" };
+  }
+  // ── CDN77 / Edgio
+  if (server.includes("cdn77") || headers.get("x-cache-status")?.includes("CDN77"))  return { isCDN: true, provider: "CDN77" };
+  if (server.includes("edgio") || headers.get("x-edgio-version"))       return { isCDN: true, provider: "Edgio" };
+  // ── KeyCDN
+  if (headers.get("x-cache") === "HIT" && headers.get("x-edge-ip"))     return { isCDN: true, provider: "KeyCDN" };
+  // ── Limelight / Edgio
+  if (via.includes("llnwd") || via.includes("limelight"))                return { isCDN: true, provider: "Limelight/Edgio" };
+  // ── Cloudflare Workers via header
+  if (headers.get("cf-cache-status"))                                    return { isCDN: true, provider: "Cloudflare" };
+  // ── Generic CDN (cache hit via Via/x-cache)
+  if (xCache.includes("hit") || via.includes("squid"))                   return { isCDN: true, provider: "Generic CDN/Proxy" };
   return { isCDN: false, provider: "" };
 }
 
@@ -96,18 +124,28 @@ function detectWAF(headers: Headers, body: string): { hasWAF: boolean; wafProvid
   const server  = (headers.get("server") || "").toLowerCase();
   const powered = (headers.get("x-powered-by") || "").toLowerCase();
   const via     = (headers.get("via") || "").toLowerCase();
+  const bodyLc  = body.toLowerCase();
 
-  if (headers.get("x-sucuri-id"))                                    return { hasWAF: true, wafProvider: "Sucuri WAF" };
-  if (headers.get("x-waf-event-info"))                               return { hasWAF: true, wafProvider: "Barracuda WAF" };
+  if (headers.get("x-sucuri-id"))                                       return { hasWAF: true, wafProvider: "Sucuri WAF" };
+  if (headers.get("x-waf-event-info"))                                  return { hasWAF: true, wafProvider: "Barracuda WAF" };
   if (headers.get("x-protected-by")?.toLowerCase().includes("imperva")) return { hasWAF: true, wafProvider: "Imperva WAF" };
-  if (headers.get("x-iinfo"))                                        return { hasWAF: true, wafProvider: "Imperva Incapsula" };
-  if (server.includes("imunify360"))                                 return { hasWAF: true, wafProvider: "Imunify360" };
+  if (headers.get("x-iinfo"))                                           return { hasWAF: true, wafProvider: "Imperva Incapsula" };
+  if (server.includes("imunify360"))                                    return { hasWAF: true, wafProvider: "Imunify360" };
   if (powered.includes("mod_security") || body.includes("mod_security")) return { hasWAF: true, wafProvider: "ModSecurity" };
-  if (body.toLowerCase().includes("access denied") && body.toLowerCase().includes("security")) {
-    return { hasWAF: true, wafProvider: "Generic WAF/Firewall" };
-  }
-  if (headers.get("x-fw-hash") || headers.get("x-fw-server"))       return { hasWAF: true, wafProvider: "Fortinet FortiGate" };
-  if (via.includes("qualys"))                                        return { hasWAF: true, wafProvider: "Qualys WAF" };
+  if (headers.get("x-fw-hash") || headers.get("x-fw-server"))          return { hasWAF: true, wafProvider: "Fortinet FortiGate" };
+  if (via.includes("qualys"))                                           return { hasWAF: true, wafProvider: "Qualys WAF" };
+  // GoCache WAF (Brazilian)
+  if (server.includes("gocache") || headers.get("x-gocache-status"))   return { hasWAF: true, wafProvider: "GoCache WAF" };
+  // Azion WAF (Brazilian)
+  if (server.includes("azion") || headers.get("x-azion-cache"))        return { hasWAF: true, wafProvider: "Azion WAF" };
+  // AWS WAF
+  if (headers.get("x-amzn-requestid") && bodyLc.includes("forbidden")) return { hasWAF: true, wafProvider: "AWS WAF" };
+  // Cloudflare WAF (via challenge/block page)
+  if (bodyLc.includes("cloudflare") && bodyLc.includes("ray id"))      return { hasWAF: true, wafProvider: "Cloudflare WAF" };
+  // Wordfence (WordPress WAF)
+  if (bodyLc.includes("wordfence") || bodyLc.includes("generated by wordfence")) return { hasWAF: true, wafProvider: "Wordfence" };
+  // Generic
+  if (bodyLc.includes("access denied") && bodyLc.includes("security")) return { hasWAF: true, wafProvider: "Generic WAF/Firewall" };
   return { hasWAF: false, wafProvider: "" };
 }
 
@@ -131,23 +169,29 @@ function detectHSTS(headers: Headers): { hasHSTS: boolean; maxAge: number; inclu
 
 function detectServerType(serverHeader: string, headers: Headers | null): ServerType {
   const s = serverHeader.toLowerCase();
-  if (s.includes("cloudflare"))                        return "cloudflare";
-  if (s.includes("openresty") || s.includes("tengine")) return "openresty";
-  if (s.includes("nginx"))                             return "nginx";
-  if (s.includes("apache"))                            return "apache";
-  if (s.includes("microsoft-iis") || s.includes("iis")) return "iis";
-  if (s.includes("litespeed") || s.includes("ls web")) return "litespeed";
-  if (s.includes("caddy"))                             return "caddy";
+  if (s.includes("cloudflare"))                                      return "cloudflare";
+  if (s.includes("openresty") || s.includes("tengine"))              return "openresty";
+  if (s.includes("nginx"))                                           return "nginx";
+  if (s.includes("apache"))                                          return "apache";
+  if (s.includes("microsoft-iis") || s.includes("iis"))             return "iis";
+  if (s.includes("litespeed") || s.includes("ls web"))              return "litespeed";
+  if (s.includes("caddy"))                                          return "caddy";
   if (s.includes("gunicorn") || s.includes("uvicorn") || s.includes("hypercorn")) return "gunicorn";
   if (s.includes("tomcat") || s.includes("jboss") || s.includes("wildfly")) return "tomcat";
-  if (s.includes("jetty") || s.includes("glassfish")) return "jetty";
+  if (s.includes("jetty") || s.includes("glassfish"))               return "jetty";
+  if (s.includes("gocache"))                                        return "gocache";
+  if (s.includes("azion"))                                          return "azion";
+  if (s.includes("varnish"))                                        return "varnish";
 
   if (headers) {
     const powered = (headers.get("x-powered-by") || "").toLowerCase();
-    if (powered.includes("express") || powered.includes("node"))     return "nodejs";
-    if (powered.includes("php"))                                     return "apache";
-    if (powered.includes("asp.net") || powered.includes("iis"))      return "iis";
-    if (powered.includes("servlet") || powered.includes("java"))     return "tomcat";
+    if (powered.includes("express") || powered.includes("node"))    return "nodejs";
+    if (powered.includes("php"))                                    return "apache";
+    if (powered.includes("asp.net") || powered.includes("iis"))     return "iis";
+    if (powered.includes("servlet") || powered.includes("java"))    return "tomcat";
+    // GoCache/Azion via other headers
+    if (headers.get("x-gocache-status") || headers.get("x-gocache-request-id")) return "gocache";
+    if (headers.get("x-azion-cache")    || headers.get("x-azion-request-id"))   return "azion";
   }
 
   return "unknown";
@@ -165,6 +209,9 @@ const SERVER_LABELS: Record<ServerType, string> = {
   gunicorn:    "Python WSGI",
   tomcat:      "Apache Tomcat",
   jetty:       "Eclipse Jetty",
+  gocache:     "GoCache CDN/WAF",
+  azion:       "Azion CDN/WAF",
+  varnish:     "Varnish Cache",
   unknown:     "Unknown",
 };
 
@@ -182,7 +229,19 @@ const CF_CIDRS_ANALYZE = [
   return [n, m, (n & m) >>> 0] as [number, number, number];
 });
 
+// Cloudflare IPv6 prefixes (exact prefix match is sufficient for /29–/32 ranges)
+const CF_IPV6_PREFIXES = [
+  "2400:cb00:", "2606:4700:", "2803:f800:",
+  "2405:b500:", "2405:8100:", "2a06:98c0:", "2c0f:f248:",
+];
+
 function isCloudflareIPAnalyze(ip: string): boolean {
+  // IPv6 check
+  if (ip.includes(":")) {
+    const lower = ip.toLowerCase();
+    return CF_IPV6_PREFIXES.some(p => lower.startsWith(p));
+  }
+  // IPv4 check
   const p = ip.split(".").map(Number);
   if (p.length !== 4 || p.some(x => isNaN(x))) return false;
   const n = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
@@ -348,6 +407,9 @@ function scoreMethodsFor(opts: {
       openresty:  `OpenResty/nginx — same worker_connections limit as nginx; conn-flood is primary vector`,
       gunicorn:   `Python WSGI server — synchronous workers; slowloris and http-flood extremely effective`,
       tomcat:     `Apache Tomcat uses thread pools — slowloris and http-flood exhaust thread pool rapidly`,
+      gocache:    `GoCache CDN/WAF (Brazilian) — cache-poison, waf-bypass and origin-bypass most effective; L4 direct to origin IPs`,
+      azion:      `Azion CDN/WAF (Brazilian) — waf-bypass + cache-poison effective; origin likely on AWS/GCP infrastructure`,
+      varnish:    `Varnish Cache — cache-buster (unique query params) forces 100% origin pass-through; no rate limiting on Varnish itself`,
     };
     return notes[serverType] ?? fallback;
   };
@@ -460,12 +522,20 @@ function scoreMethodsFor(opts: {
       : cdnProvider === "Akamai" ? 87
       : cdnProvider === "AWS CloudFront" ? 84
       : cdnProvider === "Fastly" ? 82
+      : cdnProvider === "GoCache" ? 88      // Brazilian CDN — less sophisticated WAF rules
+      : cdnProvider === "Azion" ? 85        // Brazilian CDN — waf bypass highly effective
+      : cdnProvider === "Sucuri WAF" ? 86
+      : cdnProvider === "Imperva Incapsula" ? 83
       : hasWAF ? 80
       : 76;
     recs.push({
       method: "waf-bypass", name: "Geass WAF Bypass",
       score: baseScore, tier: tierFromScore(baseScore),
-      reason: `${isCDN ? cdnProvider : "WAF"} detected — JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering. Each request appears as a distinct real Chrome browser — indistinguishable from legitimate traffic.`,
+      reason: cdnProvider === "GoCache"
+        ? `GoCache CDN/WAF (BR) detected — WAF rules generally simpler than Cloudflare/Akamai; JA3 fingerprint randomization + custom header ordering bypasses most GoCache rules effectively`
+        : cdnProvider === "Azion"
+          ? `Azion CDN/WAF (BR) detected — JA3 TLS fingerprint randomization + Chrome-exact SETTINGS bypass Azion's DDoS filtering layer`
+          : `${isCDN ? cdnProvider : "WAF"} detected — JA3 TLS fingerprint randomization + Chrome-exact HTTP/2 AKAMAI SETTINGS + precise header ordering. Each request appears as a distinct real Chrome browser — indistinguishable from legitimate traffic.`,
       suggestedThreads: 200, suggestedDuration: 180, protocol: "HTTP/2", amplification: 1,
     });
   }
@@ -609,10 +679,20 @@ function scoreMethodsFor(opts: {
 
   // ── CDN Cache Poison ───────────────────────────────────────────────────
   if (isWebServer && isCDN) {
+    const cpScore = cdnProvider === "GoCache" ? 87      // GoCache cache layer simpler to poison
+      : cdnProvider === "Azion" ? 84
+      : cdnProvider === "Varnish" || serverType === "varnish" ? 90  // Varnish = trivial cache bypass
+      : cdnProvider === "Fastly" ? 83
+      : cdnProvider === "Cloudflare" ? 78               // CF has smart cache normalization
+      : 80;
     recs.push({
       method: "cache-poison", name: "CDN Cache Poisoning DoS",
-      score: 80, tier: "A",
-      reason: `${cdnProvider} detected — fills CDN cache with unique keys, forces 100% origin miss rate, overwhelms origin server behind CDN`,
+      score: cpScore, tier: tierFromScore(cpScore),
+      reason: serverType === "varnish"
+        ? `Varnish Cache detected — unique query params (?v=RANDOM) trivially bypass Varnish cache key; 100% origin pass-through guaranteed`
+        : cdnProvider === "GoCache"
+          ? `GoCache CDN (BR) detected — cache key normalization weaker than Cloudflare; fills edge cache with unique URL variants, forces 100% origin miss rate`
+          : `${cdnProvider} detected — fills CDN cache with unique keys, forces 100% origin miss rate, overwhelms origin server behind CDN`,
       suggestedThreads: 100, suggestedDuration: 180, protocol: "HTTP", amplification: 1,
     });
   }
