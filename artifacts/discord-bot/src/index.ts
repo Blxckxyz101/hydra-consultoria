@@ -4813,30 +4813,51 @@ async function handleCpf(interaction: ChatInputCommandInteraction): Promise<void
   const v = (val: unknown, fallback = "—") => (val && String(val).trim() ? String(val).trim() : fallback);
 
   const sexoRaw = v(dados.SEXO, "");
-  const sexo = sexoRaw === "F" ? "♀️ Feminino" : sexoRaw === "M" ? "♂️ Masculino" : "—";
+  const sexo      = sexoRaw === "F" ? "♀️ Feminino" : sexoRaw === "M" ? "♂️ Masculino" : "—";
+  const sexoEmoji = sexoRaw === "F" ? "♀️" : sexoRaw === "M" ? "♂️" : "❓";
 
   const rendaRaw = parseFloat(String(dados.RENDA ?? "0").replace(",", ".")) || 0;
   const rendaFmt = rendaRaw > 0
     ? `R$ ${rendaRaw.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : "—";
 
+  // ANSI block — CPF in bold green on Discord desktop / Vencord
+  const ansiCpf = `\u001b[1;32m${fmtCpf}\u001b[0m`;
+  const ansiNome = `\u001b[1;37m${v(dados.NOME)}\u001b[0m`;
+
   // ── Build embed ─────────────────────────────────────────────────────────────
   const embed = new EmbedBuilder()
-    .setColor(0x6366f1)
-    .setTitle("🪪 CONSULTA DE CPF")
+    .setColor(0x4ade80)  // bright matrix-green accent
+    .setAuthor({
+      name: "🔍  LYZED DATABASE  •  CONSULTA CPF",
+      iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
+    })
     .setDescription(
-      `> \`\`\`${fmtCpf}\`\`\`\n` +
-      `> **${v(dados.NOME)}**`
+      // Blockquote + ANSI code block
+      `>>> \`\`\`ansi\n${ansiCpf}\n${ansiNome}\n\`\`\`\n` +
+      `**${sexoEmoji} ${v(dados.NOME)}**\n` +
+      `\`${fmtCpf}\`  ·  nascido em **${v(dados.NASC)}**  ·  ${sexo}`
     )
+    .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
     .addFields(
-      { name: "📅 Nascimento",     value: v(dados.NASC),           inline: true  },
-      { name: "🚻 Sexo",           value: sexo,                    inline: true  },
-      { name: "💰 Renda Estimada", value: rendaFmt,               inline: true  },
-      { name: "👩 Nome da Mãe",    value: v(dados.NOME_MAE),       inline: false },
-      { name: "🪪 RG",             value: v(dados.RG),             inline: true  },
-      { name: "🗳️ Título Eleitor", value: v(dados.TITULO_ELEITOR), inline: true  },
+      // ── Dados pessoais ─────────────────────────────────────────────────────
+      { name: "⠀", value: "**▸ 📋 DADOS PESSOAIS**\n────────────────────────", inline: false },
+      { name: "📅 Nascimento",     value: `\`${v(dados.NASC)}\``,       inline: true  },
+      { name: "🚻 Sexo",           value: sexo,                          inline: true  },
+      { name: "💰 Renda Estimada", value: `**${rendaFmt}**`,            inline: true  },
+
+      // ── Família ────────────────────────────────────────────────────────────
+      { name: "⠀", value: "**▸ 👨‍👩‍👧 FAMÍLIA**\n────────────────────────", inline: false },
+      { name: "👩 Nome da Mãe",    value: `> ${v(dados.NOME_MAE)}`,     inline: false },
+
+      // ── Documentos ─────────────────────────────────────────────────────────
+      { name: "⠀", value: "**▸ 🗂️ DOCUMENTOS**\n────────────────────────", inline: false },
+      { name: "🪪 RG",             value: `\`${v(dados.RG)}\``,         inline: true  },
+      { name: "🗳️ Título Eleitor", value: `\`${v(dados.TITULO_ELEITOR)}\``, inline: true },
     )
-    .setFooter({ text: `${AUTHOR} • via Lyzed Consulta` })
+    .setFooter({
+      text: `${AUTHOR} • Lyzed Consulta  •  Dados obtidos em`,
+    })
     .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
