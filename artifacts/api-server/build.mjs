@@ -46,6 +46,35 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);`,
     },
   });
 
+  // Build the Telegram bot so it is available in production (spawned by API server).
+  const tgBotSrc = path.resolve(artifactDir, "../telegram-bot/src/index.ts");
+  const tgBotDist = path.resolve(artifactDir, "../telegram-bot/dist");
+  await rm(tgBotDist, { recursive: true, force: true });
+  await esbuild({
+    entryPoints: [tgBotSrc],
+    platform: "node",
+    target: "node22",
+    bundle: true,
+    format: "esm",
+    outfile: path.join(tgBotDist, "index.mjs"),
+    logLevel: "info",
+    external: [
+      "node:*",
+      "telegraf",
+      "eventsource",
+      "node-fetch",
+    ],
+    define: { "process.env.NODE_ENV": '"production"' },
+    banner: {
+      js: `import { createRequire as __bannerCrReq } from 'node:module';
+import __bannerPath from 'node:path';
+import __bannerUrl from 'node:url';
+globalThis.require = __bannerCrReq(import.meta.url);
+globalThis.__filename = __bannerUrl.fileURLToPath(import.meta.url);
+globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);`,
+    },
+  });
+
   await esbuild({
     entryPoints: [
       path.resolve(artifactDir, "src/index.ts"),

@@ -75,6 +75,35 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
       } else {
         logger.warn({ botDist }, "Discord bot dist not found — skipping bot launch (run build first)");
       }
+
+      // Telegram bot
+      const tgBotDist = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../telegram-bot/dist/index.mjs",
+      );
+
+      if (existsSync(tgBotDist)) {
+        let tgProc: ChildProcess | null = null;
+
+        const launchTg = () => {
+          logger.info({ tgBotDist }, "Launching Telegram bot process...");
+          tgProc = spawn(process.execPath, ["--enable-source-maps", tgBotDist], {
+            env: process.env,
+            stdio: "inherit",
+          });
+          tgProc.on("exit", (code, signal) => {
+            logger.warn({ code, signal }, "Telegram bot process exited — restarting in 5s...");
+            setTimeout(launchTg, 5_000);
+          });
+          tgProc.on("error", (spawnErr) => {
+            logger.error({ spawnErr }, "Telegram bot spawn error");
+          });
+        };
+
+        launchTg();
+      } else {
+        logger.warn({ tgBotDist }, "Telegram bot dist not found — skipping bot launch (run build first)");
+      }
     }
   });
 

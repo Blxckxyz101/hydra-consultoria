@@ -60,8 +60,21 @@ function initPool() {
     accountPool.push({ cookie: envCookie, limited: false, source: "env" });
     console.log("[SKYNETCHAT] Pool initialized with 1 env account");
   }
-  // Async: also load accounts from API server pool (accounts added via panel login)
+  // Async: load accounts from API server pool (accounts added via panel login)
   void loadPoolFromApiServer();
+  // Refresh pool from API server every 5 minutes — picks up new cookies added via panel
+  // Also resets "limited" flag on existing accounts (session may have been renewed)
+  setInterval(() => {
+    void loadPoolFromApiServer().then(() => {
+      // Unmark limited on "auto" accounts — panel may have refreshed the session
+      for (const acc of accountPool) {
+        if (acc.source === "auto" && acc.limited) {
+          acc.limited = false;
+          console.log("[SKYNETCHAT] Reset limited flag on pool account (periodic refresh)");
+        }
+      }
+    });
+  }, 5 * 60 * 1000);
 }
 
 async function loadPoolFromApiServer() {

@@ -1123,10 +1123,11 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
         probeTarget(target).catch(() => ({ up: true, latencyMs: 5500, reason: "Probe inconclusive — outbound network under load" } as ProbeResult)),
       ]);
 
-      // Stop if: 5 consecutive nulls (API truly unavailable — transient timeouts are normal under load)
+      // Stop if: 8 consecutive nulls (API truly unavailable — transient timeouts are normal under attack load)
+      // 8 × 8s = 64s window before giving up — gives the server time to recover from DB spikes
       if (!attack) {
         nullConsecutive++;
-        if (nullConsecutive >= 5) {
+        if (nullConsecutive >= 8) {
           console.log(`[MONITOR #${attackId}] Stopping — nullConsec=${nullConsecutive}`);
           stopMonitor();
         }
@@ -1169,8 +1170,15 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
         discordFailCount++;
         const errMsg = (editErr instanceof Error) ? editErr.message : String(editErr);
         console.warn(`[MONITOR #${attackId}] embed edit failed (${discordFailCount}x):`, errMsg);
-        // Stop monitor if Discord token expired (Unknown Interaction / Unknown Message errors)
-        // 10+ consecutive failures = message deleted or interaction token expired (15min)
+        // Stop immediately on token expiry errors (Unknown Interaction=10062, Unknown Message=10008,
+        // Unknown Webhook=10015) — no point retrying, token is permanently invalid after 15 min.
+        const isTokenExpired = /10062|10008|10015|Unknown Interaction|Unknown Message|Unknown Webhook/i.test(errMsg);
+        if (isTokenExpired) {
+          console.log(`[MONITOR #${attackId}] Interaction token expired — stopping monitor.`);
+          stopMonitor();
+          return;
+        }
+        // Stop after 10 consecutive non-token failures (message deleted, rate limit, etc.)
         if (discordFailCount >= 10) {
           console.log(`[MONITOR #${attackId}] Stopping — Discord edit failed ${discordFailCount} times consecutively.`);
           stopMonitor();
