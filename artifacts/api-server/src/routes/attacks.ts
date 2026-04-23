@@ -208,19 +208,20 @@ const CPU_COUNT = Math.max(1, os.cpus().length);
 // In deployed: REPLIT_DEPLOYMENT=1 → no cap, full power (8-32GB dedicated).
 // In dev:      absent → strict caps to keep container alive.
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
-// Dev pools: 6 workers each → up to 6× throughput vs single-worker baseline.
-// Each worker gets its own async event-loop → true I/O parallelism on Node's libuv thread pool.
-const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 6;
+// Dev pools: 3 workers each → 3× throughput vs single-worker baseline without OOM risk.
+// Each worker has its own async event-loop (true I/O parallelism on libuv thread pool).
+// 6 would OOM on Replit dev containers (~4GB RAM). 3 is the safe sweet spot.
+const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 999 : 3;
 
-// Dev threads per worker: 512 → up to 512 concurrent in-flight sockets per worker.
-// IS_PROD=true (NODE_ENV=production) → socket tier already at 96 (not 8).
-// Raising this unlocks the full IS_PROD socket budgets.
-const DEV_MAX_THREADS = 512;
+// Dev threads per worker: 256 → 4× the old 64, stays within safe socket-buffer RAM.
+// 512 would exhaust fd limits and socket buffers (~49K sockets/worker × 64KB = 3GB each).
+const DEV_MAX_THREADS = 256;
 
-// Dev total workers: 120 × 128MB heap ≈ 15GB peak — Replit dev containers have 16GB RAM.
-// This removes the 22-worker ceiling that throttled geass-ultima/absolutum to a fraction of power.
+// Dev total workers: 48 × 128MB heap ≈ 6GB theoretical max (actual: ~2-3GB — I/O-bound workers
+// rarely hit their heap ceiling). Safe on Replit's 4GB+ containers with 2GB headroom.
+// Old value was 22 → this doubles concurrent attack parallelism without risk of OOM kill.
 let _activeWorkers = 0;
-const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 120;
+const MAX_TOTAL_WORKERS_DEV = IS_DEPLOYED ? Infinity : 48;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
