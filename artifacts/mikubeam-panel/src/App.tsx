@@ -61,8 +61,10 @@ const L7_PROXY_OK = new Set([
   "rapid-reset","ws-compression-bomb","h2-goaway-loop","sse-exhaust","h3-rapid-reset",
 ]);
 const methodInfo = (m: string) => {
-  if (m === "geass-override")       return { badge: "ARES ∞ [40V]",  cls: "geass",     color: "#C0392B" };
-  if (m === "geass-ultima")         return { badge: "ULTIMA [9V]",   cls: "geass",     color: "#8B0000" };
+  if (m === "geass-absolutum")      return { badge: "ABSOLUTUM ∞",  cls: "geass",     color: "#500000" };
+  if (m === "geass-override")       return { badge: "ARES ∞ [42V]",  cls: "geass",     color: "#C0392B" };
+  if (m === "geass-ultima")         return { badge: "ULTIMA [10V]",  cls: "geass",     color: "#8B0000" };
+  if (m === "dns-ns-flood")         return { badge: "NS KILLER",     cls: "real-udp",  color: "#e67e22" };
   if (m === "origin-bypass")        return { badge: "ORIGIN BYPASS", cls: "geass",     color: "#7B2D8B" };
   if (m === "bypass-storm")         return { badge: "BYPASS STORM",  cls: "geass",     color: "#5B2C6F" };
   if (m === "waf-bypass")           return { badge: "WAF BYPASS",    cls: "geass",     color: "#8E44AD" };
@@ -118,15 +120,18 @@ const methodInfo = (m: string) => {
 const CLUSTER_LB_METHODS = ["http-flood","tcp-flood","udp-flood","http-bypass","http2-flood"];
 function getSmartMethod(baseMethod: string, nodeIdx: number): string {
   if (nodeIdx === 0) return baseMethod;
+  if (baseMethod === "geass-absolutum") return baseMethod;
   if (baseMethod === "geass-override") return baseMethod;
   return CLUSTER_LB_METHODS[nodeIdx % CLUSTER_LB_METHODS.length];
 }
 
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
+  { label: "Absolutum ∞",    method: "geass-absolutum",     packetSize: 512, duration: 300, delay: 0, threads: 5000, icon: "☠"  },
   { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "👁"  },
   { label: "Geass Ultima",   method: "geass-ultima",        packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "🔱"  },
   { label: "Origin Bypass",  method: "origin-bypass",       packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🎯"  },
+  { label: "DNS NS Flood",   method: "dns-ns-flood",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "💀"  },
   { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🌪"  },
   { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
   { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
@@ -164,7 +169,7 @@ function getDomainKey(url: string): string {
 }
 
 /* ── Terminal log highlighter ── */
-const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-override","bypass-storm","dns-amp","ntp-amp","mem-amp","ssdp-amp","cldap-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust","tls-session-exhaust","cache-buster","vercel-flood","h2-storm","h2-dep-bomb","h2-data-flood","pipeline-flood","rapid-reset","ws-compression-bomb","h2-goaway-loop","sse-exhaust"];
+const HIGHLIGHT_METHODS = ["http-flood","http-bypass","http2-flood","http2-continuation","slowloris","conn-flood","udp-flood","udp-bypass","syn-flood","tcp-flood","tcp-ack","tcp-rst","geass-absolutum","geass-override","bypass-storm","dns-amp","dns-ns-flood","ntp-amp","mem-amp","ssdp-amp","cldap-amp","rudy","rudy-v2","waf-bypass","hpack-bomb","h2-settings-storm","graphql-dos","ws-flood","cache-poison","tls-renego","ssl-death","quic-flood","icmp-flood","http-pipeline","h2-rst-burst","grpc-flood","http-smuggling","slow-read","xml-bomb","range-flood","app-smart-flood","large-header-bomb","h2-ping-storm","http2-priority-storm","doh-flood","keepalive-exhaust","tls-session-exhaust","cache-buster","vercel-flood","h2-storm","h2-dep-bomb","h2-data-flood","pipeline-flood","rapid-reset","ws-compression-bomb","h2-goaway-loop","sse-exhaust"];
 function highlightLog(text: string): React.ReactNode {
   // Segment the text into colored spans
   const parts: React.ReactNode[] = [];
@@ -1601,7 +1606,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           const HTTP_LOG_SET= new Set(["http-flood","http-bypass","graphql-dos","cache-poison","xml-bomb","range-flood","app-smart-flood","http2-flood"]);
           const TCP_LOG_SET = new Set(["syn-flood","tcp-flood","tcp-ack","tcp-rst"]);
           const UDP_LOG_SET = new Set(["udp-flood","udp-bypass"]);
-          if (method === "geass-override")       msgs = LOG_MSGS_GEASS;
+          if (method === "geass-override" || method === "geass-absolutum") msgs = LOG_MSGS_GEASS;
           else if (H2_LOG_SET.has(method))       msgs = LOG_MSGS_H2;
           else if (SLOW_LOG_SET.has(method))     msgs = LOG_MSGS_SLOW;
           else if (CONN_LOG_SET.has(method))     msgs = LOG_MSGS_CONN;
@@ -1870,7 +1875,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       setIsRunning(true); isRunningRef.current = true;
       setLiveCodes({ ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
       setThreadsEffective((result as unknown as { threadsEffective?: number }).threadsEffective ?? null);
-      if (method === "geass-override") { setGeassFlash(true); setTimeout(() => setGeassFlash(false), 1600); }
+      if (method === "geass-override" || method === "geass-absolutum") { setGeassFlash(true); setTimeout(() => setGeassFlash(false), 1600); }
       targetRef.current = target.trim();
       startTimeRef.current = Date.now();
       durationRef.current = duration;
@@ -2770,7 +2775,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
   // Intensity for GeassEye animation (0–1 based on pps relative to a high reference)
   const eyeIntensity = isRunning ? Math.min(1, pps / 50000) : 0;
-  const sparklineColor = method === "geass-override" ? "#C0392B"
+  const sparklineColor = method === "geass-absolutum" ? "#500000" : method === "geass-override" ? "#C0392B"
     : method === "waf-bypass"  ? "#8E44AD"
     : method === "http2-flood" ? "#1abc9c"
     : method === "slowloris"   ? "#9b59b6"
@@ -2863,7 +2868,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           {isRunning && (
             <div className={`lb-badge ${targetStatus === "offline" ? "lb-badge--kill" : ""}`}>
               <span className="lb-badge-dot" />
-              {targetStatus === "offline" ? "TARGET ELIMINATED" : method === "geass-override" ? "GEASS OVERRIDE ACTIVE" : "GEASS ACTIVE"}
+              {targetStatus === "offline" ? "TARGET ELIMINATED" : method === "geass-absolutum" ? "ABSOLUTUM ∞ ACTIVE" : method === "geass-override" ? "GEASS OVERRIDE ACTIVE" : "GEASS ACTIVE"}
             </div>
           )}
           <div className="lb-title-row">
@@ -5124,10 +5129,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           {PRESETS.map(p => (
             <button
               key={p.label}
-              className={`lb-preset${p.method === "geass-override" ? " lb-preset--geass" : ""}`}
+              className={`lb-preset${(p.method === "geass-override" || p.method === "geass-absolutum") ? " lb-preset--geass" : ""}`}
               onClick={() => applyPreset(p)}
             >
-              {p.method === "geass-override"
+              {(p.method === "geass-override" || p.method === "geass-absolutum")
                 ? <img src={GEASS_SYMBOL} className="lb-preset-symbol" alt=""/>
                 : <span>{p.icon}</span>
               }

