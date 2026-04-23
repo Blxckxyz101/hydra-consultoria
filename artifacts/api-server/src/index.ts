@@ -39,45 +39,58 @@ void (async () => {
   }
 })();
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
+  const server = app.listen(port, () => {
+    logger.info({ port }, "Server listening");
 
-  logger.info({ port }, "Server listening");
+    // ── Discord bot auto-launch ─────────────────────────────────────────────
+    // In production (REPLIT_DEPLOYMENT=1) the Discord bot is NOT a separate
+    // workflow — it must be spawned here so it runs in the deployed container.
+    // In dev, the bot already runs as its own workflow, so we skip this.
+    if (process.env["REPLIT_DEPLOYMENT"] === "1") {
+      const botDist = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../discord-bot/dist/index.mjs",
+      );
 
-  // ── Discord bot auto-launch ─────────────────────────────────────────────
-  // In production (REPLIT_DEPLOYMENT=1) the Discord bot is NOT a separate
-  // workflow — it must be spawned here so it runs in the deployed container.
-  // In dev, the bot already runs as its own workflow, so we skip this.
-  if (process.env["REPLIT_DEPLOYMENT"] === "1") {
-    const botDist = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../../discord-bot/dist/index.mjs",
-    );
+      if (existsSync(botDist)) {
+        let botProc: ChildProcess | null = null;
 
-    if (existsSync(botDist)) {
-      let botProc: ChildProcess | null = null;
+        const launchBot = () => {
+          logger.info({ botDist }, "Launching Discord bot process...");
+          botProc = spawn(process.execPath, ["--enable-source-maps", botDist], {
+            env: process.env,
+            stdio: "inherit",
+          });
+          botProc.on("exit", (code, signal) => {
+            logger.warn({ code, signal }, "Discord bot process exited — restarting in 5s...");
+            setTimeout(launchBot, 5_000);
+          });
+          botProc.on("error", (spawnErr) => {
+            logger.error({ spawnErr }, "Discord bot spawn error");
+          });
+        };
 
-      const launchBot = () => {
-        logger.info({ botDist }, "Launching Discord bot process...");
-        botProc = spawn(process.execPath, ["--enable-source-maps", botDist], {
-          env: process.env,
-          stdio: "inherit",
-        });
-        botProc.on("exit", (code, signal) => {
-          logger.warn({ code, signal }, "Discord bot process exited — restarting in 5s...");
-          setTimeout(launchBot, 5_000);
-        });
-        botProc.on("error", (spawnErr) => {
-          logger.error({ spawnErr }, "Discord bot spawn error");
-        });
-      };
-
-      launchBot();
-    } else {
-      logger.warn({ botDist }, "Discord bot dist not found — skipping bot launch (run build first)");
+        launchBot();
+      } else {
+        logger.warn({ botDist }, "Discord bot dist not found — skipping bot launch (run build first)");
+      }
     }
-  }
-});
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      if (attempt >= maxAttempts) {
+        logger.error({ port, attempt }, "Port still in use after max retries — giving up");
+        process.exit(1);
+      }
+      logger.warn({ port, attempt, delayMs }, `Port in use — retrying in ${delayMs}ms (attempt ${attempt}/${maxAttempts})`);
+      setTimeout(() => startServer(attempt + 1, maxAttempts, delayMs), delayMs);
+    } else {
+      logger.error({ err }, "Unexpected server error");
+      process.exit(1);
+    }
+  });
+};
+
+startServer();
