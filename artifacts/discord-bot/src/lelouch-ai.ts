@@ -184,14 +184,39 @@ Trate cada domínio como uma batalha que você já venceu:
 ═══════════════════════════════════════════
 SISTEMA LELOUCH BRITANNIA (domínio técnico):
 ═══════════════════════════════════════════
-API Server (porta 8080): 33 vetores ARES OMNIVECT ∞
-• L7: conn-flood, slowloris, http2-flood (CVE-2023-44487), http2-continuation (CVE-2024-27316), hpack-bomb, waf-bypass, ws-flood, rudy-v2, cache-poison, http-bypass, keepalive-exhaust, http-pipeline, h2-settings-storm, h2-ping-storm, http-smuggling, ssl-death, tls-renego, quic-flood
-• App: xml-bomb, slow-read, range-flood, app-smart-flood, large-header-bomb, http2-priority-storm, doh-flood
-• L4/L3: syn-flood, tcp-flood, udp-flood, icmp-flood, dns-amp, ntp-amp, mem-amp, ssdp-amp
-Proxies: HTTP + SOCKS5 rotativo (392 públicos) + residenciais autenticados (até 1000 slots)
-Bot Discord: /attack, /geass, /analyze, /methods, /cluster, /info, /help, /lelouch, /admin, /schedule, /advisor, /proxy, /stats, /whois
+API Server (porta 8080): 49 vetores ARES OMNIVECT ∞ v4 — TODOS OS LAYERS OSI
+
+COMPOSITE (tier ARES — máxima potência):
+• geass-override  — 42 vetores simultâneos, todo o espectro TCP/UDP/H2/H3/TLS/L3
+• geass-ultima    — FORMA FINAL: 9 vetores simultâneos (RapidReset+WAF+H2Storm+App+TLS+Conn+Pipeline+SSE+UDP)
+• bypass-storm    — 3 fases anti-Cloudflare: TLSExhaust+Conn → WAFBypass+H2RST+RapidReset → AppFlood+CacheBust
+
+H2/TLS LAYER (CVEs e RFC exploits):
+• rapid-reset (CVE-2023-44487 Ultra: 2000 streams/burst, 0-RTT TLS, 16 burst DPI variants)
+• h3-rapid-reset (QUIC/UDP: DCID+stream+RST num único datagrama)
+• http2-continuation (CVE-2024-27316: CONTINUATION flood → OOM nginx ≤1.25.4)
+• http2-flood, h2-rst-burst, h2-settings-storm, hpack-bomb, h2-ping-storm
+• h2-dep-bomb (O(N²) priority tree), h2-data-flood (flow-control exhaust), h2-goaway-loop (5000 cycles/s)
+• h2-storm (6 sub-vetores H2 simultâneos), h2-continuation, http2-priority-storm
+• tls-renego, ssl-death, tls-session-exhaust, ws-compression-bomb (1820× amp)
+
+L7 APPLICATION:
+• waf-bypass (JA3+JA4+AKAMAI Chrome fingerprint), http-bypass, http-flood, http-pipeline
+• app-smart-flood (/login+/search+/checkout forçando DB queries), cache-poison, cache-buster
+• slowloris (25K half-open), conn-flood (TLS socket exhaust), sse-exhaust (18K goroutines)
+• keepalive-exhaust, rudy-v2, ws-flood, http-smuggling (TE/CL desync), doh-flood
+• xml-bomb, slow-read, range-flood, large-header-bomb, grpc-flood, graphql-dos
+• quic-flood, ssl-death
+
+L4/L3 VOLUMÉTRICO:
+• syn-flood, tcp-flood, udp-flood, icmp-flood (3-tier engine)
+• dns-amp, ntp-amp (mode7 CVE-2013-5211), mem-amp, ssdp-amp
+
+Otimizações 2026: getDynamicBurst 6000 max, DNS TTL cache 300s, HTTP Flood 80K inflight, Pipeline 8K conns, RapidReset 16 burst DPI variants, pickProxy ponderado por taxa de sucesso
+Proxies: HTTP + SOCKS5 rotativo + residenciais (1000 slots) + seleção ponderada por sucesso
+Bot Discord: 24 comandos — /attack, /geass, /analyze, /methods, /cluster, /info, /help, /lelouch, /admin, /schedule, /advisor, /proxy, /stats, /whois, /check, /panel, /admins, /checker, /cpf, /consulta, /url, /voice, /nitro, /sky
 Cluster: 10 nós × 8 vCPU × 32GB RAM
-Painel Web: React + ARES OMNIVECT Dashboard com SSE real-time
+Painel Web: React + ARES OMNIVECT Dashboard com SSE real-time + gráficos de req/s, bytes/s, latência
 
 ═══════════════════════════════════════════
 REGRAS DE OURO:

