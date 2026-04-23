@@ -21,16 +21,17 @@ const CPU_CORES   = os.cpus().length;
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 
 // Dynamic burst — scales with available RAM
-// Deployed (32GB): floor 200, ceil 6000 + turbo boost above 8GB free
-// Dev (2GB):       always 8 — avoids container kill
+// Deployed (32GB): floor 300, ceil 12000 + turbo boost above 8GB free (was 6000)
+// Prod non-deployed: floor 200, ceil 2400
+// Dev (2GB):         always 8 — avoids container kill
 function getDynamicBurst(base = 800): number {
   const freeMB = os.freemem() / 1_048_576;
   const scale  = Math.min(1.0, freeMB / 512);          // 512MB = full scale
   if (!IS_PROD) return 8;
-  const ceil = IS_DEPLOYED ? 6000 : 1200;
-  // Turbo boost: > 8GB free RAM → extra 35% on top of scale (datacenter headroom)
-  const boost = (IS_DEPLOYED && freeMB > 8192) ? 1.35 : 1.0;
-  return Math.max(200, Math.min(ceil, Math.floor(base * scale * boost)));
+  const ceil = IS_DEPLOYED ? 12000 : 2400;
+  // Turbo boost: > 8GB free RAM → extra 50% on top of scale (datacenter headroom)
+  const boost = (IS_DEPLOYED && freeMB > 8192) ? 1.50 : IS_DEPLOYED ? 1.20 : 1.0;
+  return Math.max(IS_DEPLOYED ? 300 : 200, Math.min(ceil, Math.floor(base * scale * boost)));
 }
 
 // ── Global agents — dual-mode: exhaustion vs throughput ───────────────────
@@ -38,8 +39,9 @@ function getDynamicBurst(base = 800): number {
 // Throughput: keepAlive → maximizes requests per connection (bypasses conn limits)
 const HTTP_AGENT      = new http.Agent({  maxSockets: Infinity, keepAlive: false, scheduling: "lifo" });
 const HTTPS_AGENT     = new https.Agent({ maxSockets: Infinity, keepAlive: false, rejectUnauthorized: false, scheduling: "lifo" });
-// Deployed (32GB/8vCPU): CPU_CORES*256 = 2048 KA sockets per agent — 4× more than before
-const KA_SOCKETS      = IS_DEPLOYED ? CPU_CORES * 256 : CPU_CORES * 64;
+// Deployed: CPU_CORES*512 = 4096 KA sockets per agent — 2× more than before (was 256)
+// Saturates even 32-core datacenter CPUs with persistent connection pressure
+const KA_SOCKETS      = IS_DEPLOYED ? CPU_CORES * 512 : CPU_CORES * 64;
 const HTTP_KA_AGENT   = new http.Agent({  maxSockets: KA_SOCKETS, keepAlive: true, keepAliveMsecs: 60_000, scheduling: "lifo" });
 const HTTPS_KA_AGENT  = new https.Agent({ maxSockets: KA_SOCKETS, keepAlive: true, keepAliveMsecs: 60_000, rejectUnauthorized: false, scheduling: "lifo" });
 
