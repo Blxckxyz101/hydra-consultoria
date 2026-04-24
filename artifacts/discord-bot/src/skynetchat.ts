@@ -25,7 +25,28 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { createSkynetAccount, loginWithProCode, type SkynetAccount } from "./turnstile-solver.js";
+
+// ── Residential proxy for Cloudflare bypass ────────────────────────────────────
+// SkyNetChat's /api/chat-* endpoints are behind Cloudflare Bot Management.
+// Datacenter IPs (Replit) get JS challenges. Route through residential proxy.
+function buildResidentialProxyUrl(): string | null {
+  const host = process.env.RESIDENTIAL_HOST?.trim();
+  const port = process.env.RESIDENTIAL_PORT?.trim();
+  const user = process.env.RESIDENTIAL_USER?.trim();
+  const pass = process.env.RESIDENTIAL_PASS?.trim();
+  if (!host || !port || !user || !pass) return null;
+  return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+}
+const RESIDENTIAL_PROXY_URL = buildResidentialProxyUrl();
+if (RESIDENTIAL_PROXY_URL) {
+  console.log("[SKYNETCHAT] Residential proxy configured — Cloudflare bypass active");
+} else {
+  console.warn("[SKYNETCHAT] No residential proxy — chat requests may hit Cloudflare JS challenge");
+}
+
+type FetchFn = (url: string, opts?: RequestInit) => Promise<Response>;
 
 // Pro code for unlimited messages — read from env or fallback
 const SKYNETCHAT_PRO_CODE = process.env["SKYNETCHAT_PRO_CODE"]?.trim() || "";
@@ -237,19 +258,43 @@ async function doRequest(
   const messageId = randomUUID();
   const url       = `${SKYNETCHAT_BASE}/api/${endpoint}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Accept":        "text/event-stream, text/plain, */*",
-      "Cookie":        cookie,
-      "Origin":        SKYNETCHAT_BASE,
-      "Referer":       `${SKYNETCHAT_BASE}/`,
-      "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    },
-    body: JSON.stringify({ id: chatId, messages, trigger: "submit-message", messageId }),
-    signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
-  });
+  const headers: Record<string, string> = {
+    "Content-Type":                    "application/json",
+    "Accept":                          "text/event-stream, text/plain, */*",
+    "Cookie":                          cookie,
+    "Origin":                          SKYNETCHAT_BASE,
+    "Referer":                         `${SKYNETCHAT_BASE}/`,
+    "User-Agent":                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "sec-ch-ua":                       '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+    "sec-ch-ua-mobile":                "?0",
+    "sec-ch-ua-platform":              '"Windows"',
+    "sec-fetch-dest":                  "empty",
+    "sec-fetch-mode":                  "cors",
+    "sec-fetch-site":                  "same-origin",
+  };
+
+  const bodyStr = JSON.stringify({ id: chatId, messages, trigger: "submit-message", messageId });
+
+  let res: Response;
+  if (RESIDENTIAL_PROXY_URL) {
+    // Route through residential proxy to bypass Cloudflare Bot Management
+    const agent = new ProxyAgent(RESIDENTIAL_PROXY_URL);
+    res = await (undiciFetch as unknown as FetchFn)(url, {
+      method: "POST",
+      headers,
+      body: bodyStr,
+      // @ts-expect-error undici dispatcher option
+      dispatcher: agent,
+      signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
+    });
+  } else {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: bodyStr,
+      signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
+    });
+  }
 
   const body = await res.text().catch(() => "");
   return { status: res.status, body };
