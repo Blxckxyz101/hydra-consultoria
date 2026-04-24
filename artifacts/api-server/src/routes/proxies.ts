@@ -198,7 +198,13 @@ async function fetchAndTest(limit = 400): Promise<Proxy[]> {
 // Background health-check tests a random sample every 5 min and keeps only
 // confirmed-live proxies here. spawnPool prefers this over raw proxyCache.
 export let healthyProxyCache: Proxy[] = [];
+// Fast tier (<= 1500ms) — ideal for latency-sensitive attacks (waf-bypass, rapid-reset)
+export let fastProxyCache:    Proxy[] = [];
+// Slow tier (1500-8000ms) — good for connection-holding attacks (slowloris, rudy, cdn-purge-flood)
+export let slowProxyCache:    Proxy[] = [];
 let _healthCheckRunning = false;
+
+const FAST_THRESHOLD_MS = 1500;
 
 async function runHealthCheck(): Promise<void> {
   if (_healthCheckRunning || proxyCache.length === 0) return;
@@ -207,9 +213,9 @@ async function runHealthCheck(): Promise<void> {
     // Always keep residential (authenticated) proxies — they rotate internally
     const residential = proxyCache.filter(p => p.username && p.password);
 
-    // TCP-test a random sample of the non-residential pool
+    // TCP-test a larger sample for better tier coverage
     const nonRes  = proxyCache.filter(p => !p.username);
-    const sample  = [...nonRes].sort(() => Math.random() - 0.5).slice(0, 200);
+    const sample  = [...nonRes].sort(() => Math.random() - 0.5).slice(0, 300);
     const results = await Promise.allSettled(sample.map(testProxy));
     const live    = results
       .filter((r): r is PromiseFulfilledResult<Proxy | null> => r.status === "fulfilled" && r.value !== null)
@@ -219,7 +225,18 @@ async function runHealthCheck(): Promise<void> {
     const merged = new Map<string, Proxy>();
     for (const p of [...residential, ...live]) merged.set(`${p.host}:${p.port}`, p);
     healthyProxyCache = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs);
-    console.log(`[PROXIES] Health-check done — ${healthyProxyCache.length} live (${residential.length} residential + ${live.length} free)`);
+
+    // Split into fast / slow tiers for specialized vectors
+    fastProxyCache = [
+      ...residential,  // residential always fast-tier (internal rotation)
+      ...live.filter(p => p.responseMs <= FAST_THRESHOLD_MS),
+    ].sort((a, b) => a.responseMs - b.responseMs);
+
+    slowProxyCache = live
+      .filter(p => p.responseMs > FAST_THRESHOLD_MS && p.responseMs <= 8000)
+      .sort((a, b) => a.responseMs - b.responseMs);
+
+    console.log(`[PROXIES] Health-check done — ${healthyProxyCache.length} live (${residential.length} residential + ${live.length} free) | fast:${fastProxyCache.length} slow:${slowProxyCache.length}`);
   } catch { /* keep stale */ } finally { _healthCheckRunning = false; }
 }
 

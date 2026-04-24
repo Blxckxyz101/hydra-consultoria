@@ -58,11 +58,17 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
 
         const launchBot = () => {
           logger.info({ botDist }, "Launching Discord bot process...");
-          botProc = spawn(process.execPath, ["--enable-source-maps", botDist], {
+          botProc = spawn(process.execPath, ["--max-old-space-size=384", botDist], {
             env: process.env,
             stdio: "inherit",
           });
           botProc.on("exit", (code, signal) => {
+            // Exit code 0 = clean intentional exit (e.g. dev instance deferring to prod)
+            // Don't restart on clean exit — that would create a crash loop
+            if (code === 0) {
+              logger.info({ code, signal }, "Discord bot exited cleanly — not restarting");
+              return;
+            }
             logger.warn({ code, signal }, "Discord bot process exited — restarting in 5s...");
             setTimeout(launchBot, 5_000);
           });
@@ -87,11 +93,17 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
 
         const launchTg = () => {
           logger.info({ tgBotDist }, "Launching Telegram bot process...");
-          tgProc = spawn(process.execPath, ["--enable-source-maps", tgBotDist], {
+          tgProc = spawn(process.execPath, ["--max-old-space-size=256", tgBotDist], {
             env: process.env,
             stdio: "inherit",
           });
           tgProc.on("exit", (code, signal) => {
+            // Exit code 0 = clean intentional exit (e.g. "another instance already running")
+            // Don't restart on clean exit — that would create a crash loop
+            if (code === 0) {
+              logger.info({ code, signal }, "Telegram bot exited cleanly — not restarting");
+              return;
+            }
             logger.warn({ code, signal }, "Telegram bot process exited — restarting in 5s...");
             setTimeout(launchTg, 5_000);
           });

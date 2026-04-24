@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
-    "start": "NODE_ENV=production node --max-old-space-size=768 ./dist/index.mjs",
+    "start": "NODE_ENV=production node --max-old-space-size=768 --max-http-header-size=16384 ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
