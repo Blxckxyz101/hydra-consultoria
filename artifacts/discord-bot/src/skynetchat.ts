@@ -108,12 +108,14 @@ async function getOrFetchCfClearance(proxyUrl: string): Promise<CfCookies | null
   return p;
 }
 
-// Pre-warm cf_clearance for the first proxy in the background on startup
+// Pre-warm cf_clearance for the first proxy after a safe delay.
+// 30s gives the Discord bot time to fully connect and handle initial interactions
+// before Chromium/puppeteer starts consuming CPU/memory.
 if (webshareProxies.length > 0) {
   setTimeout(() => {
     console.log("[SKYNETCHAT] Pre-warming cf_clearance for first proxy...");
     void getOrFetchCfClearance(webshareProxies[0]);
-  }, 2_000);
+  }, 30_000);
 }
 
 type FetchFn = (url: string, opts?: RequestInit) => Promise<Response>;

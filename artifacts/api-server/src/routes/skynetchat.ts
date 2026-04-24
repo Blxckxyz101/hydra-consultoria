@@ -371,6 +371,10 @@ router.get("/skynetchat/session-status", async (_req, res) => {
 // Ask endpoint — used by Telegram bot and other clients
 // POST /api/skynetchat/ask  { message: string }
 // Returns { reply: string } or { error: string }
+//
+// Strategy:
+//  1. Try the Discord bot's internal server (port 8089) — it has CF clearance + proxy rotation
+//  2. Fallback to direct call (askViaSkynet) if Discord bot is unavailable
 router.post("/skynetchat/ask", async (req, res) => {
   const { message } = (req.body ?? {}) as Record<string, string>;
   if (!message?.trim()) {
@@ -378,7 +382,31 @@ router.post("/skynetchat/ask", async (req, res) => {
     return;
   }
 
-  // Build cookie: prefer env var, fallback to first active pool account
+  // ── Strategy 1: Discord bot internal server (has CF clearance) ────────────
+  try {
+    const r = await fetch("http://127.0.0.1:8089/ask", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ message: message.trim() }),
+      signal:  AbortSignal.timeout(75_000),
+    });
+    const data = await r.json() as { reply?: string; error?: string };
+    if (r.ok && data.reply) {
+      res.json({ reply: data.reply });
+      return;
+    }
+    if (r.status === 429) {
+      res.status(429).json({ error: "rate_limit", message: "Limite de mensagens atingido." });
+      return;
+    }
+    // Non-OK but not 429 → fall through to strategy 2
+    console.warn("[SKYNET-ASK] Discord bot returned non-OK:", r.status, data);
+  } catch (e) {
+    // Discord bot unavailable (not started yet, or crashed) → fall through
+    console.warn("[SKYNET-ASK] Discord bot internal server unavailable, falling back:", (e as Error).message?.slice(0, 80));
+  }
+
+  // ── Strategy 2: Direct call (no CF clearance, but works sometimes) ─────────
   const envRaw = process.env.SKYNETCHAT_COOKIE?.trim();
   let cookie: string | null = envRaw
     ? ((envRaw.startsWith("nid=") || envRaw.startsWith("sid=")) ? envRaw : `sid=${envRaw}`)

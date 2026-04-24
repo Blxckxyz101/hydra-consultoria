@@ -1,4 +1,5 @@
 import fs   from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import {
   Client,
@@ -5162,8 +5163,13 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
 
   // ── /sky ask ─────────────────────────────────────────────────────────────────
   if (sub === "ask") {
+    // Defer IMMEDIATELY — Discord requires acknowledgement within 3 seconds.
+    // Any check or await BEFORE this risks the 3-second window expiring.
+    const deferOk = await interaction.deferReply().then(() => true).catch(() => false);
+    if (!deferOk) return; // interaction already expired — silently drop
+
     if (!isSkynetConfigured()) {
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.RED)
@@ -5171,15 +5177,12 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
             .setDescription("O segredo `SKYNETCHAT_COOKIE` não está definido.\nUse `/sky status` para ver as instruções de configuração.")
             .setFooter({ text: AUTHOR }),
         ],
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     const message  = interaction.options.getString("message", true);
     const endpoint = (interaction.options.getString("model") ?? "chat-V3") as Parameters<typeof askSkynet>[1];
-
-    await interaction.deferReply();
 
     const start = Date.now();
     let reply: string | null = null;
@@ -6468,6 +6471,44 @@ async function main(): Promise<void> {
 
   await client.login(BOT_TOKEN);
 }
+
+// ── Internal HTTP server — exposes askSkynet() to other local services ────────
+// The API server (port 8080) calls POST http://localhost:8089/ask so that
+// Telegram bot requests benefit from the full proxy + CF clearance pipeline.
+(function startInternalServer() {
+  const PORT = 8089;
+  const server = http.createServer(async (req, res) => {
+    if (req.method !== "POST" || req.url !== "/ask") {
+      res.writeHead(404).end(JSON.stringify({ error: "not_found" }));
+      return;
+    }
+    let body = "";
+    req.on("data", (c: Buffer) => { body += c.toString(); });
+    req.on("end", async () => {
+      try {
+        const { message, model } = JSON.parse(body) as { message?: string; model?: string };
+        if (!message?.trim()) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "message required" }));
+          return;
+        }
+        const endpoint = (model ?? "chat-V3") as Parameters<typeof askSkynet>[1];
+        const reply = await askSkynet([{ role: "user", content: message.trim() }], endpoint);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ reply: reply ?? "" }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const status = e instanceof SkynetRateLimitError ? 429 : 502;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: msg }));
+      }
+    });
+  });
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`[INTERNAL] SkynetChat proxy listening on 127.0.0.1:${PORT}`);
+  });
+  server.on("error", (e) => console.error("[INTERNAL] Server error:", e));
+})();
 
 // ── Global safety net — prevent silent crashes from unhandled async errors ────
 process.on("unhandledRejection", (reason) => {
