@@ -467,3 +467,95 @@ export async function closeBrowser(): Promise<void> {
     browserInstance = null;
   }
 }
+
+// ── Cloudflare JS-challenge solver via proxy ──────────────────────────────────
+// Launches a stealth browser through the given HTTP proxy, visits the target URL,
+// waits for Cloudflare's automatic JS challenge to pass, then extracts cf_clearance.
+// cf_clearance is IP-specific — must be used with the SAME proxy that fetched it.
+
+export interface CfCookies {
+  cf_clearance: string;
+  __cf_bm?: string;
+  __cfruid?: string;
+  /** Full cookie string to prepend to session cookies */
+  cookieString: string;
+}
+
+/** Returns ALL Cloudflare cookies obtained via proxy (cf_clearance + __cf_bm + __cfruid) */
+export async function getCfClearanceViaProxy(
+  proxyUrl: string,
+  targetOrigin = "https://skynetchat.net",
+  timeoutMs  = 30_000,
+): Promise<CfCookies | null> {
+  // Parse proxy: http://user:pass@host:port
+  let proxyArg = proxyUrl;
+  let proxyAuth: { username: string; password: string } | null = null;
+  try {
+    const u = new URL(proxyUrl);
+    proxyArg = `${u.protocol}//${u.hostname}:${u.port}`;
+    if (u.username) proxyAuth = { username: decodeURIComponent(u.username), password: decodeURIComponent(u.password) };
+  } catch { /* ignore */ }
+
+  const puppeteerExtra = await getPuppeteer();
+  let browser: Browser | null = null;
+  try {
+    browser = (await puppeteerExtra.launch({
+      executablePath: CHROMIUM_PATH,
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--window-size=1920,1080",
+        "--lang=pt-BR",
+        `--proxy-server=${proxyArg}`,
+        "--disable-features=PrivateStateTokens,TrustTokens,PrivacySandboxAdsAPIs,FedCm",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
+    })) as Browser;
+
+    const page = await (browser as any).newPage();
+    if (proxyAuth) await (page as any).authenticate(proxyAuth);
+
+    await (page as any).evaluateOnNewDocument(EXTRA_STEALTH);
+    await (page as any).setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    );
+
+    console.log(`[cf-clearance] Navigating to ${targetOrigin} via proxy...`);
+    await (page as any).goto(targetOrigin, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+
+    // Poll for cf_clearance cookie (set after JS challenge auto-passes)
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const cookies: Array<{ name: string; value: string }> = await (page as any).cookies(targetOrigin);
+      const cfClearance = cookies.find((c) => c.name === "cf_clearance");
+      if (cfClearance) {
+        // Collect ALL Cloudflare cookies — __cf_bm (Bot Management) is also needed
+        const cfBm     = cookies.find((c) => c.name === "__cf_bm");
+        const cfRuid   = cookies.find((c) => c.name === "__cfruid");
+        const cfParts  = [
+          `cf_clearance=${cfClearance.value}`,
+          cfBm   ? `__cf_bm=${cfBm.value}`   : null,
+          cfRuid ? `__cfruid=${cfRuid.value}` : null,
+        ].filter(Boolean) as string[];
+        const cookieString = cfParts.join("; ");
+        const proxyHost = new URL(proxyUrl).hostname;
+        console.log(`[cf-clearance] ✅ Got CF cookies for proxy ${proxyHost}: ${cfParts.map(p=>p.split('=')[0]).join(', ')}`);
+        await (page as any).close().catch(() => {});
+        return { cf_clearance: cfClearance.value, __cf_bm: cfBm?.value, __cfruid: cfRuid?.value, cookieString };
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+
+    console.warn("[cf-clearance] Timed out waiting for cf_clearance");
+    return null;
+  } catch (err) {
+    console.error("[cf-clearance] Error:", err);
+    return null;
+  } finally {
+    if (browser) await (browser as any).close().catch(() => {});
+  }
+}

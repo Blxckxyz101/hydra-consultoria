@@ -26,7 +26,16 @@
 
 import { randomUUID } from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
-import { createSkynetAccount, loginWithProCode, type SkynetAccount } from "./turnstile-solver.js";
+import { createSkynetAccount, loginWithProCode, getCfClearanceViaProxy, type SkynetAccount, type CfCookies } from "./turnstile-solver.js";
+
+/** Generate a 16-character alphanumeric ID matching SkyNetChat's format */
+function genId(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+/** SkyNetChat build version hash — used in pre-log calls */
+const SKYNET_VERSION = "c26d13cf0144ea0c6b935eebe9e7ab9d";
 
 // ── Webshare proxy pool for Cloudflare bypass ─────────────────────────────────
 // SkyNetChat's /api/chat-* endpoints are behind Cloudflare Bot Management.
@@ -68,6 +77,44 @@ function nextProxy(): string | null {
 
 // Reset failed set every 5 min — proxies recover
 setInterval(() => failedProxies.clear(), 5 * 60 * 1000);
+
+// ── cf_clearance cache ─────────────────────────────────────────────────────────
+// Cloudflare JS challenge sets cf_clearance tied to the proxy's IP.
+// We fetch it once per proxy (takes ~15s) and cache for 1 hour.
+interface CfEntry { cookies: CfCookies; expiresAt: number; }
+const cfCache = new Map<string, CfEntry>();                          // proxyUrl → CF cookies
+const cfPending = new Map<string, Promise<CfCookies | null>>();      // in-flight solves
+
+const CF_CLEARANCE_TTL = 25 * 60 * 1000; // 25 min — __cf_bm expires in ~30 min
+
+async function getOrFetchCfClearance(proxyUrl: string): Promise<CfCookies | null> {
+  // Return cached value if still fresh
+  const cached = cfCache.get(proxyUrl);
+  if (cached && Date.now() < cached.expiresAt) return cached.cookies;
+
+  // Deduplicate concurrent requests for the same proxy
+  const inflight = cfPending.get(proxyUrl);
+  if (inflight) return inflight;
+
+  const p = getCfClearanceViaProxy(proxyUrl).then((val) => {
+    cfPending.delete(proxyUrl);
+    if (val) {
+      cfCache.set(proxyUrl, { cookies: val, expiresAt: Date.now() + CF_CLEARANCE_TTL });
+      console.log(`[SKYNETCHAT] CF cookies cached for ${new URL(proxyUrl).hostname} (TTL 25min): ${val.cookieString.split(';').map(c=>c.trim().split('=')[0]).join(', ')}`);
+    }
+    return val;
+  });
+  cfPending.set(proxyUrl, p);
+  return p;
+}
+
+// Pre-warm cf_clearance for the first proxy in the background on startup
+if (webshareProxies.length > 0) {
+  setTimeout(() => {
+    console.log("[SKYNETCHAT] Pre-warming cf_clearance for first proxy...");
+    void getOrFetchCfClearance(webshareProxies[0]);
+  }, 2_000);
+}
 
 type FetchFn = (url: string, opts?: RequestInit) => Promise<Response>;
 
@@ -220,10 +267,10 @@ async function acquireFreshAccount(): Promise<string | null> {
 // ── Stream parser ──────────────────────────────────────────────────────────────
 
 /**
- * Parses a Vercel AI SDK Data Stream SSE response body.
- * Handles both:
- *   - New Data Stream Protocol: `0:"chunk"` (JSON-encoded string after type prefix)
- *   - Legacy text-delta objects: `{"type":"text-delta","textDelta":"..."}`
+ * Parses SkyNetChat SSE response body.
+ * Handles:
+ *   - New format (2025+): `{"type":"text-delta","delta":"..."}` and `{"type":"step-delta","delta":"..."}`
+ *   - Old Vercel Data Stream: `0:"chunk"` prefix format
  */
 function parseVercelAiStream(raw: string): string {
   const lines = raw.split("\n");
@@ -234,7 +281,25 @@ function parseVercelAiStream(raw: string): string {
     const payload = line.slice(6).trim();
     if (!payload || payload === "[DONE]") continue;
 
-    // New Data Stream Protocol — type prefix followed by JSON value
+    // New SkyNetChat format: JSON objects with type field
+    if (payload.startsWith("{")) {
+      try {
+        const obj = JSON.parse(payload);
+        // text-delta: actual response text chunks
+        if (obj.type === "text-delta" && typeof obj.delta === "string") {
+          chunks.push(obj.delta);
+          continue;
+        }
+        // step-delta from a text step (fallback)
+        if (obj.type === "step-delta" && obj.stepType !== "thinking" && typeof obj.delta === "string") {
+          chunks.push(obj.delta);
+          continue;
+        }
+      } catch { /* not JSON */ }
+      continue;
+    }
+
+    // Old Vercel Data Stream Protocol — type prefix followed by JSON value
     // 0:"text"       → text delta
     // d:{...}        → done (finish)
     // e:{...}        → error/done
@@ -288,26 +353,56 @@ async function doRequest(
   endpoint: string,
   cookie: string,
 ): Promise<{ status: number; body: string }> {
-  const chatId    = randomUUID();
-  const messageId = randomUUID();
-  const url       = `${SKYNETCHAT_BASE}/api/${endpoint}`;
+  const chatId = genId();
+  const url    = `${SKYNETCHAT_BASE}/api/${endpoint}`;
 
   const headers: Record<string, string> = {
-    "Content-Type":                    "application/json",
-    "Accept":                          "text/event-stream, text/plain, */*",
-    "Cookie":                          cookie,
-    "Origin":                          SKYNETCHAT_BASE,
-    "Referer":                         `${SKYNETCHAT_BASE}/`,
-    "User-Agent":                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "sec-ch-ua":                       '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-    "sec-ch-ua-mobile":                "?0",
-    "sec-ch-ua-platform":              '"Windows"',
-    "sec-fetch-dest":                  "empty",
-    "sec-fetch-mode":                  "cors",
-    "sec-fetch-site":                  "same-origin",
+    "Content-Type":   "application/json",
+    "Accept":         "text/event-stream, text/plain, */*",
+    "Cookie":         cookie,
+    "Origin":         SKYNETCHAT_BASE,
+    "Referer":        `${SKYNETCHAT_BASE}/`,
+    "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "sec-ch-ua":      '"Google Chrome";v="131", "Chromium";v="131", ";Not A Brand";v="99"',
+    "sec-ch-ua-mobile":   "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
   };
 
-  const bodyStr = JSON.stringify({ id: chatId, messages, trigger: "submit-message", messageId });
+  // Convert SkynetMessage[] → SkyNetChat's parts format
+  // Old: { role, content: "text" }
+  // New: { role, id, parts: [{ type: "text", text: "..." }] }
+  const formattedMessages = messages.map((m) => ({
+    role: m.role,
+    id:   genId(),
+    parts: [{ type: "text", text: m.content }],
+  }));
+
+  const bodyStr = JSON.stringify({
+    id:       chatId,
+    messages: formattedMessages,
+    trigger:  "submit-message",
+  });
+
+  // Send pre-log calls required by the SkyNetChat frontend before each chat
+  // These are fire-and-forget — we don't wait for them to finish
+  const logHeaders = { ...headers, "Accept": "*/*" };
+  void Promise.all([
+    fetch(`${SKYNETCHAT_BASE}/api/log`, {
+      method: "POST",
+      headers: logHeaders,
+      body: JSON.stringify({ v: SKYNET_VERSION, webrtcIp: null }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {}),
+    fetch(`${SKYNETCHAT_BASE}/api/log/message`, {
+      method: "POST",
+      headers: logHeaders,
+      body: JSON.stringify({ v: SKYNET_VERSION }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {}),
+  ]);
 
   const MAX_PROXY_TRIES = Math.max(webshareProxies.length, 1);
 
@@ -315,10 +410,17 @@ async function doRequest(
     try {
       let res: Response;
       if (proxyUrl) {
+        // Get (or fetch) all Cloudflare cookies for this proxy's IP
+        // cf_clearance + __cf_bm (Bot Management) — both tied to the proxy IP
+        const cfCookies = await getOrFetchCfClearance(proxyUrl);
+        const cookieWithCf = cfCookies
+          ? `${cfCookies.cookieString}; ${cookie}`
+          : cookie;
+
         const agent = new ProxyAgent(proxyUrl);
         res = await (undiciFetch as unknown as FetchFn)(url, {
           method: "POST",
-          headers,
+          headers: { ...headers, "Cookie": cookieWithCf },
           body: bodyStr,
           // @ts-expect-error undici dispatcher
           dispatcher: agent,
