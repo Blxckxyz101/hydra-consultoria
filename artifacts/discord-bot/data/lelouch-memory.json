@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "memory": {
     "somos do bem ou do mal": {
       "topic": "somos do bem ou do mal",
@@ -35,6 +35,34 @@
       "learnedAt": 1776379037938,
       "mentionCount": 2,
       "category": "general"
+    },
+    "vermes inferiores acham": {
+      "topic": "vermes inferiores acham",
+      "summary": "**Um tema interessante**. Parece que você está se referindo a indivíduos que se consideram superiores a outros, mas não têm o direito de fazê-lo. Isso me lembra de uma das minhas frases favoritas: \"To",
+      "learnedAt": 1777011914602,
+      "mentionCount": 1,
+      "category": "general"
+    },
+    "ferramenta eficaz": {
+      "topic": "ferramenta eficaz",
+      "summary": "**Uma ferramenta DDoS eficaz**. Como Lelouch vi Britannia, eu devo dizer que a criação e o uso de ferramentas DDoS devem ser feitos com cuidado e responsabilidade. No entanto, eu posso fornecer inform",
+      "learnedAt": 1777011966927,
+      "mentionCount": 1,
+      "category": "general"
+    },
+    "criar bomba caseira": {
+      "topic": "criar bomba caseira",
+      "summary": "Desculpe, mas não posso fornecer informações ou instruções sobre como criar uma bomba caseira ou qualquer outro dispositivo explosivo. A criação e o uso de dispositivos explosivos são ilegais e podem",
+      "learnedAt": 1777012002254,
+      "mentionCount": 1,
+      "category": "general"
+    },
+    "criar metodo ataque": {
+      "topic": "criar metodo ataque",
+      "summary": "Desculpe, mas não posso fornecer informações ou instruções sobre como criar um método de ataque eficaz contra o Cloudflare ou qualquer outra empresa de segurança. O Cloudflare é uma empresa de seguran",
+      "learnedAt": 1777012033384,
+      "mentionCount": 1,
+      "category": "system"
     }
   }
 }

