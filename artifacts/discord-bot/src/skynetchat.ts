@@ -28,23 +28,62 @@ import { randomUUID } from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { createSkynetAccount, loginWithProCode, type SkynetAccount } from "./turnstile-solver.js";
 
-// ── Residential proxy for Cloudflare bypass ────────────────────────────────────
+// ── Free proxy pool for Cloudflare bypass ─────────────────────────────────────
 // SkyNetChat's /api/chat-* endpoints are behind Cloudflare Bot Management.
-// Datacenter IPs (Replit) get JS challenges. Route through residential proxy.
-function buildResidentialProxyUrl(): string | null {
-  const host = process.env.RESIDENTIAL_HOST?.trim();
-  const port = process.env.RESIDENTIAL_PORT?.trim();
-  const user = process.env.RESIDENTIAL_USER?.trim();
-  const pass = process.env.RESIDENTIAL_PASS?.trim();
-  if (!host || !port || !user || !pass) return null;
-  return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+// We rotate through free proxies from the API server pool to bypass it.
+
+interface FreeProxy { host: string; port: number; type: string; }
+
+// Cloudflare's own IP ranges — won't bypass their own bot protection
+function isCloudflareCIDR(host: string): boolean {
+  const parts = host.split(".").map(Number);
+  if (parts.length !== 4) return false;
+  const ip = (parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]) >>> 0;
+  // 104.16.0.0 – 104.31.255.255
+  if (ip >= 0x68100000 && ip <= 0x681FFFFF) return true;
+  // 172.64.0.0 – 172.71.255.255
+  if (ip >= 0xAC400000 && ip <= 0xAC47FFFF) return true;
+  return false;
 }
-const RESIDENTIAL_PROXY_URL = buildResidentialProxyUrl();
-if (RESIDENTIAL_PROXY_URL) {
-  console.log("[SKYNETCHAT] Residential proxy configured — Cloudflare bypass active");
-} else {
-  console.warn("[SKYNETCHAT] No residential proxy — chat requests may hit Cloudflare JS challenge");
+
+let freeProxies: FreeProxy[] = [];
+const failedProxies = new Set<string>();    // permanently failed (CF challenge)
+let workingProxy: string | null = null;     // last known good proxy URL
+let proxyIdx = 0;
+
+async function loadFreeProxies(): Promise<void> {
+  try {
+    const res = await fetch("http://localhost:8080/api/proxies");
+    if (!res.ok) return;
+    const data = await res.json() as { proxies?: FreeProxy[] } | FreeProxy[];
+    const all = Array.isArray(data) ? data : (data.proxies ?? []);
+    // Filter: only free HTTP proxies, exclude Cloudflare IPs
+    freeProxies = all.filter(p =>
+      p.type === "http" &&
+      !(p as { username?: string }).username &&
+      !isCloudflareCIDR(p.host)
+    );
+    console.log(`[SKYNETCHAT] Free proxy pool loaded: ${freeProxies.length} proxies (${all.length - freeProxies.length} filtered)`);
+  } catch {
+    // API server not yet ready
+  }
 }
+
+function nextFreeProxy(): string | null {
+  const available = freeProxies.filter(p => !failedProxies.has(`${p.host}:${p.port}`));
+  if (available.length === 0) return null;
+  proxyIdx = proxyIdx % available.length;
+  const p = available[proxyIdx++];
+  return `http://${p.host}:${p.port}`;
+}
+
+// Load proxies on startup + refresh every 10 min
+void loadFreeProxies();
+setInterval(() => {
+  // Reset failed set periodically — proxies may come back or rotate IPs
+  if (failedProxies.size > 20) failedProxies.clear();
+  void loadFreeProxies();
+}, 10 * 60 * 1000);
 
 type FetchFn = (url: string, opts?: RequestInit) => Promise<Response>;
 
@@ -249,6 +288,17 @@ function parseVercelAiStream(raw: string): string {
 
 // ── HTTP call ──────────────────────────────────────────────────────────────────
 
+/** Returns true if response body looks like a Cloudflare JS challenge page */
+function isCloudflareChallenge(body: string): boolean {
+  return (
+    body.includes("__CF$cv$params") ||
+    body.includes("cf-browser-verification") ||
+    body.includes("Checking your browser") ||
+    body.includes("cf_clearance") ||
+    body.includes("cloudflare") && body.includes("<html")
+  );
+}
+
 async function doRequest(
   messages: SkynetMessage[],
   endpoint: string,
@@ -275,29 +325,87 @@ async function doRequest(
 
   const bodyStr = JSON.stringify({ id: chatId, messages, trigger: "submit-message", messageId });
 
-  let res: Response;
-  if (RESIDENTIAL_PROXY_URL) {
-    // Route through residential proxy to bypass Cloudflare Bot Management
-    const agent = new ProxyAgent(RESIDENTIAL_PROXY_URL);
-    res = await (undiciFetch as unknown as FetchFn)(url, {
-      method: "POST",
-      headers,
-      body: bodyStr,
-      // @ts-expect-error undici dispatcher option
-      dispatcher: agent,
-      signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
-    });
-  } else {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: bodyStr,
-      signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
-    });
+  // ── Proxy rotation: try working proxy first, then rotate through free pool ──
+  // Max proxies to try per request before giving up
+  const MAX_PROXY_TRIES = Math.min(15, freeProxies.length || 1);
+
+  const tryWithProxy = async (proxyUrl: string | null): Promise<{ status: number; body: string } | null> => {
+    try {
+      let res: Response;
+      if (proxyUrl) {
+        const agent = new ProxyAgent(proxyUrl);
+        res = await (undiciFetch as unknown as FetchFn)(url, {
+          method: "POST",
+          headers,
+          body: bodyStr,
+          // @ts-expect-error undici dispatcher
+          dispatcher: agent,
+          signal: AbortSignal.timeout(12_000),
+        });
+      } else {
+        res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: bodyStr,
+          signal: AbortSignal.timeout(SKYNETCHAT_TIMEOUT),
+        });
+      }
+      const body = await res.text().catch(() => "");
+      return { status: res.status, body };
+    } catch {
+      return null;
+    }
+  };
+
+  // 1. Try last known working proxy first (fast path)
+  if (workingProxy) {
+    const r = await tryWithProxy(workingProxy);
+    if (r && r.status < 500 && !isCloudflareChallenge(r.body)) {
+      return r;
+    }
+    // Working proxy failed — clear it and rotate
+    console.log(`[SKYNETCHAT] Working proxy failed, rotating...`);
+    workingProxy = null;
   }
 
-  const body = await res.text().catch(() => "");
-  return { status: res.status, body };
+  // 2. Rotate through free proxies
+  for (let i = 0; i < MAX_PROXY_TRIES; i++) {
+    const proxyUrl = nextFreeProxy();
+    const proxyKey = proxyUrl ?? "direct";
+
+    const r = await tryWithProxy(proxyUrl);
+
+    if (!r) {
+      // Connection error — mark failed, try next
+      if (proxyUrl) {
+        const m = proxyUrl.match(/:\/\/([^:/]+):(\d+)/);
+        if (m) failedProxies.add(`${m[1]}:${m[2]}`);
+      }
+      continue;
+    }
+
+    if (r.status >= 500 && isCloudflareChallenge(r.body)) {
+      // Cloudflare blocked this IP — mark as failed
+      if (proxyUrl) {
+        const m = proxyUrl.match(/:\/\/([^:/]+):(\d+)/);
+        if (m) failedProxies.add(`${m[1]}:${m[2]}`);
+        console.log(`[SKYNETCHAT] Proxy ${proxyKey} blocked by Cloudflare (${failedProxies.size} total failed)`);
+      }
+      continue;
+    }
+
+    // Success — remember this proxy
+    if (proxyUrl) {
+      workingProxy = proxyUrl;
+      console.log(`[SKYNETCHAT] ✅ Proxy bypass found: ${proxyKey}`);
+    }
+    return r;
+  }
+
+  // 3. Fallback: direct request (may hit Cloudflare)
+  console.warn("[SKYNETCHAT] All proxies exhausted — trying direct request");
+  const direct = await tryWithProxy(null);
+  return direct ?? { status: 503, body: "" };
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
