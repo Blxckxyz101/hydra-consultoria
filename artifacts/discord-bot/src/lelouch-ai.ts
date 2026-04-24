@@ -412,26 +412,47 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   }
 }
 
+// Detects if the user message likely needs real-time API data (attacks, proxies)
+function needsTools(history: HistoryEntry[]): boolean {
+  const last = history.at(-1)?.content?.toLowerCase() ?? "";
+  return /ataque|attack|proxy|proxies|rodando|running|live|status|ativo|ativa|pps|bps|método|method|cluster/.test(last);
+}
+
 async function callGroq(model: string, history: HistoryEntry[], systemPrompt: string): Promise<string> {
-  const response = await client.chat.completions.create({
+  const useTools = needsTools(history);
+
+  const makeRequest = async (withTools: boolean) => client.chat.completions.create({
     model,
     max_tokens: 800,
     temperature: 0.78,
     top_p: 0.92,
     frequency_penalty: 0.15,
     presence_penalty:  0.10,
-    tools: AI_TOOLS,
-    tool_choice: "auto",
+    ...(withTools ? { tools: AI_TOOLS, tool_choice: "auto" as const } : {}),
     messages: [
       { role: "system", content: systemPrompt },
       ...history,
     ],
   });
 
+  let response;
+  try {
+    response = await makeRequest(useTools);
+  } catch (toolErr: unknown) {
+    // Groq returns 400 failed_generation when context+tools is too large or the model
+    // can't produce a valid function call JSON. Retry without tools instead of crashing.
+    const errMsg = toolErr instanceof Error ? toolErr.message : String(toolErr);
+    if (useTools && (errMsg.includes("failed_generation") || errMsg.includes("400"))) {
+      response = await makeRequest(false);
+    } else {
+      throw toolErr;
+    }
+  }
+
   const msg = response.choices[0]?.message;
   if (!msg) return "...silêncio estratégico.";
 
-  // ── T005: Handle tool calls — execute and feed results back ───────────────
+  // ── Handle tool calls — execute and feed results back ─────────────────────
   if (msg.tool_calls && msg.tool_calls.length > 0) {
     const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
@@ -451,7 +472,7 @@ async function callGroq(model: string, history: HistoryEntry[], systemPrompt: st
       });
     }
 
-    // Second call with tool results — Lelouch summarizes findings
+    // Second call with tool results — no tools needed here
     const followUp = await client.chat.completions.create({
       model,
       max_tokens: 800,
