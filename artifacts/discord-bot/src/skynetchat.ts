@@ -58,8 +58,12 @@ let creatingAccount = false; // prevent concurrent creation
 function initPool() {
   if (poolInitialized) return;
   poolInitialized = true;
-  const envCookie = process.env.SKYNETCHAT_COOKIE?.trim();
-  if (envCookie) {
+  const envRaw = process.env.SKYNETCHAT_COOKIE?.trim();
+  if (envRaw) {
+    // Auto-prefix with sid= if user pasted just the token value (without cookie name)
+    const envCookie = (envRaw.startsWith("nid=") || envRaw.startsWith("sid="))
+      ? envRaw
+      : `sid=${envRaw}`;
     accountPool.push({ cookie: envCookie, limited: false, source: "env" });
     console.log("[SKYNETCHAT] Pool initialized with 1 env account");
   }

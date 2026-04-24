@@ -220,8 +220,11 @@ router.get("/skynetchat/session-status", async (_req, res) => {
     error?: string;
   }> = [];
 
-  // Check env cookie
-  const envCookie = process.env.SKYNETCHAT_COOKIE?.trim();
+  // Check env cookie — auto-prefix sid= if user pasted raw token
+  const envRaw = process.env.SKYNETCHAT_COOKIE?.trim();
+  const envCookie = envRaw
+    ? ((envRaw.startsWith("nid=") || envRaw.startsWith("sid=")) ? envRaw : `sid=${envRaw}`)
+    : undefined;
   if (envCookie) {
     try {
       const r = await fetch("https://skynetchat.net/api/session", {
