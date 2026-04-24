@@ -384,4 +384,13 @@ export const ATTACK_METHODS = [
     protocol: "HTTP" as const,
     description: "Vercel/Next.js specific 4-vector attack that bypasses all Vercel edge caching simultaneously: (1) RSC Bypass — requests with ?_rsc=<random> trigger full React Server Component renders; Vercel adds Vary:RSC so every unique _rsc = cache MISS → origin serverless function invocation. (2) Image Optimizer DoS — /_next/image?url=X&w=<N>&q=<N> with unique random (url,width,quality,format) triggers CPU-intensive libvips resize+encode on each cold hit; thousands of concurrent resize ops exhaust Vercel's image lambda pool. (3) Edge API Cold Start — /api/* routes with unique params prevent Vercel runtime reuse; each cold start allocates a new Node.js V8 isolate (~50ms startup). (4) ISR Data Route Flood — /_next/data/<buildId>/[page].json with random buildIds forces getServerSideProps execution per request. Combined: saturates Vercel's serverless lambda concurrency limit (default 1000 concurrent executions), triggers 429/502 responses.",
   },
+
+  // ── NEW: H2 True Multiplexing ─────────────────────────────────────────────
+  {
+    id: "h2-multiplex",
+    name: "H2 Multiplex — True Stream Pool Exhaustion",
+    layer: "L7" as const,
+    protocol: "HTTP/2" as const,
+    description: "True HTTP/2 multiplexing: N persistent sessions each maintaining maxConcurrentStreams open streams simultaneously. Zero RST — each stream sends a real request (60% GET + 40% POST with real bodies), reads the full response, then the slot is immediately refilled. Result: constant maximum pressure with 10x fewer TCP connections than HTTP/1.1. Dev: 20 sessions x 32 streams = 640 concurrent requests over 20 TCP conns. Prod: 150 sessions x 128 streams = 19,200 concurrent requests over 150 TCP conns. Bypasses per-IP connection limits (CDN limits 100 conns/IP but 10 sessions x 128 streams = 1,280 virtual reqs from 1 IP). POST bodies force origin handler + body buffer allocation. Cache-busted URLs force 100% origin cache miss. Adapts to server SETTINGS maxConcurrentStreams in real time. Appears as legitimate browser traffic.",
+  },
 ];

