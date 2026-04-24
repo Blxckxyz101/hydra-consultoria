@@ -506,7 +506,7 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
   const mu   = new Set<string>(); // dedup in-flight
 
   // Collect ALL candidate IPs from ALL sources in parallel, then verify all at once
-  const [subResults, ipv6Results, txtResults, mxResults] = await Promise.allSettled([
+  const [subResults, ipv6Results, txtResults, mxResults, crtResults] = await Promise.allSettled([
     // 1. Subdomains — all resolved simultaneously
     Promise.allSettled(BYPASS_SUBS.map(sub =>
       dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[])
@@ -517,6 +517,23 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     dnsP.resolveTxt(hostname).catch(() => [] as string[][]),
     // 4. MX
     dnsP.resolveMx(hostname).catch(() => [] as { exchange: string }[]),
+    // 5. crt.sh — Certificate Transparency logs expose subdomains even for hidden origins
+    //    Often catches old certs that reveal the real IP before the CDN was added
+    (async () => {
+      const baseDom = hostname.split(".").slice(-2).join(".");
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 5_000);
+      try {
+        const r = await fetch(
+          `https://crt.sh/?q=%25.${baseDom}&output=json`,
+          { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }, signal: ac.signal }
+        );
+        clearTimeout(timer);
+        const j = await r.json() as { name_value: string }[];
+        const subs = [...new Set(j.flatMap(e => e.name_value.split("\n").map(s => s.trim().replace(/^\*\./, ""))))];
+        return subs.filter(s => s.endsWith(`.${baseDom}`) || s === baseDom);
+      } catch { clearTimeout(timer); return [] as string[]; }
+    })(),
   ] as const);
 
   const candidates: string[] = [];
@@ -565,7 +582,24 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     }
   }
 
+  // Collect from crt.sh subdomains — resolve each to IP and add to candidates
+  if (crtResults.status === "fulfilled" && crtResults.value.length > 0) {
+    console.log(`[origin-discovery] crt.sh found ${crtResults.value.length} subdomains for ${hostname}`);
+    const crtIpLists = await Promise.allSettled(
+      crtResults.value.slice(0, 40).map(sub => dnsP.resolve4(sub).catch(() => [] as string[]))
+    );
+    for (const r of crtIpLists) {
+      if (r.status === "fulfilled") {
+        for (const ip of r.value) {
+          if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
+        }
+      }
+    }
+  }
+
   if (candidates.length === 0) return null;
+
+  console.log(`[origin-discovery] Verifying ${candidates.length} candidates for ${hostname}...`);
 
   // Verify ALL candidates simultaneously — race to first confirmed origin
   return new Promise<string | null>(resolve => {

