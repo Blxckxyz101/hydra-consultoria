@@ -205,4 +205,85 @@ router.get("/skynetchat/pool", (_req, res) => {
   res.json(pool.filter(a => !a.expired));
 });
 
+// ── Session status — shows real account info (isPro, messagesUsed, etc.) ─────
+router.get("/skynetchat/session-status", async (_req, res) => {
+  const results: Array<{
+    source: string;
+    nid: string;
+    isPro: boolean | null;
+    messagesUsed: number | null;
+    messagesMax: number | null;
+    dailyLimit: number | null;
+    subscriptionExpired: boolean | null;
+    proExpiresAt: string | null;
+    sessionOk: boolean;
+    error?: string;
+  }> = [];
+
+  // Check env cookie
+  const envCookie = process.env.SKYNETCHAT_COOKIE?.trim();
+  if (envCookie) {
+    try {
+      const r = await fetch("https://skynetchat.net/api/session", {
+        headers: {
+          "Cookie": envCookie,
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (r.ok) {
+        const d = await r.json() as { user?: Record<string, unknown> };
+        const u = d.user ?? d as Record<string, unknown>;
+        results.push({
+          source: "env (SKYNETCHAT_COOKIE)",
+          nid: (u.numberId as string ?? "").slice(0, 12),
+          isPro: (u.isPro as boolean) ?? null,
+          messagesUsed: (u.messagesUsed as number) ?? null,
+          messagesMax: (u.messagesMax as number) ?? null,
+          dailyLimit: (u.dailyLimit as number) ?? null,
+          subscriptionExpired: (u.subscriptionExpired as boolean) ?? null,
+          proExpiresAt: (u.proExpiresAt as string) ?? null,
+          sessionOk: true,
+        });
+      } else {
+        results.push({ source: "env (SKYNETCHAT_COOKIE)", nid: "", isPro: null, messagesUsed: null, messagesMax: null, dailyLimit: null, subscriptionExpired: null, proExpiresAt: null, sessionOk: false, error: `HTTP ${r.status}` });
+      }
+    } catch (e) {
+      results.push({ source: "env (SKYNETCHAT_COOKIE)", nid: "", isPro: null, messagesUsed: null, messagesMax: null, dailyLimit: null, subscriptionExpired: null, proExpiresAt: null, sessionOk: false, error: String(e) });
+    }
+  }
+
+  // Check pool accounts
+  for (const acc of pool.filter(a => !a.expired)) {
+    const cookie = `nid=${acc.nid}; sid=${acc.sid}`;
+    try {
+      const r = await fetch("https://skynetchat.net/api/session", {
+        headers: { "Cookie": cookie, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (r.ok) {
+        const d = await r.json() as { user?: Record<string, unknown> };
+        const u = d.user ?? d as Record<string, unknown>;
+        results.push({
+          source: `pool (${acc.source})`,
+          nid: acc.nid.slice(0, 12),
+          isPro: (u.isPro as boolean) ?? null,
+          messagesUsed: (u.messagesUsed as number) ?? null,
+          messagesMax: (u.messagesMax as number) ?? null,
+          dailyLimit: (u.dailyLimit as number) ?? null,
+          subscriptionExpired: (u.subscriptionExpired as boolean) ?? null,
+          proExpiresAt: (u.proExpiresAt as string) ?? null,
+          sessionOk: true,
+        });
+      } else {
+        results.push({ source: `pool (${acc.source})`, nid: acc.nid.slice(0, 12), isPro: null, messagesUsed: null, messagesMax: null, dailyLimit: null, subscriptionExpired: null, proExpiresAt: null, sessionOk: false, error: `HTTP ${r.status}` });
+      }
+    } catch (e) {
+      results.push({ source: `pool (${acc.source})`, nid: acc.nid.slice(0, 12), isPro: null, messagesUsed: null, messagesMax: null, dailyLimit: null, subscriptionExpired: null, proExpiresAt: null, sessionOk: false, error: String(e) });
+    }
+  }
+
+  res.json({ accounts: results, total: results.length });
+});
+
 export default router;

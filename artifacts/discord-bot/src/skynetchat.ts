@@ -68,13 +68,13 @@ function initPool() {
   // Note: Turnstile auto-solve is blocked on datacenter IPs (Cloudflare detects them).
   // To use the Pro code, log in manually at skynetchat.net and add cookies via the panel.
   // Refresh pool from API server every 5 minutes — picks up new cookies added via panel
-  // Also resets "limited" flag on existing accounts (session may have been renewed)
+  // Also resets "limited" flag on ALL accounts (rate limits reset daily on SkyNetChat)
   setInterval(() => {
     void loadPoolFromApiServer().then(() => {
       for (const acc of accountPool) {
-        if ((acc.source === "auto" || acc.source === "pro") && acc.limited) {
+        if (acc.limited) {
           acc.limited = false;
-          console.log("[SKYNETCHAT] Reset limited flag on pool account (periodic refresh)");
+          console.log(`[SKYNETCHAT] Reset limited flag on ${acc.source} account (periodic refresh)`);
         }
       }
     });
