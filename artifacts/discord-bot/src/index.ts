@@ -1093,7 +1093,7 @@ function buildAttackButtons(attackId: number, running: boolean): ActionRowBuilde
   );
 }
 
-function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, userId?: string, channelId?: string): void {
+function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: string, userId?: string, channelId?: string): void {
   if (monitors.has(attackId)) return;
 
   // MAX 5 concurrent monitors — prevents Discord request queue saturation that causes
@@ -1119,6 +1119,10 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
   let busy = false;
   let nullConsecutive   = 0; // consecutive null API responses
   let discordFailCount  = 0; // consecutive Discord edit failures
+
+  // Mutable editFn — swapped to channel.send/edit when interaction token expires
+  let editFn: MonitorEditFn = initialEditFn;
+  let channelFallbackMsg: import("discord.js").Message | null = null;
 
   const stopMonitor = () => {
     clearInterval(tick);
@@ -1192,11 +1196,33 @@ function startMonitor(attackId: number, editFn: MonitorEditFn, target: string, u
         discordFailCount++;
         const errMsg = (editErr instanceof Error) ? editErr.message : String(editErr);
         console.warn(`[MONITOR #${attackId}] embed edit failed (${discordFailCount}x):`, errMsg);
-        // Stop immediately on token expiry errors (Unknown Interaction=10062, Unknown Message=10008,
-        // Unknown Webhook=10015) — no point retrying, token is permanently invalid after 15 min.
+        // Token expiry (Unknown Interaction=10062, Unknown Message=10008, Unknown Webhook=10015)
+        // → Switch to channel fallback instead of stopping. Sends a fresh message to the channel
+        //   and re-uses it for the rest of the attack duration.
         const isTokenExpired = /10062|10008|10015|Unknown Interaction|Unknown Message|Unknown Webhook/i.test(errMsg);
+        if (isTokenExpired && channelId && botClient && !channelFallbackMsg) {
+          console.log(`[MONITOR #${attackId}] Token expired — switching to channel fallback message...`);
+          try {
+            const ch = await botClient.channels.fetch(channelId);
+            if (ch && ch.isTextBased() && "send" in ch) {
+              channelFallbackMsg = await (ch as import("discord.js").TextChannel).send({
+                content: userId ? `<@${userId}> ⚔️ **Ataque #${attackId}** em andamento — monitor ativo` : `⚔️ **Ataque #${attackId}** em andamento`,
+                embeds: [buildAttackEmbed(attack, livePps, liveBps, live?.conns ?? 0, history, ppsHistory, proxyCount)],
+                components: [row],
+              });
+              editFn = async (opts) => { await channelFallbackMsg!.edit(opts); };
+              discordFailCount = 0;
+              return;
+            }
+          } catch (fallbackErr) {
+            console.warn(`[MONITOR #${attackId}] Channel fallback failed:`, fallbackErr instanceof Error ? fallbackErr.message : fallbackErr);
+          }
+          stopMonitor();
+          return;
+        }
         if (isTokenExpired) {
-          console.log(`[MONITOR #${attackId}] Interaction token expired — stopping monitor.`);
+          // No channelId available or already has fallback msg — stop
+          console.log(`[MONITOR #${attackId}] Token expired, no channel fallback — stopping.`);
           stopMonitor();
           return;
         }
