@@ -7853,10 +7853,10 @@ async function runH2Multiplex(
 ): Promise<void> {
   const { connect: h2connect } = await import("node:http2");
 
-  // Each session = 1 TLS connection. Keep low in dev to stay under 768MB RAM.
-  const NUM_SESSIONS    = IS_DEPLOYED ? Math.min(threads, 300) : Math.min(threads, 20);
+  // Each session = 1 TLS connection. Raised dev cap: 64 sessions × 48 streams = 3072 concurrent streams.
+  const NUM_SESSIONS    = IS_DEPLOYED ? Math.min(threads, 300) : Math.min(threads, 64);
   // Initial target per session — server may lower via SETTINGS frame
-  const INIT_STREAMS    = IS_DEPLOYED ? 128 : 32;
+  const INIT_STREAMS    = IS_DEPLOYED ? 128 : 48;
   // POST body sizes — vary to force different server handler code paths
   const POST_BODY_SIZES = [512, 1024, 2048, 4096, 8192];
 
