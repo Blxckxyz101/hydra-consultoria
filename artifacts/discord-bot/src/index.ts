@@ -5236,29 +5236,55 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       return;
     }
 
-    // Split long replies (Discord embed limit 4096)
+    // Split long replies across embeds (Discord embed description limit 4096)
+    const CHUNK = 3800;
     const chunks: string[] = [];
     let remaining = reply;
     while (remaining.length > 0) {
-      chunks.push(remaining.slice(0, 4000));
-      remaining = remaining.slice(4000);
+      chunks.push(remaining.slice(0, CHUNK));
+      remaining = remaining.slice(CHUNK);
     }
 
-    const embeds = chunks.map((chunk, i) =>
-      new EmbedBuilder()
-        .setColor(0x1a1a2e) // dark navy
-        .setTitle(i === 0 ? "🛰️ SKYNETCHAT" : null)
-        .setDescription(chunk)
-        .setFooter(i === chunks.length - 1 ? { text: `${AUTHOR} • ${endpoint} • ${elapsed}ms` } : null)
-        .setTimestamp(i === chunks.length - 1 ? new Date() : undefined)
+    const questionPreview = message.length > 300 ? message.slice(0, 297) + "…" : message;
+    const modelLabel = endpoint === "chat-V3" ? "SKY v3" : endpoint === "chat-V2-fast" ? "SKY v2 Fast" : endpoint === "chat-V2-thinking" ? "SKY v2 Think" : endpoint === "chat-V3-thinking" ? "SKY v3 Think" : endpoint;
+
+    const embeds = chunks.map((chunk, i) => {
+      const isFirst = i === 0;
+      const isLast  = i === chunks.length - 1;
+
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.PURPLE);
+
+      if (isFirst) {
+        embed
+          .setTitle("🛰️  S K Y N E T C H A T")
+          .setDescription(
+            `> 💬 **${questionPreview}**\n` +
+            `\u200b\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `\u200b\n` +
+            chunk
+          )
+          .setThumbnail("attachment://geass-symbol.png");
+      } else {
+        embed.setDescription(chunk);
+      }
+
+      if (isLast) {
+        embed
+          .setFooter({ text: `${AUTHOR}  •  ${modelLabel}  •  ${elapsed}ms`, iconURL: undefined })
+          .setTimestamp();
+      }
+
+      return embed;
+    });
+
+    const geassFile = new AttachmentBuilder(
+      path.join(path.dirname(new URL(import.meta.url).pathname), "..", "assets", "geass-symbol.png"),
+      { name: "geass-symbol.png" }
     );
 
-    // Add user question as first embed field (only on first embed)
-    if (embeds[0]) {
-      embeds[0].addFields({ name: "💬 Pergunta", value: message.slice(0, 1024), inline: false });
-    }
-
-    await interaction.editReply({ embeds });
+    await interaction.editReply({ embeds, files: [geassFile] });
   }
 }
 

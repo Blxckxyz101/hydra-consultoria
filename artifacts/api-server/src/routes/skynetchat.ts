@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const router = Router();
 
@@ -80,6 +81,84 @@ async function runKeepalive() {
 setInterval(() => { void runKeepalive(); }, KEEPALIVE_INTERVAL_MS);
 // Initial ping 10s after startup
 setTimeout(() => { void runKeepalive(); }, 10_000);
+
+// ── SkyNetChat ask helper (SSE consumer) ─────────────────────────────────────
+
+function genId16(): string {
+  const c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  return Array.from({ length: 16 }, () => c[Math.floor(Math.random() * c.length)]).join("");
+}
+
+const SKYNET_VERSION = "c26d13cf0144ea0c6b935eebe9e7ab9d";
+
+function buildWebshareProxy(): string | null {
+  const list = process.env.WEBSHARE_PROXY_LIST?.trim();
+  const user = process.env.WEBSHARE_PROXY_USER?.trim();
+  const pass = process.env.WEBSHARE_PROXY_PASS?.trim();
+  if (!list || !user || !pass) return null;
+  const ips = list.split(",").map(s => s.trim()).filter(Boolean);
+  if (ips.length === 0) return null;
+  const ip = ips[Math.floor(Math.random() * ips.length)];
+  return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}`;
+}
+
+async function askViaSkynet(message: string, cookie: string): Promise<string> {
+  const proxyUrl = buildWebshareProxy();
+  const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+  const fetchFn = dispatcher ? (u: string, o: Record<string, unknown>) => undiciFetch(u, { ...o, dispatcher }) : fetch;
+
+  const headers = {
+    "Content-Type":   "application/json",
+    "Accept":         "text/event-stream",
+    "Cookie":         cookie,
+    "Origin":         "https://skynetchat.net",
+    "Referer":        "https://skynetchat.net/",
+    "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "x-forwarded-for": `${Math.floor(Math.random()*200)+1}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`,
+  };
+
+  const logBody = JSON.stringify({ v: SKYNET_VERSION, webrtcIp: null });
+  void fetchFn("https://skynetchat.net/api/log", { method: "POST", headers: { ...headers, "Accept": "application/json" }, body: logBody, signal: AbortSignal.timeout(5000) } as Record<string, unknown>).catch(() => {});
+  void fetchFn("https://skynetchat.net/api/log/message", { method: "POST", headers: { ...headers, "Accept": "application/json" }, body: logBody, signal: AbortSignal.timeout(5000) } as Record<string, unknown>).catch(() => {});
+
+  await new Promise(r => setTimeout(r, 300));
+
+  const body = JSON.stringify({
+    id: genId16(),
+    messages: [{ role: "user", id: genId16(), parts: [{ type: "text", text: message }] }],
+    trigger: "submit-message",
+  });
+
+  const res = await (fetchFn as typeof fetch)("https://skynetchat.net/api/chat-V3", {
+    method:  "POST",
+    headers: headers as Record<string, string>,
+    body,
+    signal:  AbortSignal.timeout(60_000),
+  });
+
+  if (res.status === 429) throw new Error("RATE_LIMIT");
+  if (!res.ok) throw new Error(`HTTP_${res.status}`);
+
+  const text = await res.text();
+  let reply = "";
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("data:")) continue;
+    const raw = t.slice(5).trim();
+    try {
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      if (obj.type === "text-delta" && typeof obj.delta === "string") {
+        reply += obj.delta;
+      }
+    } catch {
+      if (raw.startsWith("0:")) {
+        const inner = raw.slice(2);
+        try { reply += JSON.parse(inner) as string; } catch { reply += inner.replace(/^"|"$/g, ""); }
+      }
+    }
+  }
+  return reply.trim();
+}
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -287,6 +366,49 @@ router.get("/skynetchat/session-status", async (_req, res) => {
   }
 
   res.json({ accounts: results, total: results.length });
+});
+
+// Ask endpoint — used by Telegram bot and other clients
+// POST /api/skynetchat/ask  { message: string }
+// Returns { reply: string } or { error: string }
+router.post("/skynetchat/ask", async (req, res) => {
+  const { message } = (req.body ?? {}) as Record<string, string>;
+  if (!message?.trim()) {
+    res.status(400).json({ error: "message is required" });
+    return;
+  }
+
+  // Build cookie: prefer env var, fallback to first active pool account
+  const envRaw = process.env.SKYNETCHAT_COOKIE?.trim();
+  let cookie: string | null = envRaw
+    ? ((envRaw.startsWith("nid=") || envRaw.startsWith("sid=")) ? envRaw : `sid=${envRaw}`)
+    : null;
+
+  if (!cookie) {
+    const active = pool.filter(a => !a.expired);
+    if (active.length === 0) {
+      res.status(503).json({ error: "no_accounts", message: "Nenhuma conta SkyNetChat disponível no pool." });
+      return;
+    }
+    const acc = active[Math.floor(Math.random() * active.length)];
+    cookie = `nid=${acc.nid}; sid=${acc.sid}`;
+  }
+
+  try {
+    const reply = await askViaSkynet(message.trim(), cookie);
+    if (!reply) {
+      res.status(502).json({ error: "empty_reply", message: "SkyNetChat não retornou resposta." });
+      return;
+    }
+    res.json({ reply });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === "RATE_LIMIT") {
+      res.status(429).json({ error: "rate_limit", message: "Limite de mensagens atingido." });
+    } else {
+      res.status(502).json({ error: "ask_failed", message: msg });
+    }
+  }
 });
 
 export default router;

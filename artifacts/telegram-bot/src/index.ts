@@ -570,6 +570,91 @@ bot.command("checker", async ctx => {
   }
 });
 
+// ── /sky e /lelouch — IA via SkyNetChat ──────────────────────────────────────
+async function handleAiCommand(ctx: Context, question: string) {
+  if (!question.trim()) {
+    await ctx.replyWithHTML(
+      `🛰️ <b>SKYNETCHAT — IA</b>\n${LINE2}\n\n` +
+      `<i>Envie sua pergunta logo após o comando:</i>\n` +
+      `<code>/sky Qual a capital do Brasil?</code>\n` +
+      `<code>/lelouch Explique HTTP/2 Rapid Reset</code>`,
+    );
+    return;
+  }
+
+  const waitMsg = await ctx.replyWithHTML(
+    `🛰️ <b>SKYNETCHAT</b>\n${LINE2}\n\n` +
+    `⏳ <i>Consultando IA...</i>\n` +
+    `<blockquote>${esc(question.slice(0, 200))}${question.length > 200 ? "…" : ""}</blockquote>`,
+  );
+
+  const chatId = waitMsg.chat.id;
+  const msgId  = waitMsg.message_id;
+
+  try {
+    const r = await fetch(`${API_BASE}/api/skynetchat/ask`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ message: question }),
+      signal:  AbortSignal.timeout(90_000),
+    });
+
+    const data = await r.json() as { reply?: string; error?: string; message?: string };
+
+    if (!r.ok || !data.reply) {
+      const errMsg = data.message ?? data.error ?? `HTTP ${r.status}`;
+      await editMsg(ctx, chatId, msgId,
+        `🛰️ <b>SKYNETCHAT — ERRO</b>\n${LINE2}\n\n` +
+        `❌ ${esc(errMsg)}`,
+        Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+      );
+      return;
+    }
+
+    const reply = data.reply;
+    const lines = [
+      `🛰️ <b>SKYNETCHAT</b>`,
+      LINE2,
+      ``,
+      `💬 <b>Pergunta:</b>`,
+      `<blockquote>${esc(question.slice(0, 300))}${question.length > 300 ? "…" : ""}</blockquote>`,
+      ``,
+      `🤖 <b>Resposta:</b>`,
+      ``,
+      esc(reply.slice(0, 3500))
+        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+        .replace(/\*(.+?)\*/g, "<i>$1</i>")
+        .replace(/`(.+?)`/g, "<code>$1</code>"),
+    ];
+
+    if (reply.length > 3500) {
+      lines.push(``, `<i>... resposta truncada (${reply.length} chars)</i>`);
+    }
+
+    lines.push(``, LINE2);
+
+    await editMsg(ctx, chatId, msgId, lines.join("\n"),
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+  } catch (e) {
+    await editMsg(ctx, chatId, msgId,
+      `🛰️ <b>SKYNETCHAT — TIMEOUT</b>\n${LINE2}\n\n❌ A IA demorou muito para responder.`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    console.error("[SKY cmd]", e);
+  }
+}
+
+bot.command("sky", async ctx => {
+  const question = ctx.message.text.split(/\s+/).slice(1).join(" ");
+  await handleAiCommand(ctx, question);
+});
+
+bot.command("lelouch", async ctx => {
+  const question = ctx.message.text.split(/\s+/).slice(1).join(" ");
+  await handleAiCommand(ctx, question);
+});
+
 // ── /url ──────────────────────────────────────────────────────────────────────
 bot.command("url", async ctx => {
   const args = ctx.message.text.split(/\s+/).slice(1);
