@@ -40,6 +40,7 @@ import {
 } from "./bot-config.js";
 import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
 import { askSkynet, isSkynetConfigured, getSkynetPoolStatus, addAccountToPool, SkynetRateLimitError } from "./skynetchat.js";
+import { enqueueRequest, getRateLimitRemaining, getQueueStatus, type QueuePosition } from "./sky-queue.js";
 import { handleVoice } from "./voice.js";
 import {
   buildAttackEmbed,
@@ -5098,7 +5099,8 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       return;
     }
 
-    const pool = getSkynetPoolStatus();
+    const pool  = getSkynetPoolStatus();
+    const queue = getQueueStatus();
     await interaction.editReply({
       embeds: [
         new EmbedBuilder()
@@ -5106,9 +5108,10 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
           .setTitle("🛰️ SKYNETCHAT — ONLINE ✅")
           .setDescription(`**Latência:** \`${elapsed}ms\`\n**Resposta de teste:** ${testReply.slice(0, 200)}`)
           .addFields(
-            { name: "📦 Pool de contas", value: `Total: **${pool.total}** | Ativas: **${pool.active}** | Limitadas: **${pool.limited}**`, inline: false },
-            { name: "📡 Endpoints disponíveis", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`", inline: false },
-            { name: "💬 Como usar", value: "`/sky ask message:<sua pergunta>`", inline: false },
+            { name: "📦 Pool de contas",       value: `Total: **${pool.total}** | Ativas: **${pool.active}** | Limitadas: **${pool.limited}**`,          inline: false },
+            { name: "⚡ Fila de requisições",  value: `Processando: **${queue.running}/${queue.maxConcurrent}** | Aguardando: **${queue.waiting}**`,      inline: false },
+            { name: "📡 Endpoints disponíveis", value: "`chat-V3` · `chat-V2-fast` · `chat-V2-thinking` · `chat-V3-thinking`",                           inline: false },
+            { name: "💬 Como usar",             value: "`/sky ask message:<sua pergunta>`",                                                                inline: false },
           )
           .setFooter({ text: AUTHOR })
           .setTimestamp(),
@@ -5163,19 +5166,41 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
 
   // ── /sky ask ─────────────────────────────────────────────────────────────────
   if (sub === "ask") {
-    // Defer IMMEDIATELY — Discord requires acknowledgement within 3 seconds.
-    // Any check or await BEFORE this risks the 3-second window expiring.
-    const deferOk = await interaction.deferReply().then(() => true).catch(() => false);
-    if (!deferOk) return; // interaction already expired — silently drop
+    const userId  = interaction.user.id;
+    const message = interaction.options.getString("message", true);
 
-    // Safe wrapper: if editReply itself fails (e.g. network AbortError), log and swallow.
-    // Without this, a slow Discord REST response after a slow askSkynet would bubble up
-    // as [INTERACTION ERROR] and leave the user stuck on "thinking" forever.
+    // ── Rate limit check (before deferring so ephemeral reply works) ────────
+    const rlMs = getRateLimitRemaining(userId);
+    if (rlMs > 0) {
+      const secsLeft = Math.ceil(rlMs / 1000);
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.ORANGE)
+            .setTitle("🛰️ SKYNETCHAT — AGUARDE")
+            .setDescription(
+              `⏳ **Você usou o \`/sky\` recentemente.**\n\n` +
+              `> Aguarde mais **${secsLeft}s** antes de enviar outra pergunta.\n\n` +
+              `*O rate limit existe para não esgotar os tokens da conta.*`
+            )
+            .setFooter({ text: AUTHOR })
+            .setTimestamp(),
+        ],
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return;
+    }
+
+    // ── Defer IMMEDIATELY — Discord requires acknowledgement within 3s ──────
+    const deferOk = await interaction.deferReply().then(() => true).catch(() => false);
+    if (!deferOk) return;
+
+    // Safe wrapper: catches AbortError / network hiccups on editReply
     const safeEdit = async (opts: Parameters<typeof interaction.editReply>[0]): Promise<void> => {
       try {
         await interaction.editReply(opts);
       } catch (editErr) {
-        console.error("[SKY ASK] editReply failed (likely REST timeout):", editErr instanceof Error ? editErr.message : editErr);
+        console.error("[SKY ASK] editReply failed:", editErr instanceof Error ? editErr.message : editErr);
       }
     };
 
@@ -5192,16 +5217,72 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       return;
     }
 
-    const message  = interaction.options.getString("message", true);
-    const endpoint = (interaction.options.getString("model") ?? "chat-V3") as Parameters<typeof askSkynet>[1];
+    const endpoint    = (interaction.options.getString("model") ?? "chat-V3") as Parameters<typeof askSkynet>[1];
+    const qPreview    = message.length > 220 ? message.slice(0, 217) + "…" : message;
+    const geassFile   = new AttachmentBuilder(
+      path.join(path.dirname(new URL(import.meta.url).pathname), "..", "assets", "geass-symbol.png"),
+      { name: "geass-symbol.png" }
+    );
 
+    // ── Build live queue embed ───────────────────────────────────────────────
+    const BAR_LEN = 12;
+    const buildQueueEmbed = (pos: QueuePosition): EmbedBuilder => {
+      if (pos.isRunning) {
+        return new EmbedBuilder()
+          .setColor(COLORS.GOLD)
+          .setTitle("🛰️  S K Y N E T C H A T")
+          .setDescription(
+            `> 💬 **${qPreview}**\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `**⚡ Sua vez! Processando requisição...**\n\n` +
+            `> A IA está gerando sua resposta, aguarde.`
+          )
+          .setThumbnail("attachment://geass-symbol.png")
+          .setFooter({ text: `${AUTHOR}  •  ${endpoint}` })
+          .setTimestamp();
+      }
+      const totalWaiting = pos.total - pos.running;
+      const filled = Math.max(1, BAR_LEN - Math.round(((pos.waitPos - 1) / Math.max(totalWaiting - 1, 1)) * BAR_LEN));
+      const bar = `\`[${"█".repeat(filled)}${"░".repeat(BAR_LEN - filled)}]\``;
+      return new EmbedBuilder()
+        .setColor(COLORS.PURPLE)
+        .setTitle("🛰️  S K Y N E T C H A T  —  FILA")
+        .setDescription(
+          `> 💬 **${qPreview}**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `📋 **Você está na fila de requisições**\n\n` +
+          `> 🎫 Posição: **#${pos.waitPos}** de ${totalWaiting} aguardando\n` +
+          `> 👥 À sua frente: **${pos.ahead}**\n` +
+          `> ⚡ Processando agora: **${pos.running}**\n\n` +
+          `${bar}  \`${pos.waitPos}/${totalWaiting}\`\n\n` +
+          `*Aguarde sua vez — a resposta chegará em breve...*`
+        )
+        .setThumbnail("attachment://geass-symbol.png")
+        .setFooter({ text: `${AUTHOR}  •  SkyNet Queue  •  ${endpoint}` })
+        .setTimestamp();
+    };
+
+    // ── Enqueue and show live position updates ───────────────────────────────
+    let isFirstUpdate = true;
     const start = Date.now();
     let reply: string | null = null;
     let errorMsg = "";
     let isRateLimit = false;
 
     try {
-      reply = await askSkynet([{ role: "user", content: message }], endpoint);
+      reply = await enqueueRequest(
+        userId,
+        () => askSkynet([{ role: "user", content: message }], endpoint),
+        async (pos) => {
+          if (isFirstUpdate) {
+            // Include the geass attachment only on the first edit (sets thumbnail)
+            await safeEdit({ embeds: [buildQueueEmbed(pos)], files: [geassFile] });
+            isFirstUpdate = false;
+          } else {
+            await safeEdit({ embeds: [buildQueueEmbed(pos)] });
+          }
+        },
+      );
     } catch (e) {
       if (e instanceof SkynetRateLimitError) {
         isRateLimit = true;
@@ -5211,6 +5292,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     }
 
     const elapsed = Date.now() - start;
+    const modelLabel = { "chat-V3": "SKY v3", "chat-V2-fast": "SKY v2 Fast", "chat-V2-thinking": "SKY v2 Think", "chat-V3-thinking": "SKY v3 Think" }[endpoint] ?? endpoint;
 
     if (isRateLimit) {
       await safeEdit({
@@ -5225,7 +5307,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
               "• Ou assine o plano PRO em https://skynetchat.net\n\n" +
               "> O cookie continua válido — nenhuma reconfiguração necessária."
             )
-            .setFooter({ text: `${AUTHOR} • ${endpoint} • ${elapsed}ms` })
+            .setFooter({ text: `${AUTHOR}  •  ${modelLabel}  •  ${elapsed}ms` })
             .setTimestamp(),
         ],
       });
@@ -5243,14 +5325,14 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
                 ? `**Erro:** \`${errorMsg.slice(0, 300)}\``
                 : "SKYNETchat não retornou resposta. O cookie pode estar expirado ou a API offline.\nUse `/sky status` para diagnosticar."
             )
-            .setFooter({ text: `${AUTHOR} • Endpoint: ${endpoint} • ${elapsed}ms` })
+            .setFooter({ text: `${AUTHOR}  •  ${modelLabel}  •  ${elapsed}ms` })
             .setTimestamp(),
         ],
       });
       return;
     }
 
-    // Split long replies across embeds (Discord embed description limit 4096)
+    // ── Build final response embed(s) ────────────────────────────────────────
     const CHUNK = 3800;
     const chunks: string[] = [];
     let remaining = reply;
@@ -5259,21 +5341,13 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       remaining = remaining.slice(CHUNK);
     }
 
-    const questionPreview = message.length > 300 ? message.slice(0, 297) + "…" : message;
-    const modelLabel = endpoint === "chat-V3" ? "SKY v3" : endpoint === "chat-V2-fast" ? "SKY v2 Fast" : endpoint === "chat-V2-thinking" ? "SKY v2 Think" : endpoint === "chat-V3-thinking" ? "SKY v3 Think" : endpoint;
-
     const embeds = chunks.map((chunk, i) => {
-      const isFirst = i === 0;
-      const isLast  = i === chunks.length - 1;
-
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.PURPLE);
-
-      if (isFirst) {
+      const embed = new EmbedBuilder().setColor(COLORS.PURPLE);
+      if (i === 0) {
         embed
           .setTitle("🛰️  S K Y N E T C H A T")
           .setDescription(
-            `> 💬 **${questionPreview}**\n` +
+            `> 💬 **${qPreview}**\n` +
             `\u200b\n` +
             `━━━━━━━━━━━━━━━━━━━━━━\n` +
             `\u200b\n` +
@@ -5283,20 +5357,11 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       } else {
         embed.setDescription(chunk);
       }
-
-      if (isLast) {
-        embed
-          .setFooter({ text: `${AUTHOR}  •  ${modelLabel}  •  ${elapsed}ms`, iconURL: undefined })
-          .setTimestamp();
+      if (i === chunks.length - 1) {
+        embed.setFooter({ text: `${AUTHOR}  •  ${modelLabel}  •  ${elapsed}ms` }).setTimestamp();
       }
-
       return embed;
     });
-
-    const geassFile = new AttachmentBuilder(
-      path.join(path.dirname(new URL(import.meta.url).pathname), "..", "assets", "geass-symbol.png"),
-      { name: "geass-symbol.png" }
-    );
 
     await safeEdit({ embeds, files: [geassFile] });
   }

@@ -1,6 +1,7 @@
 import { Telegraf, Markup, type Context } from "telegraf";
 import { message } from "telegraf/filters";
 import { BOT_TOKEN, API_BASE, CHECKER_TARGETS, MINIAPP_URL } from "./config.js";
+import { enqueueRequest, getRateLimitRemaining, type QueuePosition } from "./sky-queue.js";
 
 if (!BOT_TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN não configurado.");
@@ -571,6 +572,46 @@ bot.command("checker", async ctx => {
 });
 
 // ── /sky e /lelouch — IA via SkyNetChat ──────────────────────────────────────
+
+/** Build the queue-position message text (HTML for Telegram) */
+function buildSkyQueueText(pos: QueuePosition, qPreview: string): string {
+  if (pos.isRunning) {
+    return [
+      `🛰️ <b>SKYNETCHAT</b>`,
+      LINE2,
+      ``,
+      `💬 <b>Sua pergunta:</b>`,
+      `<blockquote>${esc(qPreview)}</blockquote>`,
+      ``,
+      `⚡ <b>Sua vez! Processando requisição...</b>`,
+      `<i>A IA está gerando sua resposta, aguarde.</i>`,
+    ].join("\n");
+  }
+
+  const totalWaiting = pos.total - pos.running;
+  const BAR_LEN = 10;
+  const filled  = Math.max(1, BAR_LEN - Math.round(((pos.waitPos - 1) / Math.max(totalWaiting - 1, 1)) * BAR_LEN));
+  const bar     = `[${"█".repeat(filled)}${"░".repeat(BAR_LEN - filled)}]`;
+
+  return [
+    `🛰️ <b>SKYNETCHAT — FILA</b>`,
+    LINE2,
+    ``,
+    `💬 <b>Sua pergunta:</b>`,
+    `<blockquote>${esc(qPreview)}</blockquote>`,
+    ``,
+    `📋 <b>Você está na fila de requisições</b>`,
+    ``,
+    `🎫 Posição: <b>#${pos.waitPos}</b> de ${totalWaiting} aguardando`,
+    `👥 À sua frente: <b>${pos.ahead}</b>`,
+    `⚡ Processando agora: <b>${pos.running}</b>`,
+    ``,
+    `<code>${bar}</code>  <i>${pos.waitPos}/${totalWaiting}</i>`,
+    ``,
+    `<i>Aguarde sua vez — a resposta chegará em breve...</i>`,
+  ].join("\n");
+}
+
 async function handleAiCommand(ctx: Context, question: string) {
   if (!question.trim()) {
     await ctx.replyWithHTML(
@@ -582,67 +623,100 @@ async function handleAiCommand(ctx: Context, question: string) {
     return;
   }
 
-  const waitMsg = await ctx.replyWithHTML(
-    `🛰️ <b>SKYNETCHAT</b>\n${LINE2}\n\n` +
-    `⏳ <i>Consultando IA...</i>\n` +
-    `<blockquote>${esc(question.slice(0, 200))}${question.length > 200 ? "…" : ""}</blockquote>`,
-  );
+  const userId = String(ctx.from?.id ?? "unknown");
 
+  // ── Rate limit ────────────────────────────────────────────────────────────
+  const rlMs = getRateLimitRemaining(userId);
+  if (rlMs > 0) {
+    const secsLeft = Math.ceil(rlMs / 1000);
+    await ctx.replyWithHTML(
+      `🛰️ <b>SKYNETCHAT — AGUARDE</b>\n${LINE2}\n\n` +
+      `⏳ Você usou o <code>/sky</code> recentemente.\n\n` +
+      `Aguarde mais <b>${secsLeft}s</b> antes de enviar outra pergunta.\n` +
+      `<i>O rate limit evita esgotar os tokens da conta.</i>`,
+    ).catch(() => {});
+    return;
+  }
+
+  const qPreview = question.length > 220 ? question.slice(0, 217) + "…" : question;
+
+  // ── Send initial queue message ────────────────────────────────────────────
+  const waitMsg = await ctx.replyWithHTML(
+    buildSkyQueueText({ waitPos: 1, ahead: 0, total: 1, running: 0, isRunning: false }, qPreview),
+  ).catch(() => null);
+
+  if (!waitMsg) return;
   const chatId = waitMsg.chat.id;
   const msgId  = waitMsg.message_id;
 
+  const start = Date.now();
+  let reply: string | null = null;
+
   try {
-    const r = await fetch(`${API_BASE}/api/skynetchat/ask`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ message: question }),
-      signal:  AbortSignal.timeout(90_000),
-    });
-
-    const data = await r.json() as { reply?: string; error?: string; message?: string };
-
-    if (!r.ok || !data.reply) {
-      const errMsg = data.message ?? data.error ?? `HTTP ${r.status}`;
-      await editMsg(ctx, chatId, msgId,
-        `🛰️ <b>SKYNETCHAT — ERRO</b>\n${LINE2}\n\n` +
-        `❌ ${esc(errMsg)}`,
-        Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
-      );
-      return;
-    }
-
-    const reply = data.reply;
-    const lines = [
-      `🛰️ <b>SKYNETCHAT</b>`,
-      LINE2,
-      ``,
-      `💬 <b>Pergunta:</b>`,
-      `<blockquote>${esc(question.slice(0, 300))}${question.length > 300 ? "…" : ""}</blockquote>`,
-      ``,
-      `🤖 <b>Resposta:</b>`,
-      ``,
-      esc(reply.slice(0, 3500))
-        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-        .replace(/\*(.+?)\*/g, "<i>$1</i>")
-        .replace(/`(.+?)`/g, "<code>$1</code>"),
-    ];
-
-    if (reply.length > 3500) {
-      lines.push(``, `<i>... resposta truncada (${reply.length} chars)</i>`);
-    }
-
-    lines.push(``, LINE2);
-
-    await editMsg(ctx, chatId, msgId, lines.join("\n"),
-      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    reply = await enqueueRequest(
+      userId,
+      async () => {
+        const r = await fetch(`${API_BASE}/api/skynetchat/ask`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ message: question }),
+          signal:  AbortSignal.timeout(90_000),
+        });
+        const data = await r.json() as { reply?: string; error?: string; message?: string };
+        if (!r.ok || !data.reply) return null;
+        return data.reply;
+      },
+      async (pos) => {
+        await editMsg(ctx, chatId, msgId, buildSkyQueueText(pos, qPreview));
+      },
     );
-  } catch (e) {
+  } catch {
     await editMsg(ctx, chatId, msgId,
       `🛰️ <b>SKYNETCHAT — TIMEOUT</b>\n${LINE2}\n\n❌ A IA demorou muito para responder.`,
       Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
     );
-    console.error("[SKY cmd]", e);
+    return;
   }
+
+  const elapsed = Date.now() - start;
+
+  if (!reply) {
+    await editMsg(ctx, chatId, msgId,
+      `🛰️ <b>SKYNETCHAT — ERRO</b>\n${LINE2}\n\n` +
+      `❌ SKYNETchat não retornou resposta.\n` +
+      `<i>Cookie pode estar expirado ou API offline.</i>`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    return;
+  }
+
+  const formatted = esc(reply.slice(0, 3500))
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/\*(.+?)\*/g, "<i>$1</i>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
+
+  const lines = [
+    `🛰️ <b>SKYNETCHAT</b>`,
+    LINE2,
+    ``,
+    `💬 <b>Pergunta:</b>`,
+    `<blockquote>${esc(qPreview)}</blockquote>`,
+    ``,
+    `🤖 <b>Resposta:</b>`,
+    ``,
+    formatted,
+  ];
+
+  if (reply.length > 3500) {
+    lines.push(``, `<i>... resposta truncada (${reply.length} chars)</i>`);
+  }
+
+  lines.push(``, `<i>⏱ ${elapsed}ms</i>`);
+  lines.push(LINE2);
+
+  await editMsg(ctx, chatId, msgId, lines.join("\n"),
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
 }
 
 bot.command("sky", async ctx => {
