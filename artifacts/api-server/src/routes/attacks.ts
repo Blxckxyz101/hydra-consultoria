@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dnsP from "node:dns/promises";
 import https from "node:https";
+import http  from "node:http";
 import {
   CreateAttackBody,
   GetAttackParams,

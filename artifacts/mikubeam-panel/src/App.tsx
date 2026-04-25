@@ -2559,7 +2559,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       const best = data.recommendations[0];
       if (best) {
         setMethod(best.method);
-        setThreads(best.suggestedThreads);
+        setThreads(Math.min(8, Math.max(1, best.suggestedThreads)));
         setDuration(best.suggestedDuration);
         addLog(`👁 AUTO-RECON complete: ${data.recommendations.length} vectors ranked`, "success");
         if (data.serverLabel) addLog(`👁 Server: ${data.serverLabel}${data.isCDN ? ` — CDN: ${data.cdnProvider}` : ""}`, "info");
@@ -5513,7 +5513,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                           <button className={`lrec-use ${i === 0 ? "lrec-use--best" : ""}`}
                             onClick={() => {
                               setMethod(rec.method);
-                              setThreads(rec.suggestedThreads);
+                              setThreads(Math.min(8, Math.max(1, rec.suggestedThreads)));
                               setDuration(rec.suggestedDuration);
                               addLog(`👁 Applied: ${rec.name} — ${rec.suggestedThreads} threads, ${rec.suggestedDuration}s [Tier ${rec.tier}]`, "success");
                               if (soundRef.current) playTone("tick");
