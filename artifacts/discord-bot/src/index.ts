@@ -5168,8 +5168,19 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     const deferOk = await interaction.deferReply().then(() => true).catch(() => false);
     if (!deferOk) return; // interaction already expired — silently drop
 
+    // Safe wrapper: if editReply itself fails (e.g. network AbortError), log and swallow.
+    // Without this, a slow Discord REST response after a slow askSkynet would bubble up
+    // as [INTERACTION ERROR] and leave the user stuck on "thinking" forever.
+    const safeEdit = async (opts: Parameters<typeof interaction.editReply>[0]): Promise<void> => {
+      try {
+        await interaction.editReply(opts);
+      } catch (editErr) {
+        console.error("[SKY ASK] editReply failed (likely REST timeout):", editErr instanceof Error ? editErr.message : editErr);
+      }
+    };
+
     if (!isSkynetConfigured()) {
-      await interaction.editReply({
+      await safeEdit({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.RED)
@@ -5202,7 +5213,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     const elapsed = Date.now() - start;
 
     if (isRateLimit) {
-      await interaction.editReply({
+      await safeEdit({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.ORANGE)
@@ -5222,7 +5233,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     }
 
     if (!reply) {
-      await interaction.editReply({
+      await safeEdit({
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.RED)
@@ -5287,7 +5298,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
       { name: "geass-symbol.png" }
     );
 
-    await interaction.editReply({ embeds, files: [geassFile] });
+    await safeEdit({ embeds, files: [geassFile] });
   }
 }
 
@@ -5490,6 +5501,9 @@ async function main(): Promise<void> {
       // GatewayIntentBits.GuildMembers,
       // GatewayIntentBits.GuildPresences,
     ],
+    // Increase REST timeout to 60s — default is 15s which causes AbortError when
+    // editReply() is called after a slow askSkynet() response.
+    rest: { timeout: 60_000 },
   });
   botClient = client; // make accessible for DM alerts
 
