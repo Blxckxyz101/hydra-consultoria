@@ -976,9 +976,30 @@ async function sendFinalReport(
   }
 }
 
+// ── Register slash command suggestions (shown when user types "/") ────────────
+async function registerCommands() {
+  await bot.telegram.setMyCommands([
+    { command: "home",    description: "🏠 Menu principal" },
+    { command: "sky",     description: "🛰️ Perguntar para a IA (SkyNetChat)" },
+    { command: "lelouch", description: "👁️ Perguntar para a IA (alias)" },
+    { command: "checker", description: "⚔️ Iniciar checker de credenciais" },
+    { command: "import",  description: "💾 Importar arquivo .txt de credenciais" },
+    { command: "url",     description: "🔍 Buscar domínio no banco" },
+    { command: "hits",    description: "✅ Ver HITs da sessão" },
+    { command: "fails",   description: "❌ Ver FAILs da sessão" },
+    { command: "errors",  description: "⚡ Ver erros da sessão" },
+    { command: "stats",   description: "📊 Estatísticas da sessão" },
+    { command: "status",  description: "📡 Status do checker" },
+    { command: "stop",    description: "🛑 Parar checker em execução" },
+    { command: "clear",   description: "🗑️ Limpar dados da sessão" },
+    { command: "help",    description: "❓ Ajuda e lista de comandos" },
+  ]);
+}
+
 // ── Launch ────────────────────────────────────────────────────────────────────
 bot.launch(() => {
   console.log("🤖 Geass Command Center bot running...");
+  void registerCommands().catch(e => console.warn("[CMDS] Failed to register commands:", e?.message));
 }).catch(err => {
   const msg = String(err?.message ?? err);
   if (msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other")) {

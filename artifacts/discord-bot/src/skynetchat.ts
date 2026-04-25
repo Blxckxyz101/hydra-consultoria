@@ -103,6 +103,10 @@ async function getOrFetchCfClearance(proxyUrl: string): Promise<CfCookies | null
       console.log(`[SKYNETCHAT] CF cookies cached for ${new URL(proxyUrl).hostname} (TTL 25min): ${val.cookieString.split(';').map(c=>c.trim().split('=')[0]).join(', ')}`);
     }
     return val;
+  }).catch((err) => {
+    cfPending.delete(proxyUrl); // always clean up so future calls retry
+    console.warn(`[SKYNETCHAT] CF clearance fetch failed for ${new URL(proxyUrl).hostname}:`, err?.message ?? err);
+    return null;
   });
   cfPending.set(proxyUrl, p);
   return p;
@@ -412,9 +416,12 @@ async function doRequest(
     try {
       let res: Response;
       if (proxyUrl) {
-        // Get (or fetch) all Cloudflare cookies for this proxy's IP
-        // cf_clearance + __cf_bm (Bot Management) — both tied to the proxy IP
-        const cfCookies = await getOrFetchCfClearance(proxyUrl);
+        // Get (or fetch) CF clearance cookies — but race against a 5s timeout.
+        // If puppeteer hasn't finished in 5s, proceed without CF cookies rather than blocking.
+        const cfCookies = await Promise.race([
+          getOrFetchCfClearance(proxyUrl),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 5_000)),
+        ]);
         const cookieWithCf = cfCookies
           ? `${cfCookies.cookieString}; ${cookie}`
           : cookie;
@@ -502,6 +509,18 @@ export async function askSkynet(
 ): Promise<string | null> {
   initPool();
 
+  // Global 55-second hard cap — prevents Discord interactions from staying
+  // "thinking" forever if proxies/CF clearance are slow.
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("askSkynet timeout (55s)")), 55_000)
+  );
+  return Promise.race([_askSkynetInner(messages, endpoint), timeout]);
+}
+
+async function _askSkynetInner(
+  messages:  SkynetMessage[],
+  endpoint:  "chat-V3" | "chat-V2-fast" | "chat-V2-thinking" | "chat-V3-thinking",
+): Promise<string | null> {
   const MAX_RETRIES = 3;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let cookie = getActiveCookie();
