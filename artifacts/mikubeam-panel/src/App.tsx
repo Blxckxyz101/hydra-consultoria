@@ -5637,7 +5637,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               <div className="lb-field">
                 <label>Potência (1–8)</label>
                 <input className="lb-num" type="number" min={1} max={8} value={threads} onChange={e => setThreads(Math.min(8, Math.max(1, +e.target.value)))}/>
-                <span style={{ fontSize: 10, color: "#888", marginTop: 2 }}>→ {(Math.min(threads * 200, 8000)).toLocaleString()} conex./worker</span>
+                <span style={{ fontSize: 10, color: "#888", marginTop: 2 }}>→ {(Math.min(threads * 500, 12000)).toLocaleString()} conex./worker</span>
               </div>
               <div className="lb-field">
                 <label>Packet Delay (ms)</label>
@@ -6066,9 +6066,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                     {activeConns > 0 ? fmtNum(activeConns) : "…"}
                   </div>
                   <div className="lb-stat-sub">
-                    {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*200,8000) * 0.08)) / 6) * 200, 100000) * 6)}` :
-                     method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*200,8000) * 0.08)) / 6) * 150, 80000) * 6)}` :
-                     method === "ws-flood" ? `cap ${fmtNum(Math.min(Math.min(threads*200,8000) * 200, 40000))}` :
+                    {method === "slowloris" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*500,12000) * 0.08)) / 6) * 200, 100000) * 6)}` :
+                     method === "conn-flood" ? `cap ${fmtNum(Math.min(Math.floor(Math.max(400, Math.round(Math.min(threads*500,12000) * 0.08)) / 6) * 150, 80000) * 6)}` :
+                     method === "ws-flood" ? `cap ${fmtNum(Math.min(Math.min(threads*500,12000) * 200, 40000))}` :
                      method === "geass-override" ? "35-vector conn hold" :
                      "conn hold"}
                   </div>

