@@ -811,23 +811,34 @@ const COMMANDS = [
 // ── Deploy slash commands ─────────────────────────────────────────────────────
 async function deployCommands(): Promise<void> {
   const rest = new REST().setToken(BOT_TOKEN);
-  // Non-fatal — a registration failure should NEVER bring down the bot.
-  // Commands registered in a previous run remain valid; the bot keeps running.
-  try {
-    // ── Step 1: Wipe global commands ─────────────────────────────────────────
-    // Global commands + guild commands shown simultaneously = duplicates in Discord UI.
-    // Solution: keep ONLY guild-scoped commands (instant propagation, no duplicates).
-    await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: [] });
-    console.log("🧹 Cleared global application commands (preventing duplicates).");
 
-    // ── Step 2: Register per-guild (instant propagation, no duplication) ──────
-    for (const gid of ALL_GUILD_IDS) {
+  // Try per-guild registration (instant propagation).
+  // Each guild is attempted independently so one failure does not block the others.
+  let anyGuildOk = false;
+  for (const gid of ALL_GUILD_IDS) {
+    try {
       await rest.put(Routes.applicationGuildCommands(APPLICATION_ID, gid), { body: COMMANDS });
       console.log(`✅ Registered ${COMMANDS.length} commands to guild ${gid}.`);
+      anyGuildOk = true;
+    } catch (err) {
+      console.warn(`⚠️ Guild ${gid} registration failed (bot may have been removed): ${(err as Error).message}`);
     }
-  } catch (err) {
-    // Log but do NOT throw — bot will still start with previously registered commands
-    console.warn("⚠️ Command registration failed (non-fatal — using cached commands):", err);
+  }
+
+  if (anyGuildOk) {
+    // At least one guild succeeded — wipe global to avoid duplicate UI entries.
+    try {
+      await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: [] });
+      console.log("🧹 Cleared global commands (guild-scoped commands are active).");
+    } catch { /* non-critical */ }
+  } else {
+    // No guild registration succeeded — register globally as fallback (takes ~1h to propagate).
+    try {
+      await rest.put(Routes.applicationCommands(APPLICATION_ID), { body: COMMANDS });
+      console.log(`✅ Registered ${COMMANDS.length} commands globally (fallback — ~1h to propagate).`);
+    } catch (err) {
+      console.warn("⚠️ Global registration also failed:", (err as Error).message);
+    }
   }
 }
 
