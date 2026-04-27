@@ -810,13 +810,13 @@ const COMMANDS = [
     .setName("historico")
     .setDescription("📜 Ver TXT do último check de credenciais (anterior)"),
 
-  // ── /whatsapp ──────────────────────────────────────────────────────────────
+  // ── /reportwa ─────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
-    .setName("whatsapp")
-    .setDescription("📱 WhatsApp utilities — report de número e disparo de código de verificação")
+    .setName("reportwa")
+    .setDescription("🚩 Report WhatsApp — enviar reports de abuso e disparar código de verificação")
     .addSubcommand(sub =>
       sub.setName("report")
-        .setDescription("🚩 Enviar reports de abuso para um número WhatsApp")
+        .setDescription("🚩 Enviar reports de abuso para um número WhatsApp (paralelo, motivos rotativos)")
         .addStringOption(opt =>
           opt.setName("numero")
             .setDescription("Número alvo com DDI e DDD (ex: 5511999887766)")
@@ -824,10 +824,10 @@ const COMMANDS = [
         )
         .addIntegerOption(opt =>
           opt.setName("quantidade")
-            .setDescription("Quantidade de reports a enviar (1–50, padrão: 1)")
+            .setDescription("Quantidade de reports a enviar (1–200, padrão: 10)")
             .setRequired(false)
             .setMinValue(1)
-            .setMaxValue(50)
+            .setMaxValue(200)
         )
     )
     .addSubcommand(sub =>
@@ -6440,14 +6440,14 @@ async function main(): Promise<void> {
 
     if (sub === "report") {
       const numero    = interaction.options.getString("numero", true).trim();
-      const quantidade = interaction.options.getInteger("quantidade") ?? 1;
+      const quantidade = interaction.options.getInteger("quantidade") ?? 10;
 
       await interaction.deferReply();
 
       const loadEmbed = new EmbedBuilder()
         .setColor(COLORS.CRIMSON)
-        .setTitle("🚩 WhatsApp Report")
-        .setDescription(`Enviando **${quantidade}** report(s) para \`${numero}\`…`)
+        .setTitle("🚩 Report WhatsApp")
+        .setDescription(`Enviando **${quantidade}** report(s) para \`${numero}\`…\n⚡ Paralelo • Motivos rotativos`)
         .setFooter({ text: AUTHOR });
       await interaction.editReply({ embeds: [loadEmbed] });
 
@@ -6612,7 +6612,7 @@ async function main(): Promise<void> {
         await handleSky(interaction);
       } else if (commandName === "historico") {
         await handleHistorico(interaction);
-      } else if (commandName === "whatsapp") {
+      } else if (commandName === "reportwa") {
         await handleWhatsapp(interaction);
       }
     } catch (err) {
