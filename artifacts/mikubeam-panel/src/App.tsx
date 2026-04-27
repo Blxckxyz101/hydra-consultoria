@@ -975,7 +975,7 @@ function Panel() {
   const [isChecking, setIsChecking] = useState(false);
 
   /* ── Credential Bulk Checker ── */
-  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal" | "xbox" | "privacy";
+  type CredCheckerTarget = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "spotify" | "receita" | "tubehosting" | "hostinger" | "vultr" | "digitalocean" | "linode" | "github" | "aws" | "mercadopago" | "ifood" | "riot" | "hetzner" | "roblox" | "epicgames" | "steam" | "playstation" | "paypal" | "xbox" | "privacy" | "checkok";
   interface CredResult { credential: string; login: string; status: "HIT" | "FAIL" | "ERROR"; detail?: string; }
   const [credTarget, setCredTarget]         = useState<CredCheckerTarget>(
     () => (localStorage.getItem("lb-cred-target") as CredCheckerTarget) ?? "consultcenter"
@@ -2170,6 +2170,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     mercadopago:  { label: "Mercado Pago",   icon: "💳", category: "Financeiro BR",     logoUrl: si("mercadopago","009EE3"), logoColor: "#009ee3", note: "email:pass" },
     ifood:        { label: "iFood",          icon: "🍔", category: "Financeiro BR",     logoUrl: si("ifood","EA1D2C"),      logoColor: "#ea1d2c", note: "email:pass" },
     privacy:      { label: "Privacy.com.br", icon: "🔒", category: "Financeiro BR",     logoUrl: gf("privacy.com.br"),     logoColor: "#1a1a2e", note: "cpf:pass ou email:pass" },
+    checkok:      { label: "CheckOK",        icon: "✅", category: "Financeiro BR",     logoUrl: gf("checkok.com.br"),     logoColor: "#2563eb", note: "email:pass ou cpf:pass" },
     // Financeiro Global
     paypal:       { label: "PayPal",         icon: "🅿️", category: "Financeiro Global", logoUrl: si("paypal","009CDE"),     logoColor: "#003087", note: "email:pass" },
     // Gaming
