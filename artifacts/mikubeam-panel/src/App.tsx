@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -552,6 +552,249 @@ function GeassParticles() {
   );
 }
 
+/* ── WhatsApp Dashboard ── */
+interface WaHistEntry { type: "report" | "sendcode"; number: string; sent: number; total: number; at: number; userId?: string }
+function WhatsAppDashboard({ base }: { base: string }) {
+  const [entries, setEntries]   = useState<WaHistEntry[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState("");
+  const [filter, setFilter]     = useState<"all" | "report" | "sendcode">("all");
+  const [sending, setSending]   = useState(false);
+  const [formNum, setFormNum]   = useState("");
+  const [formQty, setFormQty]   = useState("10");
+  const [codeNum, setCodeNum]   = useState("");
+  const [sendResult, setSendResult] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError("");
+    fetch(`${base}/api/whatsapp/history`)
+      .then(r => r.json())
+      .then((d: { entries?: WaHistEntry[]; error?: string }) => {
+        setEntries(d.entries ?? []);
+        setLoading(false);
+      })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, [base]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = filter === "all" ? entries : entries.filter(e => e.type === filter);
+  const totalReports  = entries.filter(e => e.type === "report").reduce((s, e) => s + e.sent, 0);
+  const totalCodes    = entries.filter(e => e.type === "sendcode").reduce((s, e) => s + e.sent, 0);
+  const reportOps     = entries.filter(e => e.type === "report").length;
+  const codeOps       = entries.filter(e => e.type === "sendcode").length;
+  const successRate   = entries.length > 0
+    ? ((entries.reduce((s, e) => s + e.sent, 0) / entries.reduce((s, e) => s + e.total, 0)) * 100).toFixed(1)
+    : "0.0";
+
+  const handleReport = async () => {
+    if (!formNum.trim()) return;
+    setSending(true); setSendResult(null);
+    try {
+      const resp = await fetch(`${base}/api/whatsapp/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ number: formNum.trim(), quantity: parseInt(formQty, 10) || 1 }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const r = await resp.json() as { sent?: number; requested?: number; failed?: number };
+      setSendResult(`✅ Enviados: ${r.sent ?? 0}/${r.requested ?? formQty} | Falhos: ${r.failed ?? 0}`);
+      load();
+    } catch (e) { setSendResult(`❌ ${String(e)}`); }
+    setSending(false);
+  };
+
+  const handleCode = async () => {
+    if (!codeNum.trim()) return;
+    setSending(true); setSendResult(null);
+    try {
+      const resp = await fetch(`${base}/api/whatsapp/sendcode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ number: codeNum.trim() }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      const r = await resp.json() as { sent?: number; total?: number; failed?: number };
+      setSendResult(`📲 Enviados: ${r.sent ?? 0}/${r.total ?? 0} serviços | Falhos: ${r.failed ?? 0}`);
+      load();
+    } catch (e) { setSendResult(`❌ ${String(e)}`); }
+    setSending(false);
+  };
+
+  const card: CSSProperties = {
+    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(192,57,43,0.3)",
+    borderRadius: 10, padding: "18px 22px",
+  };
+
+  return (
+    <div style={{ padding: "24px 16px", maxWidth: 900, margin: "0 auto" }}>
+      <div style={{ textAlign: "center", marginBottom: 28 }}>
+        <div style={{ fontSize: 40, marginBottom: 8 }}>🚩</div>
+        <h2 style={{ color: "#D4AF37", fontFamily: "monospace", margin: 0, letterSpacing: 2 }}>
+          WHATSAPP REPORT DASHBOARD
+        </h2>
+        <p style={{ color: "#888", fontSize: 13, marginTop: 6 }}>
+          Histórico global • Estatísticas • Disparo rápido
+        </p>
+      </div>
+
+      {/* Stats cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Reports Enviados",  value: totalReports,  color: "#e74c3c", icon: "🚩" },
+          { label: "Operações Report",  value: reportOps,     color: "#c0392b", icon: "📋" },
+          { label: "Códigos Enviados",  value: totalCodes,    color: "#9b59b6", icon: "📲" },
+          { label: "Operações Código",  value: codeOps,       color: "#8e44ad", icon: "🔢" },
+          { label: "Taxa de Sucesso",   value: `${successRate}%`, color: "#2ecc71", icon: "✅" },
+          { label: "Total Operações",   value: entries.length, color: "#D4AF37", icon: "📊" },
+        ].map(s => (
+          <div key={s.label} style={{ ...card, textAlign: "center" }}>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "monospace", color: s.color }}>
+              {s.value}
+            </div>
+            <div style={{ fontSize: 10, color: "#888", letterSpacing: 1, textTransform: "uppercase", marginTop: 4 }}>
+              {s.label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Quick action panels */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+        <div style={card}>
+          <div style={{ color: "#e74c3c", fontFamily: "monospace", fontWeight: 700, marginBottom: 12, fontSize: 13 }}>
+            🚩 ENVIAR REPORTS
+          </div>
+          <input
+            value={formNum} onChange={e => setFormNum(e.target.value)}
+            placeholder="5511999887766"
+            style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(192,57,43,0.4)",
+              borderRadius: 6, padding: "8px 10px", color: "#eee", fontFamily: "monospace", fontSize: 12,
+              boxSizing: "border-box", marginBottom: 8 }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={formQty} onChange={e => setFormQty(e.target.value)}
+              type="number" min={1} max={200} placeholder="Qtd"
+              style={{ width: 80, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(192,57,43,0.4)",
+                borderRadius: 6, padding: "8px 10px", color: "#eee", fontFamily: "monospace", fontSize: 12 }}
+            />
+            <button
+              onClick={handleReport} disabled={sending || !formNum.trim()}
+              style={{ flex: 1, background: sending ? "rgba(192,57,43,0.3)" : "rgba(192,57,43,0.6)",
+                border: "1px solid rgba(192,57,43,0.6)", borderRadius: 6, color: "#fff",
+                fontFamily: "monospace", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "8px 0" }}
+            >
+              {sending ? "ENVIANDO…" : "ENVIAR"}
+            </button>
+          </div>
+        </div>
+
+        <div style={card}>
+          <div style={{ color: "#9b59b6", fontFamily: "monospace", fontWeight: 700, marginBottom: 12, fontSize: 13 }}>
+            📲 DISPARAR CÓDIGO SMS
+          </div>
+          <input
+            value={codeNum} onChange={e => setCodeNum(e.target.value)}
+            placeholder="5511999887766"
+            style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(155,89,182,0.4)",
+              borderRadius: 6, padding: "8px 10px", color: "#eee", fontFamily: "monospace", fontSize: 12,
+              boxSizing: "border-box", marginBottom: 8 }}
+          />
+          <button
+            onClick={handleCode} disabled={sending || !codeNum.trim()}
+            style={{ width: "100%", background: sending ? "rgba(155,89,182,0.3)" : "rgba(155,89,182,0.5)",
+              border: "1px solid rgba(155,89,182,0.6)", borderRadius: 6, color: "#fff",
+              fontFamily: "monospace", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "10px 0" }}
+          >
+            {sending ? "DISPARANDO…" : "DISPARAR (10 serviços)"}
+          </button>
+        </div>
+      </div>
+
+      {sendResult && (
+        <div style={{ ...card, marginBottom: 16, color: sendResult.startsWith("❌") ? "#e74c3c" : "#2ecc71",
+          fontFamily: "monospace", fontSize: 13 }}>
+          {sendResult}
+        </div>
+      )}
+
+      {/* History table */}
+      <div style={card}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <span style={{ color: "#D4AF37", fontFamily: "monospace", fontWeight: 700, fontSize: 13 }}>
+            📜 HISTÓRICO DE OPERAÇÕES
+          </span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(["all", "report", "sendcode"] as const).map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(192,57,43,0.4)",
+                  background: filter === f ? "rgba(192,57,43,0.3)" : "transparent",
+                  color: filter === f ? "#e74c3c" : "#888", fontFamily: "monospace", fontSize: 10, cursor: "pointer" }}>
+                {f === "all" ? "Tudo" : f === "report" ? "🚩 Reports" : "📲 Códigos"}
+              </button>
+            ))}
+            <button onClick={load}
+              style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid rgba(212,175,55,0.4)",
+                background: "transparent", color: "#D4AF37", fontFamily: "monospace", fontSize: 10, cursor: "pointer" }}>
+              ↻ Atualizar
+            </button>
+          </div>
+        </div>
+
+        {loading && <div style={{ color: "#888", fontFamily: "monospace", fontSize: 12 }}>Carregando…</div>}
+        {error && <div style={{ color: "#e74c3c", fontFamily: "monospace", fontSize: 12 }}>{error}</div>}
+        {!loading && !error && filtered.length === 0 && (
+          <div style={{ color: "#555", fontFamily: "monospace", fontSize: 12 }}>Nenhuma operação registrada ainda.</div>
+        )}
+
+        {!loading && filtered.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "monospace", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(192,57,43,0.3)" }}>
+                  {["Tipo","Número","Enviados","Total","Taxa","Horário"].map(h => (
+                    <th key={h} style={{ textAlign: "left", padding: "6px 8px", color: "#888", fontWeight: 600, fontSize: 10,
+                      letterSpacing: 1, textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.slice(0, 50).map((e, i) => {
+                  const rate = e.total > 0 ? ((e.sent / e.total) * 100).toFixed(0) : "0";
+                  const color = e.type === "report" ? "#e74c3c" : "#9b59b6";
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "6px 8px" }}>
+                        <span style={{ color, fontWeight: 700 }}>
+                          {e.type === "report" ? "🚩 Report" : "📲 Código"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "6px 8px", color: "#aaa" }}>{e.number}</td>
+                      <td style={{ padding: "6px 8px", color: e.sent > 0 ? "#2ecc71" : "#e74c3c", fontWeight: 700 }}>
+                        {e.sent}
+                      </td>
+                      <td style={{ padding: "6px 8px", color: "#888" }}>{e.total}</td>
+                      <td style={{ padding: "6px 8px", color: Number(rate) >= 50 ? "#2ecc71" : "#e67e22" }}>
+                        {rate}%
+                      </td>
+                      <td style={{ padding: "6px 8px", color: "#666", fontSize: 10 }}>
+                        {new Date(e.at).toLocaleString("pt-BR")}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Panel ── */
 function Panel() {
   /* Config state — all persisted to localStorage */
@@ -669,8 +912,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
@@ -3021,6 +3264,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               🌐 SKY Login
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "whatsapp" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("whatsapp")}
+            >
+              🚩 WhatsApp
+            </button>
           </div>
         </header>
 
@@ -5167,6 +5416,11 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             </div>
           </div>
         )}
+
+        {/* ══════════════════════════════════════════════
+            WHATSAPP DASHBOARD PAGE
+        ══════════════════════════════════════════════ */}
+        {activePage === "whatsapp" && <WhatsAppDashboard base={BASE} />}
 
         {activePage === "attack" && <>
 

@@ -181,6 +181,26 @@ const sessionTimers    = new Map<string, NodeJS.Timeout>();
 const ATTACK_COOLDOWN_MS = 30_000;
 const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimestamp
 
+// ── WhatsApp report/sendcode cooldowns ────────────────────────────────────
+const WA_REPORT_COOLDOWN_MS   = 3 * 60 * 1000; // 3 minutos
+const WA_SENDCODE_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutos
+const waReportCooldowns   = new Map<string, number>();
+const waSendcodeCooldowns = new Map<string, number>();
+
+function checkWaCooldown(map: Map<string, number>, uid: string, cdMs: number): number {
+  return Math.max(0, cdMs - (Date.now() - (map.get(uid) ?? 0)));
+}
+
+// ── WhatsApp histórico por usuário (últimas 20) ───────────────────────────
+interface WaHistoryItem { type: "report" | "sendcode"; number: string; sent: number; total: number; at: number }
+const waHistory = new Map<string, WaHistoryItem[]>();
+function addWaHistoryDiscord(uid: string, e: WaHistoryItem): void {
+  const arr = waHistory.get(uid) ?? [];
+  arr.push(e);
+  if (arr.length > 20) arr.shift();
+  waHistory.set(uid, arr);
+}
+
 // ── Cooldown map GC — runs every 10min to prevent unbounded growth ──────────
 setInterval(() => {
   const now = Date.now();
@@ -6437,26 +6457,41 @@ async function main(): Promise<void> {
   // ── /whatsapp handler ───────────────────────────────────────────────────────
   async function handleWhatsapp(interaction: ChatInputCommandInteraction): Promise<void> {
     const sub = interaction.options.getSubcommand();
+    const uid = interaction.user.id;
 
     if (sub === "report") {
-      const numero    = interaction.options.getString("numero", true).trim();
+      const numero     = interaction.options.getString("numero", true).trim();
       const quantidade = interaction.options.getInteger("quantidade") ?? 10;
 
+      // ── Cooldown check ─────────────────────────────────────────────────────
+      const wait = checkWaCooldown(waReportCooldowns, uid, WA_REPORT_COOLDOWN_MS);
+      if (wait > 0) {
+        const sec = Math.ceil(wait / 1000);
+        const cdEmbed = new EmbedBuilder()
+          .setColor(COLORS.CRIMSON)
+          .setTitle("⏳ Cooldown Ativo")
+          .setDescription(`Aguarde **${sec}s** antes de enviar outro report.`)
+          .setFooter({ text: AUTHOR });
+        await interaction.reply({ embeds: [cdEmbed], flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       await interaction.deferReply();
+      waReportCooldowns.set(uid, Date.now());
 
       const loadEmbed = new EmbedBuilder()
         .setColor(COLORS.CRIMSON)
         .setTitle("🚩 Report WhatsApp")
-        .setDescription(`Enviando **${quantidade}** report(s) para \`${numero}\`…\n⚡ Paralelo • Motivos rotativos`)
+        .setDescription(`Enviando **${quantidade}** report(s) para \`${numero}\`…\n⚡ Paralelo • Motivos rotativos • Retry automático`)
         .setFooter({ text: AUTHOR });
       await interaction.editReply({ embeds: [loadEmbed] });
 
-      let result: { sent?: number; failed?: number; requested?: number; errors?: string[]; error?: string } = {};
+      let result: { sent?: number; failed?: number; requested?: number; errors?: string[]; error?: string; number?: string } = {};
       try {
         const resp = await fetch(`${API_BASE}/api/whatsapp/report`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number: numero, quantity: quantidade }),
+          body: JSON.stringify({ number: numero, quantity: quantidade, userId: uid }),
           signal: AbortSignal.timeout(120_000),
         });
         result = await resp.json() as typeof result;
@@ -6464,14 +6499,17 @@ async function main(): Promise<void> {
         result = { error: String(e) };
       }
 
-      const ok = (result.sent ?? 0) > 0;
+      const sent = result.sent ?? 0;
+      addWaHistoryDiscord(uid, { type: "report", number: result.number ?? numero, sent, total: result.requested ?? quantidade, at: Date.now() });
+
+      const ok = sent > 0;
       const embed = new EmbedBuilder()
         .setColor(ok ? COLORS.GOLD : COLORS.CRIMSON)
         .setTitle("🚩 WhatsApp Report — Resultado")
         .addFields(
-          { name: "📱 Número",     value: `\`${numero}\``,                             inline: true },
-          { name: "✅ Enviados",   value: `\`${result.sent ?? 0}/${result.requested ?? quantidade}\``, inline: true },
-          { name: "❌ Falhos",     value: `\`${result.failed ?? quantidade}\``,         inline: true },
+          { name: "📱 Número",   value: `\`${result.number ?? numero}\``,                                    inline: true },
+          { name: "✅ Enviados", value: `\`${sent}/${result.requested ?? quantidade}\``,                       inline: true },
+          { name: "❌ Falhos",   value: `\`${result.failed ?? quantidade}\``,                                  inline: true },
         )
         .setFooter({ text: `${AUTHOR} • WhatsApp Report` })
         .setTimestamp();
@@ -6483,6 +6521,16 @@ async function main(): Promise<void> {
         embed.addFields({ name: "❌ Erro", value: `\`${result.error.slice(0, 200)}\`` });
       }
 
+      // ── Histórico resumido ──────────────────────────────────────────────────
+      const hist = (waHistory.get(uid) ?? []).slice(-5).reverse();
+      if (hist.length > 1) {
+        const histLines = hist.map(h => {
+          const t = new Date(h.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+          return `${h.type === "report" ? "🚩" : "📲"} \`${h.number}\` — ${h.sent}/${h.total} — ${t}`;
+        }).join("\n");
+        embed.addFields({ name: "📜 Histórico recente", value: histLines.slice(0, 512) });
+      }
+
       await interaction.editReply({ embeds: [embed] });
       return;
     }
@@ -6490,12 +6538,26 @@ async function main(): Promise<void> {
     if (sub === "codigo") {
       const numero = interaction.options.getString("numero", true).trim();
 
+      // ── Cooldown check ─────────────────────────────────────────────────────
+      const wait = checkWaCooldown(waSendcodeCooldowns, uid, WA_SENDCODE_COOLDOWN_MS);
+      if (wait > 0) {
+        const sec = Math.ceil(wait / 1000);
+        const cdEmbed = new EmbedBuilder()
+          .setColor(COLORS.CRIMSON)
+          .setTitle("⏳ Cooldown Ativo")
+          .setDescription(`Aguarde **${sec}s** antes de disparar outro código.`)
+          .setFooter({ text: AUTHOR });
+        await interaction.reply({ embeds: [cdEmbed], flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       await interaction.deferReply();
+      waSendcodeCooldowns.set(uid, Date.now());
 
       const loadEmbed = new EmbedBuilder()
         .setColor(COLORS.PURPLE)
         .setTitle("📲 Disparo de Código SMS")
-        .setDescription(`Disparando códigos de verificação para \`${numero}\`…`)
+        .setDescription(`Disparando códigos de verificação para \`${numero}\`…\n🎯 10 serviços: Telegram, iFood, Rappi, PicPay, ML, Shopee, TikTok, Nubank, ZeDelivery, Amazon`)
         .setFooter({ text: AUTHOR });
       await interaction.editReply({ embeds: [loadEmbed] });
 
@@ -6505,7 +6567,7 @@ async function main(): Promise<void> {
         const resp = await fetch(`${API_BASE}/api/whatsapp/sendcode`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number: numero }),
+          body: JSON.stringify({ number: numero, userId: uid }),
           signal: AbortSignal.timeout(60_000),
         });
         result = await resp.json() as typeof result;
@@ -6514,13 +6576,15 @@ async function main(): Promise<void> {
       }
 
       const sentCount = result.sent ?? 0;
+      addWaHistoryDiscord(uid, { type: "sendcode", number: result.number ?? numero, sent: sentCount, total: result.total ?? 0, at: Date.now() });
+
       const embed = new EmbedBuilder()
         .setColor(sentCount > 0 ? COLORS.GOLD : COLORS.CRIMSON)
         .setTitle("📲 Disparo de Código — Resultado")
         .addFields(
-          { name: "📱 Número",   value: `\`${result.number ?? numero}\``,              inline: true },
-          { name: "✅ Enviados", value: `\`${sentCount}/${result.total ?? 0}\``,        inline: true },
-          { name: "❌ Falhos",   value: `\`${result.failed ?? 0}\``,                   inline: true },
+          { name: "📱 Número",   value: `\`${result.number ?? numero}\``,        inline: true },
+          { name: "✅ Enviados", value: `\`${sentCount}/${result.total ?? 0}\``,  inline: true },
+          { name: "❌ Falhos",   value: `\`${result.failed ?? 0}\``,              inline: true },
         )
         .setFooter({ text: `${AUTHOR} • SMS Code Blaster` })
         .setTimestamp();

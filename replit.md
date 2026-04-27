@@ -390,3 +390,27 @@ Added `GUIA DE EFETIVIDADE POR TIPO DE ALVO` section to the SYSTEM_PROMPT:
 **Checkers confirmed working:** Disney+, Serasa, SERPRO, SIPNI, SerExp, Instagram, Xbox, PlayStation, Spotify, Roblox, Epic Games, Steam, and all others returning `FAIL` for invalid credentials.
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## WhatsApp Report & SMS Code Blast (`artifacts/api-server/src/routes/whatsapp.ts`)
+
+### Endpoints
+- `POST /api/whatsapp/report` — envia N reports de abuso ao formulário do WhatsApp (1–200, paralelo 10x, retry automático 3x com proxy diferente em caso de falha de token DTSG)
+- `POST /api/whatsapp/sendcode` — dispara códigos OTP via 10 serviços: Telegram, iFood, Rappi, PicPay, MercadoLivre, Shopee, TikTok, Nubank, ZeDelivery, Amazon
+- `GET /api/whatsapp/history` — histórico das últimas 200 operações (reports + codes) em memória
+
+### Body params (report)
+`{ number: "5511999887766", quantity: 10, userId?: "discord_id" }`
+
+### Body params (sendcode)
+`{ number: "5511999887766", userId?: "discord_id" }`
+
+### Features
+- Validação de número (aceita com/sem DDI, normaliza para E.164)
+- 8 motivos de report rotativos (spam, assédio, fraude, etc.)
+- Retry automático por worker (até 3 tentativas com proxy diferente se DTSG não encontrado)
+- Log de histórico em memória (máx 200 entradas, rotação automática)
+- Rate limit / cooldown por usuário: **3 min** entre reports, **2 min** entre sendcode (Discord + Telegram bots)
+- Limite Telegram bot: 1–200 reports (alinhado com Discord bot)
+
+### Dashboard (Panel)
+- Tab "🚩 WhatsApp" no painel web: stats em tempo real, disparo rápido de reports/códigos, tabela de histórico com filtro

@@ -43,6 +43,30 @@ function getSession(userId: number): Session {
   return sessions.get(userId)!;
 }
 
+// ── Per-user cooldowns para report/sendcode ───────────────────────────────────
+const REPORT_COOLDOWN_MS   = 3 * 60 * 1000; // 3 minutos
+const SENDCODE_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutos
+const reportCooldowns   = new Map<number, number>();
+const sendcodeCooldowns = new Map<number, number>();
+
+function checkCooldown(map: Map<number, number>, userId: number, cdMs: number): number {
+  const last = map.get(userId) ?? 0;
+  return Math.max(0, cdMs - (Date.now() - last));
+}
+function setCooldown(map: Map<number, number>, userId: number): void {
+  map.set(userId, Date.now());
+}
+
+// ── Histórico de operações por usuário (últimas 20) ───────────────────────────
+interface WaHistoryEntry { type: "report" | "sendcode"; number: string; sent: number; total: number; at: Date }
+const waHistory = new Map<number, WaHistoryEntry[]>();
+function addWaHistory(userId: number, e: WaHistoryEntry): void {
+  const arr = waHistory.get(userId) ?? [];
+  arr.push(e);
+  if (arr.length > 20) arr.shift();
+  waHistory.set(userId, arr);
+}
+
 // ── Per-user last check history (in-memory) ───────────────────────────────────
 interface TgCheckHistory {
   hits:      HitEntry[];
@@ -985,16 +1009,28 @@ bot.on(message("text"), async ctx => {
     const input = text.trim();
 
     if (step === "report_number") {
+      const userId = ctx.from!.id;
+      const wait = checkCooldown(reportCooldowns, userId, REPORT_COOLDOWN_MS);
+      if (wait > 0) {
+        const sec = Math.ceil(wait / 1000);
+        await ctx.replyWithHTML(
+          `⏳ <b>Cooldown ativo</b> — aguarde <b>${sec}s</b> antes de enviar outro report.`,
+          Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+        );
+        return;
+      }
+
       const parts  = input.split(/\s+/);
       const number = parts[0]!;
-      const qty    = Math.min(50, Math.max(1, parseInt(parts[1] ?? "1", 10) || 1));
+      const qty    = Math.min(200, Math.max(1, parseInt(parts[1] ?? "1", 10) || 1));
+      setCooldown(reportCooldowns, userId);
 
       const msg = await ctx.replyWithHTML(`🚩 Enviando <b>${qty}</b> report(s) para <code>${number}</code>…`);
       try {
         const resp = await fetch(`${API_BASE}/api/whatsapp/report`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number, quantity: qty }),
+          body: JSON.stringify({ number, quantity: qty, userId: String(userId) }),
           signal: AbortSignal.timeout(120_000),
         });
         const r = await resp.json() as {
@@ -1002,8 +1038,9 @@ bot.on(message("text"), async ctx => {
         };
         const sent   = r.sent   ?? 0;
         const failed = r.failed ?? qty;
-        const icon   = sent > 0 ? "✅" : "❌";
-        const lines  = [
+        addWaHistory(userId, { type: "report", number: r.number ?? number, sent, total: r.requested ?? qty, at: new Date() });
+        const icon = sent > 0 ? "✅" : "❌";
+        const lines = [
           `${icon} <b>WhatsApp Report</b>`, ``,
           `📱 Número: <code>${r.number ?? number}</code>`,
           `✅ Enviados: <b>${sent}</b>/${r.requested ?? qty}`,
@@ -1025,13 +1062,25 @@ bot.on(message("text"), async ctx => {
     }
 
     if (step === "code_number") {
+      const userId = ctx.from!.id;
+      const wait = checkCooldown(sendcodeCooldowns, userId, SENDCODE_COOLDOWN_MS);
+      if (wait > 0) {
+        const sec = Math.ceil(wait / 1000);
+        await ctx.replyWithHTML(
+          `⏳ <b>Cooldown ativo</b> — aguarde <b>${sec}s</b> antes de disparar outro código.`,
+          Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+        );
+        return;
+      }
+      setCooldown(sendcodeCooldowns, userId);
+
       const number = input;
       const msg = await ctx.replyWithHTML(`📲 Disparando códigos para <code>${number}</code>…`);
       try {
         const resp = await fetch(`${API_BASE}/api/whatsapp/sendcode`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number }),
+          body: JSON.stringify({ number, userId: String(userId) }),
           signal: AbortSignal.timeout(60_000),
         });
         const r = await resp.json() as {
@@ -1039,6 +1088,7 @@ bot.on(message("text"), async ctx => {
           services?: { service: string; status: "sent" | "failed"; detail?: string }[];
         };
         const sentCount = r.sent ?? 0;
+        addWaHistory(userId, { type: "sendcode", number: r.number ?? number, sent: sentCount, total: r.total ?? 0, at: new Date() });
         const icon = sentCount > 0 ? "✅" : "❌";
         const lines: string[] = [
           `${icon} <b>Disparo de Código SMS</b>`, ``,
@@ -1386,10 +1436,13 @@ async function registerCommands() {
 // ── WhatsApp: Report ─────────────────────────────────────────────────────────
 bot.action("home_wa_report", async ctx => {
   await ctx.answerCbQuery();
-  const s = getSession(ctx.from!.id);
+  const userId = ctx.from!.id;
+  const wait = checkCooldown(reportCooldowns, userId, REPORT_COOLDOWN_MS);
+  const s = getSession(userId);
   s.waStep = "report_number";
+  const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
   await ctx.replyWithHTML(
-    `🚩 <b>WhatsApp Report</b>\n\nEnvie o número alvo e a quantidade de reports no formato:\n<code>5511999887766 10</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Quantidade: 1–50 reports\n\nOu apenas o número para enviar 1 report.`,
+    `🚩 <b>WhatsApp Report</b>\n\nEnvie o número e a quantidade:\n<code>5511999887766 10</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Quantidade: 1–200 reports\n• Cooldown: 3 min entre reports${cdNote}`,
     Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
   );
 });
@@ -1397,10 +1450,13 @@ bot.action("home_wa_report", async ctx => {
 // ── WhatsApp: Send Code ───────────────────────────────────────────────────────
 bot.action("home_wa_code", async ctx => {
   await ctx.answerCbQuery();
-  const s = getSession(ctx.from!.id);
+  const userId = ctx.from!.id;
+  const wait = checkCooldown(sendcodeCooldowns, userId, SENDCODE_COOLDOWN_MS);
+  const s = getSession(userId);
   s.waStep = "code_number";
+  const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
   await ctx.replyWithHTML(
-    `📲 <b>Disparo de Código de Verificação</b>\n\nEnvie o número alvo:\n<code>5511999887766</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Serviços: Telegram, iFood, Rappi, PicPay, MercadoLivre, Shopee`,
+    `📲 <b>Disparo de Código SMS</b>\n\nEnvie o número alvo:\n<code>5511999887766</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Serviços: Telegram, iFood, Rappi, PicPay, MercadoLivre, Shopee, TikTok, Nubank, ZeDelivery, Amazon\n• Cooldown: 2 min${cdNote}`,
     Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
   );
 });

