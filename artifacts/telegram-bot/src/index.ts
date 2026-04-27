@@ -12,17 +12,19 @@ const bot = new Telegraf(BOT_TOKEN);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Session {
-  credentials?: string[];
-  activeJobId?: string;
-  hits:         HitEntry[];
-  fails:        string[];
-  errors:       string[];
-  running:      boolean;
+  credentials?:   string[];
+  activeJobId?:   string;
+  hits:           HitEntry[];
+  fails:          string[];
+  errors:         string[];
+  running:        boolean;
   progressMsgId?: number;
   progressChatId?: number;
-  abortCtrl?:   AbortController;
-  waitingFor?:  "file" | "domain" | null;
-  currentLabel?: string;
+  abortCtrl?:     AbortController;
+  waitingFor?:    "file" | "domain" | null;
+  currentLabel?:  string;
+  startedAt?:     number;
+  totalCreds?:    number;
 }
 
 interface HitEntry {
@@ -535,14 +537,18 @@ async function stopChecker(ctx: Context, s: Session, byUser = false) {
     await fetch(`${API_BASE}/api/checker/${s.activeJobId}`, { method: "DELETE" }).catch(() => {});
   }
   if (s.progressChatId && s.progressMsgId) {
-    const total = s.hits.length + s.fails.length + s.errors.length;
-    const text  = buildFinal(s.currentLabel ?? "checker", total, s.hits, s.fails, s.errors, byUser);
+    const total     = s.totalCreds ?? (s.hits.length + s.fails.length + s.errors.length);
+    const elapsedMs = s.startedAt ? Date.now() - s.startedAt : 0;
+    const label     = s.currentLabel ?? "checker";
+    const text      = buildFinal(label, total, s.hits, s.fails, s.errors, byUser);
     await editMsg(ctx, s.progressChatId, s.progressMsgId, text,
       Markup.inlineKeyboard([
         [Markup.button.callback("✅ Ver HITs", "home_hits"), Markup.button.callback("📊 Stats", "home_stats")],
         [Markup.button.callback("🏠 Início",   "go_home")],
       ]),
     );
+    // Always send full TXT even when user stopped manually
+    await sendResultsTxt(ctx, s.progressChatId, label, total, s.hits, s.fails, s.errors, byUser, elapsedMs);
   }
 }
 
@@ -916,6 +922,7 @@ async function startChecker(ctx: Context, target: string, label: string, s: Sess
   s.errors       = [];
   s.running      = true;
   s.currentLabel = label;
+  s.startedAt    = Date.now();
 
   const creds  = s.credentials!;
   const chatId = ctx.chat!.id;
@@ -1003,7 +1010,7 @@ async function startChecker(ctx: Context, target: string, label: string, s: Sess
             }
           } else if (data["type"] === "done" || data["type"] === "end") {
             s.running = false;
-            await sendFinalReport(ctx, chatId, s.progressMsgId!, label, creds.length, s.hits, s.fails, s.errors);
+            await sendFinalReport(ctx, chatId, s.progressMsgId!, label, creds.length, s.hits, s.fails, s.errors, s.startedAt ? Date.now() - s.startedAt : 0);
             return;
           }
         }
@@ -1013,10 +1020,133 @@ async function startChecker(ctx: Context, target: string, label: string, s: Sess
     } finally {
       if (s.running) {
         s.running = false;
-        await sendFinalReport(ctx, chatId, s.progressMsgId!, label, creds.length, s.hits, s.fails, s.errors);
+        await sendFinalReport(ctx, chatId, s.progressMsgId!, label, creds.length, s.hits, s.fails, s.errors, s.startedAt ? Date.now() - s.startedAt : 0);
       }
     }
   })();
+}
+
+// ── Build full results TXT (HITs + FAILs + ERRORs) ───────────────────────────
+function buildCheckerTxt(
+  label: string,
+  total: number,
+  hits: HitEntry[],
+  fails: string[],
+  errors: string[],
+  stopped = false,
+  elapsedMs = 0,
+): Buffer {
+  const W   = 66;
+  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+  const row = (content: string) => `║ ${pad(content, W - 2)} ║`;
+  const sep = (f: string) => f.repeat(W);
+
+  const dt      = new Date().toLocaleDateString("pt-BR") + " às " +
+                  new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const elapsed = Math.round(elapsedMs / 1000);
+  const elStr   = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s` : `${elapsed}s`;
+
+  const lines: string[] = [];
+
+  lines.push(sep("═"));
+  lines.push(row("  LELOUCH BRITANNIA — CHECKER RESULTADOS"));
+  lines.push(sep("═"));
+  lines.push(row(`  Alvo     : ${label.toUpperCase()}`));
+  lines.push(row(`  Data     : ${dt}`));
+  lines.push(row(`  Duração  : ${elStr}${stopped ? "  (encerrado)" : ""}`));
+  lines.push(sep("═"));
+  lines.push(row(`  Total : ${total}   ✅ HITS : ${hits.length}   ❌ FAILS : ${fails.length}   ⚠  ERROS : ${errors.length}`));
+  lines.push(sep("╚"));
+  lines.push("");
+
+  const section = (title: string) => {
+    const dashes = Math.max(0, Math.floor((W - title.length - 2) / 2));
+    lines.push(`${"─".repeat(dashes)} ${title} ${"─".repeat(W - dashes - title.length - 2)}`);
+    lines.push("");
+  };
+
+  // HITs
+  if (hits.length > 0) {
+    section(`✅  HITS (${hits.length})`);
+    hits.forEach((h, i) => {
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${h.credential}`);
+      lines.push(`      └─ ${h.detail || "—"}`);
+      lines.push("");
+    });
+  } else {
+    section("✅  HITS (0)");
+    lines.push("      Nenhum hit encontrado.");
+    lines.push("");
+  }
+
+  // FAILs (max 500)
+  const MAX_FAILS = 500;
+  if (fails.length > 0) {
+    section(`❌  FAILS (${fails.length}${fails.length > MAX_FAILS ? ` — mostrando ${MAX_FAILS}` : ""})`);
+    if (fails.length > MAX_FAILS) {
+      lines.push(`      ⚠  Lista truncada: exibindo apenas os primeiros ${MAX_FAILS} de ${fails.length} fails.`);
+      lines.push("");
+    }
+    fails.slice(0, MAX_FAILS).forEach((f, i) => {
+      const [cred, ...rest] = f.split(" | ");
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${cred}`);
+      lines.push(`      └─ ${rest.join(" | ") || "invalid_credentials"}`);
+      if ((i + 1) % 10 === 0) lines.push("");
+    });
+    lines.push("");
+  }
+
+  // ERRORs (max 200)
+  const MAX_ERRORS = 200;
+  if (errors.length > 0) {
+    section(`⚠   ERROS (${errors.length}${errors.length > MAX_ERRORS ? ` — mostrando ${MAX_ERRORS}` : ""})`);
+    if (errors.length > MAX_ERRORS) {
+      lines.push(`      ⚠  Lista truncada: exibindo apenas os primeiros ${MAX_ERRORS} de ${errors.length} erros.`);
+      lines.push("");
+    }
+    errors.slice(0, MAX_ERRORS).forEach((e, i) => {
+      const [cred, ...rest] = e.split(" | ");
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${cred}`);
+      lines.push(`      └─ ${rest.join(" | ") || "unknown_error"}`);
+      if ((i + 1) % 10 === 0) lines.push("");
+    });
+    lines.push("");
+  }
+
+  lines.push(sep("═"));
+  lines.push(`  Made by blxckxyz  •  Lelouch Britannia Panel`);
+  lines.push(sep("═"));
+
+  return Buffer.from(lines.join("\n"), "utf-8");
+}
+
+// ── Send results TXT as document ──────────────────────────────────────────────
+async function sendResultsTxt(
+  ctx: Context,
+  chatId: number,
+  label: string,
+  total: number,
+  hits: HitEntry[],
+  fails: string[],
+  errors: string[],
+  stopped = false,
+  elapsedMs = 0,
+): Promise<void> {
+  const buf      = buildCheckerTxt(label, total, hits, fails, errors, stopped, elapsedMs);
+  const slug     = label.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  const ts       = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const filename = `checker_${slug}_${ts}.txt`;
+  const caption  = [
+    stopped ? "🛑 <b>Checker encerrado</b>" : "✅ <b>Checker finalizado</b>",
+    `${esc(label.toUpperCase())}`,
+    `<b>${hits.length}</b> hit(s)  ·  <b>${fails.length}</b> fail(s)  ·  <b>${errors.length}</b> erro(s)`,
+  ].join("\n");
+
+  await ctx.telegram.sendDocument(
+    chatId,
+    { source: buf, filename },
+    { caption, parse_mode: "HTML" },
+  ).catch(() => void 0);
 }
 
 // ── Final report ──────────────────────────────────────────────────────────────
@@ -1029,6 +1159,7 @@ async function sendFinalReport(
   hits: HitEntry[],
   fails: string[],
   errors: string[],
+  elapsedMs = 0,
 ) {
   const text = buildFinal(label, total, hits, fails, errors, false);
   await editMsg(ctx, chatId, msgId, text,
@@ -1038,16 +1169,8 @@ async function sendFinalReport(
     ]),
   );
 
-  if (hits.length > 5) {
-    const buf = Buffer.from(
-      hits.map(h => `${h.credential} | ${h.detail}`).join("\n"),
-      "utf-8",
-    );
-    await ctx.telegram.sendDocument(chatId,
-      { source: buf, filename: `hits_${label.replace(/\s+/g, "_").replace(/[^\w-]/g, "")}.txt` },
-      { caption: `✅ <b>${hits.length} HITs</b> — ${esc(label)}`, parse_mode: "HTML" },
-    );
-  }
+  // Always send full TXT (HITs + FAILs + ERRORs)
+  await sendResultsTxt(ctx, chatId, label, total, hits, fails, errors, false, elapsedMs);
 }
 
 // ── Register slash command suggestions (shown when user types "/") ────────────
