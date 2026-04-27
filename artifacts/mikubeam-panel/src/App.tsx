@@ -555,18 +555,31 @@ function GeassParticles() {
 /* ── WhatsApp Dashboard ── */
 interface WaHistEntry { type: "report" | "sendcode"; number: string; sent: number; total: number; at: number; userId?: string }
 interface SvcStat { service: string; sent: number; total: number; rate: number }
+interface LiveLog  { id: number; text: string; ok: boolean | null }
 
 function WhatsAppDashboard({ base }: { base: string }) {
-  const [entries, setEntries]   = useState<WaHistEntry[]>([]);
-  const [svcStats, setSvcStats] = useState<SvcStat[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState("");
-  const [filter, setFilter]     = useState<"all" | "report" | "sendcode">("all");
-  const [sending, setSending]   = useState(false);
-  const [formNum, setFormNum]   = useState("");
-  const [formQty, setFormQty]   = useState("10");
-  const [codeNum, setCodeNum]   = useState("");
-  const [sendResult, setSendResult] = useState<string | null>(null);
+  const [entries, setEntries]       = useState<WaHistEntry[]>([]);
+  const [svcStats, setSvcStats]     = useState<SvcStat[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState("");
+  const [filter, setFilter]         = useState<"all" | "report" | "sendcode">("all");
+  const [sending, setSending]       = useState(false);
+  const [formNum, setFormNum]       = useState("");
+  const [formQty, setFormQty]       = useState("10");
+  const [codeNum, setCodeNum]       = useState("");
+  const [liveLog, setLiveLog]       = useState<LiveLog[]>([]);
+  const [progress, setProgress]     = useState<{ done: number; total: number } | null>(null);
+  const [tgChatId, setTgChatId]     = useState(() => localStorage.getItem("wa-tg-chatid") ?? "");
+  const liveRef = useRef<HTMLDivElement>(null);
+  const logIdRef = useRef(0);
+
+  const pushLog = useCallback((text: string, ok: boolean | null = null) => {
+    setLiveLog(prev => {
+      const next = [...prev, { id: ++logIdRef.current, text, ok }];
+      return next.length > 80 ? next.slice(-80) : next;
+    });
+    setTimeout(() => liveRef.current?.scrollTo(0, liveRef.current.scrollHeight), 20);
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -585,47 +598,44 @@ function WhatsAppDashboard({ base }: { base: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = filter === "all" ? entries : entries.filter(e => e.type === filter);
-  const totalReports  = entries.filter(e => e.type === "report").reduce((s, e) => s + e.sent, 0);
-  const totalCodes    = entries.filter(e => e.type === "sendcode").reduce((s, e) => s + e.sent, 0);
-  const reportOps     = entries.filter(e => e.type === "report").length;
-  const codeOps       = entries.filter(e => e.type === "sendcode").length;
-  const successRate   = entries.length > 0
+  const filtered    = filter === "all" ? entries : entries.filter(e => e.type === filter);
+  const totalReports = entries.filter(e => e.type === "report").reduce((s, e) => s + e.sent, 0);
+  const totalCodes   = entries.filter(e => e.type === "sendcode").reduce((s, e) => s + e.sent, 0);
+  const reportOps    = entries.filter(e => e.type === "report").length;
+  const codeOps      = entries.filter(e => e.type === "sendcode").length;
+  const successRate  = entries.length > 0
     ? ((entries.reduce((s, e) => s + e.sent, 0) / entries.reduce((s, e) => s + e.total, 0)) * 100).toFixed(1)
     : "0.0";
 
-  const handleReport = async () => {
-    if (!formNum.trim()) return;
-    setSending(true); setSendResult(null);
-    try {
-      const resp = await fetch(`${base}/api/whatsapp/report`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ number: formNum.trim(), quantity: parseInt(formQty, 10) || 1 }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      const r = await resp.json() as { sent?: number; requested?: number; failed?: number };
-      setSendResult(`✅ Enviados: ${r.sent ?? 0}/${r.requested ?? formQty} | Falhos: ${r.failed ?? 0}`);
-      load();
-    } catch (e) { setSendResult(`❌ ${String(e)}`); }
-    setSending(false);
+  const handleReport = () => {
+    if (!formNum.trim() || sending) return;
+    setSending(true); setLiveLog([]); setProgress(null);
+    localStorage.setItem("wa-tg-chatid", tgChatId);
+    const qty = parseInt(formQty, 10) || 1;
+    const params = new URLSearchParams({ number: formNum.trim(), quantity: String(qty), ...(tgChatId ? { chatId: tgChatId } : {}) });
+    const es = new EventSource(`${base}/api/whatsapp/stream/report?${params}`);
+    es.onmessage = (e) => {
+      const d = JSON.parse(e.data) as { type: string; n?: number; total?: number; ok?: boolean; detail?: string; sent?: number; failed?: number };
+      if (d.type === "start")    { setProgress({ done: 0, total: d.total ?? qty }); pushLog(`🚀 Iniciando ${d.total} reports…`, null); }
+      if (d.type === "progress") { setProgress({ done: d.n ?? 0, total: d.total ?? qty }); pushLog(`${d.ok ? "✅" : "❌"} Report #${d.n} — ${d.detail ?? ""}`, d.ok ?? false); }
+      if (d.type === "done")     { pushLog(`🏁 Concluído: ${d.sent}/${d.total} enviados, ${d.failed} falhos`, (d.sent ?? 0) > 0); es.close(); setSending(false); load(); }
+    };
+    es.onerror = () => { pushLog("❌ Conexão SSE encerrada", false); es.close(); setSending(false); load(); };
   };
 
-  const handleCode = async () => {
-    if (!codeNum.trim()) return;
-    setSending(true); setSendResult(null);
-    try {
-      const resp = await fetch(`${base}/api/whatsapp/sendcode`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ number: codeNum.trim() }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      const r = await resp.json() as { sent?: number; total?: number; failed?: number };
-      setSendResult(`📲 Enviados: ${r.sent ?? 0}/${r.total ?? 0} serviços | Falhos: ${r.failed ?? 0}`);
-      load();
-    } catch (e) { setSendResult(`❌ ${String(e)}`); }
-    setSending(false);
+  const handleCode = () => {
+    if (!codeNum.trim() || sending) return;
+    setSending(true); setLiveLog([]); setProgress(null);
+    localStorage.setItem("wa-tg-chatid", tgChatId);
+    const params = new URLSearchParams({ number: codeNum.trim(), ...(tgChatId ? { chatId: tgChatId } : {}) });
+    const es = new EventSource(`${base}/api/whatsapp/stream/sendcode?${params}`);
+    es.onmessage = (e) => {
+      const d = JSON.parse(e.data) as { type: string; services?: number; service?: string; ok?: boolean; sent?: number; failed?: number; total?: number };
+      if (d.type === "start")   { setProgress({ done: 0, total: d.services ?? 17 }); pushLog(`🚀 Disparando para ${d.services} serviços…`, null); }
+      if (d.type === "service") { setProgress(prev => prev ? { done: prev.done + 1, total: prev.total } : null); pushLog(`${d.ok ? "✅" : "❌"} ${d.service}`, d.ok ?? false); }
+      if (d.type === "done")    { pushLog(`🏁 Concluído: ${d.sent}/${d.total} serviços`, (d.sent ?? 0) > 0); es.close(); setSending(false); load(); }
+    };
+    es.onerror = () => { pushLog("❌ Conexão SSE encerrada", false); es.close(); setSending(false); load(); };
   };
 
   const card: CSSProperties = {
@@ -693,8 +703,26 @@ function WhatsAppDashboard({ base }: { base: string }) {
         </div>
       )}
 
+      {/* Telegram notification config */}
+      <div style={{ ...card, marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 18 }}>🔔</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: "#D4AF37", fontFamily: "monospace", fontSize: 11, marginBottom: 4, letterSpacing: 1 }}>
+            NOTIFICAÇÃO TELEGRAM (opcional) — Chat ID
+          </div>
+          <input
+            value={tgChatId}
+            onChange={e => { setTgChatId(e.target.value); localStorage.setItem("wa-tg-chatid", e.target.value); }}
+            placeholder="Ex: 123456789 — receba resultado no Telegram ao terminar"
+            style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid rgba(212,175,55,0.3)",
+              borderRadius: 6, padding: "6px 10px", color: "#eee", fontFamily: "monospace", fontSize: 12,
+              boxSizing: "border-box" }}
+          />
+        </div>
+      </div>
+
       {/* Quick action panels */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
         <div style={card}>
           <div style={{ color: "#e74c3c", fontFamily: "monospace", fontWeight: 700, marginBottom: 12, fontSize: 13 }}>
             🚩 ENVIAR REPORTS
@@ -719,7 +747,7 @@ function WhatsAppDashboard({ base }: { base: string }) {
                 border: "1px solid rgba(192,57,43,0.6)", borderRadius: 6, color: "#fff",
                 fontFamily: "monospace", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "8px 0" }}
             >
-              {sending ? "ENVIANDO…" : "ENVIAR"}
+              {sending ? "⚡ ENVIANDO…" : "ENVIAR"}
             </button>
           </div>
         </div>
@@ -741,15 +769,37 @@ function WhatsAppDashboard({ base }: { base: string }) {
               border: "1px solid rgba(155,89,182,0.6)", borderRadius: 6, color: "#fff",
               fontFamily: "monospace", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "10px 0" }}
           >
-            {sending ? "DISPARANDO…" : "DISPARAR (10 serviços)"}
+            {sending ? "⚡ DISPARANDO…" : "DISPARAR (17 serviços)"}
           </button>
         </div>
       </div>
 
-      {sendResult && (
-        <div style={{ ...card, marginBottom: 16, color: sendResult.startsWith("❌") ? "#e74c3c" : "#2ecc71",
-          fontFamily: "monospace", fontSize: 13 }}>
-          {sendResult}
+      {/* Live progress + log */}
+      {(sending || liveLog.length > 0) && (
+        <div style={{ ...card, marginBottom: 16 }}>
+          {progress && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "monospace", fontSize: 11, color: "#aaa", marginBottom: 4 }}>
+                <span>PROGRESSO</span>
+                <span>{progress.done}/{progress.total}</span>
+              </div>
+              <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%", borderRadius: 4, transition: "width 0.3s ease",
+                  background: "linear-gradient(90deg, #e74c3c, #D4AF37)",
+                  width: `${Math.min(100, (progress.done / Math.max(progress.total, 1)) * 100)}%`,
+                }} />
+              </div>
+            </div>
+          )}
+          <div ref={liveRef} style={{ maxHeight: 200, overflowY: "auto", fontFamily: "monospace", fontSize: 11 }}>
+            {liveLog.map(l => (
+              <div key={l.id} style={{ color: l.ok === null ? "#aaa" : l.ok ? "#2ecc71" : "#e74c3c", padding: "1px 0" }}>
+                {l.text}
+              </div>
+            ))}
+            {sending && <div style={{ color: "#D4AF37", animation: "pulse 1s infinite" }}>● aguardando…</div>}
+          </div>
         </div>
       )}
 

@@ -6557,7 +6557,7 @@ async function main(): Promise<void> {
       const loadEmbed = new EmbedBuilder()
         .setColor(COLORS.PURPLE)
         .setTitle("📲 Disparo de Código SMS")
-        .setDescription(`Disparando códigos de verificação para \`${numero}\`…\n🎯 10 serviços: Telegram, iFood, Rappi, PicPay, ML, Shopee, TikTok, Nubank, ZeDelivery, Amazon`)
+        .setDescription(`Disparando códigos de verificação para \`${numero}\`…\n🎯 17 serviços: Telegram, iFood, Rappi, PicPay, ML, Shopee, TikTok, Nubank, ZeDelivery, 99Food, Kwai, InDrive, Signal, Uber, OLX, Binance, Amazon`)
         .setFooter({ text: AUTHOR });
       await interaction.editReply({ embeds: [loadEmbed] });
 
