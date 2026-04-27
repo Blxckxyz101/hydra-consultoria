@@ -810,6 +810,36 @@ const COMMANDS = [
     .setName("historico")
     .setDescription("📜 Ver TXT do último check de credenciais (anterior)"),
 
+  // ── /whatsapp ──────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("whatsapp")
+    .setDescription("📱 WhatsApp utilities — report de número e disparo de código de verificação")
+    .addSubcommand(sub =>
+      sub.setName("report")
+        .setDescription("🚩 Enviar reports de abuso para um número WhatsApp")
+        .addStringOption(opt =>
+          opt.setName("numero")
+            .setDescription("Número alvo com DDI e DDD (ex: 5511999887766)")
+            .setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("quantidade")
+            .setDescription("Quantidade de reports a enviar (1–50, padrão: 1)")
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(50)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("codigo")
+        .setDescription("📲 Disparar código de verificação SMS para um número")
+        .addStringOption(opt =>
+          opt.setName("numero")
+            .setDescription("Número alvo com DDI e DDD (ex: 5511999887766)")
+            .setRequired(true)
+        )
+    ),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -6404,6 +6434,111 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── /whatsapp handler ───────────────────────────────────────────────────────
+  async function handleWhatsapp(interaction: ChatInputCommandInteraction): Promise<void> {
+    const sub = interaction.options.getSubcommand();
+
+    if (sub === "report") {
+      const numero    = interaction.options.getString("numero", true).trim();
+      const quantidade = interaction.options.getInteger("quantidade") ?? 1;
+
+      await interaction.deferReply();
+
+      const loadEmbed = new EmbedBuilder()
+        .setColor(COLORS.CRIMSON)
+        .setTitle("🚩 WhatsApp Report")
+        .setDescription(`Enviando **${quantidade}** report(s) para \`${numero}\`…`)
+        .setFooter({ text: AUTHOR });
+      await interaction.editReply({ embeds: [loadEmbed] });
+
+      let result: { sent?: number; failed?: number; requested?: number; errors?: string[]; error?: string } = {};
+      try {
+        const resp = await fetch(`${API_BASE}/api/whatsapp/report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ number: numero, quantity: quantidade }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        result = await resp.json() as typeof result;
+      } catch (e) {
+        result = { error: String(e) };
+      }
+
+      const ok = (result.sent ?? 0) > 0;
+      const embed = new EmbedBuilder()
+        .setColor(ok ? COLORS.GOLD : COLORS.CRIMSON)
+        .setTitle("🚩 WhatsApp Report — Resultado")
+        .addFields(
+          { name: "📱 Número",     value: `\`${numero}\``,                             inline: true },
+          { name: "✅ Enviados",   value: `\`${result.sent ?? 0}/${result.requested ?? quantidade}\``, inline: true },
+          { name: "❌ Falhos",     value: `\`${result.failed ?? quantidade}\``,         inline: true },
+        )
+        .setFooter({ text: `${AUTHOR} • WhatsApp Report` })
+        .setTimestamp();
+
+      if (result.errors?.length) {
+        embed.addFields({ name: "⚠️ Erros", value: `\`\`\`${result.errors.slice(0, 5).join("\n")}\`\`\`` });
+      }
+      if (result.error) {
+        embed.addFields({ name: "❌ Erro", value: `\`${result.error.slice(0, 200)}\`` });
+      }
+
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    if (sub === "codigo") {
+      const numero = interaction.options.getString("numero", true).trim();
+
+      await interaction.deferReply();
+
+      const loadEmbed = new EmbedBuilder()
+        .setColor(COLORS.PURPLE)
+        .setTitle("📲 Disparo de Código SMS")
+        .setDescription(`Disparando códigos de verificação para \`${numero}\`…`)
+        .setFooter({ text: AUTHOR });
+      await interaction.editReply({ embeds: [loadEmbed] });
+
+      type SvcResult = { service: string; status: "sent" | "failed"; detail?: string };
+      let result: { number?: string; sent?: number; failed?: number; total?: number; services?: SvcResult[]; error?: string } = {};
+      try {
+        const resp = await fetch(`${API_BASE}/api/whatsapp/sendcode`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ number: numero }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        result = await resp.json() as typeof result;
+      } catch (e) {
+        result = { error: String(e) };
+      }
+
+      const sentCount = result.sent ?? 0;
+      const embed = new EmbedBuilder()
+        .setColor(sentCount > 0 ? COLORS.GOLD : COLORS.CRIMSON)
+        .setTitle("📲 Disparo de Código — Resultado")
+        .addFields(
+          { name: "📱 Número",   value: `\`${result.number ?? numero}\``,              inline: true },
+          { name: "✅ Enviados", value: `\`${sentCount}/${result.total ?? 0}\``,        inline: true },
+          { name: "❌ Falhos",   value: `\`${result.failed ?? 0}\``,                   inline: true },
+        )
+        .setFooter({ text: `${AUTHOR} • SMS Code Blaster` })
+        .setTimestamp();
+
+      if (result.services?.length) {
+        const lines = result.services.map(s =>
+          `${s.status === "sent" ? "✅" : "❌"} **${s.service}**${s.detail ? ` — \`${s.detail}\`` : ""}`
+        ).join("\n");
+        embed.addFields({ name: "📋 Serviços", value: lines.slice(0, 1024) });
+      }
+      if (result.error) {
+        embed.addFields({ name: "❌ Erro", value: `\`${result.error.slice(0, 200)}\`` });
+      }
+
+      await interaction.editReply({ embeds: [embed] });
+    }
+  }
+
   client.on(Events.InteractionCreate, async interaction => {
     try {
       if (interaction.isStringSelectMenu()) {
@@ -6477,6 +6612,8 @@ async function main(): Promise<void> {
         await handleSky(interaction);
       } else if (commandName === "historico") {
         await handleHistorico(interaction);
+      } else if (commandName === "whatsapp") {
+        await handleWhatsapp(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

