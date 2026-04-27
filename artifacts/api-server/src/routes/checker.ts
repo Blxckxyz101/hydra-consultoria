@@ -171,29 +171,46 @@ function isProxyLevelError(result: CurlResult): boolean {
   return false;
 }
 
+/** Pick N random free (public, no-auth) proxies from the current cache. */
+function pickFreeProxies(n: number): string[][] {
+  const free = proxyCache.filter(p => !p.username && p.host !== "0.0.0.0");
+  const shuffled = free.sort(() => Math.random() - 0.5).slice(0, n);
+  return shuffled.map(p => {
+    const scheme = p.type === "socks5" ? "socks5h" : "http";
+    return ["-x", `${scheme}://${p.host}:${p.port}`];
+  });
+}
+
 async function runCurlResidential(
   fn:        (proxyArgs: string[]) => string[],
   timeoutMs: number,
 ): Promise<CurlResult> {
   const proxyArgs = getResidentialProxyArgs();
-  if (proxyArgs.length === 0) {
-    // No residential proxy configured — go direct
-    return runCurl(fn([]), timeoutMs);
+
+  // ── 1. Try residential proxy first ────────────────────────────────────────
+  if (proxyArgs.length > 0) {
+    try {
+      const result = await runCurl(fn(proxyArgs), timeoutMs);
+      if (!isProxyLevelError(result)) return result;
+      // Residential proxy itself returned an error — fall through to free proxies
+    } catch { /* residential connection failure — fall through */ }
   }
 
-  try {
-    const result = await runCurl(fn(proxyArgs), timeoutMs);
-    // If the proxy itself is blocking (403/407 from proxy, not from the target server),
-    // fall back to a direct request so valid credentials still get checked.
-    if (isProxyLevelError(result)) {
-      console.warn("[PROXY] Residential proxy returned error — falling back to direct request");
-      return runCurl(fn([]), timeoutMs);
-    }
-    return result;
-  } catch {
-    // Proxy connection failure (timeout, ECONNREFUSED) — go direct
-    return runCurl(fn([]), timeoutMs);
+  // ── 2. Try free/public proxies (up to 5 random picks) ─────────────────────
+  const freeSlots = pickFreeProxies(5);
+  for (const freeArgs of freeSlots) {
+    try {
+      const result = await runCurl(fn(freeArgs), timeoutMs);
+      if (!isProxyLevelError(result)) {
+        // Extra check: free proxy might tunnel us to Incapsula — that's still
+        // a valid result (checkSerasa handles WAF_BLOCKED_INCAPSULA itself).
+        return result;
+      }
+    } catch { /* this free proxy failed — try next */ }
   }
+
+  // ── 3. Final fallback: direct (no proxy) ──────────────────────────────────
+  return runCurl(fn([]), timeoutMs);
 }
 
 // ── Streaming proxy args: public SOCKS5 first, residential fallback ───────────
