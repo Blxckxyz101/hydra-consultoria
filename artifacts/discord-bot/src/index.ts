@@ -4595,6 +4595,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
           new ButtonBuilder().setCustomId("chk_privacy").setLabel("🔒 Privacy.com.br").setStyle(ButtonStyle.Secondary),
         ),
         new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId("chk_checkok").setLabel("✅ CheckOK").setStyle(ButtonStyle.Secondary),
           new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
         ),
       ];
@@ -4624,6 +4625,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
         { name: "🏛️ SISP-ES",      value: "Portal ES — JSF + curl",                inline: true },
         { name: "🔵 SIGMA",         value: "PC-MA — curl form login",               inline: true },
         { name: "🔒 Privacy.com.br", value: "service.privacy.com.br — CPF ou email", inline: true },
+        { name: "✅ CheckOK",        value: "bff.checkok.com.br — email ou CPF:pass",  inline: true },
       ];
 
   await catInteraction.update({
@@ -4655,7 +4657,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "privacy";
+  type CheckerTargetBot = "iseek" | "datasus" | "sipni" | "consultcenter" | "mind7" | "serpro" | "sisreg" | "credilink" | "serasa" | "crunchyroll" | "netflix" | "amazon" | "hbomax" | "disney" | "paramount" | "sinesp" | "serasa_exp" | "instagram" | "sispes" | "sigma" | "privacy" | "checkok";
   const targetMap: Record<string, CheckerTargetBot> = {
     chk_iseek:         "iseek",
     chk_datasus:       "datasus",
@@ -4678,6 +4680,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     chk_sispes:        "sispes",
     chk_sigma:         "sigma",
     chk_privacy:       "privacy",
+    chk_checkok:       "checkok",
   };
   const target        = targetMap[btnInteraction.customId] ?? "iseek";
   const targetLabel   = {
@@ -4689,6 +4692,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     sinesp: "SINESP Segurança", serasa_exp: "Serasa Experience",
     instagram: "Instagram", sispes: "SISP-ES", sigma: "SIGMA (PC-MA)",
     privacy: "Privacy.com.br",
+    checkok: "CheckOK",
   }[target]!;
   const targetIcon    = {
     iseek: "🌐", datasus: "🏥", sipni: "💉",
@@ -4699,6 +4703,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     sinesp: "🚔", serasa_exp: "💼",
     instagram: "📸", sispes: "🏛️", sigma: "🔵",
     privacy: "🔒",
+    checkok: "✅",
   }[target]!;
   const concurrency   = {
     iseek: 2, datasus: 2, sipni: 2, consultcenter: 3, mind7: 3,
@@ -4707,6 +4712,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     sinesp: 3, serasa_exp: 3,
     instagram: 2, sispes: 2, sigma: 3,
     privacy: 3,
+    checkok: 5,
   }[target] ?? 2;
 
   // ── Stop button setup ─────────────────────────────────────────────────────

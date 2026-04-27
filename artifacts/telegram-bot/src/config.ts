@@ -43,6 +43,7 @@ export const CHECKER_TARGETS = [
   { id: "sinesp",       label: "🚔 SINESP",            cat: "Governo BR"     },
   // Financeiro BR
   { id: "privacy",      label: "🔒 Privacy.com.br",    cat: "Financeiro"     },
+  { id: "checkok",      label: "✅ CheckOK",            cat: "Financeiro"     },
 ] as const;
 
 export type CheckerTargetId = (typeof CHECKER_TARGETS)[number]["id"];
