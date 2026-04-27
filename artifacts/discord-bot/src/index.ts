@@ -4109,18 +4109,19 @@ interface LiveCheckerResult {
 }
 
 interface LiveCheckerState {
-  total:       number;
-  index:       number;
-  hits:        number;
-  fails:       number;
-  errors:      number;
-  retries:     number;
-  recent:      LiveCheckerResult[];
-  allResults:  LiveCheckerResult[];
-  done:        boolean;
-  stopped:     boolean;
-  startedAt:   number;
-  credsPerMin: number;
+  total:        number;
+  index:        number;
+  hits:         number;
+  fails:        number;
+  errors:       number;
+  retries:      number;
+  recent:       LiveCheckerResult[];
+  allResults:   LiveCheckerResult[];
+  done:         boolean;
+  stopped:      boolean;
+  userStopped?: boolean;
+  startedAt:    number;
+  credsPerMin:  number;
 }
 
 function buildProgressBar(done: number, total: number, width = 20): string {
@@ -4398,9 +4399,10 @@ async function runStreamingChecker(
     startedAt: Date.now(), credsPerMin: 0,
   };
 
-  // Combine user-abort with overall timeout (no hard cap — proportional to list size)
-  const timeoutMs  = maxTimeoutMs;
-  const timeoutId  = setTimeout(() => abortController.abort("timeout"), timeoutMs);
+  // Overall timeout covers BOTH the connection AND the entire streaming read —
+  // do NOT clear it early; clear it in the finally block after streaming ends.
+  const timeoutMs = maxTimeoutMs;
+  const timeoutId = setTimeout(() => abortController.abort("timeout"), timeoutMs);
 
   let resp: Response;
   try {
@@ -4412,14 +4414,18 @@ async function runStreamingChecker(
     });
   } catch (err: unknown) {
     clearTimeout(timeoutId);
-    const isAbort = (err as Error)?.name === "AbortError";
-    state.stopped = isAbort;
-    state.done    = true;
+    // Connection-phase abort: only mark userStopped if the user explicitly clicked Stop
+    const reason = abortController.signal.reason as string | undefined;
+    if ((err as Error)?.name === "AbortError" && reason === "user_stop") {
+      state.stopped     = true;
+      state.userStopped = true;
+    }
+    state.done = true;
     return state;
   }
-  clearTimeout(timeoutId);
 
   if (!resp.ok || !resp.body) {
+    clearTimeout(timeoutId);
     throw new Error(`Stream HTTP ${resp.status}`);
   }
 
@@ -4461,7 +4467,6 @@ async function runStreamingChecker(
           if (state.recent.length > 8) state.recent.shift();
           state.allResults.push(r);
 
-          // Live speed estimate from elapsed time
           const elapsed = Date.now() - state.startedAt;
           state.credsPerMin = elapsed > 0 ? Math.round((state.index / elapsed) * 60_000) : 0;
 
@@ -4480,22 +4485,23 @@ async function runStreamingChecker(
       }
     }
   } catch (err: unknown) {
-    if ((err as Error)?.name === "AbortError") {
-      state.stopped = true;
-    } else {
-      // Unexpected stream error (server crash, network drop, etc.)
-      // Mark as done so the caller can show whatever results accumulated
-      state.stopped = true;
-      (state as LiveCheckerState & { connectionError?: string }).connectionError =
-        `Conexão perdida em ${state.index}/${state.total} — ${(err as Error)?.message ?? String(err)}`;
+    // Only treat as user-stop if the abort was explicitly triggered by the Stop button
+    const reason = abortController.signal.reason as string | undefined;
+    if ((err as Error)?.name === "AbortError" && reason === "user_stop") {
+      state.stopped     = true;
+      state.userStopped = true;
     }
+    // Any other error (network drop, timeout, server crash) — NOT userStopped.
+    // Keep whatever results accumulated; caller will still send the TXT.
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  // If stream ended without a "done" event, the connection was cut mid-run
+  // Stream ended without a "done" SSE event — server closed connection early.
+  // Mark stopped so the embed shows "interrupted", but do NOT set userStopped —
+  // the handler must still deliver the TXT with accumulated results.
   if (!state.done && !state.stopped) {
     state.stopped = true;
-    (state as LiveCheckerState & { connectionError?: string }).connectionError =
-      `Stream encerrado inesperadamente em ${state.index}/${state.total} credenciais`;
   }
 
   state.done = true;
@@ -4841,8 +4847,8 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   clearInterval(updateInterval);
   stopCollector.stop();
 
-  // ── Stopped early by user ─────────────────────────────────────────────────
-  if (finalState.stopped) {
+  // ── Stopped early by user (only skip TXT when user explicitly clicked Stop) ─
+  if (finalState.userStopped) {
     const stoppedEmbed = buildLiveCheckerEmbed(finalState, targetLabel, targetIcon, concurrency);
     await replyMsg.edit({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
     return;
@@ -5606,7 +5612,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   clearInterval(updateInterval);
   stopCollector.stop();
 
-  if (finalState.stopped) {
+  if (finalState.userStopped) {
     await replyMsg.edit({ embeds: [buildLiveCheckerEmbed(finalState, `${domain} → ${targetLabel}`, targetIcon, concurrency)], components: [] }).catch(() => void 0);
     return;
   }
@@ -6614,8 +6620,8 @@ async function main(): Promise<void> {
     clearInterval(fdUpdateInterval);
     fdStopCollector.stop();
 
-    // ── Stopped early by user ─────────────────────────────────────────────────
-    if (fdFinalState.stopped) {
+    // ── Stopped early by user (only skip TXT when user explicitly clicked Stop) ─
+    if (fdFinalState.userStopped) {
       const stoppedEmbed = buildLiveCheckerEmbed(fdFinalState, targetLabel, targetIcon, concurrency);
       await reply.edit({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
       return;
