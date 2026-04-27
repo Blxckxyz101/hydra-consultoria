@@ -1065,8 +1065,11 @@ async function checkSipni(login: string, password: string): Promise<CheckResult>
     }
 
     // ── Step 4: Follow redirect and verify active session ────────────────────
-    // redirectUrl is present and not the login page → follow it
-    const targetUrl = redirectUrl.includes("inicio.jsf") ? SIPNI_PACIENTES : redirectUrl;
+    // If the server redirected back to the login page the credentials were rejected.
+    if (redirectUrl.includes("inicio.jsf")) {
+      return { credential, login, status: "FAIL", detail: "redirect_to_login" };
+    }
+    const targetUrl = redirectUrl;
     let finalResult: CurlResult;
     try {
       finalResult = await runCurl([
@@ -1092,10 +1095,12 @@ async function checkSipni(login: string, password: string): Promise<CheckResult>
       return m ? m[1].trim() : "";
     }
 
-    // LIVE markers
+    // LIVE markers — must be exclusive to authenticated pages (NOT present on the login page).
+    // Removed: "sipni/tabelas.update", "pni.datasus.gov.br/sipni" — these appear in <script>
+    // tags on the login page itself and cause false positives.
     const liveMarkers = ["pacienteform", "pesquisa de paciente", "listapacientetable",
                          "nenhum paciente encontrado", "cartão sus", "cadastrar paciente",
-                         "sipni/tabelas.update", "pni.datasus.gov.br/sipni", "nível:"];
+                         "nível:"];
     for (const m of liveMarkers) {
       if (finalText.includes(m.toLowerCase())) {
         const nivel = extractNivel(finalBody);
