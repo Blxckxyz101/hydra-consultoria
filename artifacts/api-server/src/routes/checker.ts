@@ -149,13 +149,51 @@ async function runCurlWithProxyRetry(
 // ── Residential-only proxy helper ─────────────────────────────────────────────
 // Forces residential proxy — used by services that actively block datacenter IPs
 // (Netflix 421, Spotify TLS fingerprint, HBO Max geo-block, etc.)
-// Falls back to no-proxy if residential is not configured.
+// Falls back to no-proxy if residential is not configured OR if proxy itself
+// returns a proxy-level error (403 Forbidden / 407 Auth Required from the proxy).
+function isProxyLevelError(result: CurlResult): boolean {
+  const body = result.body;
+  const bLow = body.toLowerCase();
+  // A proxy-level error is distinct from a target-server error:
+  //  • 407: Proxy Authentication Required — always a proxy problem
+  //  • 0:   Connection failed completely
+  //  • 403 with proxy-specific HTML body (not Incapsula, not JSON)
+  //  • 403 with EMPTY body: happens when CONNECT tunnel is refused by the proxy
+  //    (real API servers always return a body with their 403/401 responses)
+  if (result.statusCode === 407 || result.statusCode === 0) return true;
+  if (result.statusCode === 403) {
+    // Empty body = CONNECT tunnel was refused by proxy (not a real API response)
+    if (body.trim().length === 0) return true;
+    // Short HTML with explicit proxy error markers
+    return bLow.includes("proxy error") || bLow.includes("<h2>403</h2>") ||
+           (body.length < 300 && bLow.includes("forbidden") && !bLow.includes("incapsula"));
+  }
+  return false;
+}
+
 async function runCurlResidential(
   fn:        (proxyArgs: string[]) => string[],
   timeoutMs: number,
 ): Promise<CurlResult> {
-  const proxyArgs = getResidentialProxyArgs(); // always residential, never datacenter
-  return runCurl(fn(proxyArgs), timeoutMs);
+  const proxyArgs = getResidentialProxyArgs();
+  if (proxyArgs.length === 0) {
+    // No residential proxy configured — go direct
+    return runCurl(fn([]), timeoutMs);
+  }
+
+  try {
+    const result = await runCurl(fn(proxyArgs), timeoutMs);
+    // If the proxy itself is blocking (403/407 from proxy, not from the target server),
+    // fall back to a direct request so valid credentials still get checked.
+    if (isProxyLevelError(result)) {
+      console.warn("[PROXY] Residential proxy returned error — falling back to direct request");
+      return runCurl(fn([]), timeoutMs);
+    }
+    return result;
+  } catch {
+    // Proxy connection failure (timeout, ECONNREFUSED) — go direct
+    return runCurl(fn([]), timeoutMs);
+  }
 }
 
 // ── Streaming proxy args: public SOCKS5 first, residential fallback ───────────
