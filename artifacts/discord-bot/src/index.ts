@@ -4135,6 +4135,19 @@ interface LiveCheckerState {
   credsPerMin:  number;
 }
 
+interface CheckerHistoryEntry {
+  txt:         Buffer;
+  fileName:    string;
+  targetLabel: string;
+  targetIcon:  string;
+  ts:          Date;
+  hitCount:    number;
+  total:       number;
+}
+
+// Per-user last check history (in-memory — cleared on restart)
+const lastCheckHistory = new Map<string, CheckerHistoryEntry>();
+
 function buildProgressBar(done: number, total: number, width = 20): string {
   const pct   = total === 0 ? 0 : Math.round((done / total) * width);
   const filled = "█".repeat(pct);
@@ -4576,11 +4589,25 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   }
 
   // ── Step 1: Categoria (Streaming vs Logins) ───────────────────────────────
-  const catRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const prevHistory    = lastCheckHistory.get(callerId);
+  const histBtnId      = `chk_history_${Date.now()}`;
+  const catComponents  = [
     new ButtonBuilder().setCustomId("chk_cat_streaming").setLabel("🎬 Streaming").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("chk_cat_logins").setLabel("🔑 Logins").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("chk_cancel").setLabel("✖ Cancelar").setStyle(ButtonStyle.Danger),
-  );
+  ];
+  if (prevHistory) {
+    catComponents.splice(2, 0,
+      new ButtonBuilder().setCustomId(histBtnId).setLabel("📜 Histórico Anterior").setStyle(ButtonStyle.Secondary),
+    );
+  }
+  const catRow = new ActionRowBuilder<ButtonBuilder>().addComponents(catComponents);
+
+  const histDesc = prevHistory
+    ? `\n\n> 📜 Histórico salvo: **${prevHistory.targetIcon} ${prevHistory.targetLabel}** — ` +
+      `**${prevHistory.hitCount}** hit(s) de ${prevHistory.total} ` +
+      `em ${prevHistory.ts.toLocaleDateString("pt-BR")} ${prevHistory.ts.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+    : "";
 
   await interaction.editReply({
     embeds: [new EmbedBuilder()
@@ -4588,7 +4615,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
       .setTitle("🎯 CHECKER — SELECIONE A CATEGORIA")
       .setDescription(
         `**${credentials.length}** credencial${credentials.length === 1 ? "" : "is"} pronta${credentials.length === 1 ? "" : "s"} para checar.\n\n` +
-        `Escolha o tipo de sistema:`,
+        `Escolha o tipo de sistema:` + histDesc,
       )
       .addFields(
         { name: "🎬 Streaming", value: "Crunchyroll · Netflix · Amazon Prime\nHBO Max · Disney+ · Paramount+", inline: true },
@@ -4610,6 +4637,39 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   } catch {
     await interaction.editReply({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhuma categoria selecionada em 60s. Operação cancelada.")], components: [] });
     return;
+  }
+
+  // ── Histórico anterior — enviar TXT do último check como ephemeral ─────────
+  if (catInteraction.customId === histBtnId) {
+    const hist = lastCheckHistory.get(callerId)!;
+    await catInteraction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.GOLD)
+        .setTitle(`📜 HISTÓRICO — ${hist.targetIcon} ${hist.targetLabel}`)
+        .setDescription(
+          `**Data:** ${hist.ts.toLocaleDateString("pt-BR")} às ${hist.ts.toLocaleTimeString("pt-BR")}\n` +
+          `**Testadas:** ${hist.total}\n` +
+          `**✅ HITs:** ${hist.hitCount}\n\n` +
+          `O arquivo completo está anexado abaixo.`,
+        )
+        .setFooter({ text: AUTHOR })],
+      files: [new AttachmentBuilder(hist.txt, { name: hist.fileName })],
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => void 0);
+    // Remove the history button and keep selection open
+    await interaction.editReply({ components: [catRow] }).catch(() => void 0);
+    // Wait again for category selection
+    try {
+      const catReply2 = await interaction.fetchReply();
+      catInteraction  = await catReply2.awaitMessageComponent({
+        componentType: ComponentType.Button,
+        filter: (b) => b.user.id === callerId && b.customId.startsWith("chk_"),
+        time: 60_000,
+      });
+    } catch {
+      await interaction.editReply({ embeds: [buildErrorEmbed("TEMPO ESGOTADO", "Nenhuma categoria selecionada em 60s.")], components: [] });
+      return;
+    }
   }
 
   if (catInteraction.customId === "chk_cancel") {
@@ -4776,14 +4836,19 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     checkok: 5,
   }[target] ?? 2;
 
-  // ── Stop button setup ─────────────────────────────────────────────────────
+  // ── Stop + Hits buttons setup ─────────────────────────────────────────────
   const stopId  = `chk_stop_${Date.now()}`;
+  const hitsId  = `chk_hits_${Date.now()}`;
   const stopAC  = new AbortController();
   const stopRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(stopId)
       .setLabel("🛑 Parar")
       .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(hitsId)
+      .setLabel("📋 Ver Hits Agora")
+      .setStyle(ButtonStyle.Success),
   );
 
   // ── Acknowledge button + show initial progress embed ──────────────────────
@@ -4814,6 +4879,83 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   stopCollector.on("collect", async (btn) => {
     stopAC.abort("user_stop");
     await btn.deferUpdate().catch(() => void 0);
+  });
+
+  // ── "Ver Hits Agora" collector — can be clicked multiple times ────────────
+  const hitsCollector = replyMsg.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    filter: (b) => b.customId === hitsId,
+    time: 24 * 60 * 60_000,
+  });
+
+  hitsCollector.on("collect", async (btn) => {
+    await btn.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => void 0);
+    const currentHits = liveState?.allResults?.filter(r => r.status === "HIT") ?? [];
+    if (currentHits.length === 0) {
+      await btn.editReply({ content: "❌ Nenhum HIT encontrado ainda." }).catch(() => void 0);
+      return;
+    }
+    // Build partial TXT with all hit details
+    const W = 66;
+    const pad  = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+    const line = (c: string) => c.repeat(W);
+    const row  = (content: string) => `║ ${pad(content, W - 2)} ║`;
+    const sep  = (l: string, m: string, r: string, f: string) => l + line(f) + r;
+    const now  = new Date();
+    const dt   = now.toLocaleDateString("pt-BR") + " às " + now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const done = liveState?.index ?? 0;
+    const total = liveState?.total ?? 0;
+
+    const txtLines: string[] = [
+      sep("╔", "", "╗", "═"),
+      row("  LELOUCH BRITANNIA — HITS PARCIAIS"),
+      sep("╠", "", "╣", "═"),
+      row(`  Alvo    : ${targetIcon} ${targetLabel}`),
+      row(`  Data    : ${dt}`),
+      row(`  Status  : ⏳ Em andamento — ${done}/${total} testadas`),
+      sep("╠", "", "╣", "═"),
+      row(`  ✅ HITs encontrados até agora: ${currentHits.length}`),
+      sep("╚", "", "╝", "═"),
+      "",
+    ];
+
+    const section = (title: string) => {
+      const dashes = Math.max(0, Math.floor((W - title.length - 2) / 2));
+      const left  = "─".repeat(dashes);
+      const right = "─".repeat(W - dashes - title.length - 2);
+      txtLines.push(`${left} ${title} ${right}`);
+      txtLines.push("");
+    };
+
+    section(`✅  HITS (${currentHits.length})`);
+    currentHits.forEach((r, i) => {
+      txtLines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
+      txtLines.push(`      └─ ${r.detail ?? "—"}`);
+      txtLines.push("");
+    });
+    txtLines.push(`${"─".repeat(W)}`);
+    txtLines.push(`  ${AUTHOR}  •  Snapshot parcial`);
+
+    const buf      = Buffer.from(txtLines.join("\n"), "utf-8");
+    const snapName = `hits_parciais_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}.txt`;
+
+    await btn.editReply({
+      embeds: [new EmbedBuilder()
+        .setColor(COLORS.GREEN)
+        .setTitle(`📋 HITS PARCIAIS — ${targetIcon} ${targetLabel}`)
+        .setDescription(
+          `**${currentHits.length}** hit${currentHits.length === 1 ? "" : "s"} encontrado${currentHits.length === 1 ? "" : "s"} até agora ` +
+          `(${done}/${total} testadas).\n\n` +
+          currentHits.slice(0, 10).map((r, i) => {
+            const cred = r.credential.length > 50 ? r.credential.slice(0, 47) + "…" : r.credential;
+            const det  = r.detail?.length > 60    ? r.detail.slice(0, 57)     + "…" : (r.detail ?? "—");
+            return `**${i + 1}.** \`${cred}\`\n> 📋 ${det}`;
+          }).join("\n\n") +
+          (currentHits.length > 10 ? `\n\n*...e mais ${currentHits.length - 10} no arquivo.*` : ""),
+        )
+        .setFooter({ text: `${AUTHOR} • arquivo completo abaixo` })],
+      files: [new AttachmentBuilder(buf, { name: snapName })],
+    }).catch(() => void 0);
   });
 
   // ── Live streaming with animated embed ────────────────────────────────────
@@ -4857,25 +4999,48 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
 
   clearInterval(updateInterval);
   stopCollector.stop();
+  hitsCollector.stop();
 
-  // ── Stopped early by user (only skip TXT when user explicitly clicked Stop) ─
+  // ── Build TXT (needed for all exit paths) ────────────────────────────────
+  const ts       = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const fileName = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
+  const txtBuf   = buildCheckerTxt(finalState.allResults, finalState, targetLabel, targetIcon, concurrency);
+
+  // ── Save to history (always, including user-stop) ─────────────────────────
+  lastCheckHistory.set(callerId, {
+    txt:         txtBuf,
+    fileName:    fileName,
+    targetLabel: targetLabel,
+    targetIcon:  targetIcon,
+    ts:          new Date(),
+    hitCount:    finalState.allResults.filter(r => r.status === "HIT").length,
+    total:       finalState.total,
+  });
+
+  // ── Stopped early by user — send TXT and final embed ──────────────────────
   if (finalState.userStopped) {
     const stoppedEmbed = buildLiveCheckerEmbed(finalState, targetLabel, targetIcon, concurrency);
-    await replyMsg.edit({ embeds: [stoppedEmbed], components: [] }).catch(() => void 0);
+    const attachment   = new AttachmentBuilder(txtBuf, { name: fileName });
+    await replyMsg.edit({ embeds: [stoppedEmbed], files: [attachment], components: [] }).catch(() => void 0);
+    // Public hits announcement if any
+    const stoppedHits = finalState.allResults.filter(r => r.status === "HIT");
+    if (stoppedHits.length > 0 && interaction.channel && "send" in interaction.channel) {
+      await (interaction.channel as import("discord.js").TextChannel)
+        .send({
+          content: `@everyone 🎯 **${stoppedHits.length} HIT(S)** encontrado(s) antes de parar — ${targetIcon} ${targetLabel}`,
+          allowedMentions: { parse: ["everyone"] },
+        }).catch(() => void 0);
+    }
     return;
   }
 
   // ── Final results — summary embed + .txt attachment ──────────────────────
   const summaryEmbed = buildCheckerSummaryEmbed(finalState, targetLabel, targetIcon, concurrency);
-  const txtBuf       = buildCheckerTxt(finalState.allResults, finalState, targetLabel, targetIcon, concurrency);
-  const ts           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const fileName     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
   const attachment   = new AttachmentBuilder(txtBuf, { name: fileName });
 
   const editOk = await interaction.editReply({ embeds: [summaryEmbed], files: [attachment], components: [] })
     .catch(() => null);
   if (!editOk) {
-    // Fallback: send file as a new message if editReply failed (token expired, file too large, etc.)
     if (interaction.channel && "send" in interaction.channel) {
       await (interaction.channel as import("discord.js").TextChannel)
         .send({ embeds: [summaryEmbed], files: [attachment] })
@@ -4898,8 +5063,11 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     const hitsBuf  = Buffer.from(hitLines.join("\n"), "utf-8");
     const hitsFile = `hits_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
     await (interaction.channel as import("discord.js").TextChannel)
-      .send({ content: `@everyone 🎯 **${finalHits.length} HIT(S)** encontrado(s) — ${targetIcon} ${targetLabel}`, files: [new AttachmentBuilder(hitsBuf, { name: hitsFile })], allowedMentions: { parse: ["everyone"] } })
-      .catch(() => void 0);
+      .send({
+        content: `@everyone 🎯 **${finalHits.length} HIT(S)** encontrado(s) — ${targetIcon} ${targetLabel}`,
+        files: [new AttachmentBuilder(hitsBuf, { name: hitsFile })],
+        allowedMentions: { parse: ["everyone"] },
+      }).catch(() => void 0);
   }
 }
 
