@@ -1,9 +1,71 @@
 {
   "residential": {
-    "host": "proxy.proxying.io",
-    "port": 8080,
-    "username": "SHJysch1",
-    "password": "zLLmLe6Eov",
-    "count": 1000
-  }
+    "host": "31.59.20.176",
+    "port": 6754,
+    "username": "nvfnpagw",
+    "password": "tz604w73efy0",
+    "count": 1
+  },
+  "pinnedList": [
+    {
+      "host": "31.59.20.176",
+      "port": 6754,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "198.23.239.134",
+      "port": 6540,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "45.38.107.97",
+      "port": 6014,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "107.172.163.27",
+      "port": 6543,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "198.105.121.200",
+      "port": 6462,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "216.10.27.159",
+      "port": 6837,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "142.111.67.146",
+      "port": 5611,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "191.96.254.138",
+      "port": 6185,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "31.58.9.4",
+      "port": 6077,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    },
+    {
+      "host": "104.239.107.47",
+      "port": 5699,
+      "username": "nvfnpagw",
+      "password": "tz604w73efy0"
+    }
+  ]
 }

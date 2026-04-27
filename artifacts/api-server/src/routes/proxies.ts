@@ -37,18 +37,44 @@ export function isFetchingProxies()  { return isFetching; }
 // ── Persistence — save/load residential config across restarts ────────────
 const CONFIG_FILE = path.join(process.cwd(), "data", "proxy-config.json");
 
+interface SavedConfig {
+  residential?: typeof residentialCreds;
+  pinnedList?: Array<{ host: string; port: number; username?: string; password?: string }>;
+}
+
 function saveConfig(): void {
   try {
     fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ residential: residentialCreds }, null, 2));
+    // Save all unique authenticated pinned proxies (not just residentialCreds single-slot)
+    const seen = new Set<string>();
+    const pinnedList = pinnedProxies
+      .filter(p => p.username && p.password)
+      .filter(p => {
+        const k = `${p.host}:${p.port}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .map(p => ({ host: p.host, port: p.port, username: p.username, password: p.password }));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ residential: residentialCreds, pinnedList }, null, 2));
   } catch { /* non-fatal */ }
 }
 
 function loadConfig(): void {
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf8");
-    const cfg = JSON.parse(raw) as { residential?: typeof residentialCreds };
-    if (cfg.residential) {
+    const cfg = JSON.parse(raw) as SavedConfig;
+    // Restore full pinned proxy list if present
+    if (cfg.pinnedList && cfg.pinnedList.length > 0) {
+      pinnedProxies = cfg.pinnedList.map((p, i) => ({
+        host: p.host, port: p.port, responseMs: i + 1, type: "http" as const,
+        username: p.username, password: p.password,
+      }));
+      proxyCache = [...pinnedProxies];
+      lastFetch = Date.now();
+      console.log(`[PROXIES] Restored ${pinnedProxies.length} pinned proxies from config`);
+    } else if (cfg.residential) {
+      // Legacy: single residential config
       residentialCreds = cfg.residential;
       pinnedProxies = Array.from({ length: cfg.residential.count }, (_, i) => ({
         host: cfg.residential!.host, port: cfg.residential!.port,
@@ -57,8 +83,9 @@ function loadConfig(): void {
       }));
       proxyCache = [...pinnedProxies];
       lastFetch = Date.now();
-      console.log(`[PROXIES] Restored ${cfg.residential.count} residential slots from config (${cfg.residential.host})`);
+      console.log(`[PROXIES] Restored ${cfg.residential.count} residential slots from legacy config (${cfg.residential.host})`);
     }
+    if (cfg.residential) residentialCreds = cfg.residential;
   } catch { /* no saved config */ }
 }
 
@@ -408,6 +435,7 @@ router.post("/proxies/import", (req, res): void => {
   const pinnedKeys = new Set(pinnedProxies.map(p => `${p.type}:${p.host}:${p.port}`));
   proxyCache = [...pinnedProxies, ...proxyCache.filter(p => !pinnedKeys.has(`${p.type}:${p.host}:${p.port}`))];
   lastFetch = Date.now();
+  saveConfig();
   res.json({ status: "imported", added: parsed.length, total: proxyCache.length });
 });
 

@@ -116,6 +116,25 @@ const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // ── Residential proxy args for curl (streaming checkers) ──────────────────────
 // Streaming services block datacenter IPs — route them through residential proxy.
 function getResidentialProxyArgs(): string[] {
+  // Prefer picking from ALL authenticated proxies in the cache (residential pool)
+  // so we rotate across multiple IPs instead of hammering a single endpoint.
+  const authPool = proxyCache.filter(p => p.username && p.password &&
+    // Dedupe: avoid 1000 identical slots from a rotating residential config
+    p.host !== "0.0.0.0"
+  );
+  // Deduplicate by host:port before sampling
+  const seen = new Set<string>();
+  const unique = authPool.filter(p => {
+    const k = `${p.host}:${p.port}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (unique.length > 0) {
+    const pick = unique[Math.floor(Math.random() * unique.length)];
+    return ["-x", `http://${pick.username}:${pick.password}@${pick.host}:${pick.port}`];
+  }
+  // Fallback: use the single configured residential creds
   const c = getResidentialCreds();
   if (!c) return [];
   return ["-x", `http://${c.username}:${c.password}@${c.host}:${c.port}`];
