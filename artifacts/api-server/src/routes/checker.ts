@@ -1562,8 +1562,6 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
           const authHdr = `Bearer ${token}`;
 
           // ── Secondary: entrepreneur/home — score, scoreMessage, situação ──────
-          // GET /serasaempreendedor/entrepreneur/v1/home
-          // Real response fields: score, scoreModel, scoreMessage, companySize, banner, cards
           try {
             const homeRes = await runCurlResidential(
               (px) => [
@@ -1579,23 +1577,65 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
             );
             if (homeRes.statusCode === 200) {
               const hj = JSON.parse(homeRes.body) as Record<string, unknown>;
-              // Score de crédito Serasa (0–1000)
-              const score = hj.score ?? hj.creditScore ?? hj.scoreValue ?? "";
-              if (score !== "") info.push(`score:${score}`);
-              // Mensagem do score / situação de inadimplência
-              const scoreMsg = String(hj.scoreMessage ?? hj.message ?? "").trim();
-              if (scoreMsg) info.push(`status:${scoreMsg.slice(0, 80)}`);
-              // Tamanho da empresa (1=MEI/micro, etc.)
+
+              // ── Score de crédito Serasa (0–1000) com classificação ─────────────
+              const scoreRaw = hj.score ?? hj.creditScore ?? hj.scoreValue;
+              if (scoreRaw !== undefined && scoreRaw !== null && scoreRaw !== "") {
+                const scoreNum = Number(scoreRaw);
+                let scoreLabel: string;
+                if      (scoreNum <= 300) scoreLabel = "RUIM";
+                else if (scoreNum <= 500) scoreLabel = "REGULAR";
+                else if (scoreNum <= 700) scoreLabel = "BOM";
+                else if (scoreNum <= 900) scoreLabel = "OTIMO";
+                else                     scoreLabel = "EXCELENTE";
+                info.push(`score:${scoreNum}/1000 (${scoreLabel})`);
+              }
+
+              // ── Situação / motivo do score ─────────────────────────────────────
+              const rawMsg = String(hj.scoreMessage ?? hj.message ?? "").trim().toUpperCase();
+              if (rawMsg) {
+                let situacao = rawMsg;
+                if      (rawMsg.includes("DEFAULT") && rawMsg.includes("FINANCEIRA"))  situacao = "NEGATIVADO:DIVIDA_FINANCEIRA";
+                else if (rawMsg.includes("DEFAULT") && rawMsg.includes("VENCIDA"))     situacao = "NEGATIVADO:DIVIDA_VENCIDA";
+                else if (rawMsg.includes("DEFAULT"))                                    situacao = "NEGATIVADO:DEFAULT";
+                else if (rawMsg.includes("NEGATIVADO"))                                 situacao = "NEGATIVADO";
+                else if (rawMsg.includes("SEM RESTRI") || rawMsg.includes("POSITIVO")) situacao = "SEM_RESTRICOES";
+                else if (rawMsg.includes("ANALISE") || rawMsg.includes("ANÁLISE"))     situacao = "EM_ANALISE";
+                else if (rawMsg.includes("INATIVO"))                                    situacao = "INATIVO";
+                else                                                                    situacao = rawMsg.slice(0, 60).replace(/\s+/g, "_");
+                info.push(`situacao:${situacao}`);
+              }
+
+              // ── Porte da empresa ───────────────────────────────────────────────
+              const porteMap: Record<string, string> = {
+                "1": "MEI", "2": "ME", "3": "EPP", "4": "MDE", "5": "GDE",
+              };
               const compSize = String(hj.companySize ?? "").trim();
-              if (compSize) info.push(`porte:${compSize}`);
-              // Banner/plano do usuário (REPORTS, PREMIUM, FREE, etc.)
-              const banner = String(hj.banner ?? hj.plan ?? hj.planName ?? "").trim();
-              if (banner) info.push(`plano:${banner}`);
-              // CNPJ se disponível
-              const cnpj = String(hj.cnpj ?? hj.document ?? hj.taxId ?? "").trim();
-              if (cnpj) info.push(`cnpj:${cnpj}`);
-              // firstAccess indica conta recém-criada (menos valiosa)
+              if (compSize) info.push(`porte:${porteMap[compSize] ?? compSize}`);
+
+              // ── Plano/banner ───────────────────────────────────────────────────
+              const bannerMap: Record<string, string> = {
+                "REPORTS": "RELATORIOS", "PREMIUM": "PREMIUM",
+                "FREE": "GRATUITO",      "MARKETPLACE": "MARKETPLACE",
+              };
+              const banner = String(hj.banner ?? hj.plan ?? hj.planName ?? "").trim().toUpperCase();
+              if (banner) info.push(`plano:${bannerMap[banner] ?? banner}`);
+
+              // ── Módulos disponíveis ────────────────────────────────────────────
+              const cards = Array.isArray(hj.cards) ? hj.cards as string[] : [];
+              const cardMap: Record<string, string> = {
+                "HEALTH": "SAUDE", "REPORTS": "RELATORIOS", "MARKETPLACE": "MARKETPLACE",
+                "CREDIT": "CREDITO", "PROTECTION": "PROTECAO",
+              };
+              if (cards.length > 0) {
+                info.push(`modulos:${cards.map(c => cardMap[c] ?? c).join(",")}`);
+              }
+
+              // ── Conta nova (menos valiosa) ─────────────────────────────────────
               if (hj.firstAccess === true) info.push(`primeiro_acesso:sim`);
+
+              // ── Parceiro (conta parceira Serasa) ──────────────────────────────
+              if (hj.partner === true) info.push(`parceiro:sim`);
             }
           } catch { /**/ }
 
