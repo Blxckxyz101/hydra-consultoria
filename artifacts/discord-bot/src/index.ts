@@ -4145,95 +4145,127 @@ function safeEmbeds(embeds: EmbedBuilder[], budget = 5800): EmbedBuilder[] {
   return result;
 }
 
-/** Builds a public hits-only embed to be sent in the channel after a checker run. */
-function buildHitsEmbed(
-  hits:        LiveCheckerResult[],
+/** Builds a beautiful, organized .txt file with all checker results. */
+function buildCheckerTxt(
+  allResults:  LiveCheckerResult[],
+  finalState:  LiveCheckerState,
   targetLabel: string,
   targetIcon:  string,
-  total:       number,
-): EmbedBuilder {
-  const lines = hits.map(r => {
-    const cred   = r.credential.length > 60 ? r.credential.slice(0, 57) + "..." : r.credential;
-    const detail = r.detail?.length > 80     ? r.detail.slice(0, 77) + "..."    : (r.detail ?? "—");
-    return `> \`${cred}\`\n> 📋 ${detail}`;
-  });
+  concurrency: number,
+): Buffer {
+  const W = 66;
+  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+  const line = (c: string) => c.repeat(W);
+  const row  = (content: string) => `║ ${pad(content, W - 2)} ║`;
+  const sep  = (l: string, m: string, r: string, f: string) => l + line(f) + r;
 
-  return new EmbedBuilder()
-    .setColor(COLORS.GREEN)
-    .setTitle(`✅ HITS ENCONTRADOS — ${targetIcon} ${targetLabel}`)
-    .setDescription(
-      `**${hits.length}** hit${hits.length === 1 ? "" : "s"} de **${total}** testada${total === 1 ? "" : "s"}\n\n` +
-      lines.join("\n\n"),
-    )
-    .setTimestamp()
-    .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` });
+  const now  = new Date();
+  const dt   = now.toLocaleDateString("pt-BR") + " às " + now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const elapsed = Math.round((Date.now() - finalState.startedAt) / 1000);
+  const elStr   = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s` : `${elapsed}s`;
+  const speedStr = finalState.credsPerMin > 0 ? `${finalState.credsPerMin} cr/min` : "—";
+
+  const hits   = allResults.filter(r => r.status === "HIT");
+  const fails  = allResults.filter(r => r.status === "FAIL");
+  const errors = allResults.filter(r => r.status === "ERROR");
+
+  const lines: string[] = [];
+
+  // ── Header box ──────────────────────────────────────────────────────────────
+  lines.push(sep("╔", "", "╗", "═"));
+  lines.push(row("  LELOUCH BRITANNIA — CHECKER RESULTADOS"));
+  lines.push(sep("╠", "", "╣", "═"));
+  lines.push(row(`  Alvo      : ${targetIcon} ${targetLabel}`));
+  lines.push(row(`  Data      : ${dt}`));
+  lines.push(row(`  Threads   : ${concurrency}x paralelo`));
+  lines.push(row(`  Duração   : ${elStr}  |  Velocidade : ${speedStr}`));
+  lines.push(sep("╠", "", "╣", "═"));
+  lines.push(row(`  Total : ${finalState.total}   ✅ HITS : ${hits.length}   ❌ FAILS : ${fails.length}   ⚠  ERROS : ${errors.length}`));
+  lines.push(sep("╚", "", "╝", "═"));
+  lines.push("");
+
+  // ── Section helper ───────────────────────────────────────────────────────────
+  const section = (title: string) => {
+    const dashes = Math.max(0, Math.floor((W - title.length - 2) / 2));
+    const left  = "─".repeat(dashes);
+    const right = "─".repeat(W - dashes - title.length - 2);
+    lines.push(`${left} ${title} ${right}`);
+    lines.push("");
+  };
+
+  // ── HITS ─────────────────────────────────────────────────────────────────────
+  if (hits.length > 0) {
+    section(`✅  HITS (${hits.length})`);
+    hits.forEach((r, i) => {
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
+      lines.push(`      └─ ${r.detail ?? "—"}`);
+      lines.push("");
+    });
+  } else {
+    section("✅  HITS (0)");
+    lines.push("      Nenhum hit encontrado.");
+    lines.push("");
+  }
+
+  // ── FAILS ─────────────────────────────────────────────────────────────────────
+  if (fails.length > 0) {
+    section(`❌  FAILS (${fails.length})`);
+    fails.forEach((r, i) => {
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
+      lines.push(`      └─ ${r.detail ?? "invalid_credentials"}`);
+      if ((i + 1) % 10 === 0) lines.push("");
+    });
+    lines.push("");
+  }
+
+  // ── ERRORS ────────────────────────────────────────────────────────────────────
+  if (errors.length > 0) {
+    section(`⚠   ERROS (${errors.length})`);
+    errors.forEach((r, i) => {
+      lines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
+      lines.push(`      └─ ${r.detail ?? "unknown_error"}`);
+      if ((i + 1) % 10 === 0) lines.push("");
+    });
+    lines.push("");
+  }
+
+  // ── Footer ───────────────────────────────────────────────────────────────────
+  lines.push("═".repeat(W));
+  lines.push(`  ${AUTHOR}  •  Lelouch Britannia Panel`);
+  lines.push("═".repeat(W));
+
+  return Buffer.from(lines.join("\n"), "utf-8");
 }
 
-/** Builds the final result embeds for a completed checker run. */
-function buildCheckerFinalEmbeds(
-  allResults: LiveCheckerResult[],
-  finalState: LiveCheckerState,
+/** Builds a compact summary embed shown alongside the .txt result file. */
+function buildCheckerSummaryEmbed(
+  finalState:  LiveCheckerState,
   targetLabel: string,
-  targetIcon: string,
+  targetIcon:  string,
   concurrency: number,
-  isSlash: boolean,
-): EmbedBuilder[] {
-  const icon = (s: "HIT" | "FAIL" | "ERROR") => s === "HIT" ? "✅" : s === "FAIL" ? "❌" : "⚠️";
-  const lines = allResults.map(r => {
-    const cred   = r.credential.length > 50 ? r.credential.slice(0, 47) + "..." : r.credential;
-    const detail = r.detail.length > 55    ? r.detail.slice(0, 52) + "..."    : r.detail;
-    return `${icon(r.status)} \`${cred}\`\n> ${detail}`;
-  });
+): EmbedBuilder {
+  const hits   = finalState.hits;
+  const fails  = finalState.fails;
+  const errors = finalState.errors;
+  const color  = hits > 0 ? COLORS.GREEN : errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
+  const elapsed = Math.round((Date.now() - finalState.startedAt) / 1000);
+  const elStr   = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s` : `${elapsed}s`;
+  const speedStr = finalState.credsPerMin > 0 ? `⚡ ${finalState.credsPerMin} cr/min` : "";
+  const retryStr = finalState.retries    > 0 ? `🔄 ${finalState.retries} retry` : "";
+  const extras   = [speedStr, retryStr].filter(Boolean).join(" • ");
 
-  const chunks: string[][] = [[]];
-  for (const line of lines) {
-    const cur = chunks[chunks.length - 1];
-    if (cur.join("\n\n").length + line.length + 2 > 1400) chunks.push([line]);
-    else cur.push(line);
-  }
-
-  const color = finalState.hits > 0 ? COLORS.GREEN : finalState.errors === finalState.total ? COLORS.ORANGE : COLORS.RED;
-  const speedStr  = finalState.credsPerMin > 0 ? ` • ⚡ ${finalState.credsPerMin} cr/min` : "";
-  const retryStr  = finalState.retries    > 0 ? ` • 🔄 ${finalState.retries} retry` : "";
-  const footer = `${AUTHOR} • ${targetLabel} • ${concurrency}x paralelo${speedStr}${retryStr}`;
-
-  const embeds: EmbedBuilder[] = chunks.map((chunk, i) => {
-    const isFirst = i === 0;
-    const header  = isFirst
-      ? `📊 **${finalState.total}** testada${finalState.total === 1 ? "" : "s"} — ✅ **${finalState.hits} HIT** | ❌ **${finalState.fails} FAIL** | ⚠️ **${finalState.errors} ERRO**\n\n`
-      : "";
-    return new EmbedBuilder()
-      .setColor(color)
-      .setTitle(isFirst ? `${targetIcon} CHECKER ${targetLabel.toUpperCase()} — RESULTADOS` : `${targetIcon} RESULTADOS (${i + 1})`)
-      .setDescription((header + chunk.join("\n\n")).slice(0, 2000))
-      .setTimestamp(isFirst ? new Date() : null)
-      .setFooter(isFirst ? { text: footer } : null);
-  });
-
-  const hits = allResults.filter(r => r.status === "HIT");
-  if (hits.length > 0) {
-    embeds.push(new EmbedBuilder()
-      .setColor(COLORS.GREEN)
-      .setTitle(`✅ HITS CONFIRMADOS (${hits.length}) — ${targetIcon} ${targetLabel}`)
-      .setDescription(hits.map(r => `\`${r.credential}\` → ${r.detail}`).join("\n").slice(0, 1500))
-      .setFooter({ text: `${AUTHOR} • ${hits.length} conta${hits.length === 1 ? "" : "s"} válida${hits.length === 1 ? "" : "s"}` }),
-    );
-  }
-
-  const activeHits = allResults.filter(
-    r => r.status === "HIT" && r.detail?.includes("/dashboard") && !r.detail?.toLowerCase().includes("expired"),
-  );
-  if (activeHits.length > 0) {
-    const activeText = activeHits.map(r => `> \`${r.credential}\`\n> 🔗 ${r.detail}`).join("\n\n");
-    embeds.push(new EmbedBuilder()
-      .setColor(0xFF0000)
-      .setTitle(`🚨 LOGIN ATIVO ENCONTRADO (${activeHits.length})`)
-      .setDescription(`**Conta${activeHits.length === 1 ? "" : "s"} com acesso confirmado!**\n\n${activeText}`.slice(0, 1200))
-      .setFooter({ text: `${AUTHOR} • Acesso ativo — dashboard acessível` }),
-    );
-  }
-
-  return safeEmbeds(embeds).slice(0, 10);
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`${targetIcon} CHECKER ${targetLabel.toUpperCase()} — CONCLUÍDO`)
+    .setDescription(
+      `📊 **${finalState.total}** testada${finalState.total === 1 ? "" : "s"}\n\n` +
+      `✅ **HITS** — ${hits}\n` +
+      `❌ **FAILS** — ${fails}\n` +
+      `⚠️ **ERROS** — ${errors}\n\n` +
+      `⏱️ Duração: **${elStr}**${extras ? `\n${extras}` : ""}`,
+    )
+    .setTimestamp()
+    .setFooter({ text: `${AUTHOR} • ${concurrency}x paralelo • resultados no arquivo abaixo` });
 }
 
 function buildLiveCheckerEmbed(
@@ -4804,16 +4836,30 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  // ── Final results ─────────────────────────────────────────────────────────
-  const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, targetLabel, targetIcon, concurrency, true);
-  await replyMsg.edit({ embeds: finalEmbeds, components: [] });
+  // ── Final results — summary embed + .txt attachment ──────────────────────
+  const summaryEmbed = buildCheckerSummaryEmbed(finalState, targetLabel, targetIcon, concurrency);
+  const txtBuf       = buildCheckerTxt(finalState.allResults, finalState, targetLabel, targetIcon, concurrency);
+  const ts           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const fileName     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
+  const attachment   = new AttachmentBuilder(txtBuf, { name: fileName });
+  await replyMsg.edit({ embeds: [summaryEmbed], files: [attachment], components: [] });
 
-  // ── Send hits to channel (public) ─────────────────────────────────────────
+  // ── Send hits-only .txt to channel (public) ───────────────────────────────
   const finalHits = finalState.allResults.filter(r => r.status === "HIT");
   if (finalHits.length > 0 && interaction.channel && "send" in interaction.channel) {
-    const hitsEmbed = buildHitsEmbed(finalHits, targetLabel, targetIcon, finalState.total);
+    const hitLines: string[] = [
+      `✅ HITS — ${targetIcon} ${targetLabel}`,
+      `${"─".repeat(50)}`,
+      "",
+      ...finalHits.map((r, i) => `[${String(i + 1).padStart(2, "0")}]  ${r.credential}\n      └─ ${r.detail ?? "—"}`),
+      "",
+      `${"─".repeat(50)}`,
+      `${finalHits.length} hit(s) de ${finalState.total} testada(s)  •  ${AUTHOR}`,
+    ];
+    const hitsBuf  = Buffer.from(hitLines.join("\n"), "utf-8");
+    const hitsFile = `hits_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
     await (interaction.channel as import("discord.js").TextChannel)
-      .send({ embeds: [hitsEmbed] })
+      .send({ content: `@everyone 🎯 **${finalHits.length} HIT(S)** encontrado(s) — ${targetIcon} ${targetLabel}`, files: [new AttachmentBuilder(hitsBuf, { name: hitsFile })], allowedMentions: { parse: ["everyone"] } })
       .catch(() => void 0);
   }
 }
@@ -5543,13 +5589,30 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  const finalEmbeds = buildCheckerFinalEmbeds(finalState.allResults, finalState, `${domain} → ${targetLabel}`, targetIcon, concurrency, true);
-  await replyMsg.edit({ embeds: finalEmbeds, components: [] });
+  const searchLabel  = `${domain} → ${targetLabel}`;
+  const summaryEmbed2 = buildCheckerSummaryEmbed(finalState, searchLabel, targetIcon, concurrency);
+  const txtBuf2       = buildCheckerTxt(finalState.allResults, finalState, searchLabel, targetIcon, concurrency);
+  const ts2           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const fileName2     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts2}.txt`;
+  const attachment2   = new AttachmentBuilder(txtBuf2, { name: fileName2 });
+  await replyMsg.edit({ embeds: [summaryEmbed2], files: [attachment2], components: [] });
 
   const finalHits = finalState.allResults.filter(r => r.status === "HIT");
   if (finalHits.length > 0 && interaction.channel && "send" in interaction.channel) {
-    const hitsEmbed = buildHitsEmbed(finalHits, `${domain} → ${targetLabel}`, targetIcon, finalState.total);
-    await (interaction.channel as import("discord.js").TextChannel).send({ embeds: [hitsEmbed] }).catch(() => void 0);
+    const hitLines2: string[] = [
+      `✅ HITS — ${targetIcon} ${searchLabel}`,
+      `${"─".repeat(50)}`,
+      "",
+      ...finalHits.map((r, i) => `[${String(i + 1).padStart(2, "0")}]  ${r.credential}\n      └─ ${r.detail ?? "—"}`),
+      "",
+      `${"─".repeat(50)}`,
+      `${finalHits.length} hit(s) de ${finalState.total} testada(s)  •  ${AUTHOR}`,
+    ];
+    const hitsBuf2  = Buffer.from(hitLines2.join("\n"), "utf-8");
+    const hitsFile2 = `hits_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts2}.txt`;
+    await (interaction.channel as import("discord.js").TextChannel)
+      .send({ content: `@everyone 🎯 **${finalHits.length} HIT(S)** encontrado(s) — ${targetIcon} ${searchLabel}`, files: [new AttachmentBuilder(hitsBuf2, { name: hitsFile2 })], allowedMentions: { parse: ["everyone"] } })
+      .catch(() => void 0);
   }
 }
 
@@ -6527,15 +6590,29 @@ async function main(): Promise<void> {
       return;
     }
 
-    // ── Final results ─────────────────────────────────────────────────────────
-    const fdFinalEmbeds = buildCheckerFinalEmbeds(fdFinalState.allResults, fdFinalState, targetLabel, targetIcon, concurrency, false);
-    await reply.edit({ embeds: fdFinalEmbeds, components: [] }).catch(() => void 0);
+    // ── Final results — summary embed + .txt attachment ──────────────────────
+    const fdSummaryEmbed = buildCheckerSummaryEmbed(fdFinalState, targetLabel, targetIcon, concurrency);
+    const fdTxtBuf       = buildCheckerTxt(fdFinalState.allResults, fdFinalState, targetLabel, targetIcon, concurrency);
+    const fdTs           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const fdFileName     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${fdTs}.txt`;
+    const fdAttachment   = new AttachmentBuilder(fdTxtBuf, { name: fdFileName });
+    await reply.edit({ embeds: [fdSummaryEmbed], files: [fdAttachment], components: [] }).catch(() => void 0);
 
-    // ── Send hits to channel (public) ─────────────────────────────────────────
+    // ── Send hits-only .txt to channel (public) ───────────────────────────────
     const fdHits = fdFinalState.allResults.filter(r => r.status === "HIT");
     if (fdHits.length > 0) {
-      const hitsEmbed = buildHitsEmbed(fdHits, targetLabel, targetIcon, fdFinalState.total);
-      await message.channel.send({ embeds: [hitsEmbed] }).catch(() => void 0);
+      const fdHitLines: string[] = [
+        `✅ HITS — ${targetIcon} ${targetLabel}`,
+        `${"─".repeat(50)}`,
+        "",
+        ...fdHits.map((r, i) => `[${String(i + 1).padStart(2, "0")}]  ${r.credential}\n      └─ ${r.detail ?? "—"}`),
+        "",
+        `${"─".repeat(50)}`,
+        `${fdHits.length} hit(s) de ${fdFinalState.total} testada(s)  •  ${AUTHOR}`,
+      ];
+      const fdHitsBuf  = Buffer.from(fdHitLines.join("\n"), "utf-8");
+      const fdHitsFile = `hits_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${fdTs}.txt`;
+      await message.channel.send({ content: `@everyone 🎯 **${fdHits.length} HIT(S)** encontrado(s) — ${targetIcon} ${targetLabel}`, files: [new AttachmentBuilder(fdHitsBuf, { name: fdHitsFile })], allowedMentions: { parse: ["everyone"] } }).catch(() => void 0);
     }
   });
 
