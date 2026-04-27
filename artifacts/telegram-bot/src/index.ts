@@ -42,6 +42,37 @@ function getSession(userId: number): Session {
   return sessions.get(userId)!;
 }
 
+// ── Per-user last check history (in-memory) ───────────────────────────────────
+interface TgCheckHistory {
+  hits:      HitEntry[];
+  fails:     string[];
+  errors:    string[];
+  label:     string;
+  total:     number;
+  ts:        Date;
+  elapsedMs: number;
+  txtBuf:    Buffer;
+  fileName:  string;
+}
+const lastCheckHistoryTg = new Map<number, TgCheckHistory>();
+
+function saveCheckHistory(
+  userId:    number,
+  label:     string,
+  total:     number,
+  hits:      HitEntry[],
+  fails:     string[],
+  errors:    string[],
+  elapsedMs: number,
+  stopped:   boolean,
+) {
+  const txtBuf  = buildCheckerTxt(label, total, hits, fails, errors, stopped, elapsedMs);
+  const ts      = new Date();
+  const safeLbl = label.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  const fileName = `checker_${safeLbl}_${ts.toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`;
+  lastCheckHistoryTg.set(userId, { hits: [...hits], fails: [...fails], errors: [...errors], label, total, ts, elapsedMs, txtBuf, fileName });
+}
+
 // ── HTML escape ───────────────────────────────────────────────────────────────
 function esc(s: string) {
   return s.replace(/[&<>"']/g, c =>
@@ -306,7 +337,10 @@ function homeKeyboard() {
       Markup.button.callback("🎯 Ver HITs",            "home_hits"),
     ],
     [
+      Markup.button.callback("📜 Histórico",           "home_historico"),
       Markup.button.callback("📋 Status Sessão",       "home_status"),
+    ],
+    [
       Markup.button.callback("🗑 Limpar Sessão",       "home_clear"),
     ],
   ];
@@ -398,7 +432,8 @@ bot.command("help", async ctx => {
     `/import   — Importar credenciais para o banco`,
     ``,
     `<b>📊 Resultados:</b>`,
-    `/hits     — Ver HITs da sessão`,
+    `/hits      — Ver HITs da sessão atual`,
+    `/historico — TXT do último check (anterior)`,
     `/fails    — Ver FAILs da sessão`,
     `/errors   — Ver erros da sessão`,
     `/stats    — Estatísticas do banco`,
@@ -467,6 +502,54 @@ async function showHits(ctx: Context, s: Session) {
       LINE,
     ].join("\n"),
     Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+}
+
+// ── /historico ────────────────────────────────────────────────────────────────
+bot.command("historico",     async ctx => { await showHistorico(ctx); });
+bot.action("home_historico", async ctx => { await ctx.answerCbQuery(); await showHistorico(ctx); });
+
+async function showHistorico(ctx: Context) {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  const hist = lastCheckHistoryTg.get(userId);
+
+  if (!hist) {
+    await ctx.replyWithHTML(
+      `📜 <b>Histórico Anterior</b>\n${LINE2}\n\n<i>Nenhum check anterior encontrado nesta sessão.\nInicie um check e os resultados ficam guardados aqui.</i>\n${LINE}`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    return;
+  }
+
+  const ts      = hist.ts.toLocaleString("pt-BR", { hour12: false });
+  const elapsed = Math.round(hist.elapsedMs / 1000);
+  const elStr   = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s` : `${elapsed}s`;
+
+  await ctx.replyWithHTML(
+    [
+      `📜 <b>Histórico — ${esc(hist.label.toUpperCase())}</b>`,
+      LINE2,
+      ``,
+      `🗓 <b>Data:</b> <code>${ts}</code>`,
+      `📦 <b>Total checado:</b> <code>${hist.total}</code>`,
+      `⏱ <b>Duração:</b> <code>${elStr}</code>`,
+      ``,
+      `✅ <b>HITs:</b> <code>${hist.hits.length}</code>`,
+      `❌ <b>FAILs:</b> <code>${hist.fails.length}</code>`,
+      `⚠️ <b>Erros:</b> <code>${hist.errors.length}</code>`,
+      ``,
+      LINE,
+      `<i>O arquivo completo com todos os resultados será enviado abaixo.</i>`,
+    ].join("\n"),
+    Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+  );
+
+  // Send the TXT that was stored when the check finished
+  await bot.telegram.sendDocument(
+    ctx.chat!.id,
+    { source: hist.txtBuf, filename: hist.fileName },
+    { caption: `📜 Histórico: <b>${esc(hist.label.toUpperCase())}</b> — ${esc(ts)}`, parse_mode: "HTML" },
   );
 }
 
@@ -549,6 +632,10 @@ async function stopChecker(ctx: Context, s: Session, byUser = false) {
     );
     // Always send full TXT even when user stopped manually
     await sendResultsTxt(ctx, s.progressChatId, label, total, s.hits, s.fails, s.errors, byUser, elapsedMs);
+    // Save to per-user history (only if there's data worth storing)
+    if (ctx.from?.id && (s.hits.length + s.fails.length + s.errors.length) > 0) {
+      saveCheckHistory(ctx.from.id, label, total, s.hits, s.fails, s.errors, elapsedMs, byUser);
+    }
   }
 }
 
@@ -1165,9 +1252,15 @@ async function sendFinalReport(
   await editMsg(ctx, chatId, msgId, text,
     Markup.inlineKeyboard([
       [Markup.button.callback("✅ Ver HITs", "home_hits"), Markup.button.callback("📊 Stats", "home_stats")],
-      [Markup.button.callback("🏠 Início",   "go_home")],
+      [Markup.button.callback("📜 Histórico", "home_historico")],
+      [Markup.button.callback("🏠 Início",    "go_home")],
     ]),
   );
+
+  // Save history before sending TXT
+  if (ctx.from?.id && (hits.length + fails.length + errors.length) > 0) {
+    saveCheckHistory(ctx.from.id, label, total, hits, fails, errors, elapsedMs, false);
+  }
 
   // Always send full TXT (HITs + FAILs + ERRORs)
   await sendResultsTxt(ctx, chatId, label, total, hits, fails, errors, false, elapsedMs);
@@ -1182,8 +1275,9 @@ async function registerCommands() {
     { command: "checker", description: "⚔️ Iniciar checker de credenciais" },
     { command: "import",  description: "💾 Importar arquivo .txt de credenciais" },
     { command: "url",     description: "🔍 Buscar domínio no banco" },
-    { command: "hits",    description: "✅ Ver HITs da sessão" },
-    { command: "fails",   description: "❌ Ver FAILs da sessão" },
+    { command: "hits",      description: "✅ Ver HITs da sessão atual" },
+    { command: "historico", description: "📜 Ver TXT do check anterior" },
+    { command: "fails",     description: "❌ Ver FAILs da sessão" },
     { command: "errors",  description: "⚡ Ver erros da sessão" },
     { command: "stats",   description: "📊 Estatísticas da sessão" },
     { command: "status",  description: "📡 Status do checker" },

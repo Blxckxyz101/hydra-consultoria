@@ -806,6 +806,10 @@ const COMMANDS = [
         )
     ),
 
+  new SlashCommandBuilder()
+    .setName("historico")
+    .setDescription("📜 Ver TXT do último check de credenciais (anterior)"),
+
 ].map(c => c.toJSON());
 
 // ── Deploy slash commands ─────────────────────────────────────────────────────
@@ -4148,6 +4152,48 @@ interface CheckerHistoryEntry {
 // Per-user last check history (in-memory — cleared on restart)
 const lastCheckHistory = new Map<string, CheckerHistoryEntry>();
 
+// ── /historico ────────────────────────────────────────────────────────────────
+async function handleHistorico(interaction: ChatInputCommandInteraction): Promise<void> {
+  const callerId = interaction.user.id;
+  const hist     = lastCheckHistory.get(callerId);
+
+  if (!hist) {
+    const noHistEmbed = new EmbedBuilder()
+      .setColor(COLORS.GOLD)
+      .setTitle("📜 Histórico de Checks")
+      .setDescription(
+        "Nenhum check anterior encontrado para a sua conta nesta sessão.\n\n" +
+        "Use `/checker` para iniciar uma verificação — os resultados serão salvos automaticamente.",
+      )
+      .setFooter({ text: AUTHOR })
+      .setTimestamp();
+    await interaction.reply({ embeds: [noHistEmbed], flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const elapsed = Math.round((Date.now() - hist.ts.getTime()) / 1000);
+  const elStr   = elapsed < 60 ? `${elapsed}s atrás` : elapsed < 3600
+    ? `${Math.floor(elapsed / 60)}m${elapsed % 60}s atrás`
+    : `${Math.floor(elapsed / 3600)}h${Math.floor((elapsed % 3600) / 60)}m atrás`;
+
+  const histEmbed = new EmbedBuilder()
+    .setColor(COLORS.GOLD)
+    .setTitle(`📜 Histórico — ${hist.targetIcon} ${hist.targetLabel}`)
+    .setDescription(
+      `**🗓 Check realizado:** <t:${Math.floor(hist.ts.getTime() / 1000)}:F>\n` +
+      `**⏱ Há quanto tempo:** ${elStr}\n\n` +
+      `**📦 Total checado:** \`${hist.total}\`\n` +
+      `**✅ HITs:** \`${hist.hitCount}\`\n` +
+      `**❌ FAILs + Erros:** \`${hist.total - hist.hitCount}\`\n\n` +
+      `O arquivo completo com todos os resultados está anexado abaixo.`,
+    )
+    .setFooter({ text: AUTHOR })
+    .setTimestamp(hist.ts);
+
+  const attachment = new AttachmentBuilder(hist.txt, { name: hist.fileName });
+  await interaction.reply({ embeds: [histEmbed], files: [attachment], flags: MessageFlags.Ephemeral });
+}
+
 function buildProgressBar(done: number, total: number, width = 20): string {
   const pct   = total === 0 ? 0 : Math.round((done / total) * width);
   const filled = "█".repeat(pct);
@@ -6429,6 +6475,8 @@ async function main(): Promise<void> {
         await handleNitro(interaction);
       } else if (commandName === "sky") {
         await handleSky(interaction);
+      } else if (commandName === "historico") {
+        await handleHistorico(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);
