@@ -1485,44 +1485,46 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
             if (cnpj)    info.push(`cnpj:${cnpj}`);
           } catch { /**/ }
 
-          // ── Secondary: credit balance ────────────────────────────────────────
-          // GET /digital-commerce/order-balance/v1/my-balances
+          // ── Secondary: financial-health — score, saldo R$, situação da empresa ─
+          // GET /financial-health/v1/my-health
           try {
-            const balRes = await runCurl([
+            const fhRes = await runCurl([
               "-H", `Authorization: ${authHdr}`,
-              "-H", clientHdr,
+              "-H", `client_id: ${SERASA_CLIENT_ID}`,
               "-H", "Accept: application/json",
               "-H", `User-Agent: ${DESKTOP_UA}`,
               "-H", "Origin: https://www.serasaempreendedor.com.br",
-              "https://api.serasaexperian.com.br/digital-commerce/order-balance/v1/my-balances",
+              "https://api.serasaexperian.com.br/financial-health/v1/my-health",
             ], 10_000);
-            if (balRes.statusCode === 200) {
-              const bj = JSON.parse(balRes.body) as Record<string, unknown>;
-              // Response may be { myBalances: [{available, total, productCode}] }
-              // or flat { available, balance, total }
-              const arr = (bj.myBalances ?? bj.balances ?? bj.items ?? null) as Array<Record<string, unknown>> | null;
-              if (Array.isArray(arr) && arr.length > 0) {
-                const credits = arr.map(b => {
-                  const prod  = String(b.productCode ?? b.product ?? b.name ?? "").slice(0, 20);
-                  const avail = b.available ?? b.balance ?? b.saldo ?? "";
-                  const total = b.total ?? b.totalBalance ?? "";
-                  return prod ? `${prod}:${avail}/${total}` : `${avail}/${total}`;
-                }).join(", ");
-                if (credits) info.push(`creditos:${credits}`);
-              } else {
-                const avail = bj.available ?? bj.balance ?? bj.saldo ?? bj.creditBalance ?? "";
-                const total = bj.total ?? bj.totalBalance ?? "";
-                if (avail !== "") info.push(`creditos:${avail}${total ? `/${total}` : ""}`);
+            if (fhRes.statusCode === 200) {
+              const fj = JSON.parse(fhRes.body) as Record<string, unknown>;
+              // R$ saldo / balance da conta
+              const saldo = fj.balance ?? fj.saldo ?? fj.creditBalance ?? fj.availableBalance ?? fj.valor ?? "";
+              if (saldo !== "") info.push(`saldo:R$${saldo}`);
+              // Score de crédito
+              const score = fj.score ?? fj.creditScore ?? fj.scoreValue ?? fj.pontuacao ?? "";
+              if (score !== "") info.push(`score:${score}`);
+              // Situação na Receita Federal (ATIVA / INAPTA / BAIXADA etc.)
+              const situacao = String(
+                fj.situacaoReceita ?? fj.situacao ?? fj.status ?? fj.companyStatus ?? ""
+              ).trim().toUpperCase();
+              if (situacao) {
+                const cobravel = ["ATIVA", "REGULAR", "ATIVO"].includes(situacao)
+                  ? "PERMITIDO" : "BLOQUEADO";
+                info.push(`situacao:${situacao} (${cobravel})`);
               }
+              // Dívidas / pendências
+              const dividas = fj.openDebts ?? fj.debts ?? fj.pendencias ?? fj.negativacoes ?? "";
+              if (dividas !== "" && dividas !== 0) info.push(`dividas:${dividas}`);
             }
           } catch { /**/ }
 
-          // ── Secondary: entrepreneur home (plano, cnpj, score) ───────────────
+          // ── Secondary: entrepreneur home (plano, CNPJ, situacaoReceita) ──────
           // GET /serasaempreendedor/entrepreneur/v1/home
           try {
             const homeRes = await runCurl([
               "-H", `Authorization: ${authHdr}`,
-              "-H", clientHdr,
+              "-H", `client_id: ${SERASA_CLIENT_ID}`,
               "-H", "Accept: application/json",
               "-H", `User-Agent: ${DESKTOP_UA}`,
               "-H", "Origin: https://www.serasaempreendedor.com.br",
@@ -1530,14 +1532,52 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
             ], 10_000);
             if (homeRes.statusCode === 200) {
               const hj = JSON.parse(homeRes.body) as Record<string, unknown>;
-              const plan   = String(hj.plan ?? hj.planName ?? hj.subscription ?? hj.produto ?? "").trim();
-              const cnpj   = String(hj.cnpj ?? hj.document ?? hj.taxId ?? "").trim();
-              const score  = hj.score ?? hj.creditScore ?? hj.scoreValue ?? "";
-              const status = String(hj.status ?? hj.situacao ?? "").trim();
-              if (plan)   info.push(`plano:${plan.slice(0, 30)}`);
+              const plan = String(hj.plan ?? hj.planName ?? hj.subscription ?? hj.produto ?? "").trim();
+              const cnpj = String(hj.cnpj ?? hj.document ?? hj.taxId ?? "").trim();
+              // Saldo R$ se não veio do financial-health
+              const saldoHome = hj.balance ?? hj.saldo ?? hj.creditBalance ?? hj.availableCredit ?? "";
+              // Situação se não veio do financial-health
+              const sitHome = String(hj.situacaoReceita ?? hj.situacao ?? hj.status ?? "").trim().toUpperCase();
+
+              if (plan) info.push(`plano:${plan.slice(0, 30)}`);
               if (cnpj && !info.some(s => s.startsWith("cnpj:"))) info.push(`cnpj:${cnpj}`);
-              if (score !== "")  info.push(`score:${score}`);
-              if (status) info.push(`status:${status.slice(0, 20)}`);
+              if (saldoHome !== "" && !info.some(s => s.startsWith("saldo:")))
+                info.push(`saldo:R$${saldoHome}`);
+              if (sitHome && !info.some(s => s.startsWith("situacao:"))) {
+                const cobravel = ["ATIVA", "REGULAR", "ATIVO"].includes(sitHome)
+                  ? "PERMITIDO" : "BLOQUEADO";
+                info.push(`situacao:${sitHome} (${cobravel})`);
+              }
+            }
+          } catch { /**/ }
+
+          // ── Secondary: order-balance — consultas/créditos disponíveis ────────
+          // GET /digital-commerce/order-balance/v1/my-balances
+          try {
+            const balRes = await runCurl([
+              "-H", `Authorization: ${authHdr}`,
+              "-H", `client_id: ${SERASA_CLIENT_ID}`,
+              "-H", "Accept: application/json",
+              "-H", `User-Agent: ${DESKTOP_UA}`,
+              "-H", "Origin: https://www.serasaempreendedor.com.br",
+              "https://api.serasaexperian.com.br/digital-commerce/order-balance/v1/my-balances",
+            ], 10_000);
+            if (balRes.statusCode === 200) {
+              const bj = JSON.parse(balRes.body) as Record<string, unknown>;
+              const arr = (bj.myBalances ?? bj.balances ?? bj.items ?? null) as Array<Record<string, unknown>> | null;
+              if (Array.isArray(arr) && arr.length > 0) {
+                const parts2 = arr.map(b => {
+                  const prod  = String(b.productCode ?? b.product ?? b.name ?? "").slice(0, 20);
+                  const avail = b.available ?? b.balance ?? b.saldo ?? "";
+                  const total = b.total ?? b.totalBalance ?? "";
+                  return prod ? `${prod}:${avail}/${total}` : `${avail}/${total}`;
+                }).filter(Boolean).join(", ");
+                if (parts2) info.push(`consultas:${parts2}`);
+              } else {
+                const avail = bj.available ?? bj.balance ?? bj.saldo ?? "";
+                const total = bj.total ?? bj.totalBalance ?? "";
+                if (avail !== "") info.push(`consultas:${avail}${total ? `/${total}` : ""}`);
+              }
             }
           } catch { /**/ }
 

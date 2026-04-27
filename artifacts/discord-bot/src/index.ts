@@ -4208,9 +4208,15 @@ function buildCheckerTxt(
   }
 
   // ── FAILS ─────────────────────────────────────────────────────────────────────
+  const MAX_FAILS = 500;
   if (fails.length > 0) {
-    section(`❌  FAILS (${fails.length})`);
-    fails.forEach((r, i) => {
+    const showFails = fails.slice(0, MAX_FAILS);
+    section(`❌  FAILS (${fails.length}${fails.length > MAX_FAILS ? ` — mostrando ${MAX_FAILS}` : ""})`);
+    if (fails.length > MAX_FAILS) {
+      lines.push(`      ⚠  Lista truncada: exibindo apenas os primeiros ${MAX_FAILS} de ${fails.length} fails.`);
+      lines.push("");
+    }
+    showFails.forEach((r, i) => {
       lines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
       lines.push(`      └─ ${r.detail ?? "invalid_credentials"}`);
       if ((i + 1) % 10 === 0) lines.push("");
@@ -4219,9 +4225,15 @@ function buildCheckerTxt(
   }
 
   // ── ERRORS ────────────────────────────────────────────────────────────────────
+  const MAX_ERRORS = 200;
   if (errors.length > 0) {
-    section(`⚠   ERROS (${errors.length})`);
-    errors.forEach((r, i) => {
+    const showErrors = errors.slice(0, MAX_ERRORS);
+    section(`⚠   ERROS (${errors.length}${errors.length > MAX_ERRORS ? ` — mostrando ${MAX_ERRORS}` : ""})`);
+    if (errors.length > MAX_ERRORS) {
+      lines.push(`      ⚠  Lista truncada: exibindo apenas os primeiros ${MAX_ERRORS} de ${errors.length} erros.`);
+      lines.push("");
+    }
+    showErrors.forEach((r, i) => {
       lines.push(`[${String(i + 1).padStart(2, "0")}]  ${r.credential}`);
       lines.push(`      └─ ${r.detail ?? "unknown_error"}`);
       if ((i + 1) % 10 === 0) lines.push("");
@@ -4842,7 +4854,17 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   const ts           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const fileName     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts}.txt`;
   const attachment   = new AttachmentBuilder(txtBuf, { name: fileName });
-  await replyMsg.edit({ embeds: [summaryEmbed], files: [attachment], components: [] });
+
+  const editOk = await interaction.editReply({ embeds: [summaryEmbed], files: [attachment], components: [] })
+    .catch(() => null);
+  if (!editOk) {
+    // Fallback: send file as a new message if editReply failed (token expired, file too large, etc.)
+    if (interaction.channel && "send" in interaction.channel) {
+      await (interaction.channel as import("discord.js").TextChannel)
+        .send({ embeds: [summaryEmbed], files: [attachment] })
+        .catch(() => void 0);
+    }
+  }
 
   // ── Send hits-only .txt to channel (public) ───────────────────────────────
   const finalHits = finalState.allResults.filter(r => r.status === "HIT");
@@ -5595,7 +5617,16 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const ts2           = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const fileName2     = `checker_${targetLabel.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${ts2}.txt`;
   const attachment2   = new AttachmentBuilder(txtBuf2, { name: fileName2 });
-  await replyMsg.edit({ embeds: [summaryEmbed2], files: [attachment2], components: [] });
+
+  const editOk2 = await interaction.editReply({ embeds: [summaryEmbed2], files: [attachment2], components: [] })
+    .catch(() => null);
+  if (!editOk2) {
+    if (interaction.channel && "send" in interaction.channel) {
+      await (interaction.channel as import("discord.js").TextChannel)
+        .send({ embeds: [summaryEmbed2], files: [attachment2] })
+        .catch(() => void 0);
+    }
+  }
 
   const finalHits = finalState.allResults.filter(r => r.status === "HIT");
   if (finalHits.length > 0 && interaction.channel && "send" in interaction.channel) {
