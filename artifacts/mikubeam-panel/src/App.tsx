@@ -554,8 +554,11 @@ function GeassParticles() {
 
 /* ── WhatsApp Dashboard ── */
 interface WaHistEntry { type: "report" | "sendcode"; number: string; sent: number; total: number; at: number; userId?: string }
+interface SvcStat { service: string; sent: number; total: number; rate: number }
+
 function WhatsAppDashboard({ base }: { base: string }) {
   const [entries, setEntries]   = useState<WaHistEntry[]>([]);
+  const [svcStats, setSvcStats] = useState<SvcStat[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState("");
   const [filter, setFilter]     = useState<"all" | "report" | "sendcode">("all");
@@ -568,10 +571,13 @@ function WhatsAppDashboard({ base }: { base: string }) {
   const load = useCallback(() => {
     setLoading(true);
     setError("");
-    fetch(`${base}/api/whatsapp/history`)
-      .then(r => r.json())
-      .then((d: { entries?: WaHistEntry[]; error?: string }) => {
-        setEntries(d.entries ?? []);
+    Promise.all([
+      fetch(`${base}/api/whatsapp/history`).then(r => r.json()),
+      fetch(`${base}/api/whatsapp/stats`).then(r => r.json()),
+    ])
+      .then(([hist, stats]: [{ entries?: WaHistEntry[] }, { services?: SvcStat[] }]) => {
+        setEntries(hist.entries ?? []);
+        setSvcStats(stats.services ?? []);
         setLoading(false);
       })
       .catch(e => { setError(String(e)); setLoading(false); });
@@ -660,6 +666,32 @@ function WhatsAppDashboard({ base }: { base: string }) {
           </div>
         ))}
       </div>
+
+      {/* Service stats table */}
+      {svcStats.length > 0 && (
+        <div style={{ ...card, marginBottom: 24 }}>
+          <div style={{ color: "#D4AF37", fontFamily: "monospace", fontWeight: 700, fontSize: 13, marginBottom: 14 }}>
+            📡 TAXA DE SUCESSO POR SERVIÇO (sendcode)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 8 }}>
+            {svcStats.map(s => {
+              const color = s.rate >= 70 ? "#2ecc71" : s.rate >= 30 ? "#e67e22" : "#e74c3c";
+              return (
+                <div key={s.service} style={{
+                  background: "rgba(0,0,0,0.25)", border: `1px solid ${color}33`,
+                  borderRadius: 8, padding: "10px 12px", textAlign: "center",
+                }}>
+                  <div style={{ fontFamily: "monospace", fontSize: 20, fontWeight: 700, color }}>{s.rate}%</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 11, color: "#aaa", marginTop: 2 }}>{s.service}</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#555", marginTop: 2 }}>
+                    {s.sent}/{s.total} ops
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quick action panels */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
