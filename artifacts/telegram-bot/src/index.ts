@@ -25,7 +25,7 @@ interface Session {
   currentLabel?:  string;
   startedAt?:     number;
   totalCreds?:    number;
-  waStep?:        "report_number" | "code_number";
+  waStep?:        "report_number" | "code_number" | "social_url";
   waRunning?:     boolean;
 }
 
@@ -371,6 +371,7 @@ function homeKeyboard() {
       Markup.button.callback("📲 Código SMS",          "home_wa_code"),
     ],
     [
+      Markup.button.callback("📢 Report Redes",        "home_social_report"),
       Markup.button.callback("🗑 Limpar Sessão",       "home_clear"),
     ],
   ];
@@ -467,6 +468,12 @@ bot.command("help", async ctx => {
     `/fails    — Ver FAILs da sessão`,
     `/errors   — Ver erros da sessão`,
     `/stats    — Estatísticas do banco`,
+    ``,
+    `<b>📢 Redes Sociais:</b>`,
+    `/reportredes &lt;URL&gt; [qty] — Reportar conta/post Instagram ou TikTok`,
+    `  Ex: <code>/reportredes https://instagram.com/alvo 10</code>`,
+    `  Ex: <code>/reportredes https://instagram.com/p/ABC123/ 5</code>`,
+    `  Ex: <code>/reportredes https://tiktok.com/@alvo 8</code>`,
     ``,
     LINE,
     `<i>💡 Envie um .txt com <code>login:senha</code> por linha para carregar credenciais.</i>`,
@@ -1150,6 +1157,14 @@ bot.on(message("text"), async ctx => {
       }
       return;
     }
+
+    if (step === "social_url") {
+      const parts  = input.split(/\s+/);
+      const rawUrl = parts[0]!;
+      const qty    = Math.min(50, Math.max(1, parseInt(parts[1] ?? "10", 10) || 10));
+      await doSocialReport(ctx, rawUrl, qty);
+      return;
+    }
   }
   // ── end WhatsApp step machine ─────────────────────────────────────────────
 
@@ -1461,9 +1476,10 @@ async function registerCommands() {
     { command: "errors",  description: "⚡ Ver erros da sessão" },
     { command: "stats",   description: "📊 Estatísticas da sessão" },
     { command: "status",  description: "📡 Status do checker" },
-    { command: "stop",    description: "🛑 Parar checker em execução" },
-    { command: "clear",   description: "🗑️ Limpar dados da sessão" },
-    { command: "help",    description: "❓ Ajuda e lista de comandos" },
+    { command: "stop",         description: "🛑 Parar checker em execução" },
+    { command: "clear",        description: "🗑️ Limpar dados da sessão" },
+    { command: "reportredes",  description: "📢 Reportar conta/post no Instagram ou TikTok" },
+    { command: "help",         description: "❓ Ajuda e lista de comandos" },
   ]);
 }
 
@@ -1479,6 +1495,124 @@ bot.action("home_wa_report", async ctx => {
     `🚩 <b>WhatsApp Report</b>\n\nEnvie o número e a quantidade:\n<code>5511999887766 10</code>\n\n• DDI + DDD + número (sem espaços/traços)\n• Quantidade: 1–200 reports\n• Cooldown: 3 min entre reports${cdNote}`,
     Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
   );
+});
+
+// ── Social Media: Report Redes ────────────────────────────────────────────────
+const SOCIAL_COOLDOWN_MS = 60_000; // 1 minuto entre reports sociais
+const socialCooldowns = new Map<number, number>();
+
+async function doSocialReport(ctx: Context, rawUrl: string, qty: number) {
+  const userId = ctx.from!.id;
+  const wait = checkCooldown(socialCooldowns, userId, SOCIAL_COOLDOWN_MS);
+  if (wait > 0) {
+    await ctx.replyWithHTML(
+      `⏳ <b>Cooldown ativo</b> — aguarde <b>${Math.ceil(wait / 1000)}s</b> antes de outro report social.`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    return;
+  }
+
+  // Lookup first
+  let lookupData: { platform?: string; identifier?: string; type?: string; error?: string } = {};
+  try {
+    const lr = await fetch(`${API_BASE}/api/social/lookup?url=${encodeURIComponent(rawUrl)}`, { signal: AbortSignal.timeout(8_000) });
+    lookupData = await lr.json() as typeof lookupData;
+  } catch {}
+
+  if (lookupData.error || !lookupData.platform) {
+    await ctx.replyWithHTML(
+      `❌ <b>URL não reconhecida</b>\n\nSuportamos apenas Instagram e TikTok.\n\n<i>Exemplos:</i>\n<code>https://instagram.com/@usuario</code>\n<code>https://instagram.com/p/SHORTCODE/</code>\n<code>https://tiktok.com/@usuario</code>`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    return;
+  }
+
+  const platIcon = lookupData.platform === "instagram" ? "📸" : "🎵";
+  const targetLabel = lookupData.type === "post"
+    ? `post <code>${esc(lookupData.identifier ?? "")}</code>`
+    : `@<code>${esc(lookupData.identifier ?? "")}</code>`;
+
+  const msg = await ctx.replyWithHTML(
+    `${platIcon} <b>${lookupData.platform!.toUpperCase()} Report</b>\n\nAlvo: ${targetLabel}\nEnviando <b>${qty}</b> reports…`,
+  );
+
+  setCooldown(socialCooldowns, userId);
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/social/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: rawUrl, quantity: qty }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    const r = await resp.json() as { platform?: string; target?: string; subtype?: string; sent?: number; failed?: number; total?: number; error?: string };
+
+    if (r.error) {
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+        `❌ <b>Erro:</b> <code>${esc(r.error)}</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+      );
+      return;
+    }
+
+    const icon = (r.sent ?? 0) > 0 ? "✅" : "❌";
+    const lines = [
+      `${icon} <b>${(r.platform ?? "").toUpperCase()} Report</b>`,
+      ``,
+      `${platIcon} Alvo: ${targetLabel}`,
+      `✅ Enviados: <b>${r.sent ?? 0}</b>/${r.total ?? qty}`,
+      `❌ Falhos: <b>${r.failed ?? 0}</b>`,
+      ``,
+      `<i>Tipo: ${r.subtype === "post" ? "Post/Reel" : "Conta"}</i>`,
+    ];
+    await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined, lines.join("\n"),
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+    );
+  } catch (e) {
+    await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+      `❌ Erro ao enviar reports: <code>${esc(String(e).slice(0, 120))}</code>`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+    );
+  }
+}
+
+bot.action("home_social_report", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  s.waStep = "social_url";
+  const wait = checkCooldown(socialCooldowns, ctx.from!.id, SOCIAL_COOLDOWN_MS);
+  const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
+  await ctx.replyWithHTML(
+    [
+      `📢 <b>Report Redes Sociais</b>`,
+      ``,
+      `Envie a URL e opcionalmente a quantidade:`,
+      `<code>https://instagram.com/alvo 10</code>`,
+      `<code>https://instagram.com/p/SHORTCODE/ 5</code>`,
+      `<code>https://tiktok.com/@alvo 8</code>`,
+      ``,
+      `• Suporte: Instagram (conta, post, reel) e TikTok`,
+      `• Quantidade padrão: 10 reports`,
+      `• Cooldown: 60s entre reports${cdNote}`,
+    ].join("\n"),
+    Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+  );
+});
+
+bot.command("reportredes", async ctx => {
+  const args = ctx.message.text.split(/\s+/).slice(1);
+  if (args.length === 0) {
+    const s = getSession(ctx.from!.id);
+    s.waStep = "social_url";
+    await ctx.replyWithHTML(
+      `📢 <b>Report Redes Sociais</b>\n\nEnvie a URL e quantidade:\n<code>https://instagram.com/alvo 10</code>\n<code>https://tiktok.com/@alvo 5</code>`,
+      Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+    );
+    return;
+  }
+  const rawUrl = args[0]!;
+  const qty = Math.min(50, Math.max(1, parseInt(args[1] ?? "10", 10) || 10));
+  await doSocialReport(ctx, rawUrl, qty);
 });
 
 // ── WhatsApp: Send Code ───────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ run = "pnpm --filter @workspace/api-server run dev"
 [services.production]
 
 [services.production.build]
-args = ["sh", "-c", "pnpm --filter @workspace/api-server run build"]
+args = ["sh", "-c", "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/discord-bot run build && pnpm --filter @workspace/telegram-bot run build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
