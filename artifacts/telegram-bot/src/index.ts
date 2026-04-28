@@ -27,6 +27,7 @@ interface Session {
   totalCreds?:    number;
   waStep?:        "report_number" | "code_number" | "social_url";
   waRunning?:     boolean;
+  socialPlatHint?: "instagram" | "tiktok";
 }
 
 interface HitEntry {
@@ -1160,10 +1161,13 @@ bot.on(message("text"), async ctx => {
     }
 
     if (step === "social_url") {
-      const parts  = input.split(/\s+/);
-      const rawUrl = parts[0]!;
-      const qty    = Math.min(50, Math.max(1, parseInt(parts[1] ?? "10", 10) || 10));
-      await doSocialReport(ctx, rawUrl, qty);
+      const parts    = input.split(/\s+/);
+      const rawUrl   = parts[0]!;
+      const qty      = Math.min(50, Math.max(1, parseInt(parts[1] ?? "10", 10) || 10));
+      const platHint = s.socialPlatHint;
+      s.waStep = undefined;
+      s.socialPlatHint = undefined;
+      await doSocialReport(ctx, rawUrl, qty, platHint);
       return;
     }
   }
@@ -1502,7 +1506,7 @@ bot.action("home_wa_report", async ctx => {
 const SOCIAL_COOLDOWN_MS = 60_000; // 1 minuto entre reports sociais
 const socialCooldowns = new Map<number, number>();
 
-async function doSocialReport(ctx: Context, rawUrl: string, qty: number) {
+async function doSocialReport(ctx: Context, rawUrl: string, qty: number, platHint?: "instagram" | "tiktok") {
   const userId = ctx.from!.id;
   const wait = checkCooldown(socialCooldowns, userId, SOCIAL_COOLDOWN_MS);
   if (wait > 0) {
@@ -1513,17 +1517,31 @@ async function doSocialReport(ctx: Context, rawUrl: string, qty: number) {
     return;
   }
 
+  // If user sent a bare username and we have a platform hint, prefix it
+  let normalizedUrl = rawUrl;
+  if (platHint && !rawUrl.includes("instagram.com") && !rawUrl.includes("tiktok.com")) {
+    const clean = rawUrl.replace(/^@/, "");
+    normalizedUrl = platHint === "tiktok"
+      ? `https://tiktok.com/@${clean}`
+      : `https://instagram.com/${clean}`;
+  }
+
   // Lookup first
   let lookupData: { platform?: string; identifier?: string; type?: string; error?: string } = {};
   try {
-    const lr = await fetch(`${API_BASE}/api/social/lookup?url=${encodeURIComponent(rawUrl)}`, { signal: AbortSignal.timeout(8_000) });
+    const lr = await fetch(`${API_BASE}/api/social/lookup?url=${encodeURIComponent(normalizedUrl)}`, { signal: AbortSignal.timeout(8_000) });
     lookupData = await lr.json() as typeof lookupData;
   } catch {}
 
   if (lookupData.error || !lookupData.platform) {
+    const platIcon = platHint === "tiktok" ? "🎵" : "📸";
+    const exampleBase = platHint === "tiktok" ? "tiktok.com/@usuario" : "instagram.com/usuario";
     await ctx.replyWithHTML(
-      `❌ <b>URL não reconhecida</b>\n\nSuportamos apenas Instagram e TikTok.\n\n<i>Exemplos:</i>\n<code>https://instagram.com/@usuario</code>\n<code>https://instagram.com/p/SHORTCODE/</code>\n<code>https://tiktok.com/@usuario</code>`,
-      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+      `❌ <b>URL não reconhecida</b>\n\n${platIcon} Tente: <code>https://${exampleBase}</code>\n\nOu use a URL completa da conta/post.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("📸 Instagram", "social_plat_instagram"), Markup.button.callback("🎵 TikTok", "social_plat_tiktok")],
+        [Markup.button.callback("🏠 Início", "go_home")],
+      ]),
     );
     return;
   }
@@ -1579,40 +1597,93 @@ async function doSocialReport(ctx: Context, rawUrl: string, qty: number) {
 
 bot.action("home_social_report", async ctx => {
   await ctx.answerCbQuery();
-  const s = getSession(ctx.from!.id);
-  s.waStep = "social_url";
   const wait = checkCooldown(socialCooldowns, ctx.from!.id, SOCIAL_COOLDOWN_MS);
   const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
   await ctx.replyWithHTML(
-    [
-      `📢 <b>Report Redes Sociais</b>`,
+    [`📢 <b>Report Redes Sociais</b>`, ``, `Escolha a plataforma:${cdNote}`].join("\n"),
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("📸 Instagram", "social_plat_instagram"),
+        Markup.button.callback("🎵 TikTok",    "social_plat_tiktok"),
+      ],
+      [Markup.button.callback("↩ Cancelar", "go_home")],
+    ]),
+  );
+});
+
+function socialPlatPrompt(plat: "instagram" | "tiktok", cdNote: string): string {
+  if (plat === "instagram") {
+    return [
+      `📸 <b>Instagram Report</b>`,
       ``,
-      `Envie a URL e opcionalmente a quantidade:`,
+      `Envie o alvo e a quantidade (opcional):`,
       ``,
-      `<b>Instagram:</b>`,
-      `<code>https://instagram.com/alvo 10</code>`,
-      `<code>https://instagram.com/p/SHORTCODE/ 5</code>`,
-      `<code>https://instagram.com/reel/SHORTCODE/ 5</code>`,
-      ``,
-      `<b>TikTok:</b>`,
-      `<code>https://tiktok.com/@alvo 8</code>`,
-      `<code>https://tiktok.com/@alvo/video/ID_DO_VIDEO 8</code>`,
+      `👤 Conta: <code>https://instagram.com/usuario 10</code>`,
+      `📷 Post:  <code>https://instagram.com/p/SHORTCODE/ 5</code>`,
+      `🎬 Reel:  <code>https://instagram.com/reel/SHORTCODE/ 5</code>`,
       ``,
       `• Quantidade padrão: 10 | Máximo: 50`,
       `• Cooldown: 60s entre reports${cdNote}`,
-    ].join("\n"),
-    Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+    ].join("\n");
+  }
+  return [
+    `🎵 <b>TikTok Report</b>`,
+    ``,
+    `Envie o alvo e a quantidade (opcional):`,
+    ``,
+    `👤 Conta:  <code>https://tiktok.com/@usuario 10</code>`,
+    `🎬 Vídeo: <code>https://tiktok.com/@usuario/video/ID_DO_VIDEO 5</code>`,
+    ``,
+    `• Quantidade padrão: 10 | Máximo: 50`,
+    `• Cooldown: 60s entre reports${cdNote}`,
+  ].join("\n");
+}
+
+bot.action("social_plat_instagram", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  s.waStep = "social_url";
+  s.socialPlatHint = "instagram";
+  const wait = checkCooldown(socialCooldowns, ctx.from!.id, SOCIAL_COOLDOWN_MS);
+  const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
+  await ctx.replyWithHTML(socialPlatPrompt("instagram", cdNote),
+    Markup.inlineKeyboard([
+      [Markup.button.callback("🎵 Trocar para TikTok", "social_plat_tiktok")],
+      [Markup.button.callback("↩ Cancelar", "go_home")],
+    ]),
+  );
+});
+
+bot.action("social_plat_tiktok", async ctx => {
+  await ctx.answerCbQuery();
+  const s = getSession(ctx.from!.id);
+  s.waStep = "social_url";
+  s.socialPlatHint = "tiktok";
+  const wait = checkCooldown(socialCooldowns, ctx.from!.id, SOCIAL_COOLDOWN_MS);
+  const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
+  await ctx.replyWithHTML(socialPlatPrompt("tiktok", cdNote),
+    Markup.inlineKeyboard([
+      [Markup.button.callback("📸 Trocar para Instagram", "social_plat_instagram")],
+      [Markup.button.callback("↩ Cancelar", "go_home")],
+    ]),
   );
 });
 
 bot.command("reportredes", async ctx => {
   const args = ctx.message.text.split(/\s+/).slice(1);
   if (args.length === 0) {
-    const s = getSession(ctx.from!.id);
-    s.waStep = "social_url";
+    // Show platform selector
+    const wait = checkCooldown(socialCooldowns, ctx.from!.id, SOCIAL_COOLDOWN_MS);
+    const cdNote = wait > 0 ? `\n⏳ Cooldown: <b>${Math.ceil(wait / 1000)}s</b> restantes` : "";
     await ctx.replyWithHTML(
-      `📢 <b>Report Redes Sociais</b>\n\nEnvie a URL e quantidade:\n\n<b>Instagram:</b>\n<code>https://instagram.com/alvo 10</code>\n<code>https://instagram.com/p/SHORTCODE/ 5</code>\n\n<b>TikTok:</b>\n<code>https://tiktok.com/@alvo 8</code>\n<code>https://tiktok.com/@alvo/video/ID 8</code>`,
-      Markup.inlineKeyboard([[Markup.button.callback("↩ Cancelar", "go_home")]]),
+      [`📢 <b>Report Redes Sociais</b>`, ``, `Escolha a plataforma:${cdNote}`].join("\n"),
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback("📸 Instagram", "social_plat_instagram"),
+          Markup.button.callback("🎵 TikTok",    "social_plat_tiktok"),
+        ],
+        [Markup.button.callback("↩ Cancelar", "go_home")],
+      ]),
     );
     return;
   }
