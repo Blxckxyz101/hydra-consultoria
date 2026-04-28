@@ -21,6 +21,9 @@
     "pino": "^9",
     "pino-http": "^10",
     "playwright-core": "^1.59.1",
+    "puppeteer-core": "^24.42.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "raw-socket": "^1.8.1",
     "undici": "^8.1.0"
   },

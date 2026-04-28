@@ -4,6 +4,97 @@ import * as fs      from "fs";
 import * as path    from "path";
 import { proxyCache, getResidentialCreds } from "./proxies.js";
 
+// ── Chromium path (ungoogled-chromium in Nix store) ───────────────────────────
+const CHROMIUM_PATH = "/nix/store/43y6k6fj85l4kcd1yan43hpdld6nmjmp-ungoogled-chromium-131.0.6778.204/bin/chromium";
+
+// ── Cached WhatsApp page tokens (DTSG + cookies) ─────────────────────────────
+interface WaPageTokens {
+  dtsg:       string;
+  jazoest:    string;
+  lsd:        string;
+  cookieStr:  string;
+  fetchedAt:  number;
+}
+let _waTokenCache: WaPageTokens | null = null;
+const WA_TOKEN_TTL_MS = 8 * 60 * 1000; // 8 minutes
+
+async function fetchWaTokensViaHeadless(): Promise<WaPageTokens | null> {
+  if (_waTokenCache && Date.now() - _waTokenCache.fetchedAt < WA_TOKEN_TTL_MS) {
+    return _waTokenCache;
+  }
+  let browser: any = null;
+  try {
+    const [mod, stealth] = await Promise.all([
+      import("puppeteer-extra"),
+      import("puppeteer-extra-plugin-stealth"),
+    ]);
+    const puppeteerExtra: any = mod.default ?? mod;
+    const StealthPlugin: any  = (stealth.default ?? stealth);
+    puppeteerExtra.use(StealthPlugin());
+
+    browser = await puppeteerExtra.launch({
+      executablePath: CHROMIUM_PATH,
+      headless: "new",
+      args: [
+        "--no-sandbox", "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage", "--disable-gpu",
+        "--window-size=1280,800", "--lang=pt-BR",
+        "--disable-features=PrivateStateTokens,TrustTokens,FedCm",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    );
+    await page.evaluateOnNewDocument(`
+      Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
+      Object.defineProperty(navigator,'languages',{get:()=>['pt-BR','pt','en-US','en']});
+      Object.defineProperty(navigator,'platform',{get:()=>'Win32'});
+    `);
+
+    console.log("[WA-HEADLESS] Fetching WhatsApp contact page...");
+    await page.goto("https://www.whatsapp.com/contact/?subject=Abuse", {
+      waitUntil: "networkidle2",
+      timeout: 30_000,
+    });
+
+    // Wait for the form DTSG field to appear
+    await (page as any).waitForFunction(
+      () => document.body.innerHTML.includes('"token":"Ad'),
+      { timeout: 20_000 },
+    ).catch(() => { /* proceed with whatever loaded */ });
+
+    const content: string = await page.content();
+    const cookies: Array<{ name: string; value: string }> = await page.cookies();
+
+    const dtsgMatch = content.match(/"token":"(Ad[A-Za-z0-9_\-]{10,})"/);
+    const dtsg      = dtsgMatch?.[1] ?? "";
+
+    if (!dtsg) {
+      console.warn("[WA-HEADLESS] DTSG not found in rendered page");
+      return null;
+    }
+
+    const lsdMatch  = content.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
+    const lsd       = lsdMatch?.[1] ?? dtsg;
+    const jazoest   = computeJazoest(dtsg);
+
+    const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    const result: WaPageTokens = { dtsg, jazoest, lsd, cookieStr, fetchedAt: Date.now() };
+    _waTokenCache = result;
+    console.log(`[WA-HEADLESS] ✅ Got DTSG token (${dtsg.slice(0, 12)}…), ${cookies.length} cookies`);
+    return result;
+  } catch (err) {
+    console.error("[WA-HEADLESS] Error:", err);
+    return null;
+  } finally {
+    if (browser) await (browser as any).close().catch(() => {});
+  }
+}
+
 const router = Router();
 
 // ── Persistent history (data/history.json) ────────────────────────────────────
@@ -191,7 +282,7 @@ function computeJazoest(dtsg: string): string {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const randDelay = (min: number, max: number) => sleep(min + Math.random() * (max - min));
 
-// ── Single report worker (with retry + real success verification) ─────────────
+// ── Single report worker (with retry + headless fallback for DTSG) ────────────
 async function sendOneReport(e164: string, index: number, maxRetries = 3): Promise<{ ok: boolean; detail?: string }> {
   const reason = REASONS[index % REASONS.length]!;
 
@@ -200,34 +291,44 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
     const ckFile = `/tmp/wa_rep_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
 
     try {
-      const pageRes = await runCurl([
-        ...proxy,
-        "--tlsv1.2",
-        "-c", ckFile,
-        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
-        "-H", "Sec-Fetch-Site: none",
-        "-H", "Sec-Fetch-Mode: navigate",
-        "-H", "Sec-Fetch-Dest: document",
-        "-H", "Upgrade-Insecure-Requests: 1",
-        "https://www.whatsapp.com/contact/?subject=Abuse",
-      ], 15_000);
+      // ── Step 1: get DTSG tokens ───────────────────────────────────────────
+      let dtsg      = "";
+      let jazoest   = "";
+      let lsd       = "";
+      let cookieHdr = ""; // cookie header for curl (from headless session)
 
-      const dtsgMatch = pageRes.body.match(/"token":"(Ad[A-Za-z0-9_\-]{10,})"/);
-      const dtsg = dtsgMatch?.[1] ?? "";
+      // Try curl-based page fetch first (fast; works if WhatsApp serves SSR)
+      try {
+        const pageRes = await runCurl([
+          ...proxy, "--tlsv1.2", "-c", ckFile,
+          "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "-H", "Accept-Language: pt-BR,pt;q=0.9,en;q=0.8",
+          "-H", "Sec-Fetch-Site: none", "-H", "Sec-Fetch-Mode: navigate",
+          "-H", "Sec-Fetch-Dest: document", "-H", "Upgrade-Insecure-Requests: 1",
+          "https://www.whatsapp.com/contact/?subject=Abuse",
+        ], 12_000);
+        const m = pageRes.body.match(/"token":"(Ad[A-Za-z0-9_\-]{10,})"/);
+        if (m?.[1]) {
+          dtsg    = m[1];
+          jazoest = computeJazoest(dtsg);
+          const lm = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
+          lsd     = lm?.[1] ?? dtsg;
+        }
+      } catch { /* ignore — fall through to headless */ }
 
+      // Fallback: headless browser (always works; result is cached 8 min)
       if (!dtsg) {
         try { fs.unlinkSync(ckFile); } catch { /**/ }
-        continue;
+        const tok = await fetchWaTokensViaHeadless();
+        if (!tok) { continue; } // will retry
+        dtsg      = tok.dtsg;
+        jazoest   = tok.jazoest;
+        lsd       = tok.lsd;
+        cookieHdr = tok.cookieStr;
       }
 
-      const jazoest    = computeJazoest(dtsg);
-      const lsdMatch   = pageRes.body.match(/\["LSD",\[\],\{"token":"([^"]+)"\}/);
-      const lsd        = lsdMatch?.[1] ?? dtsg;
-      const wacsrfMatch = pageRes.body.match(/wa_csrf[^=\n]*?\t([A-Za-z0-9_\-]+)/);
-      const waCsrfBody  = wacsrfMatch?.[1] ?? "";
-
+      // ── Step 2: build form body ───────────────────────────────────────────
       const formBody = new URLSearchParams({
         fb_dtsg:      dtsg,
         jazoest,
@@ -239,18 +340,20 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
         content:      reason.content,
         category:     reason.category,
         _subject:     reason._subject,
-        ...(waCsrfBody ? { wa_csrf_token: waCsrfBody } : {}),
       }).toString();
 
-      // Small organic delay before submitting
       await randDelay(300, 900);
 
+      // ── Step 3: submit the form via curl ──────────────────────────────────
+      // If we used headless, pass its session cookies via -H; otherwise -b ckFile
+      const cookieArgs = cookieHdr
+        ? ["-H", `Cookie: ${cookieHdr}`]
+        : ["-b", ckFile];
+
       const postRes = await runCurl([
-        ...proxy,
-        "--tlsv1.2",
-        "-X", "POST",
-        "-b", ckFile,
-        "-H", "User-Agent: Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        ...proxy, "--tlsv1.2", "-X", "POST",
+        ...cookieArgs,
+        "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "Origin: https://www.whatsapp.com",
         "-H", "Referer: https://www.whatsapp.com/contact/?subject=Abuse",
@@ -263,12 +366,19 @@ async function sendOneReport(e164: string, index: number, maxRetries = 3): Promi
         "https://www.whatsapp.com/contact/",
       ], 15_000);
 
-      // WhatsApp always returns 200 on success (or 302 if redirect followed)
-      // A 4xx/5xx indicates a real server-side error
+      // WhatsApp returns 200 on success (or 302 if redirect followed)
       if (postRes.statusCode === 200 || postRes.statusCode === 302) {
+        // Invalidate token cache if response looks like a CSRF error
+        if (postRes.body.includes("csrf") || postRes.body.includes("invalid_token")) {
+          _waTokenCache = null;
+        }
         return { ok: true, detail: reason.category };
       }
 
+      // If 4xx, DTSG may be stale — bust cache
+      if (postRes.statusCode >= 400) {
+        _waTokenCache = null;
+      }
       try { fs.unlinkSync(ckFile); } catch { /**/ }
       if (attempt < maxRetries - 1) continue;
       return { ok: false, detail: `http_${postRes.statusCode}` };
