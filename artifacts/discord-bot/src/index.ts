@@ -833,7 +833,7 @@ const COMMANDS = [
   // ── /reportredes ──────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("reportredes")
-    .setDescription("📢 Report Redes Sociais — mass report em Instagram, TikTok, YouTube, Facebook ou Twitter/X")
+    .setDescription("📢 Report Redes Sociais — mass report em Instagram e TikTok")
     .addStringOption(opt =>
       opt.setName("alvo")
         .setDescription("URL ou @username da conta (ex: https://instagram.com/fulano ou @fulano)")
@@ -6507,8 +6507,7 @@ async function main(): Promise<void> {
     const target = result.target ?? alvo;
 
     const PLAT_EMOJIS: Record<string, string> = {
-      instagram: "📸", tiktok: "🎵", youtube: "▶️",
-      facebook: "👤", twitter: "🐦", kwai: "🎬", twitch: "🎮",
+      instagram: "📸", tiktok: "🎵",
     };
     const platEmoji = PLAT_EMOJIS[plat] ?? "🌐";
 

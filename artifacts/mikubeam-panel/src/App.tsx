@@ -882,12 +882,10 @@ interface SocialLog { id: number; text: string; ok: boolean | null }
 interface SocialPlatInfo { platform: string; identifier: string; type: string }
 
 const PLATFORM_ICONS: Record<string, string> = {
-  instagram: "📸", tiktok: "🎵", youtube: "▶️", facebook: "👤",
-  twitter: "🐦", kwai: "🎬", twitch: "🎮",
+  instagram: "📸", tiktok: "🎵",
 };
 const PLATFORM_COLORS: Record<string, string> = {
-  instagram: "#E1306C", tiktok: "#010101", youtube: "#FF0000",
-  facebook: "#1877F2", twitter: "#1DA1F2", kwai: "#FFC107", twitch: "#9146FF",
+  instagram: "#E1306C", tiktok: "#010101",
 };
 
 function SocialDashboard({ base }: { base: string }) {
@@ -982,7 +980,7 @@ function SocialDashboard({ base }: { base: string }) {
           <input
             value={url}
             onChange={e => setUrl(e.target.value)}
-            placeholder="URL ou @username (Instagram, TikTok, YouTube, Facebook, Twitter)"
+            placeholder="URL ou @username (Instagram ou TikTok)"
             style={{
               flex: 1, minWidth: 260, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.15)",
               borderRadius: 6, padding: "10px 14px", color: "#fff", fontFamily: "monospace", fontSize: 13,
