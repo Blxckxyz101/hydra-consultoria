@@ -156,27 +156,27 @@ const METHOD_OPTIONS = [
 
 // ── Duration presets ─────────────────────────────────────────────────────────
 const DURATION_OPTIONS = [
-  { value: "30",   label: "30 seconds",   description: "Quick burst test" },
-  { value: "60",   label: "1 minute",     description: "Standard attack (default)" },
-  { value: "120",  label: "2 minutes",    description: "Extended pressure" },
-  { value: "300",  label: "5 minutes",    description: "Sustained assault" },
-  { value: "600",  label: "10 minutes",   description: "Maximum duration" },
+  { value: "30",   label: "30 seconds",           description: "Quick burst test" },
+  { value: "60",   label: "1 minute",             description: "Standard attack (default) — Free max" },
+  { value: "120",  label: "[VIP] 2 minutes",      description: "VIP only — Extended pressure" },
+  { value: "300",  label: "[VIP] 5 minutes",      description: "VIP only — Sustained assault" },
+  { value: "600",  label: "[VIP] 10 minutes",     description: "VIP only — Maximum duration" },
 ];
 
 // ── Thread presets (power levels 1–8; internally ×500 connections in prod) ───
 const THREAD_OPTIONS = [
-  { value: "1", label: "⚪ Power 1 — Mínimo",      description: "~500 conns — teste básico" },
-  { value: "2", label: "🟢 Power 2 — Baixo",       description: "~1.000 conns" },
-  { value: "3", label: "🟢 Power 3 — Médio-Baixo", description: "~1.500 conns" },
-  { value: "4", label: "🟡 Power 4 — Médio",       description: "~2.000 conns (padrão)" },
-  { value: "5", label: "🟡 Power 5 — Médio-Alto",  description: "~2.500 conns" },
-  { value: "6", label: "🟠 Power 6 — Alto",        description: "~3.000 conns" },
-  { value: "7", label: "🔴 Power 7 — Muito Alto",  description: "~3.500 conns" },
-  { value: "8", label: "💀 Power 8 — MÁXIMO",      description: "~4.000 conns por worker" },
+  { value: "1", label: "⚪ Power 1 — Mínimo",           description: "~500 conns — teste básico" },
+  { value: "2", label: "🟢 Power 2 — Baixo",            description: "~1.000 conns" },
+  { value: "3", label: "🟢 Power 3 — Médio-Baixo",      description: "~1.500 conns" },
+  { value: "4", label: "🟡 Power 4 — Médio (Free max)", description: "~2.000 conns (padrão free)" },
+  { value: "5", label: "[VIP] Power 5 — Médio-Alto",    description: "VIP only — ~2.500 conns" },
+  { value: "6", label: "[VIP] Power 6 — Alto",          description: "VIP only — ~3.000 conns" },
+  { value: "7", label: "[VIP] Power 7 — Muito Alto",    description: "VIP only — ~3.500 conns" },
+  { value: "8", label: "[VIP] Power 8 — MÁXIMO",        description: "VIP only — ~4.000 conns por worker" },
 ];
 
 // ── Pending launcher sessions (userId → { target, duration, threads }) ───────
-interface LaunchSession { target: string; duration: number; threads: number; }
+interface LaunchSession { target: string; duration: number; threads: number; isVip?: boolean; }
 const pendingSessions  = new Map<string, LaunchSession>();
 const sessionTimers    = new Map<string, NodeJS.Timeout>();
 
@@ -1488,12 +1488,22 @@ function buildLauncherComponents(_target: string) {
 
 function buildLauncherEmbed(target: string, session: LaunchSession, selectedMethod?: string): EmbedBuilder {
   const mInfo = selectedMethod ? METHOD_OPTIONS.find(m => m.value === selectedMethod) : null;
+  const isVip = session.isVip ?? false;
 
-  const desc = mInfo
-    ? `**${mInfo.label}** selecionado — ajuste duração & threads, depois clique **🚀 LAUNCH**`
-    : "Selecione um **método de ataque**, ajuste duração & threads se quiser.\nClique **🚀 LAUNCH** quando pronto.";
+  // Tier badge shown in description
+  const tierBadge = isVip
+    ? "👑 **VIP** — Power 1–8 · Duração até 600s · Todos os métodos"
+    : "🔓 **Free** — Power máx **4**/8 · Duração máx **60s** · Métodos básicos";
 
-  const powerLabel = `⚡ Power **${session.threads}**/8`;
+  const desc = [
+    tierBadge,
+    "",
+    mInfo
+      ? `**${mInfo.label}** selecionado — ajuste duração & threads, depois clique **🚀 LAUNCH**`
+      : "Selecione um **método de ataque**, ajuste duração & threads se quiser.\nClique **🚀 LAUNCH** quando pronto.",
+  ].join("\n");
+
+  const powerLabel = `⚡ Power **${session.threads}**/${isVip ? "8" : "4"}`;
   const configValue = mInfo
     ? `\`${target}\` · ${mInfo.emoji ?? "⚡"} **${mInfo.label}** · ⏱ **${session.duration}s** · ${powerLabel}`
     : `\`${target}\` · ⚔️ _método não selecionado_ · ⏱ **${session.duration}s** · ${powerLabel}`;
@@ -1513,7 +1523,7 @@ function buildLauncherEmbed(target: string, session: LaunchSession, selectedMeth
   }
 
   embed
-    .setFooter({ text: AUTHOR })
+    .setFooter({ text: `${AUTHOR} • ${isVip ? "VIP — sem restrições" : "Free — /vip status para ver seus limites"}` })
     .setTimestamp();
 
   return embed;
@@ -1553,8 +1563,16 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   }
   attackCooldowns.set(userId, Date.now());
 
+  // Fetch user tier to enforce limits and show correct badge in embed
+  const isPrivileged = isOwner(userId, interaction.user.username) || isMod(userId, interaction.user.username);
+  let isVip = isPrivileged; // owners/mods always bypass
+  if (!isPrivileged) {
+    const tierData = await api.getUserTier(userId).catch(() => ({ tier: "free", expiresAt: null }));
+    isVip = tierData.tier === "vip" && (!tierData.expiresAt || new Date(tierData.expiresAt) > new Date());
+  }
+
   // Init session with defaults — auto-expires in 5 minutes if abandoned
-  const session: LaunchSession = { target, duration: 60, threads: 4 };
+  const session: LaunchSession = { target, duration: 60, threads: 4, isVip };
   pendingSessions.set(userId, session);
   scheduleSessionExpiry(userId);
 
@@ -2187,13 +2205,22 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
 
       const violations: string[] = [];
       if (!isVip && !FREE_METHODS.has(method)) {
-        violations.push(`❌ **${method}** é exclusivo VIP\nMétodos free: ${[...FREE_METHODS].join(", ")}`);
+        const freeList = [...FREE_METHODS].map(m => `\`${m}\``).join(", ");
+        violations.push(`❌ **${method}** é exclusivo VIP\n> Métodos disponíveis no Free: ${freeList}`);
       }
       if (session.threads > maxPower) {
-        violations.push(`❌ Power **${session.threads}** excede limite ${isVip ? "VIP" : "Free"} (**${maxPower}**)`);
+        violations.push(
+          isVip
+            ? `❌ Power **${session.threads}** excede limite VIP (**${maxPower}**)`
+            : `❌ Power **${session.threads}** excede limite Free — **máximo: ${maxPower}**\n> Selecione Power 1–${maxPower} no menu de threads`,
+        );
       }
       if (session.duration > maxDur) {
-        violations.push(`❌ Duração **${session.duration}s** excede limite ${isVip ? "VIP" : "Free"} (**${maxDur}s**)`);
+        violations.push(
+          isVip
+            ? `❌ Duração **${session.duration}s** excede limite VIP (**${maxDur}s**)`
+            : `❌ Duração **${session.duration}s** excede limite Free — **máximo: ${maxDur}s**\n> Selecione 30s ou 60s no menu de duração`,
+        );
       }
 
       if (violations.length > 0) {
@@ -2201,8 +2228,11 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
           embeds: [
             new EmbedBuilder()
               .setColor(COLORS.RED)
-              .setTitle(isVip ? "⚠️ Limite VIP Excedido" : "🔒 Recurso VIP Necessário")
-              .setDescription(violations.join("\n\n") + (isVip ? "" : "\n\n*Use `/vip status` para ver seus limites ou contate um admin para upgrade.*"))
+              .setTitle(isVip ? "⚠️ Limite VIP Excedido" : "🔒 Plano Free — Limite Atingido")
+              .setDescription(
+                violations.join("\n\n") +
+                (isVip ? "" : "\n\n> Use `/vip status` para ver seus limites\n> Peça para um admin te dar VIP com `/vip grant`"),
+              )
               .setFooter({ text: AUTHOR }),
           ],
           flags: MessageFlags.Ephemeral,
@@ -2692,10 +2722,10 @@ async function handleVip(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // ── /vip grant — owner only ─────────────────────────────────────────────
+  // ── /vip grant — admin only (owner + mod) ───────────────────────────────
   if (sub === "grant") {
-    if (!isOwner(callerId, callerName)) {
-      await interaction.reply({ content: "❌ Apenas owners podem conceder VIP.", flags: MessageFlags.Ephemeral });
+    if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+      await interaction.reply({ content: "❌ Apenas administradores podem conceder VIP.", flags: MessageFlags.Ephemeral });
       return;
     }
     const target = interaction.options.getUser("user", true);
@@ -2722,10 +2752,10 @@ async function handleVip(interaction: ChatInputCommandInteraction): Promise<void
     return;
   }
 
-  // ── /vip revoke — owner only ────────────────────────────────────────────
+  // ── /vip revoke — admin only (owner + mod) ───────────────────────────────
   if (sub === "revoke") {
-    if (!isOwner(callerId, callerName)) {
-      await interaction.reply({ content: "❌ Apenas owners podem revogar VIP.", flags: MessageFlags.Ephemeral });
+    if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+      await interaction.reply({ content: "❌ Apenas administradores podem revogar VIP.", flags: MessageFlags.Ephemeral });
       return;
     }
     const target = interaction.options.getUser("user", true);
