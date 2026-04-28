@@ -877,6 +877,225 @@ function WhatsAppDashboard({ base }: { base: string }) {
   );
 }
 
+/* ── Social Media Mass Reporter Dashboard ── */
+interface SocialLog { id: number; text: string; ok: boolean | null }
+interface SocialPlatInfo { platform: string; identifier: string; type: string }
+
+const PLATFORM_ICONS: Record<string, string> = {
+  instagram: "📸", tiktok: "🎵", youtube: "▶️", facebook: "👤",
+  twitter: "🐦", kwai: "🎬", twitch: "🎮",
+};
+const PLATFORM_COLORS: Record<string, string> = {
+  instagram: "#E1306C", tiktok: "#010101", youtube: "#FF0000",
+  facebook: "#1877F2", twitter: "#1DA1F2", kwai: "#FFC107", twitch: "#9146FF",
+};
+
+function SocialDashboard({ base }: { base: string }) {
+  const [url,       setUrl]       = useState("");
+  const [qty,       setQty]       = useState("10");
+  const [sending,   setSending]   = useState(false);
+  const [logs,      setLogs]      = useState<SocialLog[]>([]);
+  const [progress,  setProgress]  = useState<{ done: number; total: number } | null>(null);
+  const [platInfo,  setPlatInfo]  = useState<SocialPlatInfo | null>(null);
+  const [summary,   setSummary]   = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const logIdRef = useRef(0);
+  const logRef   = useRef<HTMLDivElement>(null);
+  const esRef    = useRef<EventSource | null>(null);
+
+  const addLog = (text: string, ok: boolean | null = null) =>
+    setLogs(p => [...p.slice(-199), { id: logIdRef.current++, text, ok }]);
+
+  useEffect(() => {
+    if (!url.trim()) { setPlatInfo(null); return; }
+    const t = setTimeout(() => {
+      fetch(`${base}/api/social/lookup?url=${encodeURIComponent(url.trim())}`)
+        .then(r => r.json())
+        .then((d: SocialPlatInfo) => { if (d.platform) setPlatInfo(d); else setPlatInfo(null); })
+        .catch(() => setPlatInfo(null));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [url, base]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+
+  function startReport() {
+    if (sending || !url.trim()) return;
+    setSending(true);
+    setLogs([]);
+    setSummary(null);
+    setProgress(null);
+    const params = new URLSearchParams({ url: url.trim(), quantity: qty });
+    const es = new EventSource(`${base}/api/social/stream/report?${params}`);
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data) as Record<string, unknown>;
+        if (d.type === "start") {
+          addLog(`🚀 Iniciando: ${d.total} reports → @${d.target} [${String(d.platform).toUpperCase()}]`, null);
+        } else if (d.type === "lookup") {
+          addLog(`🔍 Perfil encontrado${d.userId ? ` (id: ${d.userId})` : d.videoCount ? ` (${d.videoCount} vídeos)` : ""}`, true);
+        } else if (d.type === "info") {
+          addLog(`ℹ️ ${d.msg}`, null);
+        } else if (d.type === "progress") {
+          const icon = d.ok ? "✅" : "❌";
+          addLog(`${icon} Report ${d.n}/${d.total}`, d.ok as boolean);
+          setProgress({ done: Number(d.n), total: Number(d.total) });
+        } else if (d.type === "error") {
+          addLog(`⚠️ Erro: ${d.msg}`, false);
+        } else if (d.type === "done") {
+          setSummary({ sent: Number(d.sent), failed: Number(d.failed), total: Number(d.total) });
+          addLog(`🏁 Concluído: ${d.sent}/${d.total} enviados`, null);
+          setSending(false);
+          es.close();
+        }
+      } catch {}
+    };
+    es.onerror = () => {
+      addLog("❌ Conexão SSE perdida", false);
+      setSending(false);
+      es.close();
+    };
+  }
+
+  function stopReport() {
+    esRef.current?.close();
+    setSending(false);
+    addLog("⛔ Interrompido pelo usuário", null);
+  }
+
+  const platColor = platInfo ? (PLATFORM_COLORS[platInfo.platform] ?? "#888") : "#888";
+  const platIcon  = platInfo ? (PLATFORM_ICONS[platInfo.platform]  ?? "🌐") : "🌐";
+  const progress_ = progress && progress.total > 0 ? (progress.done / progress.total) * 100 : 0;
+
+  return (
+    <div style={{ padding: "16px 0", maxWidth: 820, margin: "0 auto" }}>
+      <h2 style={{ color: "#D4AF37", fontFamily: "monospace", marginBottom: 16, fontSize: 18 }}>
+        📢 Mass Reporter — Redes Sociais
+      </h2>
+
+      {/* URL input */}
+      <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            placeholder="URL ou @username (Instagram, TikTok, YouTube, Facebook, Twitter)"
+            style={{
+              flex: 1, minWidth: 260, background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 6, padding: "10px 14px", color: "#fff", fontFamily: "monospace", fontSize: 13,
+            }}
+          />
+          {platInfo && (
+            <span style={{
+              padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+              background: `${platColor}22`, border: `1px solid ${platColor}66`, color: platColor,
+            }}>
+              {platIcon} {platInfo.platform.toUpperCase()} · @{platInfo.identifier}
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 16, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "#aaa", fontSize: 12, fontFamily: "monospace" }}>Reports:</span>
+            <input
+              type="range" min={1} max={50} value={qty}
+              onChange={e => setQty(e.target.value)}
+              style={{ width: 120, accentColor: "#D4AF37" }}
+            />
+            <span style={{ color: "#D4AF37", fontFamily: "monospace", fontSize: 14, minWidth: 24 }}>{qty}</span>
+          </div>
+
+          {sending ? (
+            <button onClick={stopReport} style={{
+              padding: "9px 22px", borderRadius: 6, border: "none", cursor: "pointer",
+              background: "rgba(192,57,43,0.8)", color: "#fff", fontWeight: 700, fontSize: 13,
+            }}>⛔ Parar</button>
+          ) : (
+            <button
+              onClick={startReport}
+              disabled={!url.trim() || !platInfo}
+              style={{
+                padding: "9px 22px", borderRadius: 6, border: "none", cursor: !url.trim() || !platInfo ? "not-allowed" : "pointer",
+                background: !url.trim() || !platInfo ? "rgba(255,255,255,0.1)" : "rgba(212,175,55,0.85)",
+                color: !url.trim() || !platInfo ? "#666" : "#000", fontWeight: 700, fontSize: 13,
+              }}>
+              📢 Iniciar Report
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {progress && (
+        <div style={{ marginBottom: 10, background: "rgba(255,255,255,0.05)", borderRadius: 6, overflow: "hidden", height: 6 }}>
+          <div style={{ height: "100%", width: `${progress_}%`, background: "#D4AF37", transition: "width 0.3s ease" }} />
+        </div>
+      )}
+
+      {/* Summary */}
+      {summary && (
+        <div style={{
+          display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap",
+        }}>
+          {[
+            { label: "Enviados", val: summary.sent, color: "#2ecc71" },
+            { label: "Falhos",   val: summary.failed, color: "#e74c3c" },
+            { label: "Total",    val: summary.total,  color: "#D4AF37" },
+          ].map(c => (
+            <div key={c.label} style={{
+              background: `${c.color}18`, border: `1px solid ${c.color}44`,
+              borderRadius: 8, padding: "8px 18px", textAlign: "center",
+            }}>
+              <div style={{ color: c.color, fontSize: 20, fontWeight: 700, fontFamily: "monospace" }}>{c.val}</div>
+              <div style={{ color: "#888", fontSize: 11 }}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Live log */}
+      {logs.length > 0 && (
+        <div
+          ref={logRef}
+          style={{
+            background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 8, padding: "10px 14px", maxHeight: 320, overflowY: "auto",
+            fontFamily: "monospace", fontSize: 12,
+          }}
+        >
+          {logs.map(l => (
+            <div key={l.id} style={{
+              padding: "2px 0",
+              color: l.ok === true ? "#2ecc71" : l.ok === false ? "#e74c3c" : "#ccc",
+            }}>
+              {l.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Platform help */}
+      {!platInfo && !url && (
+        <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {Object.entries(PLATFORM_ICONS).map(([plat, icon]) => (
+            <span key={plat} style={{
+              padding: "4px 12px", borderRadius: 14, fontSize: 11, fontFamily: "monospace",
+              background: `${PLATFORM_COLORS[plat]}18`, border: `1px solid ${PLATFORM_COLORS[plat]}44`,
+              color: PLATFORM_COLORS[plat] ?? "#888",
+            }}>
+              {icon} {plat}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Panel ── */
 function Panel() {
   /* Config state — all persisted to localStorage */
@@ -994,8 +1213,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
@@ -3352,6 +3571,12 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               🚩 WhatsApp
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "redes" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("redes")}
+            >
+              📢 Redes
+            </button>
           </div>
         </header>
 
@@ -5503,6 +5728,11 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             WHATSAPP DASHBOARD PAGE
         ══════════════════════════════════════════════ */}
         {activePage === "whatsapp" && <WhatsAppDashboard base={BASE} />}
+
+        {/* ══════════════════════════════════════════════
+            REDES SOCIAIS — MASS REPORTER
+        ══════════════════════════════════════════════ */}
+        {activePage === "redes" && <SocialDashboard base={BASE} />}
 
         {activePage === "attack" && <>
 

@@ -17,6 +17,7 @@ import discordRouter from "./discord";
 import nitroRouter from "./nitro";
 import skynetchatRouter from "./skynetchat";
 import whatsappRouter from "./whatsapp";
+import socialRouter    from "./social";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(discordRouter);
 router.use(nitroRouter);
 router.use(skynetchatRouter);
 router.use("/whatsapp", whatsappRouter);
+router.use("/social",  socialRouter);
 
 export default router;

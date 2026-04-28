@@ -830,6 +830,23 @@ const COMMANDS = [
     .setName("historico")
     .setDescription("📜 Ver TXT do último check de credenciais (anterior)"),
 
+  // ── /reportredes ──────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("reportredes")
+    .setDescription("📢 Report Redes Sociais — mass report em Instagram, TikTok, YouTube, Facebook ou Twitter/X")
+    .addStringOption(opt =>
+      opt.setName("alvo")
+        .setDescription("URL ou @username da conta (ex: https://instagram.com/fulano ou @fulano)")
+        .setRequired(true)
+    )
+    .addIntegerOption(opt =>
+      opt.setName("quantidade")
+        .setDescription("Quantos reports enviar (1–50, padrão: 10)")
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(50)
+    ),
+
   // ── /reportwa ─────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("reportwa")
@@ -6454,6 +6471,69 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── /reportredes handler ──────────────────────────────────────────────────────
+  async function handleReportRedes(interaction: ChatInputCommandInteraction): Promise<void> {
+    const alvo      = interaction.options.getString("alvo", true).trim();
+    const quantidade = interaction.options.getInteger("quantidade") ?? 10;
+    const uid = interaction.user.id;
+
+    await interaction.deferReply();
+
+    const loadEmbed = new EmbedBuilder()
+      .setColor(COLORS.PURPLE)
+      .setTitle("📢 Report Redes Sociais")
+      .setDescription(`Detectando plataforma e disparando **${quantidade}** reports para \`${alvo}\`…\n🔄 Aguarde, isso pode levar alguns segundos.`)
+      .setFooter({ text: AUTHOR });
+    await interaction.editReply({ embeds: [loadEmbed] });
+
+    type SocialResult = { platform?: string; target?: string; sent?: number; failed?: number; total?: number; error?: string };
+    let result: SocialResult = {};
+    try {
+      const resp = await fetch(`${API_BASE}/api/social/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: alvo, quantity: quantidade }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      result = await resp.json() as SocialResult;
+    } catch (e) {
+      result = { error: String(e) };
+    }
+
+    const sent   = result.sent ?? 0;
+    const failed = result.failed ?? quantidade;
+    const total  = result.total ?? quantidade;
+    const plat   = result.platform ?? "?";
+    const target = result.target ?? alvo;
+
+    const PLAT_EMOJIS: Record<string, string> = {
+      instagram: "📸", tiktok: "🎵", youtube: "▶️",
+      facebook: "👤", twitter: "🐦", kwai: "🎬", twitch: "🎮",
+    };
+    const platEmoji = PLAT_EMOJIS[plat] ?? "🌐";
+
+    const ok = sent > 0;
+    const resultEmbed = new EmbedBuilder()
+      .setColor(ok ? COLORS.GREEN : COLORS.CRIMSON)
+      .setTitle(`${platEmoji} Report ${plat.toUpperCase()} — Resultado`)
+      .setDescription(ok
+        ? `*"O Geass age nas sombras digitais. ${sent} reports enviados — o alvo está marcado."*`
+        : `*"Falha na operação. Verifique o alvo e tente novamente."*`)
+      .addFields(
+        { name: "🎯 Alvo",      value: `\`@${target}\``,                           inline: true },
+        { name: "✅ Enviados",  value: `\`${sent}/${total}\``,                       inline: true },
+        { name: "❌ Falhos",    value: `\`${failed}\``,                              inline: true },
+      )
+      .setFooter({ text: `${AUTHOR} • Redes Sociais Report • ${uid}` })
+      .setTimestamp();
+
+    if (result.error) {
+      resultEmbed.addFields({ name: "⚠️ Erro", value: `\`${result.error.slice(0, 200)}\`` });
+    }
+
+    await interaction.editReply({ embeds: [resultEmbed] });
+  }
+
   // ── /whatsapp handler ───────────────────────────────────────────────────────
   async function handleWhatsapp(interaction: ChatInputCommandInteraction): Promise<void> {
     const sub = interaction.options.getSubcommand();
@@ -6557,7 +6637,7 @@ async function main(): Promise<void> {
       const loadEmbed = new EmbedBuilder()
         .setColor(COLORS.PURPLE)
         .setTitle("📲 Disparo de Código SMS")
-        .setDescription(`Disparando códigos de verificação para \`${numero}\`…\n🎯 17 serviços: Telegram, iFood, Rappi, PicPay, ML, Shopee, TikTok, Nubank, ZeDelivery, 99Food, Kwai, InDrive, Signal, Uber, OLX, Binance, Amazon`)
+        .setDescription(`Disparando códigos de verificação para \`${numero}\`…\n🎯 22 serviços: Telegram, iFood, Rappi, PicPay, ML, Shopee, TikTok, Nubank, ZeDelivery, 99Food, Kwai, InDrive, Signal, Uber, OLX, Binance, Amazon, Nubank Pix, PicPay Pix, RecargaPay, Mercado Pago, Kwai BR`)
         .setFooter({ text: AUTHOR });
       await interaction.editReply({ embeds: [loadEmbed] });
 
@@ -6678,6 +6758,8 @@ async function main(): Promise<void> {
         await handleHistorico(interaction);
       } else if (commandName === "reportwa") {
         await handleWhatsapp(interaction);
+      } else if (commandName === "reportredes") {
+        await handleReportRedes(interaction);
       }
     } catch (err) {
       console.error("[INTERACTION ERROR]", err);

