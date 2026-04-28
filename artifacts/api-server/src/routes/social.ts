@@ -49,10 +49,18 @@ export interface PlatformInfo {
   platform: "instagram" | "tiktok";
   identifier: string;
   type: "user" | "post";
+  extra?: string; // TikTok: username when identifier is a video ID
 }
 
 export function detectPlatform(input: string): PlatformInfo | null {
   const s = input.trim().replace(/^@/, "");
+
+  // TikTok video/post
+  const ttVideoMatch = s.match(/tiktok\.com\/@[^/?&\s]+\/video\/(\d{10,25})/);
+  if (ttVideoMatch?.[1]) {
+    const usernameM = s.match(/tiktok\.com\/@([^/?&\s]+)/);
+    return { platform: "tiktok", identifier: ttVideoMatch[1], type: "post", extra: usernameM?.[1] };
+  }
 
   // TikTok user
   const ttMatch = s.match(/tiktok\.com\/@([^/?&\s]+)/);
@@ -168,15 +176,32 @@ async function ttLookup(username: string): Promise<string | null> {
   } catch { return null; }
 }
 
+const TK_UA = "com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A; Cronet/112)";
+const TK_ENDPOINTS = [
+  "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/report/",
+  "https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/report/",
+];
+
 async function ttReport(secUid: string, reason: number, proxy: string[]): Promise<boolean> {
-  const UA = "com.zhiliaoapp.musically/2023130060 (Linux; U; Android 13; pt_BR; Pixel 7; Build/TQ3A; Cronet/112)";
   const body = `object_id=${encodeURIComponent(secUid)}&object_type=1&reason=${reason}&os_type=0&aid=1233&app_name=musically_go&channel=googleplay&device_platform=android&version_code=320000`;
-  for (const ep of [
-    "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/report/",
-    "https://api22-normal-c-useast2a.tiktokv.com/aweme/v1/report/",
-  ]) {
+  for (const ep of TK_ENDPOINTS) {
     try {
-      const r = await runCurl([...proxy, "-X", "POST", "-H", `User-Agent: ${UA}`,
+      const r = await runCurl([...proxy, "-X", "POST", "-H", `User-Agent: ${TK_UA}`,
+        "-H", "Content-Type: application/x-www-form-urlencoded",
+        "-H", "X-TT-Locale: pt_BR", "--data-raw", body, ep,
+      ], 12_000);
+      if (r.statusCode === 200 && !r.body.includes('"status_code":1')) return true;
+    } catch {}
+  }
+  return false;
+}
+
+// TikTok video/post report — object_type=4 (aweme)
+async function ttVideoReport(videoId: string, reason: number, proxy: string[]): Promise<boolean> {
+  const body = `object_id=${encodeURIComponent(videoId)}&object_type=4&reason=${reason}&os_type=0&aid=1233&app_name=musically_go&channel=googleplay&device_platform=android&version_code=320000`;
+  for (const ep of TK_ENDPOINTS) {
+    try {
+      const r = await runCurl([...proxy, "-X", "POST", "-H", `User-Agent: ${TK_UA}`,
         "-H", "Content-Type: application/x-www-form-urlencoded",
         "-H", "X-TT-Locale: pt_BR", "--data-raw", body, ep,
       ], 12_000);
@@ -210,6 +235,14 @@ async function runRound(
       ok ? sent++ : failed++;
       emit({ type: "progress", n: i + 1, total: qty, ok, platform: "instagram", ...(roundLabel ? { round: roundLabel } : {}) });
       if (i < qty - 1 && !stopped()) await rand(300, 800);
+    }
+  } else if (info.platform === "tiktok" && info.type === "post") {
+    // TikTok video report — identifier is the video ID
+    for (let i = 0; i < qty && !stopped(); i++) {
+      const ok = await ttVideoReport(info.identifier, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
+      ok ? sent++ : failed++;
+      emit({ type: "progress", n: i + 1, total: qty, ok, platform: "tiktok", ...(roundLabel ? { round: roundLabel } : {}) });
+      if (i < qty - 1 && !stopped()) await rand(250, 700);
     }
   } else if (info.platform === "tiktok" && ttSecUid) {
     for (let i = 0; i < qty && !stopped(); i++) {
@@ -269,9 +302,14 @@ router.get("/stream/report", async (req, res): Promise<void> => {
         emit({ type: "lookup", userId: igUserId, username: info.identifier, targetType: "account" });
       }
     } else if (info.platform === "tiktok") {
-      ttSecUid = await ttLookup(info.identifier);
-      if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
-      emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier });
+      if (info.type === "post") {
+        // Video ID is already in identifier — no lookup needed
+        emit({ type: "lookup", videoId: info.identifier, username: info.extra ?? "?", targetType: "video" });
+      } else {
+        ttSecUid = await ttLookup(info.identifier);
+        if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
+        emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier, targetType: "account" });
+      }
     }
 
     const { sent, failed } = await runRound(info, qty, igUserId, igMediaId, ttSecUid, emit, () => stopped);
@@ -324,9 +362,13 @@ router.get("/stream/loop", async (req, res): Promise<void> => {
         emit({ type: "lookup", userId: igUserId, username: info.identifier, targetType: "account" });
       }
     } else if (info.platform === "tiktok") {
-      ttSecUid = await ttLookup(info.identifier);
-      if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
-      emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier });
+      if (info.type === "post") {
+        emit({ type: "lookup", videoId: info.identifier, username: info.extra ?? "?", targetType: "video" });
+      } else {
+        ttSecUid = await ttLookup(info.identifier);
+        if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
+        emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier, targetType: "account" });
+      }
     }
   } catch (err) {
     emit({ type: "error", msg: String(err).slice(0, 100) }); res.end(); return;
@@ -398,14 +440,23 @@ router.post("/report", async (req, res): Promise<void> => {
         } else { failed = qty; }
       }
     } else if (info.platform === "tiktok") {
-      const secUid = await ttLookup(info.identifier);
-      if (secUid) {
+      if (info.type === "post") {
+        // Video report — ID is directly in identifier
         for (let i = 0; i < qty; i++) {
-          const ok = await ttReport(secUid, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
+          const ok = await ttVideoReport(info.identifier, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
           ok ? sent++ : failed++;
           if (i < qty - 1) await sleep(250);
         }
-      } else { failed = qty; }
+      } else {
+        const secUid = await ttLookup(info.identifier);
+        if (secUid) {
+          for (let i = 0; i < qty; i++) {
+            const ok = await ttReport(secUid, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
+            ok ? sent++ : failed++;
+            if (i < qty - 1) await sleep(250);
+          }
+        } else { failed = qty; }
+      }
     } else {
       failed = qty;
     }

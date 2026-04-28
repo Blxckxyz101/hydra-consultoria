@@ -1005,7 +1005,7 @@ function SocialDashboard({ base }: { base: string }) {
           if (d.targetType === "post") {
             addLog(`🔍 Post identificado — mediaId: ${d.mediaId}`, true);
           } else {
-            addLog(`🔍 Perfil encontrado${d.userId ? ` (id: ${d.userId})` : d.secUid ? " (TikTok secUid ok)" : ""}`, true);
+            addLog(`🔍 Alvo encontrado${d.userId ? ` (id: ${d.userId})` : d.secUid ? " (TikTok secUid ok)" : d.videoId ? ` (TikTok vídeo: ${String(d.videoId).slice(0, 10)}…)` : d.mediaId ? " (IG media ok)" : ""}`, true);
           }
         } else if (d.type === "info") {
           addLog(`ℹ️ ${d.msg}`, null);
