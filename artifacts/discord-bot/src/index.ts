@@ -29,7 +29,7 @@ type MonitorEditFn = (opts: {
   embeds:     EmbedBuilder[];
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
-import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE, METHOD_EMOJIS } from "./config.js";
 import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type NitroCodeResult } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
@@ -1338,12 +1338,8 @@ function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: st
                 .setTitle("💀 TARGET CONFIRMED DOWN")
                 .setDescription(
                   `> *"All opposition shall submit to the might of Geass."*\n\n` +
-                  `**Attack #${attackId}** — \`${target}\` has gone **DOWN**.`
-                )
-                .addFields(
-                  { name: "🎯 Target",   value: `\`${target}\``,             inline: true },
-                  { name: "⚔️ Method",   value: `\`${attack.method}\``,      inline: true },
-                  { name: "💀 Reason",   value: probe.reason ?? "ECONNREFUSED", inline: false },
+                  `\`${target}\` · ${METHOD_EMOJIS[attack.method] ?? "⚡"} **${attack.method}** · \`#${attackId}\`\n` +
+                  `💀 **${probe.reason ?? "ECONNREFUSED"}**`
                 )
                 .setFooter({ text: AUTHOR })
                 .setTimestamp(),
@@ -1448,23 +1444,34 @@ function buildLauncherComponents(_target: string) {
 
 function buildLauncherEmbed(target: string, session: LaunchSession, selectedMethod?: string): EmbedBuilder {
   const mInfo = selectedMethod ? METHOD_OPTIONS.find(m => m.value === selectedMethod) : null;
-  return new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle("⚔️ GEASS LAUNCHER — Configure Attack")
-    .setDescription(
-      mInfo
-        ? `**${mInfo.label}** selected — configure duration & threads, then click **🚀 LAUNCH**`
-        : "Select an **attack method**, then optionally change duration & threads.\nClick **🚀 LAUNCH** when ready."
-    )
-    .addFields(
-      { name: "🎯 Target",    value: `\`${target}\``,                                     inline: false },
-      { name: "⚔️ Method",   value: mInfo ? `**${mInfo.label}**` : "_not selected yet_",  inline: true  },
-      { name: "⏱ Duration",  value: `**${session.duration}s**`,                           inline: true  },
-      { name: "🧵 Threads",  value: `**${session.threads}**`,                             inline: true  },
-      { name: "\u200b",      value: "Select method above, then press **🚀 LAUNCH**.",      inline: false },
-    )
+
+  const desc = mInfo
+    ? `**${mInfo.label}** selecionado — ajuste duração & threads, depois clique **🚀 LAUNCH**`
+    : "Selecione um **método de ataque**, ajuste duração & threads se quiser.\nClique **🚀 LAUNCH** quando pronto.";
+
+  const configValue = mInfo
+    ? `\`${target}\` · ${mInfo.emoji ?? "⚡"} **${mInfo.label}** · ⏱ **${session.duration}s** · 🧵 **${session.threads}t**`
+    : `\`${target}\` · ⚔️ _método não selecionado_ · ⏱ **${session.duration}s** · 🧵 **${session.threads}t**`;
+
+  const embed = new EmbedBuilder()
+    .setColor(mInfo ? COLORS.CRIMSON : COLORS.GOLD)
+    .setTitle("⚔️ GEASS LAUNCHER")
+    .setDescription(desc)
+    .addFields({ name: "🎯 Configuração", value: configValue, inline: false });
+
+  if (mInfo?.description) {
+    embed.addFields({
+      name:   "📋 Como funciona",
+      value:  `> ${mInfo.description.slice(0, 300)}`,
+      inline: false,
+    });
+  }
+
+  embed
     .setFooter({ text: AUTHOR })
     .setTimestamp();
+
+  return embed;
 }
 
 // ── Command Handlers ──────────────────────────────────────────────────────────
@@ -5664,7 +5671,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
     }
 
     const elapsed = Date.now() - start;
-    const modelLabel = { "chat-V3": "SKY v3", "chat-V2-fast": "SKY v2 Fast", "chat-V2-thinking": "SKY v2 Think", "chat-V3-thinking": "SKY v3 Think" }[endpoint] ?? endpoint;
+    const modelLabel = endpoint ? ({ "chat-V3": "SKY v3", "chat-V2-fast": "SKY v2 Fast", "chat-V2-thinking": "SKY v2 Think", "chat-V3-thinking": "SKY v3 Think" } as Record<string, string>)[endpoint] ?? endpoint : "SKY";
 
     if (isRateLimit) {
       await safeEdit({

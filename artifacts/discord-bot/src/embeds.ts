@@ -337,148 +337,120 @@ export function buildAttackEmbed(
   ppsHistory:    number[]      = [],
   proxyCount     = 0,
 ): EmbedBuilder {
-  const isRunning  = attack.status === "running";
-  const color      = isRunning ? COLORS.CRIMSON
+  const isRunning = attack.status === "running";
+  const color     = isRunning ? COLORS.CRIMSON
     : attack.status === "finished" ? COLORS.GREEN
     : COLORS.GRAY;
-  const emoji      = METHOD_EMOJIS[attack.method] ?? "⚡";
-  const showConns  = CONN_METHODS.has(attack.method);
-  const trend      = trendArrow(ppsHistory);
-  const isGeass    = attack.method === "geass-override";
+  const emoji     = METHOD_EMOJIS[attack.method] ?? "⚡";
+  const showConns = CONN_METHODS.has(attack.method);
+  const trend     = trendArrow(ppsHistory);
+  const isGeass   = attack.method === "geass-override";
 
-  // Proxy badge shown when proxies are active and method uses them
-  const proxyBadge = proxyCount > 0
-    ? `🌐 **${proxyCount.toLocaleString()}** residential IPs rotating`
-    : "";
+  // ── Compact header: all key config in one description line ───────────────
+  const configLine = `\`${attack.target}\` · ${emoji} **${methodLabel(attack.method)}** · \`#${attack.id}\` · **${fmtNum(attack.threads)}t** · **${attack.duration}s**`;
 
-  const descLines: string[] = [];
+  let statusDesc: string;
   if (isRunning) {
-    if (isGeass) {
-      descLines.push("👁️ **ARES OMNIVECT ∞** — 33 simultaneous real attack vectors, all CVEs active");
-    } else {
-      descLines.push(`**Target is under ${attack.method === "waf-bypass" ? "WAF Bypass" : "fire"}** — live monitoring active`);
-    }
-    if (proxyBadge) descLines.push(proxyBadge);
+    statusDesc = isGeass
+      ? "👁️ **ARES OMNIVECT ∞** — all CVEs active simultaneously"
+      : "🔴 **ATTACK ACTIVE** — live metrics updating every 8s";
   } else {
-    descLines.push(`Attack **#${attack.id}** has **${attack.status}**.`);
+    const icon = attack.status === "finished" ? "✅" : attack.status === "stopped" ? "⏹️" : "⚠️";
+    statusDesc = `${icon} **${attack.status.toUpperCase()}**`;
   }
+
+  const proxyLine = proxyCount > 0
+    ? `\n🌐 **${proxyCount.toLocaleString()}** residential IPs in rotation`
+    : "";
 
   const embed = new EmbedBuilder()
     .setColor(color)
-    .setTitle(`${emoji} ${isRunning ? "GEASS COMMAND ACTIVE" : `ATTACK ${attack.status.toUpperCase()}`}`)
-    .setDescription(descLines.join(" • "))
-    .addFields(
-      { name: "🎯 Target",   value: `\`${attack.target}\``,                       inline: true },
-      { name: "⚔️ Method",   value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
-      { name: "🆔 ID",       value: `\`#${attack.id}\``,                          inline: true },
-      { name: "🧵 Threads",  value: `**${fmtNum(attack.threads)}**`,               inline: true },
-      { name: "⏱ Duration",  value: `**${attack.duration}s**`,                    inline: true },
-      { name: "📊 Status",   value: statusIcon(attack.status),                     inline: true },
-    );
+    .setTitle(`${emoji} ${isRunning ? "GEASS COMMAND ACTIVE" : `ATTACK #${attack.id} ${attack.status.toUpperCase()}`}`)
+    .setDescription(`${configLine}\n${statusDesc}${proxyLine}`);
 
   if (isRunning) {
-    // ── Live metrics section ────────────────────────────────────────────────
-    embed.addFields({ name: "‎", value: "━━━━━━━━━━━━ 📡 **LIVE METRICS** ━━━━━━━━━━━━", inline: false });
+    // ── Single compact live metrics field ───────────────────────────────────
+    const ppsStr   = `⚡ **${fmtPps(livePps)}**${trend}`;
+    const bpsStr   = liveBps > 0 ? `📶 **${fmtBps(liveBps)}** ${bpsBar(liveBps)}` : "📶 _ramping..._";
+    const pktsStr  = `📦 **${fmtPkt(attack.packetsSent)}**`;
+    const bytesStr = `💾 **${fmtBytes(attack.bytesSent)}**`;
+    const timeStr  = `⏳ **${elapsed(attack.startedAt)}**`;
+    const connLine = showConns
+      ? `\n🔗 ${liveConns > 0 ? connBar(liveConns) : "_conns ramping..._"}`
+      : "";
 
-    // Row 1: PPS + Bandwidth
-    embed.addFields(
-      {
-        name:   "⚡ Packet Rate",
-        value:  `**${fmtPps(livePps)}**${trend}`,
-        inline: true,
-      },
-      {
-        name:   "📶 Bandwidth",
-        value:  liveBps > 0 ? `**${fmtBps(liveBps)}**${trend}\n${bpsBar(liveBps)}` : "_ramping..._",
-        inline: true,
-      },
-      { name: "⏳ Elapsed", value: `**${elapsed(attack.startedAt)}**`, inline: true },
-    );
+    embed.addFields({
+      name:   "📡 Live Metrics",
+      value:  `${ppsStr}  ·  ${bpsStr}\n${pktsStr} sent  ·  ${bytesStr}  ·  ${timeStr}${connLine}`,
+      inline: false,
+    });
 
-    // Row 2: Cumulative totals
-    embed.addFields(
-      { name: "📦 Packets Sent", value: `**${fmtPkt(attack.packetsSent)}**`,   inline: true },
-      { name: "💾 Data Sent",    value: `**${fmtBytes(attack.bytesSent)}**`,    inline: true },
-    );
-
-    // Row 3: Open connections (if applicable)
-    if (showConns) {
-      embed.addFields({
-        name:   "🔗 Open Connections",
-        value:  liveConns > 0 ? connBar(liveConns) : "_ramping up..._",
-        inline: true,
-      });
-    }
-
-    // Progress bar
-    embed.addFields({ name: "‎", value: progressBar(attack.startedAt, attack.duration), inline: false });
+    // Progress bar (zero-width name to keep compact)
+    embed.addFields({ name: "\u200b", value: progressBar(attack.startedAt, attack.duration), inline: false });
 
     // Target status sparkline
     embed.addFields(buildStatusField(targetHistory, attack.method));
 
   } else {
-    // ── Finished metrics ────────────────────────────────────────────────────
-    embed.addFields({ name: "‎", value: "━━━━━━━━━━━━ 📊 **FINAL REPORT** ━━━━━━━━━━━━", inline: false });
-
+    // ── Compact final report ─────────────────────────────────────────────────
     const elapsedSec = attack.stoppedAt && attack.startedAt
       ? Math.max(1, Math.round((new Date(attack.stoppedAt).getTime() - new Date(attack.startedAt).getTime()) / 1000))
       : attack.duration;
-    const avgPps  = elapsedSec > 0 ? Math.round(attack.packetsSent / elapsedSec) : 0;
-    const avgBps  = elapsedSec > 0 ? Math.round((attack.bytesSent * 8) / elapsedSec) : 0;
+    const avgPps = elapsedSec > 0 ? Math.round(attack.packetsSent / elapsedSec) : 0;
+    const avgBps = elapsedSec > 0 ? Math.round((attack.bytesSent * 8) / elapsedSec) : 0;
+    const minSec = Math.floor(elapsedSec / 60);
+    const remSec = elapsedSec % 60;
+    const durStr = minSec > 0 ? `${minSec}m ${remSec}s` : `${elapsedSec}s`;
 
-    embed.addFields(
-      { name: "📦 Total Packets",  value: `**${fmtPkt(attack.packetsSent)}**`,  inline: true },
-      { name: "💾 Total Data",     value: `**${fmtBytes(attack.bytesSent)}**`,   inline: true },
-      { name: "⏳ Elapsed",        value: `**${elapsed(attack.startedAt)}**`,    inline: true },
-      { name: "📈 Avg PPS",        value: `**${fmtPps(avgPps)}**`,              inline: true },
-      { name: "📶 Avg Bandwidth",  value: `**${fmtBps(avgBps)}**`,              inline: true },
-    );
+    embed.addFields({
+      name:   "📊 Final Report",
+      value:  `📦 **${fmtPkt(attack.packetsSent)}** · 💾 **${fmtBytes(attack.bytesSent)}** · ⏳ **${durStr}**\n📈 Avg rate: **${fmtPps(avgPps)}** · 📶 Avg BW: **${fmtBps(avgBps)}**`,
+      inline: false,
+    });
 
     if (targetHistory.length > 0) {
       embed.addFields(buildStatusField(targetHistory, attack.method));
     }
   }
 
-  embed.setFooter(footer(`Attack #${attack.id} • updates every 8s`)).setTimestamp();
+  embed.setFooter(footer(`#${attack.id} • updates every 8s`)).setTimestamp();
   return embed;
 }
 
 // ── Attack Started Embed ──────────────────────────────────────────────────────
 export function buildStartEmbed(attack: Attack, proxyCount = 0, lang: "en" | "pt" = "en"): EmbedBuilder {
-  const pt    = lang === "pt";
-  const emoji = METHOD_EMOJIS[attack.method] ?? "⚡";
+  const pt      = lang === "pt";
+  const emoji   = METHOD_EMOJIS[attack.method] ?? "⚡";
   const isGeass = attack.method === "geass-override";
 
-  const proxyLine = proxyCount > 0
-    ? pt
-      ? `\n\n🌐 **${proxyCount.toLocaleString()} IPs residenciais** em rotação — cada requisição de um IP diferente`
-      : `\n\n🌐 **${proxyCount.toLocaleString()} residential IPs** in rotation — each request from a different IP`
+  const quote = pt
+    ? `> *"NÃO. POR CAUSA DISSO… nós lutamos."*  — **Lelouch vi Britannia**`
+    : `> *"No. BECAUSE of that… We fight."*  — **Lelouch vi Britannia**`;
+
+  const geassLine = isGeass
+    ? (pt ? "\n👁️ **ARES OMNIVECT ∞** — 35 vetores simultâneos" : "\n👁️ **ARES OMNIVECT ∞** — 35 simultaneous vectors")
     : "";
 
-  const quote = pt
-    ? `> *"Os homens NÃO nascem iguais. Alguns nascem mais rápidos, outros com mais beleza, alguns nascem na pobreza — e outros nascem doentes. Por causa disso... NÃO. POR CAUSA DISSO… nós lutamos."*\n> — **Lelouch vi Britannia**`
-    : `> *"All men are NOT created equal. Some are born swifter afoot, some with greater beauty, some are born into poverty — and others are born sick and feeble. In spite of that... No. BECAUSE of that… We fight."*\n> — **Lelouch vi Britannia**`;
+  const proxyLine = proxyCount > 0
+    ? (pt
+        ? `\n🌐 **${proxyCount.toLocaleString()} IPs residenciais** em rotação`
+        : `\n🌐 **${proxyCount.toLocaleString()} residential IPs** rotating`)
+    : "";
+
+  const configLine = `\`${attack.target}\` · ${emoji} **${methodLabel(attack.method)}** · \`#${attack.id}\` · **${fmtNum(attack.threads)}t** · **${attack.duration}s**`;
 
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
     .setTitle(pt ? `${emoji} COMANDO GEASS EMITIDO` : `${emoji} GEASS COMMAND ISSUED`)
-    .setDescription(
-      isGeass
-        ? `${quote}\n\n👁️ **ARES OMNIVECT ∞** — ${pt ? "35 vetores de ataque reais disparando simultaneamente" : "35 real attack vectors deploying simultaneously"}${proxyLine}`
-        : `${quote}${proxyLine}`
-    )
+    .setDescription(`${quote}${geassLine}${proxyLine}\n\n${configLine}`)
     .setImage("attachment://lelouch.gif")
     .setThumbnail("attachment://geass-symbol.png")
-    .addFields(
-      { name: pt ? "🎯 Alvo"       : "🎯 Target",    value: `\`${attack.target}\``,                       inline: true },
-      { name: pt ? "⚔️ Método"     : "⚔️ Method",    value: `${emoji} **${methodLabel(attack.method)}**`, inline: true },
-      { name: pt ? "🆔 ID do Ataque" : "🆔 Attack ID", value: `\`#${attack.id}\``,                        inline: true },
-      { name: pt ? "🧵 Threads"    : "🧵 Threads",   value: `**${fmtNum(attack.threads)}**`,               inline: true },
-      { name: pt ? "⏱ Duração"    : "⏱ Duration",   value: `**${attack.duration}s**`,                    inline: true },
-      { name: pt ? "📊 Status"     : "📊 Status",    value: pt ? "🔴 **INICIALIZANDO...**" : "🔴 **INITIALIZING...**", inline: true },
-      { name: "‎", value: pt ? "*Métricas ao vivo atualizam a cada 5 segundos.*" : "*Live metrics update every 5 seconds automatically.*", inline: false },
-    )
-    .setFooter(footer(pt ? "Iniciado por slash command" : "Started by slash command"))
+    .addFields({
+      name:   pt ? "🔴 Inicializando" : "🔴 Initializing",
+      value:  pt ? "*Métricas ao vivo em instantes — esta mensagem atualiza automaticamente.*" : "*Live metrics in moments — this message updates automatically.*",
+      inline: false,
+    })
+    .setFooter(footer(pt ? `ID #${attack.id}` : `Attack #${attack.id}`))
     .setTimestamp();
 }
 
@@ -520,23 +492,21 @@ export function buildFinishEmbed(
   const elapsedSec = stoppedAt && startedAt
     ? Math.max(1, Math.round((new Date(stoppedAt).getTime() - new Date(startedAt).getTime()) / 1000))
     : 0;
-  const avgPps  = elapsedSec > 0 ? Math.round(packets / elapsedSec) : 0;
-  const avgBps  = elapsedSec > 0 ? Math.round((bytes * 8) / elapsedSec) : 0;
-  const minSec  = Math.floor(elapsedSec / 60);
-  const remSec  = elapsedSec % 60;
-  const durStr  = minSec > 0 ? `${minSec}m ${remSec}s` : `${elapsedSec}s`;
+  const avgPps = elapsedSec > 0 ? Math.round(packets / elapsedSec) : 0;
+  const avgBps = elapsedSec > 0 ? Math.round((bytes * 8) / elapsedSec) : 0;
+  const minSec = Math.floor(elapsedSec / 60);
+  const remSec = elapsedSec % 60;
+  const durStr = minSec > 0 ? `${minSec}m ${remSec}s` : `${elapsedSec}s`;
 
   return new EmbedBuilder()
     .setColor(finishColor)
-    .setTitle(`${finishIcon} ATTACK #${attackId} ${status.toUpperCase()}`)
+    .setTitle(`${finishIcon} ATTACK #${attackId} — ${status.toUpperCase()}`)
     .setDescription(`${emoji} **${methodLabel(method)}** → \`${target}\``)
-    .addFields(
-      { name: "⏱️ Duration",      value: `**${durStr}**`,         inline: true },
-      { name: "📦 Total Packets", value: `**${fmtPkt(packets)}**`,  inline: true },
-      { name: "💾 Total Data",    value: `**${fmtBytes(bytes)}**`,   inline: true },
-      { name: "📈 Avg Rate",      value: `**${fmtPps(avgPps)}**`,   inline: true },
-      { name: "📶 Avg Bandwidth", value: `**${fmtBps(avgBps)}**`,   inline: true },
-    )
+    .addFields({
+      name:   "📊 Damage Report",
+      value:  `⏱️ **${durStr}**  ·  📦 **${fmtPkt(packets)}**  ·  💾 **${fmtBytes(bytes)}**\n📈 Avg rate: **${fmtPps(avgPps)}**  ·  📶 Avg BW: **${fmtBps(avgBps)}**`,
+      inline: false,
+    })
     .setFooter({ text: `${BOT_NAME} — ${AUTHOR}` })
     .setTimestamp();
 }
@@ -558,10 +528,10 @@ export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): Emb
 
   if (running.length > 0) {
     embed.addFields({
-      name: pt ? "🔴 ATAQUES ATIVOS" : "🔴 ACTIVE ATTACKS",
+      name: pt ? "🔴 Ativos Agora" : "🔴 Active Now",
       value: running.map(a => {
         const e = METHOD_EMOJIS[a.method] ?? "⚡";
-        return `\`#${a.id}\` ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtPkt(a.packetsSent)} | ⏳ ${elapsed(a.startedAt)}`;
+        return `\`#${a.id}\` ${e} **${methodLabel(a.method)}**\n┗ \`${a.target}\` · ${fmtPkt(a.packetsSent)} · ⏳ ${elapsed(a.startedAt)} · **${a.threads}t**`;
       }).join("\n"),
       inline: false,
     });
@@ -569,11 +539,17 @@ export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): Emb
 
   if (completed.length > 0) {
     embed.addFields({
-      name: pt ? "📋 HISTÓRICO RECENTE" : "📋 RECENT HISTORY",
+      name: pt ? "📋 Histórico Recente" : "📋 Recent History",
       value: completed.map(a => {
         const icon = a.status === "finished" ? "✅" : a.status === "stopped" ? "⏹️" : "❌";
         const e    = METHOD_EMOJIS[a.method] ?? "⚡";
-        return `\`#${a.id}\` ${icon} ${e} **${methodLabel(a.method)}** → \`${a.target}\` | ${fmtPkt(a.packetsSent)} | ${fmtBytes(a.bytesSent)}`;
+        const elapsedSec = a.stoppedAt && a.startedAt
+          ? Math.max(1, Math.round((new Date(a.stoppedAt).getTime() - new Date(a.startedAt).getTime()) / 1000))
+          : a.duration;
+        const minSec = Math.floor(elapsedSec / 60);
+        const remSec = elapsedSec % 60;
+        const durStr = minSec > 0 ? `${minSec}m${remSec}s` : `${elapsedSec}s`;
+        return `${icon} \`#${a.id}\` ${e} **${methodLabel(a.method)}** → \`${a.target}\` · ${fmtPkt(a.packetsSent)} · ${fmtBytes(a.bytesSent)} · ${durStr}`;
       }).join("\n"),
       inline: false,
     });
@@ -581,13 +557,13 @@ export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): Emb
 
   if (attacks.length === 0) {
     embed.addFields({
-      name: pt ? "Nenhum ataque encontrado" : "No attacks found",
+      name: pt ? "Nenhum ataque" : "No attacks found",
       value: pt ? "Use `/attack start` para iniciar um Comando Geass." : "Use `/attack start` to launch a Geass command.",
       inline: false,
     });
   }
 
-  embed.setFooter(footer(pt ? `${attacks.length} entradas no total` : `${attacks.length} total entries`)).setTimestamp();
+  embed.setFooter(footer(pt ? `${attacks.length} no total` : `${attacks.length} total`)).setTimestamp();
   return embed;
 }
 
