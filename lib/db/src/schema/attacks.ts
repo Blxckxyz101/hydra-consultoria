@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, bigint, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -18,6 +18,7 @@ export const attacksTable = pgTable("attacks", {
   codesClient: integer("codes_client"),
   codesServer: integer("codes_server"),
   codesTimeout: integer("codes_timeout"),
+  targetWentDown: boolean("target_went_down").default(false),
   webhookUrl: text("webhook_url"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   stoppedAt: timestamp("stopped_at", { withTimezone: true }),

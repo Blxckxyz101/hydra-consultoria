@@ -617,12 +617,33 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
     embed.addFields({
       name: pt ? "🏆 Métodos Mais Usados" : "🏆 Top Methods",
       value: topMethods.map((m, i) => {
-        const emoji = METHOD_EMOJIS[m.method] ?? "⚡";
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        return `${medal} ${emoji} **${methodLabel(m.method)}** — ${m.count} ${pt ? "ataques" : "attacks"}`;
+        const emoji    = METHOD_EMOJIS[m.method] ?? "⚡";
+        const medal    = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const efficacy = stats.efficacy?.[m.method];
+        const eff      = efficacy ? ` | 💀 ${efficacy.downed}/${efficacy.total} (${efficacy.rate}%)` : "";
+        return `${medal} ${emoji} **${methodLabel(m.method)}** — ${m.count} ${pt ? "ataques" : "attacks"}${eff}`;
       }).join("\n"),
       inline: false,
     });
+  }
+
+  // ── Efficacy leaderboard (if any data) ───────────────────────────────────
+  if (stats.efficacy) {
+    const entries = Object.entries(stats.efficacy)
+      .filter(([, e]) => e.total > 0)
+      .sort(([, a], [, b]) => b.rate - a.rate)
+      .slice(0, 5);
+    if (entries.length > 0) {
+      embed.addFields({
+        name: pt ? "💀 Eficácia — Alvo Derrubado" : "💀 Efficacy — Target Downed",
+        value: entries.map(([method, e], i) => {
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+          const bar   = `\`[${"█".repeat(Math.round(e.rate / 10))}${"░".repeat(10 - Math.round(e.rate / 10))}]\``;
+          return `${medal} **${methodLabel(method)}** ${bar} **${e.rate}%** (${e.downed}/${e.total})`;
+        }).join("\n"),
+        inline: false,
+      });
+    }
   }
 
   embed.setFooter(footer()).setTimestamp();
@@ -630,146 +651,151 @@ export function buildStatsEmbed(stats: AttackStats, proxyStats?: { count: number
 }
 
 // ── Analyze Embed ─────────────────────────────────────────────────────────────
+// Convert raw suggestedThreads count to power level 1-8
+const toPowerLevel = (rawThreads: number): number =>
+  Math.min(8, Math.max(1, Math.round(rawThreads / 500)));
+
 export function buildAnalyzeEmbed(result: AnalyzeResult, lang: "en" | "pt" = "en"): EmbedBuilder {
   const pt = lang === "pt";
+  const none = pt ? "Nenhum" : "None";
 
-  // ── Strings ──
-  const T = {
-    title:      pt ? "🔍 RECONHECIMENTO DE ALVO — GEASS SCAN" : "🔍 TARGET RECONNAISSANCE — GEASS SCAN",
-    desc:       pt ? `Análise completa de \`${result.target}\`` : `Full intelligence scan of \`${result.target}\``,
-    secDns:     pt ? "━━━━ 🌐  **DNS & REDE** ━━━━" : "━━━━ 🌐  **DNS & NETWORK** ━━━━",
-    primaryIp:  pt ? "🎯 IP Principal" : "🎯 Primary IP",
-    allIps:     pt ? "📡 Todos IPs" : "📡 All IPs",
-    secServer:  pt ? "━━━━ 🖥️  **SERVIDOR** ━━━━" : "━━━━ 🖥️  **SERVER FINGERPRINT** ━━━━",
-    server:     pt ? "🖥️ Servidor" : "🖥️ Server",
-    response:   pt ? "⏱ Resposta" : "⏱ Response Time",
-    http:       pt ? "🌍 HTTP/HTTPS" : "🌍 HTTP/HTTPS",
-    secProt:    pt ? "━━━━ 🛡️  **PROTEÇÃO** ━━━━" : "━━━━ 🛡️  **PROTECTION LAYER** ━━━━",
-    cdn:        pt ? "☁️ CDN" : "☁️ CDN",
-    waf:        pt ? "🛡️ WAF" : "🛡️ WAF",
-    hsts:       pt ? "🔒 HSTS" : "🔒 HSTS",
-    secProto:   pt ? "━━━━ 📡  **PROTOCOLOS** ━━━━" : "━━━━ 📡  **PROTOCOLS & FEATURES** ━━━━",
-    httpVer:    pt ? "📡 Versão HTTP" : "📡 HTTP Version",
-    ports:      pt ? "🔌 Portas Abertas" : "🔌 Open Ports",
-    features:   pt ? "🔧 Recursos" : "🔧 Features",
-    secOrigin:  pt ? "━━━━ 🔓  **IP DE ORIGEM DESCOBERTO** ━━━━" : "━━━━ 🔓  **ORIGIN IP DISCOVERED** ━━━━",
-    originIp:   pt ? "🎯 IP Real (Bypass CDN)" : "🎯 Real IP (CDN Bypass)",
-    originSub:  pt ? "🔗 Subdomínio Exposto" : "🔗 Exposed Subdomain",
-    secRec:     pt ? "━━━━ 🏆  **VETORES RECOMENDADOS** ━━━━" : "━━━━ 🏆  **RECOMMENDED ATTACK VECTORS** ━━━━",
-    recTitle:   pt ? "📋 Melhores Métodos" : "📋 Top Methods",
-    noRec:      pt ? "Nenhuma recomendação disponível." : "No recommendations available.",
-    noneDetect: pt ? "Nenhum detectado" : "None detected",
-    none:       pt ? "Nenhuma" : "None",
-    footerTxt:  pt ? `Escaneado em ${new Date().toUTCString()}` : `Scanned ${new Date().toUTCString()}`,
-  };
+  // ── Threat assessment — drives color + headline ───────────────────────────
+  const defenseScore = (result.isCDN ? 2 : 0) + (result.hasWAF ? 2 : 0) + (result.hasHSTS ? 1 : 0);
+  const threatColor  = defenseScore >= 4 ? COLORS.ORANGE
+    : defenseScore >= 2 ? COLORS.GOLD
+    : COLORS.PURPLE;
+  const threatLabel  = defenseScore >= 4
+    ? (pt ? "🔴 BEM PROTEGIDO — bypass necessário" : "🔴 HEAVILY DEFENDED — bypass required")
+    : defenseScore >= 2
+    ? (pt ? "🟡 PROTEÇÃO PARCIAL — vulnerável" : "🟡 PARTIALLY DEFENDED — vulnerable")
+    : (pt ? "🟢 EXPOSTO — ataque direto eficaz" : "🟢 EXPOSED — direct attack effective");
 
-  // ── Server display ──
+  // ── Server ───────────────────────────────────────────────────────────────
   const serverDisplay = result.serverLabel && result.serverLabel !== "Unknown"
     ? result.serverLabel
     : result.serverType && result.serverType !== "unknown"
       ? result.serverType
-      : T.noneDetect;
+      : (pt ? "Desconhecido" : "Unknown");
 
-  // ── IP lines ──
-  const primaryIpLine = result.ip ?? T.noneDetect;
-  const allIpsLine = result.allIPs?.length > 1
-    ? result.allIPs.slice(0, 6).map(ip => `\`${ip}\``).join("\n") +
-      (result.allIPs.length > 6 ? `\n_+${result.allIPs.length - 6} more_` : "")
-    : `\`${result.ip ?? "Unknown"}\``;
+  // ── Response time with interpretation ────────────────────────────────────
+  const rms = result.responseTimeMs;
+  const rmsIcon = rms > 2000 ? "🔴" : rms > 800 ? "🟡" : rms > 300 ? "🟠" : "⚡";
+  const rmsLabel = rms > 2000
+    ? (pt ? "muito lento" : "very slow")
+    : rms > 800 ? (pt ? "lento" : "slow")
+    : rms > 300 ? (pt ? "moderado" : "moderate")
+    : (pt ? "rápido" : "fast");
+  const responseStr = `${rmsIcon} **${rms}ms** — ${rmsLabel}`;
 
-  // ── HTTP availability ──
-  const httpParts: string[] = [];
-  if (result.httpAvailable)  httpParts.push("**HTTP** ✅");
-  if (result.httpsAvailable) httpParts.push("**HTTPS** ✅");
-  if (!result.httpAvailable && !result.httpsAvailable) httpParts.push(pt ? "Indisponível" : "Unavailable");
-  const httpLine = httpParts.join("  /  ");
+  // ── Protocols ────────────────────────────────────────────────────────────
+  const protoTags: string[] = ["**H/1.1**"];
+  if (result.supportsH2) protoTags.push("**H/2**");
+  if (result.supportsH3) protoTags.push("**H/3** ⚡");
+  const protocolStr = protoTags.join(" + ");
 
-  // ── Protection ──
-  const cdnLine  = result.isCDN
-    ? `✅ **${result.cdnProvider}**`
-    : pt ? "❌ Não detectado" : "❌ Not detected";
-  const wafLine  = result.hasWAF
-    ? `🛡️ **${result.wafProvider}**`
-    : pt ? "❌ Não detectado" : "❌ Not detected";
-  const hstsLine = result.hasHSTS
-    ? `✅ ${result.hstsMaxAge ? `max-age **${Math.round(result.hstsMaxAge / 86400)}d**` : "enabled"}`
-    : pt ? "❌ Não ativo" : "❌ Not set";
+  // ── HTTP/HTTPS ───────────────────────────────────────────────────────────
+  const httpTags: string[] = [];
+  if (result.httpAvailable)  httpTags.push("HTTP");
+  if (result.httpsAvailable) httpTags.push("HTTPS 🔒");
+  const httpStr = httpTags.length > 0 ? httpTags.join(" · ") : (pt ? "Offline" : "Offline");
 
-  // ── Protocols ──
-  const h2h3Parts: string[] = [];
-  if (result.supportsH2) h2h3Parts.push("**H/2**");
-  if (result.supportsH3) h2h3Parts.push("**H/3**");
-  const protocolLine = h2h3Parts.length > 0 ? `✅ ${h2h3Parts.join(" + ")}` : "HTTP/1.1 only";
+  // ── Features ─────────────────────────────────────────────────────────────
+  const features: string[] = [];
+  if (result.hasGraphQL)   features.push("GraphQL");
+  if (result.hasWebSocket) features.push("WebSocket");
+  const featStr = features.length > 0 ? features.join(", ") : none;
 
-  // ── Features ──
-  const featureParts: string[] = [];
-  if (result.hasGraphQL)   featureParts.push("GraphQL");
-  if (result.hasWebSocket) featureParts.push("WebSocket");
-  const featuresLine = featureParts.length > 0 ? featureParts.join(", ") : T.noneDetect;
-
-  // ── Ports ──
-  const portsLine = result.openPorts.length > 0
+  // ── Ports ────────────────────────────────────────────────────────────────
+  const portsStr = result.openPorts.length > 0
     ? result.openPorts.map(p => `\`${p}\``).join("  ")
-    : T.none;
+    : none;
 
-  // ── Recommendations ──
-  const top4 = [...result.recommendations]
+  // ── IPs ──────────────────────────────────────────────────────────────────
+  const ipStr = result.allIPs?.length > 1
+    ? result.allIPs.slice(0, 4).map(ip => `\`${ip}\``).join("  ") +
+      (result.allIPs.length > 4 ? ` _+${result.allIPs.length - 4}_` : "")
+    : `\`${result.ip ?? "N/A"}\``;
+
+  // ── Protection display ────────────────────────────────────────────────────
+  const cdnStr  = result.isCDN  ? `✅ **${result.cdnProvider}**`         : `❌ ${pt ? "Não detectado" : "Not detected"}`;
+  const wafStr  = result.hasWAF ? `🛡️ **${result.wafProvider}**`         : `❌ ${pt ? "Não detectado" : "Not detected"}`;
+  const hstsStr = result.hasHSTS
+    ? `✅ max-age **${result.hstsMaxAge ? Math.round(result.hstsMaxAge / 86400) : "?"}d**`
+    : `❌ ${pt ? "Não ativo" : "Not set"}`;
+
+  // ── Recommendations (top 5) ───────────────────────────────────────────────
+  const top5 = [...result.recommendations]
     .sort((a, b) => b.score - a.score)
-    .slice(0, 4);
-  const recoLines = top4.length > 0
-    ? top4.map((r, i) => {
-        const medal  = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const tier   = tierIcon(r.tier ?? "");
-        const reason = getMethodDesc((r as { method?: string }).method ?? "", lang, r.reason ?? "");
-        return `${medal} ${tier} **${r.name}** — Score \`${r.score}\` | **${r.tier ?? "?"}**\n> ${reason}`;
+    .slice(0, 5);
+
+  const recoLines = top5.length > 0
+    ? top5.map((r, i) => {
+        const medal   = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+        const tIcon   = tierIcon(r.tier ?? "");
+        const power   = toPowerLevel(r.suggestedThreads);
+        const dur     = r.suggestedDuration;
+        const reason  = getMethodDesc((r as { method?: string }).method ?? "", lang, r.reason ?? "");
+        return `${medal} ${tIcon} **${r.name}** \`${r.score}pts\` — ⚡Power **${power}**/8 · ⏱ **${dur}s**\n> ${reason.slice(0, 120)}`;
       }).join("\n\n").slice(0, 1020)
-    : T.noRec;
+    : (pt ? "Nenhuma recomendação disponível." : "No recommendations available.");
+
+  // ── Build description with threat summary ─────────────────────────────────
+  const ipAllStr = result.allIPs?.length > 1
+    ? `${result.allIPs.length} IPs` : (result.ip ?? "N/A");
+  const descLines = [
+    threatLabel,
+    `🌐 \`${result.target}\` — ${ipAllStr} — 🖥️ ${serverDisplay} — ${responseStr}`,
+  ];
+  if (result.originIP) {
+    const src = result.originSource ? ` via ${result.originSource}` : "";
+    descLines.push(`🔓 **${pt ? "IP real descoberto" : "Real IP found"}:** \`${result.originIP}\`${src}`);
+  }
 
   const embed = new EmbedBuilder()
-    .setColor(result.isCDN || result.hasWAF ? COLORS.GOLD : COLORS.PURPLE)
-    .setTitle(T.title)
-    .setDescription(T.desc)
+    .setColor(threatColor)
+    .setTitle(pt ? "🔍 RECONHECIMENTO DE ALVO — GEASS SCAN" : "🔍 TARGET RECONNAISSANCE — GEASS SCAN")
+    .setDescription(descLines.join("\n"))
     .setThumbnail("attachment://geass-symbol.png")
     .addFields(
-      // ── DNS / IP ──
-      { name: "\u200b", value: T.secDns, inline: false },
-      { name: T.primaryIp, value: `\`${primaryIpLine}\``, inline: true },
-      { name: T.allIps,    value: allIpsLine,               inline: true },
-      // ── Server ──
-      { name: "\u200b",     value: T.secServer, inline: false },
-      { name: T.server,     value: `**${serverDisplay}**`,    inline: true },
-      { name: T.response,   value: `**${result.responseTimeMs}ms**`, inline: true },
-      { name: T.http,       value: httpLine,                  inline: true },
-      // ── Protection ──
-      { name: "\u200b", value: T.secProt, inline: false },
-      { name: T.cdn,    value: cdnLine,   inline: true },
-      { name: T.waf,    value: wafLine,   inline: true },
-      { name: T.hsts,   value: hstsLine,  inline: true },
-      // ── Protocols & Features ──
-      { name: "\u200b",   value: T.secProto,  inline: false },
-      { name: T.httpVer,  value: protocolLine, inline: true },
-      { name: T.features, value: featuresLine, inline: true },
-      { name: T.ports,    value: portsLine,    inline: true },
+      // ── Network row ──
+      {
+        name:   pt ? "🌐 Rede" : "🌐 Network",
+        value:  `${ipStr}\n📡 ${protocolStr} · ${httpStr}\n🔌 ${portsStr}`,
+        inline: false,
+      },
+      // ── Protection row (3 inline) ──
+      { name: "☁️ CDN",   value: cdnStr,  inline: true },
+      { name: "🛡️ WAF",   value: wafStr,  inline: true },
+      { name: "🔒 HSTS",  value: hstsStr, inline: true },
     );
 
-  // ── Origin IP bypass section (only if found) ──
+  // ── Features row (only if any found) ──
+  if (features.length > 0) {
+    embed.addFields({
+      name:   pt ? "🔧 Recursos Detectados" : "🔧 Detected Features",
+      value:  featStr,
+      inline: false,
+    });
+  }
+
+  // ── Origin IP bypass (if found) ──
   if (result.originIP) {
-    embed.addFields(
-      { name: "\u200b",     value: T.secOrigin, inline: false },
-      { name: T.originIp,   value: `\`${result.originIP}\``,            inline: true },
-      { name: T.originSub,  value: result.originSubdomain
-          ? `\`${result.originSubdomain}\``
-          : (pt ? "_não identificado_" : "_not identified_"),            inline: true },
-    );
+    const sub = result.originSubdomain ? `\`${result.originSubdomain}\`` : (pt ? "_nenhum_" : "_none_");
+    embed.addFields({
+      name:   pt ? "🔓 IP de Origem (CDN Bypass)" : "🔓 Origin IP (CDN Bypass)",
+      value:  `\`${result.originIP}\` · ${pt ? "via" : "via"} ${result.originSource ?? (pt ? "subdomínio" : "subdomain")}\n${pt ? "Subdomínio exposto:" : "Exposed subdomain:"} ${sub}`,
+      inline: false,
+    });
   }
 
   // ── Attack recommendations ──
-  embed.addFields(
-    { name: "\u200b",   value: T.secRec,  inline: false },
-    { name: T.recTitle, value: recoLines, inline: false },
-  );
+  embed.addFields({
+    name:   pt ? "🏆 Vetores Recomendados" : "🏆 Recommended Attack Vectors",
+    value:  recoLines,
+    inline: false,
+  });
 
-  embed.setFooter(footer(T.footerTxt)).setTimestamp();
+  embed.setFooter(footer(pt ? `Escaneado em ${new Date().toUTCString()}` : `Scanned ${new Date().toUTCString()}`)).setTimestamp();
   return embed;
 }
 

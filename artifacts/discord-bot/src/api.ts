@@ -22,6 +22,7 @@ export interface AttackStats {
   totalPacketsSent:  number;
   totalBytesSent:    number;
   attacksByMethod:   { method: string; count: number }[];
+  efficacy?:         Record<string, { total: number; downed: number; rate: number }>;
   recentAttacks:     Attack[];
   cpuCount?:         number;
 }
@@ -61,6 +62,7 @@ export interface AnalyzeResult {
   openPorts:        number[];
   originIP:         string | null;
   originSubdomain:  string | null;
+  originSource?:    string | null;
   recommendations:  Recommendation[];
 }
 
@@ -168,6 +170,22 @@ export const api = {
     req<AiAdvice>(`/api/advisor?target=${encodeURIComponent(target)}`, {
       signal: AbortSignal.timeout(20_000),
     }),
+
+  // ── User Tiers (VIP/Free) ────────────────────────────────────────────────
+  getUserTier: (userId: string) =>
+    req<{ userId: string; tier: string; expiresAt: string | null; grantedAt?: string }>(`/api/users/${userId}`).catch(() => ({ userId, tier: "free", expiresAt: null })),
+
+  grantVip: (userId: string, grantedBy: string, durationDays?: number) =>
+    req<{ ok: boolean; userId: string; tier: string; expiresAt: string | null }>(`/api/users/${userId}/tier`, {
+      method: "POST",
+      body:   JSON.stringify({ tier: "vip", grantedBy, durationDays }),
+    }),
+
+  revokeVip: (userId: string) =>
+    req<{ ok: boolean; userId: string; tier: string }>(`/api/users/${userId}/tier`, { method: "DELETE" }),
+
+  markTargetDown: (attackId: number) =>
+    req<{ ok: boolean }>(`/api/attacks/${attackId}/down`, { method: "POST" }).catch(() => null),
 
   // ── Proxy Stats ─────────────────────────────────────────────────────────
   getProxyStats: () =>

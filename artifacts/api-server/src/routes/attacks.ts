@@ -1645,8 +1645,8 @@ router.get("/attacks/scheduled", (_req, res): void => {
 });
 
 router.get("/attacks/stats", async (_req, res): Promise<void> => {
-  // Run all 3 queries in parallel — no full table scan in JS
-  const [aggRows, methodRows, recentAttacks] = await Promise.all([
+  // Run all 4 queries in parallel — no full table scan in JS
+  const [aggRows, methodRows, recentAttacks, efficacyRows] = await Promise.all([
     // 1. Aggregate totals — O(1) via SQL COUNT/SUM
     db.select({
       totalAttacks:     sql<number>`COUNT(*)::int`,
@@ -1661,14 +1661,29 @@ router.get("/attacks/stats", async (_req, res): Promise<void> => {
     }).from(attacksTable).groupBy(attacksTable.method),
     // 3. Recent 10 only — O(10) with LIMIT
     db.select().from(attacksTable).orderBy(desc(attacksTable.createdAt)).limit(10),
+    // 4. Per-method efficacy — how many times each method downed the target
+    db.select({
+      method:    attacksTable.method,
+      total:     sql<number>`COUNT(*)::int`,
+      downed:    sql<number>`COUNT(*) FILTER (WHERE target_went_down = true)::int`,
+    }).from(attacksTable).where(sql`status != 'running'`).groupBy(attacksTable.method),
   ]);
   const agg = aggRows[0];
+  const efficacyMap: Record<string, { total: number; downed: number; rate: number }> = {};
+  for (const r of efficacyRows) {
+    efficacyMap[r.method] = {
+      total:  r.total,
+      downed: r.downed,
+      rate:   r.total > 0 ? Math.round((r.downed / r.total) * 100) : 0,
+    };
+  }
   res.json({
     totalAttacks:     agg.totalAttacks,
     runningAttacks:   agg.runningAttacks,
     totalPacketsSent: Number(agg.totalPacketsSent),
     totalBytesSent:   Number(agg.totalBytesSent),
     attacksByMethod:  methodRows,
+    efficacy:         efficacyMap,
     recentAttacks,
     cpuCount:         CPU_COUNT,
   });
@@ -1756,6 +1771,14 @@ router.post("/attacks/:id/stop", async (req, res): Promise<void> => {
   if (!a) { res.status(404).json({ error: "Not found" }); return; }
   if (a.webhookUrl) await fireWebhook(a.webhookUrl, a, "attack_stopped");
   res.json({ ok: true, ...a });
+});
+
+// ── Mark target as down (called by bot monitor when confirmed down) ──────────
+router.post("/attacks/:id/down", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.update(attacksTable).set({ targetWentDown: true }).where(eq(attacksTable.id, id));
+  res.json({ ok: true });
 });
 
 // ── AI Advisor — Groq-powered live attack analysis ─────────────────────────
