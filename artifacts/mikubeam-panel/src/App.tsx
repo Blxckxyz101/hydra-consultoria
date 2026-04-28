@@ -23,7 +23,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 /* ── Types ── */
 type LogType = "info" | "success" | "error" | "warn";
-type AppTheme = "lelouch" | "suzaku";
+type AppTheme = "lelouch" | "suzaku" | "void";
 interface LogEntry       { id: number; text: string; type: LogType; ts: number; }
 interface CheckResult    { up: boolean; status: number; statusText: string; responseTime: number; error: string | null; dnsOk?: boolean; tcpOk?: boolean; anyHttpResponse?: boolean; }
 interface Preset         { label: string; method: string; packetSize: number; duration: number; delay: number; threads: number; icon: string; }
@@ -877,6 +877,59 @@ function WhatsAppDashboard({ base }: { base: string }) {
   );
 }
 
+/* ── Theme Toggle (animated, 3 states) ── */
+const THEME_CYCLE: AppTheme[] = ["lelouch", "suzaku", "void"];
+const THEME_LABELS: Record<AppTheme, string> = {
+  lelouch: "Suzaku Mode",
+  suzaku:  "Geass Void",
+  void:    "Lelouch Mode",
+};
+const THEME_TITLES: Record<AppTheme, string> = {
+  lelouch: "Mudar para Suzaku (navy)",
+  suzaku:  "Mudar para Geass Void (abismo)",
+  void:    "Mudar para Lelouch (crimson)",
+};
+
+function ThemeToggle({ theme, setTheme }: { theme: AppTheme; setTheme: (t: AppTheme) => void }) {
+  const [spinning, setSpinning] = useState(false);
+
+  function cycle() {
+    setSpinning(true);
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length]!;
+    setTheme(next);
+    setTimeout(() => setSpinning(false), 650);
+  }
+
+  return (
+    <button
+      className={`lb-theme-toggle${spinning ? " lb-theme-toggle--transitioning" : ""}`}
+      title={THEME_TITLES[theme]}
+      onClick={cycle}
+      style={{
+        position: "relative", overflow: "hidden",
+        ...(theme === "void" ? {
+          background: "linear-gradient(135deg, rgba(140,0,0,0.7), rgba(60,0,0,0.9))",
+          borderColor: "rgba(200,0,0,0.5)",
+          color: "#ff4444",
+          boxShadow: "0 0 16px rgba(200,0,0,0.35)",
+        } : {}),
+      }}
+    >
+      <span className={`lb-theme-toggle-icon${spinning ? " lb-theme-toggle-icon--spinning" : ""}`}>
+        {theme === "void" ? "🩸" : theme === "suzaku" ? "🌑" : "⚔"}
+      </span>
+      {" "}{THEME_LABELS[theme]}
+      {theme === "void" && (
+        <span style={{
+          position: "absolute", inset: 0, pointerEvents: "none",
+          background: "linear-gradient(90deg, transparent 0%, rgba(200,0,0,0.06) 50%, transparent 100%)",
+          animation: "void-scanline 3s linear infinite",
+        }} />
+      )}
+    </button>
+  );
+}
+
 /* ── Social Media Mass Reporter Dashboard ── */
 interface SocialLog { id: number; text: string; ok: boolean | null }
 interface SocialPlatInfo { platform: string; identifier: string; type: string }
@@ -892,16 +945,21 @@ function SocialDashboard({ base }: { base: string }) {
   const [url,       setUrl]       = useState("");
   const [qty,       setQty]       = useState("10");
   const [sending,   setSending]   = useState(false);
-  const [logs,      setLogs]      = useState<SocialLog[]>([]);
-  const [progress,  setProgress]  = useState<{ done: number; total: number } | null>(null);
-  const [platInfo,  setPlatInfo]  = useState<SocialPlatInfo | null>(null);
-  const [summary,   setSummary]   = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [logs,         setLogs]        = useState<SocialLog[]>([]);
+  const [progress,     setProgress]    = useState<{ done: number; total: number } | null>(null);
+  const [platInfo,     setPlatInfo]    = useState<SocialPlatInfo | null>(null);
+  const [summary,      setSummary]     = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [loopMode,     setLoopMode]    = useState(false);
+  const [loopInterval, setLoopInterval] = useState("60");
+  const [loopRound,    setLoopRound]   = useState(0);
+  const [loopStats,    setLoopStats]   = useState<{ totalSent: number; totalFailed: number } | null>(null);
+  const [cooldown,     setCooldown]    = useState<number | null>(null);
   const logIdRef = useRef(0);
   const logRef   = useRef<HTMLDivElement>(null);
   const esRef    = useRef<EventSource | null>(null);
 
   const addLog = (text: string, ok: boolean | null = null) =>
-    setLogs(p => [...p.slice(-199), { id: logIdRef.current++, text, ok }]);
+    setLogs(p => [...p.slice(-299), { id: logIdRef.current++, text, ok }]);
 
   useEffect(() => {
     if (!url.trim()) { setPlatInfo(null); return; }
@@ -924,30 +982,65 @@ function SocialDashboard({ base }: { base: string }) {
     setLogs([]);
     setSummary(null);
     setProgress(null);
+    setLoopRound(0);
+    setLoopStats(null);
+    setCooldown(null);
+
+    const endpoint = loopMode ? "stream/loop" : "stream/report";
     const params = new URLSearchParams({ url: url.trim(), quantity: qty });
-    const es = new EventSource(`${base}/api/social/stream/report?${params}`);
+    if (loopMode) params.set("interval", loopInterval);
+    const es = new EventSource(`${base}/api/social/${endpoint}?${params}`);
     esRef.current = es;
 
     es.onmessage = (e) => {
       try {
         const d = JSON.parse(e.data) as Record<string, unknown>;
+
+        // ── eventos comuns ──
         if (d.type === "start") {
-          addLog(`🚀 Iniciando: ${d.total} reports → @${d.target} [${String(d.platform).toUpperCase()}]`, null);
+          addLog(`🚀 Iniciando: ${d.total} reports → ${d.subtype === "post" ? "📷 post" : "@" + d.target} [${String(d.platform).toUpperCase()}]`, null);
+        } else if (d.type === "loop_init") {
+          addLog(`🔁 Modo Loop ativado: ${d.qty} reports/rodada | cooldown ${d.intervalSec}s → ${String(d.platform).toUpperCase()}`, null);
         } else if (d.type === "lookup") {
-          addLog(`🔍 Perfil encontrado${d.userId ? ` (id: ${d.userId})` : d.videoCount ? ` (${d.videoCount} vídeos)` : ""}`, true);
+          if (d.targetType === "post") {
+            addLog(`🔍 Post identificado — mediaId: ${d.mediaId}`, true);
+          } else {
+            addLog(`🔍 Perfil encontrado${d.userId ? ` (id: ${d.userId})` : d.secUid ? " (TikTok secUid ok)" : ""}`, true);
+          }
         } else if (d.type === "info") {
           addLog(`ℹ️ ${d.msg}`, null);
+
+        // ── progresso único ──
         } else if (d.type === "progress") {
           const icon = d.ok ? "✅" : "❌";
-          addLog(`${icon} Report ${d.n}/${d.total}`, d.ok as boolean);
+          const roundLabel = d.round ? ` [R${d.round}]` : "";
+          addLog(`${icon} Report ${d.n}/${d.total}${roundLabel}`, d.ok as boolean);
           setProgress({ done: Number(d.n), total: Number(d.total) });
-        } else if (d.type === "error") {
-          addLog(`⚠️ Erro: ${d.msg}`, false);
+
+        // ── eventos de loop ──
+        } else if (d.type === "round_start") {
+          setLoopRound(Number(d.round));
+          setCooldown(null);
+          setProgress(null);
+          addLog(`▶️ Rodada ${d.round} iniciando — ${d.qty} reports`, null);
+        } else if (d.type === "round_done") {
+          setLoopStats({ totalSent: Number(d.totalSent), totalFailed: Number(d.totalFailed) });
+          addLog(`✔️ Rodada ${d.round} concluída: ${d.sent}/${Number(d.sent) + Number(d.failed)} enviados (acum: ${d.totalSent})`, Number(d.sent) > 0);
+        } else if (d.type === "cooldown") {
+          setCooldown(Number(d.remaining));
+        } else if (d.type === "loop_done") {
+          addLog(`🏁 Loop encerrado: ${d.rounds} rodadas | ${d.totalSent} enviados | ${d.totalFailed} falhas`, null);
+          setLoopStats({ totalSent: Number(d.totalSent), totalFailed: Number(d.totalFailed) });
+          setSending(false); es.close();
+
+        // ── evento single done ──
         } else if (d.type === "done") {
           setSummary({ sent: Number(d.sent), failed: Number(d.failed), total: Number(d.total) });
           addLog(`🏁 Concluído: ${d.sent}/${d.total} enviados`, null);
-          setSending(false);
-          es.close();
+          setSending(false); es.close();
+
+        } else if (d.type === "error") {
+          addLog(`⚠️ Erro: ${d.msg}`, false);
         }
       } catch {}
     };
@@ -961,6 +1054,7 @@ function SocialDashboard({ base }: { base: string }) {
   function stopReport() {
     esRef.current?.close();
     setSending(false);
+    setCooldown(null);
     addLog("⛔ Interrompido pelo usuário", null);
   }
 
@@ -996,9 +1090,10 @@ function SocialDashboard({ base }: { base: string }) {
           )}
         </div>
 
+        {/* Reports slider + Loop toggle row */}
         <div style={{ display: "flex", gap: 16, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ color: "#aaa", fontSize: 12, fontFamily: "monospace" }}>Reports:</span>
+            <span style={{ color: "#aaa", fontSize: 12, fontFamily: "monospace" }}>Reports/rodada:</span>
             <input
               type="range" min={1} max={50} value={qty}
               onChange={e => setQty(e.target.value)}
@@ -1006,6 +1101,21 @@ function SocialDashboard({ base }: { base: string }) {
             />
             <span style={{ color: "#D4AF37", fontFamily: "monospace", fontSize: 14, minWidth: 24 }}>{qty}</span>
           </div>
+
+          {/* Loop mode toggle */}
+          <button
+            disabled={sending}
+            onClick={() => setLoopMode(m => !m)}
+            style={{
+              padding: "7px 16px", borderRadius: 6, border: `1px solid ${loopMode ? "rgba(46,204,113,0.6)" : "rgba(255,255,255,0.15)"}`,
+              background: loopMode ? "rgba(46,204,113,0.15)" : "rgba(255,255,255,0.05)",
+              color: loopMode ? "#2ecc71" : "#888", fontWeight: 700, fontSize: 12,
+              cursor: sending ? "not-allowed" : "pointer", fontFamily: "monospace",
+              transition: "all 0.2s",
+            }}
+          >
+            🔁 {loopMode ? "Loop ON" : "Loop OFF"}
+          </button>
 
           {sending ? (
             <button onClick={stopReport} style={{
@@ -1018,24 +1128,79 @@ function SocialDashboard({ base }: { base: string }) {
               disabled={!url.trim() || !platInfo}
               style={{
                 padding: "9px 22px", borderRadius: 6, border: "none", cursor: !url.trim() || !platInfo ? "not-allowed" : "pointer",
-                background: !url.trim() || !platInfo ? "rgba(255,255,255,0.1)" : "rgba(212,175,55,0.85)",
+                background: !url.trim() || !platInfo ? "rgba(255,255,255,0.1)" : loopMode ? "rgba(46,204,113,0.75)" : "rgba(212,175,55,0.85)",
                 color: !url.trim() || !platInfo ? "#666" : "#000", fontWeight: 700, fontSize: 13,
+                transition: "background 0.2s",
               }}>
-              📢 Iniciar Report
+              {loopMode ? "🔁 Iniciar Loop" : "📢 Iniciar Report"}
             </button>
           )}
         </div>
+
+        {/* Interval slider — só aparece com loop ON */}
+        {loopMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12,
+            background: "rgba(46,204,113,0.06)", border: "1px solid rgba(46,204,113,0.2)",
+            borderRadius: 6, padding: "10px 14px" }}>
+            <span style={{ color: "#2ecc71", fontSize: 12, fontFamily: "monospace" }}>⏱ Cooldown:</span>
+            <input
+              type="range" min={30} max={3600} step={30} value={loopInterval}
+              onChange={e => setLoopInterval(e.target.value)}
+              disabled={sending}
+              style={{ width: 160, accentColor: "#2ecc71" }}
+            />
+            <span style={{ color: "#2ecc71", fontFamily: "monospace", fontSize: 14, minWidth: 48 }}>
+              {Number(loopInterval) >= 60
+                ? `${Math.floor(Number(loopInterval) / 60)}m${Number(loopInterval) % 60 > 0 ? `${Number(loopInterval) % 60}s` : ""}`
+                : `${loopInterval}s`}
+            </span>
+            <span style={{ color: "#666", fontSize: 11, fontFamily: "monospace" }}>entre rodadas</span>
+          </div>
+        )}
       </div>
 
+      {/* Loop status bar */}
+      {loopMode && (loopRound > 0 || sending) && (
+        <div style={{
+          display: "flex", gap: 12, marginBottom: 10, alignItems: "center", flexWrap: "wrap",
+          background: "rgba(46,204,113,0.06)", border: "1px solid rgba(46,204,113,0.2)",
+          borderRadius: 8, padding: "10px 16px",
+        }}>
+          <div style={{ fontFamily: "monospace", fontSize: 13, color: "#2ecc71" }}>
+            🔁 Rodada <strong>{loopRound}</strong>
+          </div>
+          {cooldown !== null && (
+            <div style={{ fontFamily: "monospace", fontSize: 13, color: "#aaa" }}>
+              ⏳ Próxima em <strong style={{ color: "#f39c12" }}>{cooldown}s</strong>
+            </div>
+          )}
+          {loopStats && (
+            <>
+              <div style={{ fontFamily: "monospace", fontSize: 13, color: "#2ecc71" }}>
+                ✅ <strong>{loopStats.totalSent}</strong> enviados
+              </div>
+              <div style={{ fontFamily: "monospace", fontSize: 13, color: "#e74c3c" }}>
+                ❌ <strong>{loopStats.totalFailed}</strong> falhos
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Progress bar */}
-      {progress && (
+      {progress && !loopMode && (
         <div style={{ marginBottom: 10, background: "rgba(255,255,255,0.05)", borderRadius: 6, overflow: "hidden", height: 6 }}>
           <div style={{ height: "100%", width: `${progress_}%`, background: "#D4AF37", transition: "width 0.3s ease" }} />
         </div>
       )}
+      {progress && loopMode && (
+        <div style={{ marginBottom: 10, background: "rgba(46,204,113,0.08)", borderRadius: 6, overflow: "hidden", height: 6 }}>
+          <div style={{ height: "100%", width: `${progress_}%`, background: "#2ecc71", transition: "width 0.3s ease" }} />
+        </div>
+      )}
 
-      {/* Summary */}
-      {summary && (
+      {/* Summary (single run) */}
+      {summary && !loopMode && (
         <div style={{
           display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap",
         }}>
@@ -1867,6 +2032,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   /* ── Theme class on body ── */
   useEffect(() => {
     document.body.classList.toggle("theme-suzaku", theme === "suzaku");
+    document.body.classList.toggle("theme-void",   theme === "void");
     localStorage.setItem("lb-theme", theme);
   }, [theme]);
 
@@ -3465,13 +3631,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
-          <button
-            className="lb-theme-toggle"
-            title={`Switch to ${theme === "lelouch" ? "Suzaku (navy)" : "Lelouch (crimson)"} theme`}
-            onClick={() => setTheme(t => t === "lelouch" ? "suzaku" : "lelouch")}
-          >
-            {theme === "lelouch" ? "⚔ Suzaku Mode" : "👁 Lelouch Mode"}
-          </button>
+          <ThemeToggle theme={theme} setTheme={setTheme} />
 
           {/* ── Page tabs ── */}
           <div className="lb-page-tabs">

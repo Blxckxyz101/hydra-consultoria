@@ -48,24 +48,58 @@ const rand  = (min: number, max: number) => sleep(min + Math.random() * (max - m
 export interface PlatformInfo {
   platform: "instagram" | "tiktok";
   identifier: string;
-  type: "user";
+  type: "user" | "post";
 }
 
 export function detectPlatform(input: string): PlatformInfo | null {
   const s = input.trim().replace(/^@/, "");
+
+  // TikTok user
   const ttMatch = s.match(/tiktok\.com\/@([^/?&\s]+)/);
   if (ttMatch?.[1]) return { platform: "tiktok", identifier: ttMatch[1], type: "user" };
+
+  // Instagram post/reel
+  const igPostMatch = s.match(/instagram\.com\/(?:p|reel)\/([A-Za-z0-9_-]{8,14})/);
+  if (igPostMatch?.[1]) return { platform: "instagram", identifier: igPostMatch[1], type: "post" };
+
+  // Instagram user
   const igMatch = s.match(/instagram\.com\/([a-zA-Z0-9_.]+)/);
-  if (igMatch?.[1] && igMatch[1] !== "p" && igMatch[1] !== "reel" && igMatch[1] !== "stories")
+  if (igMatch?.[1] && !["p","reel","stories","explore","accounts"].includes(igMatch[1]))
     return { platform: "instagram", identifier: igMatch[1], type: "user" };
+
+  // Bare username → Instagram
   if (/^[a-zA-Z0-9_.]{2,30}$/.test(s)) return { platform: "instagram", identifier: s, type: "user" };
+
   return null;
+}
+
+// ── Instagram shortcode → media ID ───────────────────────────────────────────
+const IG_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+function shortcodeToMediaId(shortcode: string): string {
+  let id = BigInt(0);
+  for (const c of shortcode) {
+    const idx = IG_ALPHABET.indexOf(c);
+    if (idx < 0) continue;
+    id = id * BigInt(64) + BigInt(idx);
+  }
+  return id.toString();
 }
 
 const IG_REASONS = [1, 2, 3, 4, 5, 7, 8, 9, 11, 18];
 const TK_REASONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-// ── Instagram ─────────────────────────────────────────────────────────────────
+// ── Instagram: shared CSRF helper ─────────────────────────────────────────────
+async function igGetCsrf(proxy: string[], cookiePath: string): Promise<string> {
+  const page = await runCurl([...proxy, "--tlsv1.2", "-c", cookiePath,
+    "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+    "-H", "Accept: text/html", "-H", "Accept-Language: pt-BR,pt;q=0.9",
+    "https://www.instagram.com/accounts/login/",
+  ], 12_000);
+  return page.body.match(/"csrf_token":"([^"]+)"/)?.[1]
+      ?? page.body.match(/csrftoken=([^;"\s]+)/)?.[1] ?? "";
+}
+
+// ── Instagram user lookup ─────────────────────────────────────────────────────
 async function igLookup(username: string): Promise<string | null> {
   try {
     const r = await runCurl([
@@ -84,16 +118,11 @@ async function igLookup(username: string): Promise<string | null> {
   } catch { return null; }
 }
 
+// ── Instagram account report ───────────────────────────────────────────────────
 async function igReport(userId: string, reason: number, proxy: string[]): Promise<boolean> {
   const ck = `/tmp/ig_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
   try {
-    const page = await runCurl([...proxy, "--tlsv1.2", "-c", ck,
-      "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-      "-H", "Accept: text/html", "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "https://www.instagram.com/accounts/login/",
-    ], 12_000);
-    const csrf = page.body.match(/"csrf_token":"([^"]+)"/)?.[1]
-              ?? page.body.match(/csrftoken=([^;"\s]+)/)?.[1] ?? "";
+    const csrf = await igGetCsrf(proxy, ck);
     if (!csrf) return false;
     const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", ck,
       "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
@@ -102,6 +131,25 @@ async function igReport(userId: string, reason: number, proxy: string[]): Promis
       "-H", "Referer: https://www.instagram.com/",
       "--data-raw", `source_name=profile_page&reason_id=${reason}&frx_context=`,
       `https://www.instagram.com/users/${userId}/flag/`,
+    ], 12_000);
+    return r.statusCode === 200 || r.statusCode === 302;
+  } catch { return false; }
+  finally { try { fs.unlinkSync(ck); } catch {} }
+}
+
+// ── Instagram post/reel report ─────────────────────────────────────────────────
+async function igMediaReport(mediaId: string, reason: number, proxy: string[]): Promise<boolean> {
+  const ck = `/tmp/igm_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    const csrf = await igGetCsrf(proxy, ck);
+    if (!csrf) return false;
+    const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", ck,
+      "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      "-H", `X-CSRFToken: ${csrf}`, "-H", "X-IG-App-ID: 936619743392459",
+      "-H", "X-Instagram-AJAX: 1", "-H", "Content-Type: application/x-www-form-urlencoded",
+      "-H", "Referer: https://www.instagram.com/",
+      "--data-raw", `reason_id=${reason}&frx_context=`,
+      `https://www.instagram.com/media/${mediaId}/flag/`,
     ], 12_000);
     return r.statusCode === 200 || r.statusCode === 302;
   } catch { return false; }
@@ -138,6 +186,43 @@ async function ttReport(secUid: string, reason: number, proxy: string[]): Promis
   return false;
 }
 
+// ── Shared: executar uma rodada de reports ─────────────────────────────────────
+async function runRound(
+  info: PlatformInfo,
+  qty: number,
+  igUserId: string | null,
+  igMediaId: string | null,
+  ttSecUid: string | null,
+  emit: (d: object) => void,
+  stopped: () => boolean,
+  roundLabel?: number,
+): Promise<{ sent: number; failed: number }> {
+  let sent = 0, failed = 0;
+
+  if (info.platform === "instagram") {
+    for (let i = 0; i < qty && !stopped(); i++) {
+      let ok = false;
+      if (info.type === "post" && igMediaId) {
+        ok = await igMediaReport(igMediaId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+      } else if (igUserId) {
+        ok = await igReport(igUserId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+      }
+      ok ? sent++ : failed++;
+      emit({ type: "progress", n: i + 1, total: qty, ok, platform: "instagram", ...(roundLabel ? { round: roundLabel } : {}) });
+      if (i < qty - 1 && !stopped()) await rand(300, 800);
+    }
+  } else if (info.platform === "tiktok" && ttSecUid) {
+    for (let i = 0; i < qty && !stopped(); i++) {
+      const ok = await ttReport(ttSecUid, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
+      ok ? sent++ : failed++;
+      emit({ type: "progress", n: i + 1, total: qty, ok, platform: "tiktok", ...(roundLabel ? { round: roundLabel } : {}) });
+      if (i < qty - 1 && !stopped()) await rand(200, 600);
+    }
+  }
+
+  return { sent, failed };
+}
+
 // ── GET /api/social/lookup ────────────────────────────────────────────────────
 router.get("/lookup", (req, res): void => {
   const { url: u } = req.query as Record<string, string>;
@@ -153,10 +238,7 @@ router.get("/stream/report", async (req, res): Promise<void> => {
   if (!rawUrl) { res.status(400).end(); return; }
 
   const info = detectPlatform(rawUrl);
-  if (!info) {
-    res.status(400).json({ error: "Plataforma não reconhecida — suportamos Instagram e TikTok" });
-    return;
-  }
+  if (!info) { res.status(400).json({ error: "Plataforma não reconhecida — suportamos Instagram e TikTok" }); return; }
 
   const qty = Math.min(Math.max(1, parseInt(String(quantity ?? "5"), 10)), 50);
 
@@ -167,38 +249,122 @@ router.get("/stream/report", async (req, res): Promise<void> => {
   });
 
   const emit = (d: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); };
-  emit({ type: "start", platform: info.platform, target: info.identifier, total: qty });
+  let stopped = false;
+  req.on("close", () => { stopped = true; });
 
-  let sent = 0, failed = 0;
+  emit({ type: "start", platform: info.platform, target: info.identifier, subtype: info.type, total: qty });
+
+  let igUserId: string | null = null;
+  let igMediaId: string | null = null;
+  let ttSecUid: string | null = null;
 
   try {
     if (info.platform === "instagram") {
-      const userId = await igLookup(info.identifier);
-      if (!userId) { emit({ type: "error", msg: "Usuário não encontrado no Instagram" }); res.end(); return; }
-      emit({ type: "lookup", userId, username: info.identifier });
-      for (let i = 0; i < qty; i++) {
-        const ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
-        ok ? sent++ : failed++;
-        emit({ type: "progress", n: i + 1, total: qty, ok, platform: "instagram" });
-        if (i < qty - 1) await rand(300, 800);
+      if (info.type === "post") {
+        igMediaId = shortcodeToMediaId(info.identifier);
+        emit({ type: "lookup", mediaId: igMediaId, shortcode: info.identifier, targetType: "post" });
+      } else {
+        igUserId = await igLookup(info.identifier);
+        if (!igUserId) { emit({ type: "error", msg: "Usuário não encontrado no Instagram" }); res.end(); return; }
+        emit({ type: "lookup", userId: igUserId, username: info.identifier, targetType: "account" });
       }
     } else if (info.platform === "tiktok") {
-      const secUid = await ttLookup(info.identifier);
-      if (!secUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
-      emit({ type: "lookup", secUid: secUid.slice(0, 20) + "…", username: info.identifier });
-      for (let i = 0; i < qty; i++) {
-        const ok = await ttReport(secUid, TK_REASONS[i % TK_REASONS.length]!, pickProxy());
-        ok ? sent++ : failed++;
-        emit({ type: "progress", n: i + 1, total: qty, ok, platform: "tiktok" });
-        if (i < qty - 1) await rand(200, 600);
-      }
+      ttSecUid = await ttLookup(info.identifier);
+      if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
+      emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier });
     }
+
+    const { sent, failed } = await runRound(info, qty, igUserId, igMediaId, ttSecUid, emit, () => stopped);
+    emit({ type: "done", sent, failed, total: qty });
   } catch (err) {
     emit({ type: "error", msg: String(err).slice(0, 100) });
+    emit({ type: "done", sent: 0, failed: qty, total: qty });
   }
 
-  emit({ type: "done", sent, failed, total: qty });
   res.end();
+});
+
+// ── GET /api/social/stream/loop ────────────────────────────────────────────────
+// Loop infinito: dispara `quantity` reports, espera `interval` segundos, repete.
+router.get("/stream/loop", async (req, res): Promise<void> => {
+  const { url: rawUrl, quantity, interval } = req.query as Record<string, string>;
+  if (!rawUrl) { res.status(400).end(); return; }
+
+  const info = detectPlatform(rawUrl);
+  if (!info) { res.status(400).json({ error: "Plataforma não reconhecida" }); return; }
+
+  const qty         = Math.min(Math.max(1, parseInt(String(quantity ?? "5"), 10)), 50);
+  const intervalMs  = Math.min(Math.max(30, parseInt(String(interval ?? "60"), 10)), 3600) * 1000;
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-store",
+    "Connection": "keep-alive", "X-Accel-Buffering": "no",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  const emit = (d: object) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(d)}\n\n`); };
+  let stopped = false;
+  req.on("close", () => { stopped = true; });
+
+  // Pre-lookup
+  let igUserId: string | null = null;
+  let igMediaId: string | null = null;
+  let ttSecUid: string | null = null;
+
+  emit({ type: "loop_init", platform: info.platform, target: info.identifier, subtype: info.type, qty, intervalSec: intervalMs / 1000 });
+
+  try {
+    if (info.platform === "instagram") {
+      if (info.type === "post") {
+        igMediaId = shortcodeToMediaId(info.identifier);
+        emit({ type: "lookup", mediaId: igMediaId, shortcode: info.identifier, targetType: "post" });
+      } else {
+        igUserId = await igLookup(info.identifier);
+        if (!igUserId) { emit({ type: "error", msg: "Usuário não encontrado no Instagram" }); res.end(); return; }
+        emit({ type: "lookup", userId: igUserId, username: info.identifier, targetType: "account" });
+      }
+    } else if (info.platform === "tiktok") {
+      ttSecUid = await ttLookup(info.identifier);
+      if (!ttSecUid) { emit({ type: "error", msg: "Usuário não encontrado no TikTok" }); res.end(); return; }
+      emit({ type: "lookup", secUid: ttSecUid.slice(0, 20) + "…", username: info.identifier });
+    }
+  } catch (err) {
+    emit({ type: "error", msg: String(err).slice(0, 100) }); res.end(); return;
+  }
+
+  let round = 0;
+  let totalSent = 0, totalFailed = 0;
+
+  while (!stopped && !res.writableEnded) {
+    round++;
+    emit({ type: "round_start", round, target: info.identifier, qty });
+
+    try {
+      const { sent, failed } = await runRound(info, qty, igUserId, igMediaId, ttSecUid, emit, () => stopped, round);
+      totalSent   += sent;
+      totalFailed += failed;
+      emit({ type: "round_done", round, sent, failed, totalSent, totalFailed });
+    } catch (err) {
+      emit({ type: "error", msg: String(err).slice(0, 100) });
+    }
+
+    if (stopped || res.writableEnded) break;
+
+    // Countdown until next round
+    const endAt = Date.now() + intervalMs;
+    while (!stopped && !res.writableEnded && Date.now() < endAt) {
+      await sleep(1000);
+      const remaining = Math.ceil((endAt - Date.now()) / 1000);
+      if (remaining >= 0 && !res.writableEnded) {
+        emit({ type: "cooldown", remaining, nextRound: round + 1 });
+      }
+    }
+  }
+
+  if (!res.writableEnded) {
+    emit({ type: "loop_done", totalSent, totalFailed, rounds: round });
+    res.end();
+  }
 });
 
 // ── POST /api/social/report — para chamadas do Discord bot (retorna JSON) ─────
@@ -207,24 +373,30 @@ router.post("/report", async (req, res): Promise<void> => {
   if (!rawUrl || typeof rawUrl !== "string") { res.status(400).json({ error: "url obrigatório" }); return; }
 
   const info = detectPlatform(rawUrl.trim());
-  if (!info) {
-    res.status(400).json({ error: "Plataforma não reconhecida — suportamos Instagram e TikTok" });
-    return;
-  }
+  if (!info) { res.status(400).json({ error: "Plataforma não reconhecida — suportamos Instagram e TikTok" }); return; }
 
   const qty = Math.min(Math.max(1, parseInt(String(quantity ?? 5), 10)), 50);
   let sent = 0, failed = 0;
 
   try {
     if (info.platform === "instagram") {
-      const userId = await igLookup(info.identifier);
-      if (userId) {
+      if (info.type === "post") {
+        const mediaId = shortcodeToMediaId(info.identifier);
         for (let i = 0; i < qty; i++) {
-          const ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+          const ok = await igMediaReport(mediaId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
           ok ? sent++ : failed++;
           if (i < qty - 1) await sleep(300);
         }
-      } else { failed = qty; }
+      } else {
+        const userId = await igLookup(info.identifier);
+        if (userId) {
+          for (let i = 0; i < qty; i++) {
+            const ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+            ok ? sent++ : failed++;
+            if (i < qty - 1) await sleep(300);
+          }
+        } else { failed = qty; }
+      }
     } else if (info.platform === "tiktok") {
       const secUid = await ttLookup(info.identifier);
       if (secUid) {
@@ -239,7 +411,7 @@ router.post("/report", async (req, res): Promise<void> => {
     }
   } catch { failed = qty - sent; }
 
-  res.json({ platform: info.platform, target: info.identifier, sent, failed, total: qty });
+  res.json({ platform: info.platform, target: info.identifier, subtype: info.type, sent, failed, total: qty });
 });
 
 export default router;

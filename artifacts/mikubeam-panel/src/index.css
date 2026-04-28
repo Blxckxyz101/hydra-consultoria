@@ -2849,3 +2849,112 @@ input[type="datetime-local"].lb-num {
 .lb-cred-row-content { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .lb-cred-row-cred   { color: var(--text); word-break: break-all; }
 .lb-cred-row-detail { color: var(--text-muted); font-size: .67rem; word-break: break-all; }
+
+/* ════════════════════════════════════════════════════════════════
+   TEMA GEASS VOID — abismo absoluto + varredura vermelha
+   ════════════════════════════════════════════════════════════════ */
+
+/* Keyframes exclusivos do void */
+@keyframes void-scanline {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+@keyframes void-border-pulse {
+  0%, 100% { border-color: rgba(200,0,0,0.25); box-shadow: 0 0 6px rgba(200,0,0,0.15); }
+  50%       { border-color: rgba(200,0,0,0.55); box-shadow: 0 0 18px rgba(200,0,0,0.35); }
+}
+@keyframes geass-eye-open {
+  0%   { transform: scaleY(0.1) rotate(0deg); opacity: 0.6; }
+  30%  { transform: scaleY(1.0) rotate(0deg); opacity: 1;   }
+  60%  { transform: scaleY(1.0) rotate(360deg); opacity: 1; }
+  100% { transform: scaleY(0.1) rotate(360deg); opacity: 0.6; }
+}
+@keyframes void-glow-text {
+  0%, 100% { text-shadow: 0 0 8px rgba(200,0,0,0.4), 0 0 20px rgba(200,0,0,0.2); }
+  50%       { text-shadow: 0 0 16px rgba(200,0,0,0.8), 0 0 40px rgba(200,0,0,0.4); }
+}
+@keyframes theme-toggle-spin {
+  0%   { transform: rotate(0deg)   scale(1);   }
+  50%  { transform: rotate(180deg) scale(1.15); }
+  100% { transform: rotate(360deg) scale(1);   }
+}
+
+/* Pseudo-element scan-line overlay */
+body.theme-void::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none; z-index: 9999;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(200,0,0,0.03) 50%,
+    transparent 100%
+  );
+  background-size: 100% 4px;
+  animation: void-scanline 6s linear infinite;
+}
+
+/* Root overrides for void theme */
+body.theme-void {
+  --accent:       #cc0000;
+  --accent2:      #ff2222;
+  --bg:           #000000;
+  --bg2:          #080808;
+  --bg3:          #0f0000;
+  --card:         rgba(12,0,0,0.95);
+  --border:       rgba(200,0,0,0.2);
+  --text:         #dddddd;
+  --text-muted:   #666666;
+}
+
+body.theme-void .lb-card,
+body.theme-void .lb-panel {
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+  animation: void-border-pulse 3s ease-in-out infinite;
+}
+
+body.theme-void .lb-title {
+  color: #cc0000 !important;
+  animation: void-glow-text 2.5s ease-in-out infinite;
+}
+
+body.theme-void .lb-sub {
+  color: rgba(200,0,0,0.55) !important;
+}
+
+body.theme-void .lb-page-tab--active {
+  background: rgba(200,0,0,0.18) !important;
+  border-color: rgba(200,0,0,0.45) !important;
+  color: #ff4444 !important;
+}
+
+body.theme-void .lb-page-tab:hover:not(.lb-page-tab--active) {
+  background: rgba(200,0,0,0.08) !important;
+}
+
+body.theme-void input,
+body.theme-void select,
+body.theme-void textarea {
+  background: rgba(15,0,0,0.9) !important;
+  border-color: rgba(200,0,0,0.25) !important;
+  color: #ddd !important;
+}
+
+body.theme-void .lb-theme-toggle {
+  background: linear-gradient(135deg, rgba(140,0,0,0.6), rgba(80,0,0,0.8)) !important;
+  border-color: rgba(200,0,0,0.5) !important;
+  color: #ff4444 !important;
+  box-shadow: 0 0 14px rgba(200,0,0,0.3) !important;
+}
+
+/* Animated eye icon on void toggle */
+.lb-theme-toggle-icon {
+  display: inline-block;
+}
+.lb-theme-toggle-icon--spinning {
+  animation: geass-eye-open 0.6s ease-in-out;
+}
+.lb-theme-toggle--transitioning {
+  animation: theme-toggle-spin 0.6s ease-in-out;
+}
