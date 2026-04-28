@@ -82,9 +82,16 @@ const TW_BEARER  = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%
 async function igLookup(username: string): Promise<string|null> {
   try {
     const r = await runCurl([
-      "-H","User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      "-H","User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "-H","X-IG-App-ID: 936619743392459",
-      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+      "-H","Accept: */*",
+      "-H","Accept-Language: pt-BR,pt;q=0.9",
+      "-H","Sec-Fetch-Site: same-origin",
+      "-H","Sec-Fetch-Mode: cors",
+      "-H","Sec-Fetch-Dest: empty",
+      "-H","Referer: https://www.instagram.com/",
+      "-H","Origin: https://www.instagram.com",
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
     ], 12_000);
     return JSON.parse(r.body)?.data?.user?.id ?? null;
   } catch { return null; }
