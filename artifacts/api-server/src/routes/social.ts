@@ -109,6 +109,7 @@ async function igGetCsrf(proxy: string[], cookiePath: string): Promise<string> {
 
 // ── Instagram user lookup ─────────────────────────────────────────────────────
 async function igLookup(username: string): Promise<string | null> {
+  // Try direct first (proxies return 401 for this IG endpoint)
   try {
     const r = await runCurl([
       "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -122,7 +123,22 @@ async function igLookup(username: string): Promise<string | null> {
       "-H", "Origin: https://www.instagram.com",
       `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
     ], 12_000);
-    return JSON.parse(r.body)?.data?.user?.id ?? null;
+    const userId = JSON.parse(r.body)?.data?.user?.id ?? null;
+    if (userId) return userId;
+  } catch {}
+  // Fallback: scrape user page HTML for the user ID
+  try {
+    const proxy = pickProxy();
+    const page = await runCurl([
+      ...proxy,
+      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      `https://www.instagram.com/${encodeURIComponent(username)}/`,
+    ], 15_000);
+    const m = page.body.match(/"user_id"\s*:\s*"(\d+)"/)
+           ?? page.body.match(/instapp:owner_user_id"\s+content="(\d+)"/)
+           ?? page.body.match(/"id"\s*:\s*"(\d+)".*?"username"\s*:\s*"${username}"/i);
+    return m?.[1] ?? null;
   } catch { return null; }
 }
 
@@ -166,8 +182,10 @@ async function igMediaReport(mediaId: string, reason: number, proxy: string[]): 
 
 // ── TikTok ────────────────────────────────────────────────────────────────────
 async function ttLookup(username: string): Promise<string | null> {
+  const proxy = pickProxy();
   try {
     const page = await runCurl([
+      ...proxy,
       "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "-H", "Accept-Language: pt-BR,pt;q=0.9",
       `https://www.tiktok.com/@${encodeURIComponent(username)}`,

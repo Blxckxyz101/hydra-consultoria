@@ -156,6 +156,10 @@ overrides:
 importers:
 
   .:
+    dependencies:
+      kind-of:
+        specifier: ^3.2.2
+        version: 3.2.2
     devDependencies:
       prettier:
         specifier: ^3.8.1
