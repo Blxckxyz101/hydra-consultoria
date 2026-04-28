@@ -1070,6 +1070,35 @@ function SocialDashboard({ base }: { base: string }) {
 
       {/* URL input */}
       <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+        {/* Platform quick-select buttons */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {[
+            { plat: "instagram", icon: "📸", label: "Instagram", color: "#E1306C", prefix: "https://instagram.com/" },
+            { plat: "tiktok",    icon: "🎵", label: "TikTok",    color: "#69C9D0", prefix: "https://tiktok.com/@" },
+          ].map(({ plat, icon, label, color, prefix }) => {
+            const active = platInfo?.platform === plat;
+            return (
+              <button
+                key={plat}
+                onClick={() => {
+                  const clean = url.trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?(instagram\.com|tiktok\.com)\/@?/, "");
+                  const bare  = clean.split("?")[0]!.split("/")[0] ?? "";
+                  setUrl(bare ? `${prefix}${bare}` : prefix);
+                }}
+                style={{
+                  padding: "6px 16px", borderRadius: 20, border: `1px solid ${color}${active ? "bb" : "44"}`,
+                  background: active ? `${color}22` : "rgba(255,255,255,0.04)",
+                  color: active ? color : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                  fontFamily: "monospace", transition: "all 0.2s",
+                }}
+              >
+                {icon} {label}
+              </button>
+            );
+          })}
+          <span style={{ color: "#555", fontSize: 11, alignSelf: "center", fontFamily: "monospace" }}>← selecione a plataforma</span>
+        </div>
+
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input
             value={url}
