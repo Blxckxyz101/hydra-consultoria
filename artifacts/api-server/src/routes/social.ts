@@ -96,37 +96,27 @@ function shortcodeToMediaId(shortcode: string): string {
 const IG_REASONS = [1, 2, 3, 4, 5, 7, 8, 9, 11, 18];
 const TK_REASONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-// ── Instagram: shared CSRF helper ─────────────────────────────────────────────
-async function igGetCsrf(proxy: string[], cookiePath: string): Promise<string> {
-  const page = await runCurl([...proxy, "--tlsv1.2", "-c", cookiePath,
-    "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-    "-H", "Accept: text/html", "-H", "Accept-Language: pt-BR,pt;q=0.9",
-    "https://www.instagram.com/accounts/login/",
-  ], 12_000);
-  return page.body.match(/"csrf_token":"([^"]+)"/)?.[1]
-      ?? page.body.match(/csrftoken=([^;"\s]+)/)?.[1] ?? "";
+// ── Instagram: shared CSRF helper (with cookie file) ──────────────────────────
+interface IgSession { csrf: string; cookiePath: string }
+
+async function igGetSession(proxy: string[]): Promise<IgSession | null> {
+  const cookiePath = `/tmp/ig_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+  try {
+    const page = await runCurl([...proxy, "--tlsv1.2", "-c", cookiePath,
+      "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+      "-H", "Accept: text/html", "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "https://www.instagram.com/accounts/login/",
+    ], 12_000);
+    const csrf = page.body.match(/"csrf_token":"([^"]+)"/)?.[1]
+              ?? page.body.match(/csrftoken=([^;"\s]+)/)?.[1] ?? "";
+    if (!csrf) return null;
+    return { csrf, cookiePath };
+  } catch { return null; }
 }
 
 // ── Instagram user lookup ─────────────────────────────────────────────────────
 async function igLookup(username: string): Promise<string | null> {
-  // Try direct first (proxies return 401 for this IG endpoint)
-  try {
-    const r = await runCurl([
-      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "-H", "X-IG-App-ID: 936619743392459",
-      "-H", "Accept: */*",
-      "-H", "Accept-Language: pt-BR,pt;q=0.9",
-      "-H", "Sec-Fetch-Site: same-origin",
-      "-H", "Sec-Fetch-Mode: cors",
-      "-H", "Sec-Fetch-Dest: empty",
-      "-H", "Referer: https://www.instagram.com/",
-      "-H", "Origin: https://www.instagram.com",
-      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-    ], 12_000);
-    const userId = JSON.parse(r.body)?.data?.user?.id ?? null;
-    if (userId) return userId;
-  } catch {}
-  // Fallback: scrape user page HTML for the user ID
+  // Scrape the user profile page via proxy (IG API requires login from our IPs)
   try {
     const proxy = pickProxy();
     const page = await runCurl([
@@ -137,20 +127,33 @@ async function igLookup(username: string): Promise<string | null> {
     ], 15_000);
     const m = page.body.match(/"user_id"\s*:\s*"(\d+)"/)
            ?? page.body.match(/instapp:owner_user_id"\s+content="(\d+)"/)
-           ?? page.body.match(/"id"\s*:\s*"(\d+)".*?"username"\s*:\s*"${username}"/i);
-    return m?.[1] ?? null;
-  } catch { return null; }
+           ?? page.body.match(/"id"\s*:\s*"(\d+)"/);
+    if (m?.[1]) return m[1];
+  } catch {}
+  // Fallback: try IG API directly (may or may not work depending on IP reputation)
+  try {
+    const r = await runCurl([
+      "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "-H", "X-IG-App-ID: 936619743392459",
+      "-H", "Accept: */*", "-H", "Accept-Language: pt-BR,pt;q=0.9",
+      "-H", "Referer: https://www.instagram.com/",
+      `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    ], 12_000);
+    const userId = JSON.parse(r.body)?.data?.user?.id ?? null;
+    if (userId) return userId;
+  } catch {}
+  return null;
 }
 
-// ── Instagram account report ───────────────────────────────────────────────────
-async function igReport(userId: string, reason: number, proxy: string[]): Promise<boolean> {
-  const ck = `/tmp/ig_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+// ── Instagram account report — accepts pre-fetched session to avoid N CSRF hits ─
+async function igReport(userId: string, reason: number, proxy: string[], session?: IgSession): Promise<boolean> {
+  const sess = session ?? await igGetSession(proxy);
+  const ownSession = !session;
+  if (!sess) return false;
   try {
-    const csrf = await igGetCsrf(proxy, ck);
-    if (!csrf) return false;
-    const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", ck,
+    const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", sess.cookiePath,
       "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-      "-H", `X-CSRFToken: ${csrf}`, "-H", "X-IG-App-ID: 936619743392459",
+      "-H", `X-CSRFToken: ${sess.csrf}`, "-H", "X-IG-App-ID: 936619743392459",
       "-H", "X-Instagram-AJAX: 1", "-H", "Content-Type: application/x-www-form-urlencoded",
       "-H", "Referer: https://www.instagram.com/",
       "--data-raw", `source_name=profile_page&reason_id=${reason}&frx_context=`,
@@ -158,18 +161,18 @@ async function igReport(userId: string, reason: number, proxy: string[]): Promis
     ], 12_000);
     return r.statusCode === 200 || r.statusCode === 302;
   } catch { return false; }
-  finally { try { fs.unlinkSync(ck); } catch {} }
+  finally { if (ownSession) { try { fs.unlinkSync(sess.cookiePath); } catch {} } }
 }
 
-// ── Instagram post/reel report ─────────────────────────────────────────────────
-async function igMediaReport(mediaId: string, reason: number, proxy: string[]): Promise<boolean> {
-  const ck = `/tmp/igm_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`;
+// ── Instagram post/reel report — accepts pre-fetched session ──────────────────
+async function igMediaReport(mediaId: string, reason: number, proxy: string[], session?: IgSession): Promise<boolean> {
+  const sess = session ?? await igGetSession(proxy);
+  const ownSession = !session;
+  if (!sess) return false;
   try {
-    const csrf = await igGetCsrf(proxy, ck);
-    if (!csrf) return false;
-    const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", ck,
+    const r = await runCurl([...proxy, "--tlsv1.2", "-X", "POST", "-b", sess.cookiePath,
       "-H", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-      "-H", `X-CSRFToken: ${csrf}`, "-H", "X-IG-App-ID: 936619743392459",
+      "-H", `X-CSRFToken: ${sess.csrf}`, "-H", "X-IG-App-ID: 936619743392459",
       "-H", "X-Instagram-AJAX: 1", "-H", "Content-Type: application/x-www-form-urlencoded",
       "-H", "Referer: https://www.instagram.com/",
       "--data-raw", `reason_id=${reason}&frx_context=`,
@@ -177,7 +180,7 @@ async function igMediaReport(mediaId: string, reason: number, proxy: string[]): 
     ], 12_000);
     return r.statusCode === 200 || r.statusCode === 302;
   } catch { return false; }
-  finally { try { fs.unlinkSync(ck); } catch {} }
+  finally { if (ownSession) { try { fs.unlinkSync(sess.cookiePath); } catch {} } }
 }
 
 // ── TikTok ────────────────────────────────────────────────────────────────────
@@ -243,16 +246,26 @@ async function runRound(
   let sent = 0, failed = 0;
 
   if (info.platform === "instagram") {
-    for (let i = 0; i < qty && !stopped(); i++) {
-      let ok = false;
-      if (info.type === "post" && igMediaId) {
-        ok = await igMediaReport(igMediaId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
-      } else if (igUserId) {
-        ok = await igReport(igUserId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+    // Get one session (CSRF + cookie) for the whole batch — avoids N login-page hits
+    const proxy = pickProxy();
+    let igSess = await igGetSession(proxy);
+    try {
+      for (let i = 0; i < qty && !stopped(); i++) {
+        let ok = false;
+        if (info.type === "post" && igMediaId) {
+          ok = await igMediaReport(igMediaId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined);
+          // Refresh session on failure
+          if (!ok) { igSess = await igGetSession(proxy); ok = await igMediaReport(igMediaId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined); }
+        } else if (igUserId) {
+          ok = await igReport(igUserId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined);
+          if (!ok) { igSess = await igGetSession(proxy); ok = await igReport(igUserId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined); }
+        }
+        ok ? sent++ : failed++;
+        emit({ type: "progress", n: i + 1, total: qty, ok, platform: "instagram", ...(roundLabel ? { round: roundLabel } : {}) });
+        if (i < qty - 1 && !stopped()) await rand(300, 800);
       }
-      ok ? sent++ : failed++;
-      emit({ type: "progress", n: i + 1, total: qty, ok, platform: "instagram", ...(roundLabel ? { round: roundLabel } : {}) });
-      if (i < qty - 1 && !stopped()) await rand(300, 800);
+    } finally {
+      if (igSess) { try { fs.unlinkSync(igSess.cookiePath); } catch {} }
     }
   } else if (info.platform === "tiktok" && info.type === "post") {
     // TikTok video report — identifier is the video ID
@@ -440,22 +453,30 @@ router.post("/report", async (req, res): Promise<void> => {
 
   try {
     if (info.platform === "instagram") {
-      if (info.type === "post") {
-        const mediaId = shortcodeToMediaId(info.identifier);
-        for (let i = 0; i < qty; i++) {
-          const ok = await igMediaReport(mediaId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
-          ok ? sent++ : failed++;
-          if (i < qty - 1) await sleep(300);
-        }
-      } else {
-        const userId = await igLookup(info.identifier);
-        if (userId) {
+      const proxy = pickProxy();
+      let igSess = await igGetSession(proxy);
+      try {
+        if (info.type === "post") {
+          const mediaId = shortcodeToMediaId(info.identifier);
           for (let i = 0; i < qty; i++) {
-            const ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, pickProxy());
+            let ok = await igMediaReport(mediaId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined);
+            if (!ok) { igSess = await igGetSession(proxy); ok = await igMediaReport(mediaId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined); }
             ok ? sent++ : failed++;
             if (i < qty - 1) await sleep(300);
           }
-        } else { failed = qty; }
+        } else {
+          const userId = await igLookup(info.identifier);
+          if (userId) {
+            for (let i = 0; i < qty; i++) {
+              let ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined);
+              if (!ok) { igSess = await igGetSession(proxy); ok = await igReport(userId, IG_REASONS[i % IG_REASONS.length]!, proxy, igSess ?? undefined); }
+              ok ? sent++ : failed++;
+              if (i < qty - 1) await sleep(300);
+            }
+          } else { failed = qty; }
+        }
+      } finally {
+        if (igSess) { try { fs.unlinkSync(igSess.cookiePath); } catch {} }
       }
     } else if (info.platform === "tiktok") {
       if (info.type === "post") {
