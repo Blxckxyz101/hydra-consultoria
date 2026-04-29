@@ -156,23 +156,23 @@ const METHOD_OPTIONS = [
 
 // ── Duration presets ─────────────────────────────────────────────────────────
 const DURATION_OPTIONS = [
-  { value: "30",   label: "30 seconds",           description: "Quick burst test" },
-  { value: "60",   label: "1 minute",             description: "Standard attack (default) — Free max" },
-  { value: "120",  label: "[VIP] 2 minutes",      description: "VIP only — Extended pressure" },
-  { value: "300",  label: "[VIP] 5 minutes",      description: "VIP only — Sustained assault" },
-  { value: "600",  label: "[VIP] 10 minutes",     description: "VIP only — Maximum duration" },
+  { value: "30",   label: "⏱ 30 segundos",              description: "Burst rápido — Free" },
+  { value: "60",   label: "⏱ 1 minuto (padrão)",        description: "Ataque padrão — limite Free" },
+  { value: "120",  label: "👑 [VIP] 2 minutos",         description: "VIP — pressão prolongada" },
+  { value: "300",  label: "👑 [VIP] 5 minutos",         description: "VIP — assalto sustentado" },
+  { value: "600",  label: "👑 [VIP] 10 minutos",        description: "VIP — duração máxima" },
 ];
 
 // ── Thread presets (power levels 1–8; internally ×500 connections in prod) ───
 const THREAD_OPTIONS = [
-  { value: "1", label: "⚪ Power 1 — Mínimo",           description: "~500 conns — teste básico" },
-  { value: "2", label: "🟢 Power 2 — Baixo",            description: "~1.000 conns" },
-  { value: "3", label: "🟢 Power 3 — Médio-Baixo",      description: "~1.500 conns" },
-  { value: "4", label: "🟡 Power 4 — Médio (Free max)", description: "~2.000 conns (padrão free)" },
-  { value: "5", label: "[VIP] Power 5 — Médio-Alto",    description: "VIP only — ~2.500 conns" },
-  { value: "6", label: "[VIP] Power 6 — Alto",          description: "VIP only — ~3.000 conns" },
-  { value: "7", label: "[VIP] Power 7 — Muito Alto",    description: "VIP only — ~3.500 conns" },
-  { value: "8", label: "[VIP] Power 8 — MÁXIMO",        description: "VIP only — ~4.000 conns por worker" },
+  { value: "1", label: "⚪ Power 1 — Mínimo",           description: "~500 conexões — teste básico — Free" },
+  { value: "2", label: "🟢 Power 2 — Baixo",            description: "~1.000 conexões — Free" },
+  { value: "3", label: "🟢 Power 3 — Médio-Baixo",      description: "~1.500 conexões — Free" },
+  { value: "4", label: "🟡 Power 4 — Médio (padrão)",   description: "~2.000 conexões — limite Free" },
+  { value: "5", label: "👑 [VIP] Power 5 — Médio-Alto", description: "~2.500 conexões — VIP" },
+  { value: "6", label: "👑 [VIP] Power 6 — Alto",       description: "~3.000 conexões — VIP" },
+  { value: "7", label: "👑 [VIP] Power 7 — Muito Alto", description: "~3.500 conexões — VIP" },
+  { value: "8", label: "👑 [VIP] Power 8 — MÁXIMO",     description: "~4.000 conexões por worker — VIP" },
 ];
 
 // ── Pending launcher sessions (userId → { target, duration, threads }) ───────
@@ -1427,63 +1427,80 @@ function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: st
 
 // ── Build launcher embed with all dropdowns ────────────────────────────────────
 // Discord hard-limit: 25 options per select menu, 5 rows per message.
-// 49 methods split: Row1 = first 25 (Geass/L7/L4), Row2 = remaining 24 (ARES ∞),
-// Row3 = duration, Row4 = threads, Row5 = Launch/Cancel buttons.
-const METHOD_OPTIONS_A = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 (≤25)
-const METHOD_OPTIONS_B = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞ (≤25)
+// VIP:  Row1 = methods 1-25, Row2 = methods 26-50, Row3 = duration, Row4 = threads, Row5 = buttons
+// Free: Row1 = 7 free methods only,               Row2 = duration, Row3 = threads, Row4 = buttons
+const METHOD_OPTIONS_A     = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 (≤25)
+const METHOD_OPTIONS_B     = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞  (≤25)
+const FREE_METHOD_OPTIONS  = METHOD_OPTIONS.filter(m => FREE_METHODS.has(m.value));
 
-function buildLauncherComponents(_target: string) {
-  // Row 1 — Methods 1-25 (Geass, L7, L4, L3)
-  const methodMenuA = new StringSelectMenuBuilder()
-    .setCustomId("select_method")
-    .setPlaceholder("⚔️ Method — Geass / L7 / L4 / L3 (1-25)...")
-    .addOptions(
-      METHOD_OPTIONS_A.map(m =>
-        new StringSelectMenuOptionBuilder()
-          .setValue(m.value)
-          .setLabel(m.label)
-          .setDescription(m.description.slice(0, 100))
-      )
-    );
+const FREE_DURATION_OPTIONS = DURATION_OPTIONS.filter(d => parseInt(d.value, 10) <= MAX_DURATION_FREE);
+const FREE_THREAD_OPTIONS   = THREAD_OPTIONS.filter(t => parseInt(t.value, 10) <= MAX_POWER_FREE);
 
-  // Row 2 — Methods 26-35 (ARES OMNIVECT advanced vectors)
-  const methodMenuB = new StringSelectMenuBuilder()
-    .setCustomId("select_method_2")
-    .setPlaceholder("🌀 Method — ARES OMNIVECT ∞ (26-35)...")
-    .addOptions(
-      METHOD_OPTIONS_B.map(m =>
-        new StringSelectMenuOptionBuilder()
-          .setValue(m.value)
-          .setLabel(m.label)
-          .setDescription(m.description.slice(0, 100))
-      )
-    );
+function buildLauncherComponents(
+  _target:         string,
+  isVip            = false,
+  selectedMethod?: string,
+  selectedDuration = "60",
+  selectedThreads  = "4",
+): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  const mkMethodOpt = (m: typeof METHOD_OPTIONS[0]) =>
+    new StringSelectMenuOptionBuilder()
+      .setValue(m.value)
+      .setLabel(m.label)
+      .setDescription(m.description.slice(0, 100))
+      .setDefault(m.value === selectedMethod);
 
-  // Row 3 — Duration select
+  const mkDurOpt = (d: typeof DURATION_OPTIONS[0]) =>
+    new StringSelectMenuOptionBuilder()
+      .setValue(d.value)
+      .setLabel(d.label)
+      .setDescription(d.description)
+      .setDefault(d.value === selectedDuration);
+
+  const mkThreadOpt = (t: typeof THREAD_OPTIONS[0]) =>
+    new StringSelectMenuOptionBuilder()
+      .setValue(t.value)
+      .setLabel(t.label)
+      .setDescription(t.description)
+      .setDefault(t.value === selectedThreads);
+
+  // Duration and thread pools (filtered by tier)
+  const durOpts    = isVip ? DURATION_OPTIONS    : FREE_DURATION_OPTIONS;
+  const threadOpts = isVip ? THREAD_OPTIONS      : FREE_THREAD_OPTIONS;
+
   const durationMenu = new StringSelectMenuBuilder()
     .setCustomId("select_duration")
-    .setPlaceholder("⏱ Duration (default: 60s)")
-    .addOptions(
-      DURATION_OPTIONS.map(d =>
-        new StringSelectMenuOptionBuilder()
-          .setValue(d.value)
-          .setLabel(d.label)
-          .setDescription(d.description)
-      )
-    );
+    .setPlaceholder("⏱ Duração (padrão: 60s)")
+    .addOptions(durOpts.map(mkDurOpt));
 
-  // Row 4 — Thread select
   const threadMenu = new StringSelectMenuBuilder()
     .setCustomId("select_threads")
-    .setPlaceholder("🧵 Threads (default: 200)")
-    .addOptions(
-      THREAD_OPTIONS.map(t =>
-        new StringSelectMenuOptionBuilder()
-          .setValue(t.value)
-          .setLabel(t.label)
-          .setDescription(t.description)
-      )
-    );
+    .setPlaceholder("⚡ Power (padrão: 4 — ~2.000 conns)")
+    .addOptions(threadOpts.map(mkThreadOpt));
+
+  if (!isVip) {
+    // Free: single method menu with 7 allowed methods
+    const freeMethodMenu = new StringSelectMenuBuilder()
+      .setCustomId("select_method")
+      .setPlaceholder("⚔️ Método de Ataque — Plano Free (7 disponíveis)...")
+      .addOptions(FREE_METHOD_OPTIONS.map(mkMethodOpt));
+    return [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(freeMethodMenu),
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(durationMenu),
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(threadMenu),
+    ];
+  }
+
+  // VIP: two method menus (all 50 methods)
+  const methodMenuA = new StringSelectMenuBuilder()
+    .setCustomId("select_method")
+    .setPlaceholder("⚔️ Método — Geass / L7 / L4 / L3 (1-25)...")
+    .addOptions(METHOD_OPTIONS_A.map(mkMethodOpt));
+
+  const methodMenuB = new StringSelectMenuBuilder()
+    .setCustomId("select_method_2")
+    .setPlaceholder("🌀 Método — ARES OMNIVECT ∞ (26-50)...")
+    .addOptions(METHOD_OPTIONS_B.map(mkMethodOpt));
 
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(methodMenuA),
@@ -1497,40 +1514,52 @@ function buildLauncherEmbed(target: string, session: LaunchSession, selectedMeth
   const mInfo = selectedMethod ? METHOD_OPTIONS.find(m => m.value === selectedMethod) : null;
   const isVip = session.isVip ?? false;
 
-  // Tier badge shown in description
-  const tierBadge = isVip
-    ? "👑 **VIP** — Power 1–8 · Duração até 600s · Todos os métodos"
-    : "🔓 **Free** — Power máx **4**/8 · Duração máx **60s** · Métodos básicos";
+  // ── Tier info ─────────────────────────────────────────────────────────────
+  const tierLine = isVip
+    ? "👑 **VIP** — Power 1–8 · até 600s · todos os métodos desbloqueados"
+    : `🔓 **Free** — Power máx **${MAX_POWER_FREE}** · até **${MAX_DURATION_FREE}s** · ${FREE_METHODS.size} métodos disponíveis`;
 
-  const desc = [
-    tierBadge,
-    "",
-    mInfo
-      ? `**${mInfo.label}** selecionado — ajuste duração & threads, depois clique **🚀 LAUNCH**`
-      : "Selecione um **método de ataque**, ajuste duração & threads se quiser.\nClique **🚀 LAUNCH** quando pronto.",
-  ].join("\n");
+  // ── Config summary ────────────────────────────────────────────────────────
+  const powerLabel   = `⚡ **Power ${session.threads}**/${isVip ? "8" : MAX_POWER_FREE}`;
+  const durationLabel= `⏱ **${session.duration}s**`;
+  const methodLabel  = mInfo
+    ? `${mInfo.emoji ?? "⚡"} **${mInfo.label}**`
+    : "⚔️ _nenhum selecionado_";
 
-  const powerLabel = `⚡ Power **${session.threads}**/${isVip ? "8" : "4"}`;
-  const configValue = mInfo
-    ? `\`${target}\` · ${mInfo.emoji ?? "⚡"} **${mInfo.label}** · ⏱ **${session.duration}s** · ${powerLabel}`
-    : `\`${target}\` · ⚔️ _método não selecionado_ · ⏱ **${session.duration}s** · ${powerLabel}`;
+  const configLine = `\`${target}\`\n${methodLabel}  ·  ${durationLabel}  ·  ${powerLabel}`;
+
+  // ── Description ───────────────────────────────────────────────────────────
+  const instructionLine = mInfo
+    ? `✅ Método selecionado — ajuste duração & power se quiser, depois clique **🚀 DISPARAR**`
+    : `1️⃣ Escolha um **método** no menu abaixo\n2️⃣ Ajuste **duração** e **power** se quiser\n3️⃣ Clique **🚀 DISPARAR** para lançar`;
 
   const embed = new EmbedBuilder()
     .setColor(mInfo ? COLORS.CRIMSON : COLORS.GOLD)
-    .setTitle("⚔️ GEASS LAUNCHER")
-    .setDescription(desc)
-    .addFields({ name: "🎯 Configuração", value: configValue, inline: false });
+    .setTitle("⚔️ GEASS LAUNCHER — CONFIGURAÇÃO DO ATAQUE")
+    .setDescription(`${tierLine}\n\n${instructionLine}`)
+    .addFields({ name: "🎯 Configuração Atual", value: configLine, inline: false });
 
+  // ── Method description ────────────────────────────────────────────────────
   if (mInfo?.description) {
     embed.addFields({
       name:   "📋 Como funciona",
       value:  `> ${mInfo.description.slice(0, 300)}`,
       inline: false,
     });
+  } else if (!isVip) {
+    // Show free method list for unselected state
+    const freeMethodList = FREE_METHOD_OPTIONS
+      .map(m => `${m.emoji ?? "⚡"} ${m.label}`)
+      .join("\n");
+    embed.addFields({
+      name:   `🔓 Métodos disponíveis no Free (${FREE_METHODS.size})`,
+      value:  freeMethodList,
+      inline: false,
+    });
   }
 
   embed
-    .setFooter({ text: `${AUTHOR} • ${isVip ? "VIP — sem restrições" : "Free — /vip status para ver seus limites"}` })
+    .setFooter({ text: `${AUTHOR} • ${isVip ? "👑 VIP — acesso total" : "🔓 Free — use /vip status para ver seus limites"}` })
     .setTimestamp();
 
   return embed;
@@ -1555,10 +1584,10 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.GOLD)
-            .setTitle("⏳ GEASS RECHARGING")
+            .setTitle("⏳ GEASS EM RECARGA")
             .setDescription(
-              `*"Even the Geass requires a moment to focus. Patience is a weapon, not a weakness."*\n\n` +
-              `You must wait **${remaining}s** before launching another assault.`
+              `> *"Mesmo o Geass precisa de um momento para se concentrar. A paciência é uma arma, não uma fraqueza."*\n\n` +
+              `Aguarde **${remaining}s** antes de lançar outro ataque.`
             )
             .setFooter({ text: `${AUTHOR} • Cooldown: ${ATTACK_COOLDOWN_MS / 1000}s` })
             .setTimestamp(),
@@ -1583,17 +1612,17 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
   pendingSessions.set(userId, session);
   scheduleSessionExpiry(userId);
 
-  const components = buildLauncherComponents(target);
-  // Row 4 — Launch + Cancel buttons
+  const components = buildLauncherComponents(target, isVip);
+  // Linha de botões — DISPARAR desabilitado até o usuário escolher um método
   const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId("launch_attack")
-      .setLabel("🚀 LAUNCH")
+      .setLabel("🚀 DISPARAR")
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(true), // disabled until method is chosen
+      .setDisabled(true),
     new ButtonBuilder()
       .setCustomId("cancel_launch")
-      .setLabel("✖ Cancel")
+      .setLabel("✖ Cancelar")
       .setStyle(ButtonStyle.Secondary),
   );
 
@@ -1988,9 +2017,9 @@ async function handleInfo(interaction: ChatInputCommandInteraction): Promise<voi
 
 async function handleHelp(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.reply({
-    embeds: [buildHelpEmbed("en")],
+    embeds: [buildHelpEmbed("pt")],
     files: buildGeassFiles(),
-    components: [buildLangRow("en", "help")],
+    components: [buildLangRow("pt", "help")],
   });
 }
 
@@ -2187,16 +2216,22 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
 
     const currentMethod = pendingMethodMap.get(userId);
 
-    const components = buildLauncherComponents(session.target);
+    const components = buildLauncherComponents(
+      session.target,
+      session.isVip ?? false,
+      currentMethod,
+      String(session.duration),
+      String(session.threads),
+    );
     const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId("launch_attack")
-        .setLabel("🚀 LAUNCH")
+        .setLabel("🚀 DISPARAR")
         .setStyle(ButtonStyle.Danger)
         .setDisabled(!currentMethod),
       new ButtonBuilder()
         .setCustomId("cancel_launch")
-        .setLabel("✖ Cancel")
+        .setLabel("✖ Cancelar")
         .setStyle(ButtonStyle.Secondary),
     );
 
@@ -2222,7 +2257,7 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
     const session = pendingSessions.get(userId);
     const method  = pendingMethodMap.get(userId);
     if (!session || !method) {
-      await interaction.reply({ content: "❌ Session expired. Run `/attack start` again.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: "❌ Sessão expirada. Use `/attack start` novamente.", flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -2291,12 +2326,12 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
         api.getProxyStats().catch(() => undefined),
       ]);
       const row     = buildAttackButtons(attack.id, true);
-      await interaction.editReply({ embeds: [buildStartEmbed(attack, pStats?.count ?? 0)], components: [row], files: buildAttackFiles() });
+      await interaction.editReply({ embeds: [buildStartEmbed(attack, pStats?.count ?? 0, "pt")], components: [row], files: buildAttackFiles() });
       console.log(`[ATTACK #${attack.id}] Started — ${method} → ${target}`);
       startMonitor(attack.id, (opts) => interaction.editReply(opts), target, userId, interaction.channelId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      await interaction.editReply({ embeds: [buildErrorEmbed("ATTACK FAILED", message)], components: [] });
+      await interaction.editReply({ embeds: [buildErrorEmbed("FALHA AO INICIAR ATAQUE", message)], components: [] });
     }
     return;
   }
@@ -2309,8 +2344,8 @@ async function handleButton(interaction: import("discord.js").ButtonInteraction)
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.GRAY)
-          .setTitle("✖ Launch Cancelled")
-          .setDescription("The attack was cancelled.")
+          .setTitle("✖ Ataque Cancelado")
+          .setDescription("O lançamento foi cancelado.")
           .setFooter({ text: AUTHOR }),
       ],
       components: [],
