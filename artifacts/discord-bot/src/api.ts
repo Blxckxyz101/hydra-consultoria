@@ -141,7 +141,7 @@ export const api = {
     req<AnalyzeResult>("/api/analyze", {
       method: "POST",
       body:   JSON.stringify({ url: target }),  // API schema uses 'url', not 'target'
-      signal: AbortSignal.timeout(15_000),      // 15s — DNS probes + HTTP fingerprinting
+      signal: AbortSignal.timeout(60_000),      // 60s — DNS probes + HTTP fingerprinting + origin IP discovery
     }),
 
   getClusterStatus: () =>

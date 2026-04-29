@@ -43,6 +43,14 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
 
+    // Prevent "other side closed" errors when clients (Discord bot, panel) reuse
+    // HTTP keep-alive connections. Node.js defaults to 5s — too short for callers
+    // that poll every 5-10s. Set to 65s (must be > any client-side idle timeout).
+    server.keepAliveTimeout = 65_000;
+    // headersTimeout must be > keepAliveTimeout to avoid a race condition where
+    // the server sends FIN while the client is mid-request.
+    server.headersTimeout = 66_000;
+
     // ── Discord bot auto-launch ─────────────────────────────────────────────
     // In production (REPLIT_DEPLOYMENT=1) the Discord bot is NOT a separate
     // workflow — it must be spawned here so it runs in the deployed container.
