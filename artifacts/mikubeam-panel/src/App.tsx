@@ -2872,19 +2872,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
   }
 
   /* ── Credential Bulk Checker helpers ── */
-  interface CredTargetMeta { label: string; icon: string; category: string; logoUrl?: string; logoColor?: string; note?: string; }
+  interface CredTargetMeta { label: string; icon: string; category: string; logoUrl?: string; logoColor?: string; note?: string; broken?: boolean; }
   function gf(domain: string) { return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`; }
   function si(slug: string, hex: string) { return `https://cdn.simpleicons.org/${slug}/${hex}`; }
   const CRED_TARGETS: Record<string, CredTargetMeta> = {
     // Gov / Saúde
     datasus:      { label: "DataSUS",        icon: "🏥", category: "Governo",           logoUrl: gf("datasus.gov.br"),      logoColor: "#1a6b3a", note: "user:pass" },
-    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo",           logoUrl: gf("sipni.saude.gov.br"),  logoColor: "#1565c0", note: "user:pass" },
+    sipni:        { label: "SIPNI",          icon: "💉", category: "Governo",           logoUrl: gf("sipni.saude.gov.br"),  logoColor: "#1565c0", note: "user:pass", broken: true },
     consultcenter:{ label: "ConsultCenter",  icon: "📋", category: "Governo",           logoColor: "#4527a0", note: "user:pass" },
-    mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo",           logoColor: "#283593", note: "user:pass" },
+    mind7:        { label: "Mind-7",         icon: "🧠", category: "Governo",           logoColor: "#283593", note: "user:pass", broken: true },
     serpro:       { label: "SERPRO",         icon: "🛡️", category: "Governo",           logoUrl: gf("serpro.gov.br"),       logoColor: "#1a237e", note: "user:pass" },
-    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo",           logoUrl: gf("sisregiii.saude.gov.br"), logoColor: "#00695c", note: "user:pass" },
-    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo",           logoUrl: gf("sinesp.gov.br"),       logoColor: "#1b5e20", note: "user:pass" },
-    sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo",           logoColor: "#bf360c", note: "user:pass" },
+    sisreg:       { label: "SISREG III",     icon: "🏨", category: "Governo",           logoUrl: gf("sisregiii.saude.gov.br"), logoColor: "#00695c", note: "user:pass", broken: true },
+    sinesp:       { label: "SINESP",         icon: "🚔", category: "Governo",           logoUrl: gf("sinesp.gov.br"),       logoColor: "#1b5e20", note: "user:pass", broken: true },
+    sispes:       { label: "SISP-ES",        icon: "🏛️", category: "Governo",           logoColor: "#bf360c", note: "user:pass", broken: true },
     sigma:        { label: "SIGMA PC-MA",    icon: "🔵", category: "Governo",           logoColor: "#0d47a1", note: "user:pass" },
     // Finanças / Crédito
     credilink:    { label: "CrediLink",      icon: "💳", category: "Finanças",          logoColor: "#1976d2", note: "user:pass" },
@@ -2894,18 +2894,18 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     // Social / Redes
     instagram:    { label: "Instagram",      icon: "📸", category: "Social",            logoUrl: si("instagram","E4405F"),  logoColor: "#c13584", note: "email:pass" },
     // Streaming
-    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: si("crunchyroll","F47521"),logoColor: "#f47521", note: "email:pass" },
-    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: si("netflix","E50914"),    logoColor: "#e50914", note: "email:pass" },
-    amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: gf("primevideo.com"),      logoColor: "#00a8e1", note: "email:pass" },
-    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: si("hbomax","5f2d91"),     logoColor: "#5f2d91", note: "email:pass" },
+    crunchyroll:  { label: "Crunchyroll",    icon: "🍥", category: "Streaming",         logoUrl: si("crunchyroll","F47521"),logoColor: "#f47521", note: "email:pass", broken: true },
+    netflix:      { label: "Netflix",        icon: "🎬", category: "Streaming",         logoUrl: si("netflix","E50914"),    logoColor: "#e50914", note: "email:pass", broken: true },
+    amazon:       { label: "Prime Video",    icon: "📦", category: "Streaming",         logoUrl: gf("primevideo.com"),      logoColor: "#00a8e1", note: "email:pass", broken: true },
+    hbomax:       { label: "HBO Max",        icon: "👑", category: "Streaming",         logoUrl: si("hbomax","5f2d91"),     logoColor: "#5f2d91", note: "email:pass", broken: true },
     disney:       { label: "Disney+",        icon: "🏰", category: "Streaming",         logoUrl: gf("disneyplus.com"),      logoColor: "#0063e5", note: "email:pass" },
-    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: si("paramountplus","1a4cff"), logoColor: "#1a4cff", note: "email:pass" },
-    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: si("spotify","1DB954"),    logoColor: "#1db954", note: "user:pass" },
+    paramount:    { label: "Paramount+",     icon: "⭐", category: "Streaming",         logoUrl: si("paramountplus","1a4cff"), logoColor: "#1a4cff", note: "email:pass", broken: true },
+    spotify:      { label: "Spotify",        icon: "🎵", category: "Streaming",         logoUrl: si("spotify","1DB954"),    logoColor: "#1db954", note: "user:pass", broken: true },
     // Consultas (CPF/dados públicos)
     receita:      { label: "Receita Federal",icon: "🧾", category: "Consultas",         logoUrl: gf("receita.fazenda.gov.br"), logoColor: "#1a237e", note: "cpf:nasc" },
     // VPS / Hosting
-    tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting",     logoColor: "#0d47a1", note: "user:pass" },
-    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: si("hostinger","673fd7"),  logoColor: "#673fd7", note: "email:pass" },
+    tubehosting:  { label: "Tube Hosting",   icon: "🖥️", category: "VPS / Hosting",     logoColor: "#0d47a1", note: "user:pass", broken: true },
+    hostinger:    { label: "Hostinger",      icon: "🌐", category: "VPS / Hosting",     logoUrl: si("hostinger","673fd7"),  logoColor: "#673fd7", note: "email:pass", broken: true },
     vultr:        { label: "Vultr",          icon: "⚡", category: "VPS / Hosting",     logoUrl: si("vultr","007BFC"),      logoColor: "#007bfc", note: "API Key" },
     digitalocean: { label: "DigitalOcean",   icon: "🌊", category: "VPS / Hosting",     logoUrl: si("digitalocean","0080FF"), logoColor: "#0080ff", note: "API Key" },
     linode:       { label: "Linode/Akamai",  icon: "🟩", category: "VPS / Hosting",     logoUrl: si("akamai","009BDE"),     logoColor: "#02b159", note: "API Key" },
@@ -2925,8 +2925,8 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     roblox:       { label: "Roblox",         icon: "🟥", category: "Gaming",            logoUrl: si("roblox","E02020"),     logoColor: "#e02020", note: "user:pass" },
     epicgames:    { label: "Epic Games",     icon: "⚫", category: "Gaming",            logoUrl: si("epicgames","ffffff"),   logoColor: "#313131", note: "email:pass" },
     steam:        { label: "Steam",          icon: "🎲", category: "Gaming",            logoUrl: si("steam","C6D4DF"),      logoColor: "#1b2838", note: "user:pass" },
-    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: si("playstation","0070D1"), logoColor: "#003087", note: "email:pass" },
-    xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: gf("xbox.com"),            logoColor: "#107c10", note: "email:pass" },
+    playstation:  { label: "PlayStation",    icon: "🎮", category: "Gaming",            logoUrl: si("playstation","0070D1"), logoColor: "#003087", note: "email:pass", broken: true },
+    xbox:         { label: "Xbox",           icon: "🎮", category: "Gaming",            logoUrl: gf("xbox.com"),            logoColor: "#107c10", note: "email:pass", broken: true },
   };
   const CRED_CATEGORIES = ["Governo", "Finanças", "Social", "Streaming", "Consultas", "VPS / Hosting", "Dev / Cloud", "Financeiro BR", "Financeiro Global", "Gaming"];
 
@@ -4231,7 +4231,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                               disabled={credRunning}
                               title={`${m.label}${m.note ? ` — ${m.note}` : ""}`}
                             >
-                              <div className="lb-cred-logo-wrap">
+                              <div className="lb-cred-logo-wrap" style={{ position: "relative" }}>
                                 {m.logoUrl ? (
                                   <img
                                     src={m.logoUrl}
@@ -4252,6 +4252,17 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                                   <span style={{ fontSize: "1.25rem", lineHeight: 1 }}>{m.icon}</span>
                                 </div>
                                 {isActive && <div className="lb-cred-logo-ring" />}
+                                <span
+                                  title={m.broken ? "Checker indisponível" : "Checker funcionando"}
+                                  style={{
+                                    position: "absolute", bottom: 1, right: 1,
+                                    width: 8, height: 8, borderRadius: "50%",
+                                    background: m.broken ? "#ef4444" : "#22c55e",
+                                    boxShadow: m.broken ? "0 0 4px #ef444488" : "0 0 4px #22c55e88",
+                                    border: "1.5px solid rgba(0,0,0,0.45)",
+                                    display: "block", flexShrink: 0,
+                                  }}
+                                />
                               </div>
                               <span className="lb-cred-target-name">{m.label}</span>
                               {m.note && <span className="lb-cred-target-note">{m.note}</span>}
