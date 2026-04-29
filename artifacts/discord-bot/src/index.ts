@@ -30,7 +30,7 @@ type MonitorEditFn = (opts: {
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
 import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE, METHOD_EMOJIS } from "./config.js";
-import { api, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type NitroCodeResult } from "./api.js";
+import { api, apiProbe, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type NitroCodeResult } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
   isOwner, isMod,
@@ -1040,8 +1040,15 @@ async function probeTarget(rawUrl: string): Promise<ProbeResult> {
   if (def1) return p1;
   if (def2) return p2;
 
-  // Both timed out / inconclusive — return worst latency (highest) to show degradation
+  // Both timed out / inconclusive — try via the API server's proxy pool as tiebreaker.
+  // If both direct probes are inconclusive, the target may be blocking Replit datacenter IPs.
+  // The proxied probe distinguishes "target down" from "Replit IP blocked by target CDN".
   if (!p1.up && !p2.up) {
+    const proxied = await apiProbe(url).catch(() => null);
+    if (proxied && proxied.statusCode !== null) {
+      const up = proxied.statusCode > 0 && proxied.statusCode < 500 && proxied.statusCode !== 503;
+      return { up, latencyMs: proxied.latencyMs, statusCode: proxied.statusCode, reason: proxied.up ? `Proxy probe: HTTP ${proxied.statusCode} via ${proxied.via}` : `Proxy probe: HTTP ${proxied.statusCode} — origin error` };
+    }
     return p1.latencyMs >= p2.latencyMs ? p1 : p2;
   }
   if (!p1.up) return p2; // p2 is UP — use it (p1 was a blip)
@@ -1795,12 +1802,36 @@ async function handleCheck(interaction: ChatInputCommandInteraction): Promise<vo
   // Fire all probes in parallel
   const probeResults = await Promise.all(Array.from({ length: PROBES }, runProbe));
 
-  const successfulProbes = probeResults.filter(p => p.ok && p.statusCode !== null);
-  const anySuccess       = successfulProbes.length > 0;
+  let successfulProbes = probeResults.filter(p => p.ok && p.statusCode !== null);
+  let anySuccess       = successfulProbes.length > 0;
+
+  // ── Proxy fallback: if ALL direct probes failed, try via the API server's proxy pool ──
+  // This handles cases where the target blocks Replit datacenter IPs (Cloudflare, Akamai, etc.)
+  let proxyFallbackUsed = false;
+  if (!anySuccess) {
+    const proxied = await apiProbe(rawTarget);
+    if (proxied && proxied.statusCode !== null) {
+      const fallback: SingleCheckResult = {
+        ok:           proxied.up,
+        statusCode:   proxied.statusCode,
+        latencyMs:    proxied.latencyMs,
+        serverHeader: proxied.serverHeader,
+        contentType:  null,
+        redirected:   proxied.redirected,
+        finalUrl:     proxied.finalUrl,
+        headers:      undefined,
+        error:        proxied.error ?? null,
+      };
+      probeResults.splice(0, probeResults.length, fallback, fallback, fallback);
+      successfulProbes = probeResults.filter(p => p.ok && p.statusCode !== null);
+      anySuccess       = successfulProbes.length > 0;
+      proxyFallbackUsed = true;
+    }
+  }
 
   // One GET probe for content-type and CDN headers (only if at least one HEAD succeeded)
   let getResult: SingleCheckResult | null = null;
-  if (anySuccess) {
+  if (anySuccess && !proxyFallbackUsed) {
     getResult = await runProbe().then(async () => {
       const t0   = Date.now();
       const ctrl = new AbortController();

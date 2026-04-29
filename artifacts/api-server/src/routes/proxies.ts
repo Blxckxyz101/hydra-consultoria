@@ -14,6 +14,7 @@ import net from "node:net";
 import dns from "node:dns/promises";
 import fs from "node:fs";
 import path from "node:path";
+import { execFile } from "node:child_process";
 import { refreshLimiter } from "../middlewares/rateLimit.js";
 
 const router: IRouter = Router();
@@ -245,33 +246,59 @@ async function runHealthCheck(): Promise<void> {
   if (_healthCheckRunning || proxyCache.length === 0) return;
   _healthCheckRunning = true;
   try {
-    // Always keep residential (authenticated) proxies — they rotate internally
-    const residential = proxyCache.filter(p => p.username && p.password);
+    const residentialAll = proxyCache.filter(p => p.username && p.password);
+    const nonRes         = proxyCache.filter(p => !p.username);
 
-    // TCP-test a larger sample for better tier coverage
-    const nonRes  = proxyCache.filter(p => !p.username);
+    // ── TCP-test ALL residential proxies — remove dead ones ───────────────
+    // Residential proxies rotate internally, but the proxy gateway endpoint
+    // itself can go down. We test each with a 5s TCP timeout and keep only
+    // confirmed-live ones. Dead proxies are removed from pinnedProxies too.
+    const resTestResults = await Promise.allSettled(
+      residentialAll.map(p => testProxy({ host: p.host, port: p.port, type: p.type ?? "http" })),
+    );
+    const liveResidential: Proxy[] = [];
+    const deadResidential = new Set<string>();
+    resTestResults.forEach((r, i) => {
+      const p = residentialAll[i];
+      if (r.status === "fulfilled" && r.value !== null) {
+        // Preserve auth credentials on the result from testProxy (it doesn't copy them)
+        liveResidential.push({ ...r.value, username: p.username, password: p.password });
+      } else {
+        deadResidential.add(`${p.host}:${p.port}`);
+        console.warn(`[PROXIES] Dead residential proxy removed: ${p.host}:${p.port}`);
+      }
+    });
+
+    // Remove dead proxies from pinnedProxies so they don't come back on next harvest
+    if (deadResidential.size > 0) {
+      pinnedProxies = pinnedProxies.filter(p => !deadResidential.has(`${p.host}:${p.port}`));
+      proxyCache    = proxyCache.filter(p => !deadResidential.has(`${p.host}:${p.port}`));
+      saveConfig();
+    }
+
+    // ── TCP-test a sample of non-residential proxies ───────────────────────
     const sample  = [...nonRes].sort(() => Math.random() - 0.5).slice(0, 300);
     const results = await Promise.allSettled(sample.map(testProxy));
-    const live    = results
+    const liveFree = results
       .filter((r): r is PromiseFulfilledResult<Proxy | null> => r.status === "fulfilled" && r.value !== null)
       .map(r => r.value!);
 
     // Merge: residential first, then confirmed-live non-residential, deduped
     const merged = new Map<string, Proxy>();
-    for (const p of [...residential, ...live]) merged.set(`${p.host}:${p.port}`, p);
+    for (const p of [...liveResidential, ...liveFree]) merged.set(`${p.host}:${p.port}`, p);
     healthyProxyCache = [...merged.values()].sort((a, b) => a.responseMs - b.responseMs);
 
     // Split into fast / slow tiers for specialized vectors
     fastProxyCache = [
-      ...residential,  // residential always fast-tier (internal rotation)
-      ...live.filter(p => p.responseMs <= FAST_THRESHOLD_MS),
+      ...liveResidential,
+      ...liveFree.filter(p => p.responseMs <= FAST_THRESHOLD_MS),
     ].sort((a, b) => a.responseMs - b.responseMs);
 
-    slowProxyCache = live
+    slowProxyCache = liveFree
       .filter(p => p.responseMs > FAST_THRESHOLD_MS && p.responseMs <= 8000)
       .sort((a, b) => a.responseMs - b.responseMs);
 
-    console.log(`[PROXIES] Health-check done — ${healthyProxyCache.length} live (${residential.length} residential + ${live.length} free) | fast:${fastProxyCache.length} slow:${slowProxyCache.length}`);
+    console.log(`[PROXIES] Health-check done — ${healthyProxyCache.length} live (${liveResidential.length}/${residentialAll.length} residential + ${liveFree.length} free) | fast:${fastProxyCache.length} slow:${slowProxyCache.length}${deadResidential.size > 0 ? ` | removed ${deadResidential.size} dead` : ""}`);
   } catch { /* keep stale */ } finally { _healthCheckRunning = false; }
 }
 
@@ -483,6 +510,98 @@ router.delete("/proxies/pinned", (_req, res): void => {
   residentialCreds = null;
   proxyCache = proxyCache.filter(p => !p.username);
   res.json({ status: "cleared", removed, remaining: proxyCache.length });
+});
+
+// ── GET /api/probe?url=...  — proxied HTTP probe ──────────────────────────
+// Fires a HEAD (then GET fallback) request through the proxy pool to the target.
+// Used by the Discord/Telegram bot when direct probes fail (datacenter IP blocks).
+// Tries: residential → random free proxies (3) → direct.
+// Response: { up, statusCode, latencyMs, serverHeader, redirected, finalUrl, via, error }
+router.get("/probe", (req, res): void => {
+  const rawUrl = typeof req.query["url"] === "string" ? req.query["url"].trim() : "";
+  if (!rawUrl) { res.status(400).json({ error: "url query param required" }); return; }
+
+  let url = rawUrl;
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+
+  const TIMEOUT_S = 10;
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+  function runCurlProbe(proxyArgs: string[]): Promise<{ statusCode: number; serverHeader: string | null; location: string | null }> {
+    return new Promise((resolve, reject) => {
+      const args = ["-s", "--max-time", String(TIMEOUT_S),
+        "-I", "-L", "--max-redirs", "5", "-A", UA,
+        "-H", "Cache-Control: no-cache, no-store",
+        "-H", "Pragma: no-cache",
+        ...proxyArgs, "--", url];
+      execFile("curl", args, { maxBuffer: 1024 * 1024 }, (err, stdout) => {
+        if (!stdout && err) { reject(err); return; }
+        // Parse status code from HTTP status line(s) — use last one (after all redirects)
+        const lines = stdout.split(/\r?\n/);
+        let statusCode = 0;
+        let serverHeader: string | null = null;
+        let location: string | null = null;
+        for (const line of lines) {
+          const sm = line.match(/^HTTP\/\S+\s+(\d+)/i);
+          if (sm) { statusCode = parseInt(sm[1], 10); serverHeader = null; location = null; }
+          const sh = line.match(/^(?:server|x-powered-by):\s*(.+)/i);
+          if (sh) serverHeader = sh[1].trim();
+          const lh = line.match(/^location:\s*(.+)/i);
+          if (lh) location = lh[1].trim();
+        }
+        if (statusCode === 0) { reject(new Error("no HTTP status parsed")); return; }
+        resolve({ statusCode, serverHeader, location });
+      });
+    });
+  }
+
+  // Build proxy candidate list: residential first, then 3 random free proxies
+  function getProxyCandidates(): string[][] {
+    const candidates: string[][] = [];
+    const rc = residentialCreds;
+    if (rc) {
+      const auth = `${rc.username}:${rc.password}@${rc.host}:${rc.port}`;
+      candidates.push(["-x", `http://${auth}`]);
+    }
+    const free = proxyCache.filter(p => !p.username && p.host !== "0.0.0.0");
+    const shuffled = free.sort(() => Math.random() - 0.5).slice(0, 3);
+    for (const p of shuffled) {
+      const scheme = p.type === "socks5" ? "socks5h" : "http";
+      candidates.push(["-x", `${scheme}://${p.host}:${p.port}`]);
+    }
+    candidates.push([]); // direct fallback
+    return candidates;
+  }
+
+  void (async () => {
+    const t0 = Date.now();
+    const candidates = getProxyCandidates();
+    let lastError: string | null = null;
+    let via: "residential" | "free-proxy" | "direct" = "direct";
+
+    for (let i = 0; i < candidates.length; i++) {
+      const proxyArgs = candidates[i];
+      const isResidential = i === 0 && residentialCreds !== null;
+      const isFree        = !isResidential && proxyArgs.length > 0;
+      const isDirect      = proxyArgs.length === 0;
+
+      try {
+        const result = await runCurlProbe(proxyArgs);
+        const latencyMs = Date.now() - t0;
+        via = isResidential ? "residential" : isFree ? "free-proxy" : "direct";
+        const up = result.statusCode > 0 && result.statusCode < 500 && result.statusCode !== 503;
+        const finalUrl = result.location ?? null;
+        res.json({ up, statusCode: result.statusCode, latencyMs, serverHeader: result.serverHeader, redirected: finalUrl !== null, finalUrl, via });
+        return;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        if (!isDirect) continue; // try next candidate
+      }
+    }
+
+    const latencyMs = Date.now() - t0;
+    res.json({ up: false, statusCode: null, latencyMs, serverHeader: null, redirected: false, finalUrl: null, via, error: lastError ?? "All probe attempts failed" });
+  })();
 });
 
 export default router;

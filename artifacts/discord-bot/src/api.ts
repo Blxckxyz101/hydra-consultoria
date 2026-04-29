@@ -330,3 +330,29 @@ export interface QueryStats {
   situacao: Record<string, number>;
   topLocais: { local: string; count: number }[];
 }
+
+// ── Proxied probe — routes through API server's proxy pool ────────────────
+// Used as fallback when the bot's direct HTTP probes fail (CF/datacenter blocks).
+export interface ApiProbeResult {
+  up:           boolean;
+  statusCode:   number | null;
+  latencyMs:    number;
+  serverHeader: string | null;
+  redirected:   boolean;
+  finalUrl:     string | null;
+  via:          "residential" | "free-proxy" | "direct";
+  error?:       string;
+}
+
+export async function apiProbe(targetUrl: string): Promise<ApiProbeResult | null> {
+  try {
+    const encoded = encodeURIComponent(targetUrl);
+    const res = await fetch(`${API_BASE}/api/probe?url=${encoded}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<ApiProbeResult>;
+  } catch {
+    return null;
+  }
+}
