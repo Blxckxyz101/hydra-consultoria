@@ -6211,9 +6211,17 @@ async function main(): Promise<void> {
       // GatewayIntentBits.GuildMembers,
       // GatewayIntentBits.GuildPresences,
     ],
-    // Increase REST timeout to 60s — default is 15s which causes AbortError when
-    // editReply() is called after a slow askSkynet() response.
-    rest: { timeout: 60_000 },
+    rest: {
+      timeout: 60_000,
+      // Force Connection: close on every Discord REST request so undici never
+      // reuses a stale socket — eliminates "SocketError: other side closed"
+      // (UND_ERR_SOCKET) caused by Discord closing idle keep-alive connections.
+      makeRequest: (url, init) => {
+        const h = new Headers(init.headers as HeadersInit | undefined);
+        h.set("connection", "close");
+        return fetch(url, { ...(init as RequestInit), headers: h });
+      },
+    },
   });
   botClient = client; // make accessible for DM alerts
 
