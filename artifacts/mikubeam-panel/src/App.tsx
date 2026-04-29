@@ -1324,6 +1324,10 @@ function Panel() {
   const [lastAtkPkts,  setLastAtkPkts]  = useState(0);
   const [lastAtkBytes, setLastAtkBytes] = useState(0);
   const [liveCodes, setLiveCodes] = useState({ ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
+  interface LiveProbeResult { t: number; up: boolean; statusCode: number | null; latencyMs: number; serverHeader: string | null; via: string; }
+  const [liveProbe, setLiveProbe]           = useState<LiveProbeResult | null>(null);
+  const [liveProbeHistory, setLiveProbeHistory] = useState<LiveProbeResult[]>([]);
+  const [liveOriginIP, setLiveOriginIP]     = useState<string | null>(null);
   const [threadsEffective, setThreadsEffective] = useState<number | null>(null);
   const peakPpsRef = useRef(0);
   const peakBpsRef = useRef(0);
@@ -2286,7 +2290,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       try {
         const r = await fetch(`${BASE}/api/attacks/${currentAttackId}/live`);
         if (!r.ok) return;
-        const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean; codes?: { ok: number; redir: number; client: number; server: number; timeout: number }; latAvgMs?: number };
+        const live = await r.json() as { pps: number; bps: number; totalPackets: number; totalBytes: number; conns: number; running: boolean; codes?: { ok: number; redir: number; client: number; server: number; timeout: number }; latAvgMs?: number; probe?: { t: number; up: boolean; statusCode: number | null; latencyMs: number; serverHeader: string | null; via: string }; probeHistory?: { t: number; up: boolean; statusCode: number | null; latencyMs: number; serverHeader: string | null; via: string }[]; originIP?: string | null };
 
         // Sync accumulator refs so progress bar + final count stay accurate
         if (live.totalPackets > currentPacketsRef.current) currentPacketsRef.current = live.totalPackets;
@@ -2331,6 +2335,11 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
         // Update live response codes (T003 telemetry)
         if (live.codes) setLiveCodes(live.codes);
+
+        // Update residential proxy probe data (real impact measurement)
+        if (live.probe) setLiveProbe(live.probe);
+        if (live.probeHistory && live.probeHistory.length > 0) setLiveProbeHistory(live.probeHistory);
+        if (live.originIP !== undefined) setLiveOriginIP(live.originIP ?? null);
 
         // Log at most once per 2s
         const now = Date.now();
@@ -2656,6 +2665,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       setCurrentAttackId(result.id);
       setIsRunning(true); isRunningRef.current = true;
       setLiveCodes({ ok: 0, redir: 0, client: 0, server: 0, timeout: 0 });
+      setLiveProbe(null); setLiveProbeHistory([]); setLiveOriginIP(null);
       setThreadsEffective((result as unknown as { threadsEffective?: number }).threadsEffective ?? null);
       if (method === "geass-override" || method === "geass-absolutum") { setGeassFlash(true); setTimeout(() => setGeassFlash(false), 1600); }
       targetRef.current = target.trim();
@@ -6991,9 +7001,65 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               )}
             </div>
 
-            {/* Target status banner */}
+            {/* Residential probe monitoring — real HTTP check, not blocked by WAF */}
+            {isRunning && liveProbe && (
+              <div className="lb-res-probe" style={{
+                marginTop: 10, padding: "9px 14px", borderRadius: 8,
+                background: liveProbe.up ? "rgba(46,204,113,0.08)" : "rgba(231,76,60,0.13)",
+                border: `1px solid ${liveProbe.up ? "rgba(46,204,113,0.35)" : "rgba(231,76,60,0.45)"}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      width: 9, height: 9, borderRadius: "50%", display: "inline-block", flexShrink: 0,
+                      background: liveProbe.up ? "#2ecc71" : "#e74c3c",
+                      boxShadow: liveProbe.up ? "0 0 6px #2ecc71" : "0 0 6px #e74c3c",
+                    }}/>
+                    <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700,
+                      color: liveProbe.up ? "#2ecc71" : "#e74c3c" }}>
+                      {liveProbe.up
+                        ? `SITE UP — HTTP ${liveProbe.statusCode ?? "??"} · ${liveProbe.latencyMs}ms`
+                        : liveProbe.statusCode
+                          ? `HTTP ${liveProbe.statusCode} · ${liveProbe.latencyMs}ms`
+                          : `SITE DOWN / TIMEOUT · ${liveProbe.latencyMs}ms`}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#888", fontFamily: "monospace" }}>
+                      via {liveProbe.via}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {liveProbeHistory.length > 1 && (
+                      <svg width="60" height="18" viewBox={`0 0 60 18`} style={{ flexShrink: 0 }}>
+                        {(() => {
+                          const vals = liveProbeHistory.map(p => p.latencyMs);
+                          const maxV = Math.max(...vals, 1);
+                          const pts  = vals.map((v, i) => `${Math.round((i / Math.max(vals.length-1,1)) * 60)},${Math.round(18 - (v / maxV) * 16)}`).join(" ");
+                          return <polyline points={pts} fill="none" stroke={liveProbe.up ? "#2ecc71" : "#e74c3c"} strokeWidth="1.5" opacity="0.8"/>;
+                        })()}
+                      </svg>
+                    )}
+                    <span style={{ fontSize: 10, color: "#666", fontFamily: "monospace" }}>
+                      {liveProbeHistory.length}× probe
+                    </span>
+                  </div>
+                </div>
+                {liveOriginIP && (
+                  <div style={{ marginTop: 5, fontFamily: "monospace", fontSize: 11, color: "#f39c12" }}>
+                    ⚡ ORIGIN PIVOT ATIVO: <strong style={{ color: "#f39c12" }}>{liveOriginIP}</strong>
+                    <span style={{ color: "#888", marginLeft: 8 }}>atacando direto no servidor</span>
+                  </div>
+                )}
+                {!liveProbe.up && liveProbe.statusCode === null && (
+                  <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: 10, color: "#e74c3c", opacity: 0.85 }}>
+                    TIMEOUT via proxy residencial — servidor provavelmente DERRUBADO
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Target status banner (Replit direct probe — for WAF/DNS/TCP diagnostics) */}
             {isRunning && targetStatus !== "unknown" && (
-              <div className={`lb-target-status ${targetStatus === "offline" ? "ts-offline" : "ts-online"}`}>
+              <div className={`lb-target-status ${targetStatus === "offline" ? "ts-offline" : "ts-online"}`} style={{ marginTop: liveProbe ? 5 : undefined }}>
                 <span className="ts-dot"/>
                 <span className="ts-label">
                   {targetStatus === "online"
