@@ -1859,17 +1859,20 @@ const TG_OSINT_META: Record<string, { label: string; emoji: string }> = {
 };
 
 const TG_OSINT_KNOWN_FIELDS = [
+  "QUANTIDADE DE FUNCIONÁRIOS", "DATA SITUAÇÃO CADASTRAL", "SITUAÇÃO CADASTRAL",
   "STATUS NA RECEITA", "MUNICÍPIO DE NASCIMENTO", "TIPO SANGÚINEO",
   "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR",
+  "NATUREZA JURÍDICA", "DATA FUNDAÇÃO", "CPF REPRESENTANTE",
   "ESTADO_ENDERECO", "ESTADO CIVIL", "CLASSE SOCIAL", "MARCA_MODEL0",
-  "TIPO_VEICULO", "ANO_FABRICACAO", "ANO_MODELO", "NOME MÃE", "NOME PAI",
+  "TIPO_VEICULO", "TIPO DE EMPRESA", "ANO_FABRICACAO", "ANO_MODELO",
+  "NOME FANTASIA", "NOME MÃE", "NOME PAI", "RAZÃO SOCIAL",
   "RECEBE INSS", "CPF_CNPJ", "NASCIMENTO", "ESCOLARIDADE", "PROFISSÃO",
-  "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM", "CHASSI", "MOTOR",
-  "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO", "IPVA", "ESTADO",
-  "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE", "CNPJ", "EMAIL",
-  "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME", "PLACA",
-  "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG", "PIS", "NIS", "CNS",
-  "COR", "MAE", "PAI",
+  "CAPITAL SOCIAL", "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM",
+  "CHASSI", "MOTOR", "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO",
+  "IPVA", "ESTADO", "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE",
+  "CNPJ", "EMAIL", "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME",
+  "PLACA", "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG",
+  "PIS", "NIS", "CNS", "COR", "MAE", "PAI", "RAMO", "RISCO",
 ].sort((a, b) => b.length - a.length);
 
 function tgParseGeass(raw: string): Array<[string, string]> {
@@ -1878,10 +1881,39 @@ function tgParseGeass(raw: string): Array<[string, string]> {
   const hits: Array<{ key: string; start: number; vStart: number }> = [];
   let m: RegExpExecArray | null;
   while ((m = rx.exec(raw)) !== null) hits.push({ key: m[1], start: m.index, vStart: m.index + m[0].length });
-  return hits.map(({ key, start, vStart }, i) => [
+  return hits.map(({ key, vStart }, i) => [
     key,
     raw.slice(vStart, i + 1 < hits.length ? hits[i + 1].start : raw.length).trimEnd(),
   ]);
+}
+
+// ── Parser: BASE N format (TELEFONE, EMAIL…) ──────────────────────────────────
+interface TgBaseRecord { cpf: string; nome: string; nascimento?: string }
+function tgParseBaseFormat(raw: string): TgBaseRecord[] {
+  const records: TgBaseRecord[] = [];
+  const baseRx = /BASE\s+\d+\s+CPF:\s*`?([^\s`]+?)`?\s+NOME:\s*([\s\S]*?)(?=BASE\s+\d+|$)/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = baseRx.exec(raw)) !== null) {
+    const cpf  = bm[1].replace(/`/g, "").trim();
+    const block = bm[2].trim();
+    const nasc  = /NASCIMENTO:\s*([^\s]+)/.exec(block);
+    const nome  = block.replace(/NASCIMENTO:.*|EMAIL:.*/g, "").trim();
+    records.push({ cpf, nome, nascimento: nasc?.[1] });
+  }
+  return records;
+}
+
+// ── Group ⎯-format pairs into per-record maps ────────────────────────────────
+function tgGroupRecords(pairs: Array<[string, string]>): Array<Map<string, string>> {
+  const records: Array<Map<string, string>> = [];
+  let cur = new Map<string, string>();
+  const STARTERS = new Set(["CPF", "CNPJ", "PLACA", "CHASSI"]);
+  for (const [k, v] of pairs) {
+    if (STARTERS.has(k) && cur.has(k)) { records.push(cur); cur = new Map(); }
+    cur.set(k, v);
+  }
+  if (cur.size > 0) records.push(cur);
+  return records;
 }
 
 function tgParseSections(raw: string): Array<{ name: string; count: number; items: string[] }> {
@@ -1905,18 +1937,49 @@ const TG_OSINT_GROUPS = [
   { name: "👨‍👩‍👧 FAMÍLIA",       fields: ["NOME MÃE", "NOME PAI", "MUNICÍPIO DE NASCIMENTO"] },
   { name: "📍 LOCALIZAÇÃO",    fields: ["CEP", "RUA", "NUMERO", "COMPLEMENTO", "BAIRRO", "CIDADE", "UF", "ESTADO", "ESTADO_ENDERECO"] },
   { name: "🚗 VEÍCULO",        fields: ["SITUACAO", "COR", "COMBUSTIVEL", "CATEGORIA", "TIPO_VEICULO", "ANO_MODELO", "ANO_FABRICACAO", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR", "IPVA", "MULTAS", "LICENCIAMENTO", "SEGURO", "MOTOR", "MARCA_MODEL0"] },
+  { name: "🏢 EMPRESA",        fields: ["RAZÃO SOCIAL", "NOME FANTASIA", "DATA FUNDAÇÃO", "NATUREZA JURÍDICA", "QUANTIDADE DE FUNCIONÁRIOS", "TIPO DE EMPRESA", "CAPITAL SOCIAL", "RAMO", "RISCO", "SITUAÇÃO CADASTRAL", "DATA SITUAÇÃO CADASTRAL", "CPF REPRESENTANTE"] },
 ];
 const TG_OSINT_SKIP = new Set(["SEM INFORMAÇÃO", "NÃO INFORMADO", "NÃO", "0", "", "ZONA:", "SECAO:"]);
 
-function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, string]>, sections: Array<{ name: string; count: number; items: string[] }>): string {
-  const meta    = TG_OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍" };
-  const pMap    = new Map(kvPairs.map(([k, v]) => [k, v]));
-  const usedKs  = new Set<string>();
+function buildTgBaseText(tipo: string, dado: string, records: TgBaseRecord[]): string {
+  const meta  = TG_OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍" };
   const lines: string[] = [];
-
   lines.push(`👁 <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>`);
   lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
   lines.push(`🔎 <b>Dado consultado:</b> <code>${dado}</code>`);
+  lines.push(``);
+
+  // Deduplicate by CPF
+  const seen = new Set<string>();
+  const unique = records.filter(r => { if (seen.has(r.cpf)) return false; seen.add(r.cpf); return true; });
+
+  lines.push(`🪪 <b>RESULTADOS ENCONTRADOS</b> <i>(${unique.length} únicos)</i>`);
+  for (let i = 0; i < unique.length && i < 15; i++) {
+    const r    = unique[i];
+    const tree = i === unique.length - 1 || i === 14 ? "└" : "├";
+    const nasc = r.nascimento ? `  <i>${r.nascimento}</i>` : "";
+    lines.push(`${tree} <code>${r.cpf}</code>  <b>${r.nome}</b>${nasc}`);
+  }
+  if (unique.length > 15) lines.push(`└ <i>… +${unique.length - 15} registros adicionais</i>`);
+
+  lines.push(``);
+  lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+  lines.push(`<i>🤖 GeassZero API  •  Lelouch Britannia</i>`);
+  return lines.join("\n");
+}
+
+function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, string]>, sections: Array<{ name: string; count: number; items: string[] }>): string {
+  const meta    = TG_OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍" };
+  const usedKs  = new Set<string>();
+  const lines: string[] = [];
+
+  // Group into records (handles multi-person ⎯ format)
+  const records = tgGroupRecords(kvPairs);
+  const pMap    = records[0] ?? new Map(kvPairs.map(([k, v]) => [k, v]));
+
+  lines.push(`👁 <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>`);
+  lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+  lines.push(`🔎 <b>Dado consultado:</b> <code>${dado}</code>${records.length > 1 ? `  •  <i>${records.length} registros</i>` : ""}`);
 
   for (const group of TG_OSINT_GROUPS) {
     const entries: [string, string][] = [];
@@ -1951,10 +2014,10 @@ function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, st
     }
   }
 
-  // Fallback if nothing parsed
-  if (lines.length <= 3) {
+  // Fallback if nothing parsed from the first record
+  if (lines.length <= 4) {
     lines.push(``);
-    lines.push(`<pre>${kvPairs.map(([k, v]) => `${k}: ${v}`).join("\n").slice(0, 2500)}</pre>`);
+    lines.push(`<pre>${kvPairs.slice(0, 20).map(([k, v]) => `${k}: ${v}`).join("\n").slice(0, 2500)}</pre>`);
   }
 
   // Sections (TELEFONES, ENDERECOS, etc.)
@@ -1982,6 +2045,22 @@ function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, st
         lines.push(...positives);
       }
     }
+  }
+
+  // Other records summary (multi-person ⎯ format)
+  if (records.length > 1) {
+    lines.push(``);
+    lines.push(`📋 <b>OUTROS REGISTROS</b>`);
+    const others = records.slice(1, 9);
+    for (let i = 0; i < others.length; i++) {
+      const r    = others[i];
+      const nome = r.get("NOME") ?? r.get("RAZÃO SOCIAL") ?? "?";
+      const cpf  = r.get("CPF")  ?? r.get("CNPJ") ?? "?";
+      const nasc = r.get("NASCIMENTO") ? `  <i>${r.get("NASCIMENTO")}</i>` : "";
+      const tree = i === others.length - 1 && records.length - 1 <= 8 ? "└" : "├";
+      lines.push(`${tree} <code>${cpf}</code>  <b>${nome}</b>${nasc}`);
+    }
+    if (records.length - 1 > 8) lines.push(`└ <i>… +${records.length - 9} mais</i>`);
   }
 
   lines.push(``);
@@ -2060,9 +2139,17 @@ bot.command("osint", async ctx => {
     return;
   }
 
-  const kvPairs  = tgParseGeass(resposta);
-  const sections = tgParseSections(resposta);
-  const text     = buildTgOsintText(tipo, dado, kvPairs, sections);
+  // Detect format and use the right parser
+  const isBaseFormat = /BASE\s+\d+\s+CPF:/i.test(resposta);
+  let text: string;
+  if (isBaseFormat) {
+    const baseRecords = tgParseBaseFormat(resposta);
+    text = buildTgBaseText(tipo, dado, baseRecords);
+  } else {
+    const kvPairs  = tgParseGeass(resposta);
+    const sections = tgParseSections(resposta);
+    text = buildTgOsintText(tipo, dado, kvPairs, sections);
+  }
 
   await ctx.telegram.editMessageText(
     msg.chat.id, msg.message_id, undefined,

@@ -6080,19 +6080,24 @@ const OSINT_META: Record<string, { label: string; emoji: string; color: number }
 
 // Known field names sorted by length (longest first) for reliable matching
 const OSINT_KNOWN_FIELDS = [
+  // Long/multi-word first
+  "QUANTIDADE DE FUNCIONÁRIOS", "DATA SITUAÇÃO CADASTRAL", "SITUAÇÃO CADASTRAL",
   "STATUS NA RECEITA", "MUNICÍPIO DE NASCIMENTO", "TIPO SANGÚINEO",
   "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR",
+  "NATUREZA JURÍDICA", "DATA FUNDAÇÃO", "CPF REPRESENTANTE",
   "ESTADO_ENDERECO", "ESTADO CIVIL", "CLASSE SOCIAL", "MARCA_MODEL0",
-  "TIPO_VEICULO", "ANO_FABRICACAO", "ANO_MODELO", "NOME MÃE", "NOME PAI",
+  "TIPO_VEICULO", "TIPO DE EMPRESA", "ANO_FABRICACAO", "ANO_MODELO",
+  "NOME FANTASIA", "NOME MÃE", "NOME PAI", "RAZÃO SOCIAL",
   "RECEBE INSS", "CPF_CNPJ", "NASCIMENTO", "ESCOLARIDADE", "PROFISSÃO",
-  "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM", "CHASSI", "MOTOR",
-  "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO", "IPVA", "ESTADO",
-  "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE", "CNPJ", "EMAIL",
-  "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME", "PLACA",
-  "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG", "PIS", "NIS", "CNS",
-  "COR", "MAE", "PAI",
+  "CAPITAL SOCIAL", "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM",
+  "CHASSI", "MOTOR", "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO",
+  "IPVA", "ESTADO", "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE",
+  "CNPJ", "EMAIL", "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME",
+  "PLACA", "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG",
+  "PIS", "NIS", "CNS", "COR", "MAE", "PAI", "RAMO", "RISCO",
 ].sort((a, b) => b.length - a.length);
 
+// ── Parser: ⎯ format (CPF, PLACA, CEP, NOME, CNPJ…) ─────────────────────────
 function parseGeassResposta(raw: string): Array<[string, string]> {
   const escaped = OSINT_KNOWN_FIELDS.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const rx = new RegExp(`(${escaped.join("|")}) ⎯ `, "g");
@@ -6108,6 +6113,40 @@ function parseGeassResposta(raw: string): Array<[string, string]> {
     pairs.push([key, raw.slice(vStart, end).trimEnd()]);
   }
   return pairs;
+}
+
+// ── Parser: BASE N format (TELEFONE, EMAIL…) ──────────────────────────────────
+interface BaseRecord { cpf: string; nome: string; nascimento?: string; email?: string }
+function parseBaseFormat(raw: string): BaseRecord[] {
+  const records: BaseRecord[] = [];
+  // Match "BASE N CPF: XXXX NOME: YYYY" blocks
+  const baseRx = /BASE\s+\d+\s+CPF:\s*`?([^\s`]+?)`?\s+NOME:\s*([\s\S]*?)(?=BASE\s+\d+|$)/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = baseRx.exec(raw)) !== null) {
+    const cpf   = bm[1].replace(/`/g, "").trim();
+    const block = bm[2].trim();
+    const nasc  = /NASCIMENTO:\s*([^\s]+)/.exec(block);
+    const mail  = /EMAIL:\s*([^\s]+)/.exec(block);
+    const nome  = block.replace(/NASCIMENTO:.*|EMAIL:.*/g, "").trim();
+    records.push({ cpf, nome, nascimento: nasc?.[1], email: mail?.[1] });
+  }
+  return records;
+}
+
+// ── Group ⎯-format pairs into per-record maps (handles multi-person results) ──
+function groupGeassRecords(pairs: Array<[string, string]>): Array<Map<string, string>> {
+  const records: Array<Map<string, string>> = [];
+  let cur = new Map<string, string>();
+  const RECORD_STARTERS = new Set(["CPF", "CNPJ", "PLACA", "CHASSI"]);
+  for (const [k, v] of pairs) {
+    if (RECORD_STARTERS.has(k) && cur.has(k)) {
+      records.push(cur);
+      cur = new Map<string, string>();
+    }
+    cur.set(k, v);
+  }
+  if (cur.size > 0) records.push(cur);
+  return records;
 }
 
 function parseSections(raw: string): Array<{ name: string; count: number; items: string[] }> {
@@ -6142,7 +6181,11 @@ const OSINT_FIELD_GROUPS = [
     name: "🚗  VEÍCULO",
     fields: ["SITUACAO", "COR", "COMBUSTIVEL", "CATEGORIA", "TIPO_VEICULO", "ANO_MODELO", "ANO_FABRICACAO", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR", "IPVA", "MULTAS", "LICENCIAMENTO", "SEGURO", "MOTOR", "MARCA_MODEL0"],
   },
-] as const;
+  {
+    name: "🏢  EMPRESA",
+    fields: ["RAZÃO SOCIAL", "NOME FANTASIA", "DATA FUNDAÇÃO", "NATUREZA JURÍDICA", "QUANTIDADE DE FUNCIONÁRIOS", "TIPO DE EMPRESA", "CAPITAL SOCIAL", "RAMO", "RISCO", "SITUAÇÃO CADASTRAL", "DATA SITUAÇÃO CADASTRAL", "CPF REPRESENTANTE"],
+  },
+];
 
 const OSINT_SKIP = new Set(["SEM INFORMAÇÃO", "NÃO INFORMADO", "NÃO", "0", "", "ZONA:", "SECAO:"]);
 const OSINT_SECTION_EMOJI: Record<string, string> = {
@@ -6151,13 +6194,14 @@ const OSINT_SECTION_EMOJI: Record<string, string> = {
   SOCIOS: "🤝", FUNCIONARIOS: "👥",
 };
 
-function buildOsintEmbed(
-  tipo: string, dado: string,
-  kvPairs: Array<[string, string]>,
+function buildOsintEmbedFromMap(
+  meta: { label: string; emoji: string; color: number },
+  dado: string,
+  pMap: Map<string, string>,
+  allPairs: Array<[string, string]>,
   sections: Array<{ name: string; count: number; items: string[] }>,
+  headerExtra?: string,
 ): EmbedBuilder {
-  const meta   = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
-  const pMap   = new Map(kvPairs.map(([k, v]) => [k, v]));
   const usedKs = new Set<string>();
 
   const embed = new EmbedBuilder()
@@ -6167,7 +6211,7 @@ function buildOsintEmbed(
       iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
     })
     .setDescription(
-      `> 🔎  Consultando  **\`${dado}\`**\n` +
+      `> 🔎  Consultando  **\`${dado}\`**${headerExtra ? `  •  ${headerExtra}` : ""}\n` +
       `> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
     )
     .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
@@ -6176,7 +6220,6 @@ function buildOsintEmbed(
 
   let fieldCount = 0;
 
-  // ── Grouped fields ──────────────────────────────────────────────────────────
   for (const group of OSINT_FIELD_GROUPS) {
     if (fieldCount >= 20) break;
     const entries: [string, string][] = [];
@@ -6188,40 +6231,33 @@ function buildOsintEmbed(
       }
     }
     if (entries.length === 0) continue;
-
     const lines = entries.slice(0, 10).map(([k, v], i, arr) => {
-      const tree = i === arr.length - 1 ? "└" : "├";
-      const display = k.replace(/_/g, " ");
-      const value   = v.length > 70 ? v.slice(0, 68) + "…" : v;
-      return `${tree} **${display}**  \`${value}\``;
+      const tree  = i === arr.length - 1 ? "└" : "├";
+      const value = v.length > 72 ? v.slice(0, 70) + "…" : v;
+      return `${tree} **${k.replace(/_/g, " ")}**  \`${value}\``;
     });
-
-    embed.addFields({
-      name:   group.name,
-      value:  lines.join("\n"),
-      inline: entries.length <= 4,
-    });
+    embed.addFields({ name: group.name, value: lines.join("\n"), inline: entries.length <= 4 });
     fieldCount++;
   }
 
-  // ── Remaining fields not in any group ───────────────────────────────────────
-  const extra = kvPairs.filter(([k]) => !usedKs.has(k) && k !== "");
+  // Remaining fields not in any group
+  const extra = allPairs.filter(([k]) => !usedKs.has(k) && k.trim() !== "");
   if (extra.length > 0 && fieldCount < 20) {
     const lines = extra.slice(0, 8).map(([k, v], i, arr) => {
       const tree  = i === arr.length - 1 ? "└" : "├";
-      const value = v.length > 70 ? v.slice(0, 68) + "…" : v;
+      const value = v.length > 72 ? v.slice(0, 70) + "…" : v;
       return `${tree} **${k.replace(/_/g, " ")}**  \`${value}\``;
     });
     embed.addFields({ name: "📋  OUTROS DADOS", value: lines.join("\n"), inline: false });
     fieldCount++;
   }
 
-  // ── Fallback if nothing parsed ───────────────────────────────────────────────
   if (fieldCount === 0) {
-    embed.addFields({ name: "📄  Resposta bruta", value: `\`\`\`\n${kvPairs.map(([k, v]) => `${k}: ${v}`).join("\n").slice(0, 900)}\n\`\`\``, inline: false });
+    const fallback = allPairs.slice(0, 15).map(([k, v]) => `**${k}:** \`${v.slice(0, 100)}\``).join("\n");
+    embed.addFields({ name: "📄  Dados", value: fallback.slice(0, 1024) || "Sem dados estruturados.", inline: false });
   }
 
-  // ── Dynamic sections (TELEFONES, ENDERECOS, etc.) ───────────────────────────
+  // Dynamic sections (TELEFONES, ENDERECOS, etc.)
   for (const sec of sections.slice(0, 4)) {
     if (fieldCount >= 23) break;
     const sEmoji = OSINT_SECTION_EMOJI[sec.name] ?? "📋";
@@ -6231,23 +6267,87 @@ function buildOsintEmbed(
     });
     if (sec.count > 6) shown.push(`└ *… +${sec.count - 6} mais*`);
     if (shown.length > 0) {
-      embed.addFields({
-        name:   `${sEmoji}  ${sec.name}  —  ${sec.count} encontrados`,
-        value:  shown.join("\n"),
-        inline: false,
-      });
+      embed.addFields({ name: `${sEmoji}  ${sec.name}  —  ${sec.count} encontrados`, value: shown.join("\n"), inline: false });
       fieldCount++;
     }
   }
 
-  // ── Interesses Pessoais ──────────────────────────────────────────────────────
-  const intMatch = /INTERESSES PESSOAIS([\s\S]+?)(?=\n[A-Z]|$)/.exec(kvPairs.map(([, v]) => v).join(" "));
-  if (intMatch && fieldCount < 23) {
-    const positives = intMatch[1].split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `✅ ${l.split(":")[0].trim()}`).slice(0, 10);
+  // Interesses Pessoais
+  const allVals = allPairs.map(([, v]) => v).join(" ");
+  const intStart = allVals.indexOf("INTERESSES PESSOAIS");
+  if (intStart !== -1 && fieldCount < 23) {
+    const positives = allVals.slice(intStart + 20).split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `✅ ${l.split(":")[0].trim()}`).slice(0, 10);
     if (positives.length > 0) embed.addFields({ name: "💡  Interesses", value: positives.join("\n"), inline: false });
   }
 
   return embed;
+}
+
+function buildOsintEmbed(
+  tipo: string, dado: string,
+  kvPairs: Array<[string, string]>,
+  sections: Array<{ name: string; count: number; items: string[] }>,
+  baseRecords?: BaseRecord[],
+): EmbedBuilder {
+  const meta = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
+
+  // ── BASE format (TELEFONE, EMAIL) — show as numbered results list ────────────
+  if (baseRecords && baseRecords.length > 0) {
+    const embed = new EmbedBuilder()
+      .setColor(meta.color)
+      .setAuthor({
+        name: `${meta.emoji}  OSINT — ${meta.label}`,
+        iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
+      })
+      .setDescription(
+        `> 🔎  Consultando  **\`${dado}\`**  •  **${baseRecords.length}** resultados\n` +
+        `> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      )
+      .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
+      .setFooter({ text: `${AUTHOR}  •  GeassZero API  •  ${new Date().toLocaleDateString("pt-BR")}` })
+      .setTimestamp();
+
+    // Deduplicate by CPF
+    const seen = new Set<string>();
+    const unique = baseRecords.filter(r => {
+      if (seen.has(r.cpf)) return false;
+      seen.add(r.cpf);
+      return true;
+    });
+
+    const lines = unique.slice(0, 15).map((r, i, arr) => {
+      const tree  = i === arr.length - 1 ? "└" : "├";
+      const nasc  = r.nascimento ? `  •  \`${r.nascimento}\`` : "";
+      return `${tree} \`${r.cpf}\`  **${r.nome}**${nasc}`;
+    });
+    embed.addFields({ name: `🪪  RESULTADOS ENCONTRADOS  (${unique.length} únicos)`, value: lines.join("\n").slice(0, 1024), inline: false });
+    if (unique.length > 15) embed.addFields({ name: "⠀", value: `*… +${unique.length - 15} registros adicionais*`, inline: false });
+    return embed;
+  }
+
+  // ── ⎯ format — group into records, show first in detail ─────────────────────
+  const records = groupGeassRecords(kvPairs);
+
+  if (records.length > 1) {
+    // First record in detail, others as summary list
+    const firstEmbed = buildOsintEmbedFromMap(meta, dado, records[0], kvPairs.slice(0, kvPairs.length), sections, `${records.length} registros`);
+    if (records.length > 1) {
+      const summaries = records.slice(1, 8).map((r, i) => {
+        const nome = r.get("NOME") ?? r.get("RAZÃO SOCIAL") ?? "?";
+        const cpf  = r.get("CPF")  ?? r.get("CNPJ") ?? "?";
+        const nasc = r.get("NASCIMENTO") ? `  •  \`${r.get("NASCIMENTO")}\`` : "";
+        return `├ \`${cpf}\`  **${nome}**${nasc}`;
+      });
+      if (records.length - 1 > 7) summaries.push(`└ *… +${records.length - 8} mais*`);
+      else if (summaries.length > 0) summaries[summaries.length - 1] = summaries[summaries.length - 1].replace("├", "└");
+      firstEmbed.addFields({ name: "📋  OUTROS REGISTROS", value: summaries.join("\n").slice(0, 1024), inline: false });
+    }
+    return firstEmbed;
+  }
+
+  // Single record
+  const pMap = records[0] ?? new Map(kvPairs.map(([k, v]) => [k, v]));
+  return buildOsintEmbedFromMap(meta, dado, pMap, kvPairs, sections);
 }
 
 async function handleOsint(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -6304,9 +6404,13 @@ async function handleOsint(interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
-  const kvPairs  = parseGeassResposta(resposta);
-  const sections = parseSections(resposta);
-  await interaction.editReply({ embeds: [buildOsintEmbed(tipo, dado, kvPairs, sections)] });
+  // Detect format and parse accordingly
+  const isBaseFormat = /BASE\s+\d+\s+CPF:/i.test(resposta);
+  const kvPairs      = isBaseFormat ? [] : parseGeassResposta(resposta);
+  const sections     = isBaseFormat ? [] : parseSections(resposta);
+  const baseRecords  = isBaseFormat ? parseBaseFormat(resposta) : undefined;
+
+  await interaction.editReply({ embeds: [buildOsintEmbed(tipo, dado, kvPairs, sections, baseRecords)] });
 }
 
 // ── /url — Credential DB domain search + auto-checker ─────────────────────────
