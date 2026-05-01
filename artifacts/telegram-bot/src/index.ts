@@ -486,6 +486,16 @@ bot.command("help", async ctx => {
     `  🎵 TK vídeo: <code>/reportredes https://tiktok.com/@alvo/video/ID 8</code>`,
     `  💡 Sem URL: mostra seletor de plataforma (📸 / 🎵)`,
     ``,
+    `<b>🕵️ OSINT:</b>`,
+    `/osint &lt;tipo&gt; &lt;dado&gt; — Consulta via GeassZero + DarkFlow`,
+    `  🪪 CPF:      <code>/osint cpf 12345678901</code>`,
+    `  🚗 Placa:    <code>/osint placa ABC1D23</code>`,
+    `  📱 Telefone: <code>/osint telefone 11999887766</code>`,
+    `  👤 Nome:     <code>/osint nome João Silva</code>`,
+    `  📧 Email:    <code>/osint email addr@mail.com</code>`,
+    `  📸 Foto CNH: <code>/osint foto 12345678901</code>`,
+    `  💡 Use <code>/osint</code> sem args para ver todos os tipos`,
+    ``,
     LINE,
     `<i>💡 Envie um .txt com <code>login:senha</code> por linha para carregar credenciais.</i>`,
   ].join("\n"), Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]));
@@ -1495,6 +1505,7 @@ async function registerCommands() {
     { command: "reportwa",     description: "🚩 Reportar número WhatsApp" },
     { command: "sendcode",     description: "📲 Disparar códigos SMS de verificação" },
     { command: "reportredes",  description: "📢 Reportar conta/post no Instagram ou TikTok" },
+    { command: "osint",        description: "🕵️ Consulta OSINT (CPF, placa, telefone, email…)" },
     { command: "help",         description: "❓ Ajuda e lista de comandos" },
   ]);
 }
@@ -1820,6 +1831,216 @@ bot.command("sendcode", async ctx => {
   } catch (e) {
     await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined, `❌ Erro: <code>${String(e).slice(0, 120)}</code>`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
   } finally { s.waRunning = false; }
+});
+
+// ── /osint — OSINT Lookup via GeassZero + DarkFlow APIs ──────────────────────
+const TG_GEASS_BASE   = "http://149.56.18.68:25584/api/consulta";
+const TG_GEASS_KEY    = "GeassZero";
+const TG_DARKFLOW_URL = "https://darkflowapis.space/api.php";
+const TG_DARKFLOW_TOK = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
+
+const TG_OSINT_META: Record<string, { label: string; emoji: string }> = {
+  cpf:      { label: "CPF",           emoji: "🪪" },
+  nome:     { label: "Nome",          emoji: "👤" },
+  telefone: { label: "Telefone",      emoji: "📱" },
+  placa:    { label: "Placa",         emoji: "🚗" },
+  cep:      { label: "CEP",           emoji: "📍" },
+  cnpj:     { label: "CNPJ",          emoji: "🏢" },
+  email:    { label: "Email",         emoji: "📧" },
+  pix:      { label: "Chave PIX",     emoji: "💰" },
+  cnh:      { label: "CNH",           emoji: "🚙" },
+  rg:       { label: "RG",            emoji: "🪪" },
+  renavam:  { label: "RENAVAM",       emoji: "🔢" },
+  chassi:   { label: "Chassi",        emoji: "⚙️" },
+  mae:      { label: "Nome da Mãe",   emoji: "👩" },
+  pai:      { label: "Nome do Pai",   emoji: "👨" },
+  obito:    { label: "Óbito",         emoji: "💀" },
+  foto:     { label: "Foto CNH BR",   emoji: "📸" },
+};
+
+const TG_OSINT_KNOWN_FIELDS = [
+  "STATUS NA RECEITA", "MUNICÍPIO DE NASCIMENTO", "TIPO SANGÚINEO",
+  "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR",
+  "ESTADO_ENDERECO", "ESTADO CIVIL", "CLASSE SOCIAL", "MARCA_MODEL0",
+  "TIPO_VEICULO", "ANO_FABRICACAO", "ANO_MODELO", "NOME MÃE", "NOME PAI",
+  "RECEBE INSS", "CPF_CNPJ", "NASCIMENTO", "ESCOLARIDADE", "PROFISSÃO",
+  "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM", "CHASSI", "MOTOR",
+  "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO", "IPVA", "ESTADO",
+  "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE", "CNPJ", "EMAIL",
+  "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME", "PLACA",
+  "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG", "PIS", "NIS", "CNS",
+  "COR", "MAE", "PAI",
+].sort((a, b) => b.length - a.length);
+
+function tgParseGeass(raw: string): Array<[string, string]> {
+  const escaped = TG_OSINT_KNOWN_FIELDS.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const rx = new RegExp(`(${escaped.join("|")}) ⎯ `, "g");
+  const hits: Array<{ key: string; start: number; vStart: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(raw)) !== null) hits.push({ key: m[1], start: m.index, vStart: m.index + m[0].length });
+  return hits.map(({ key, start, vStart }, i) => [
+    key,
+    raw.slice(vStart, i + 1 < hits.length ? hits[i + 1].start : raw.length).trimEnd(),
+  ]);
+}
+
+function tgParseSections(raw: string): Array<{ name: string; count: number; items: string[] }> {
+  const rx = /([A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*):\s*\(\s*(\d+)\s*-\s*[Ee]ncontrados?\)([\s\S]*?)(?=(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*):|\s*$)/g;
+  const sections: Array<{ name: string; count: number; items: string[] }> = [];
+  let sm: RegExpExecArray | null;
+  while ((sm = rx.exec(raw)) !== null) {
+    sections.push({ name: sm[1], count: parseInt(sm[2]), items: sm[3].split(/\s*•\s*/).map(s => s.trim()).filter(Boolean) });
+  }
+  return sections;
+}
+
+const TG_SECTION_EMOJI: Record<string, string> = {
+  EMAILS: "📧", TELEFONES: "📱", ENDERECOS: "🏠", PARENTES: "👨‍👩‍👧",
+  VEICULOS: "🚗", EMPREGOS: "💼", EMPRESAS: "🏢", SOCIOS: "🤝", BANCOS: "🏦",
+};
+
+const TG_PRIORITY_FIELDS = [
+  "CPF", "NOME", "SEXO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "RENDA", "SCORE",
+  "ESTADO CIVIL", "ÓBITO", "STATUS NA RECEITA", "RG", "PLACA", "CHASSI", "RENAVAM",
+  "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "SITUACAO", "COR", "COMBUSTIVEL",
+  "BAIRRO", "CIDADE", "UF", "CEP", "IPVA", "MULTAS",
+];
+
+bot.command("osint", async ctx => {
+  const parts = (ctx.message.text ?? "").replace(/^\/osint\s*/i, "").trim().split(/\s+/);
+  const tipo  = parts[0]?.toLowerCase() ?? "";
+  const dado  = parts.slice(1).join(" ").trim();
+  const meta  = TG_OSINT_META[tipo];
+
+  if (!meta || !dado) {
+    const tipos = Object.entries(TG_OSINT_META).map(([k, v]) => `<code>/osint ${k} [dado]</code> — ${v.emoji} ${v.label}`).join("\n");
+    await ctx.replyWithHTML(
+      `🕵️ <b>OSINT — Tipos disponíveis:</b>\n\n${tipos}\n\n<i>Exemplos:</i>\n<code>/osint cpf 12345678901</code>\n<code>/osint placa ABC1D23</code>\n<code>/osint telefone 11999887766</code>`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+    );
+    return;
+  }
+
+  const msg = await ctx.replyWithHTML(`⏳ <b>Consultando ${meta.emoji} ${meta.label}…</b>\n\n<code>${dado}</code>`);
+
+  // ── DarkFlow (foto) ─────────────────────────────────────────────────────────
+  if (tipo === "foto") {
+    const cpfNum = dado.replace(/\D/g, "");
+    try {
+      const r = await fetch(
+        `${TG_DARKFLOW_URL}?token=${TG_DARKFLOW_TOK}&modulo=foto_br&consulta=${encodeURIComponent(cpfNum)}`,
+        { signal: AbortSignal.timeout(20_000) },
+      );
+      const j = await r.json() as { url?: string; base64?: string; error?: string; status?: number };
+      if (j.error || j.status === 500 || !j.url) {
+        await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+          `❌ <b>Foto não encontrada</b>\n\nCPF: <code>${cpfNum}</code>\n${j.error ?? "Sem foto cadastrada ou serviço indisponível."}`,
+          { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+        return;
+      }
+      await ctx.replyWithPhoto(j.url, { caption: `📸 <b>Foto CNH BR</b> — CPF <code>${cpfNum}</code>`, parse_mode: "HTML" });
+      await ctx.telegram.deleteMessage(msg.chat.id, msg.message_id).catch(() => {/* ignore */});
+    } catch (e) {
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+        `❌ <b>Erro DarkFlow:</b> <code>${String(e).slice(0, 150)}</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+    }
+    return;
+  }
+
+  // ── GeassZero API ────────────────────────────────────────────────────────────
+  let resposta: string;
+  try {
+    const url = `${TG_GEASS_BASE}/${tipo}?dados=${encodeURIComponent(dado)}&apikey=${TG_GEASS_KEY}`;
+    const r   = await fetch(url, { signal: AbortSignal.timeout(18_000) });
+    const j   = await r.json() as { status?: string; resposta?: string; error?: string };
+    resposta  = (j.resposta ?? j.error ?? "Sem resposta").trim();
+  } catch (e) {
+    await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+      `❌ <b>Erro de conexão:</b> <code>${String(e).slice(0, 150)}</code>`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+    return;
+  }
+
+  const rLow = resposta.toLowerCase();
+  if (rLow.includes("inválido") || rLow.includes("não encontrado") || rLow.includes("nao encontrado") || rLow.includes("verifique")) {
+    await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+      `⚠️ <b>Sem resultado</b>\n\n${resposta.slice(0, 500)}`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+    return;
+  }
+
+  // ── Parse + Format ──────────────────────────────────────────────────────────
+  const kvPairs  = tgParseGeass(resposta);
+  const sections = tgParseSections(resposta);
+  const pMap     = new Map(kvPairs.map(([k, v]) => [k, v]));
+
+  const lines: string[] = [];
+  lines.push(`🕵️ <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>`);
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(`🔎 <b>Dado consultado:</b> <code>${dado}</code>`);
+  lines.push(``);
+
+  // Priority fields
+  const shownPriority: string[] = [];
+  for (const f of TG_PRIORITY_FIELDS) {
+    const val = pMap.get(f);
+    if (val && !val.toUpperCase().includes("NÃO INFORMADO") && !val.includes("Sem Informação")) {
+      shownPriority.push(`<b>${f}:</b> <code>${val.slice(0, 300)}</code>`);
+    }
+  }
+
+  // Extra non-priority fields
+  const extraKv = kvPairs.filter(([k]) => !TG_PRIORITY_FIELDS.includes(k));
+  const extraLines = extraKv.slice(0, 10).map(([k, v]) => `<b>${k}:</b> <code>${v.slice(0, 200)}</code>`);
+
+  if (shownPriority.length > 0) {
+    lines.push(...shownPriority);
+  } else if (extraLines.length > 0) {
+    lines.push(...extraLines.slice(0, 12));
+  } else {
+    // Raw fallback
+    lines.push(`<pre>${resposta.slice(0, 3000)}</pre>`);
+  }
+
+  if (extraLines.length > 0 && shownPriority.length > 0) {
+    lines.push(``);
+    lines.push(`<b>📋 Dados Adicionais</b>`);
+    lines.push(...extraLines.slice(0, 8));
+  }
+
+  // Sections (TELEFONES, ENDERECOS, etc.)
+  for (const sec of sections.slice(0, 4)) {
+    const sEmoji = TG_SECTION_EMOJI[sec.name] ?? "📋";
+    lines.push(``);
+    lines.push(`${sEmoji} <b>${sec.name} (${sec.count} encontrados)</b>`);
+    const shown = sec.items.slice(0, 6).map(it => `  • <code>${it.replace(/</g, "&lt;").replace(/>/g, "&gt;").slice(0, 200)}</code>`);
+    if (sec.count > 6) shown.push(`  … +${sec.count - 6} mais`);
+    lines.push(...shown);
+  }
+
+  // Interesses Pessoais section
+  if (resposta.includes("INTERESSES PESSOAIS")) {
+    const intIdx  = resposta.indexOf("INTERESSES PESSOAIS");
+    const intRaw  = resposta.slice(intIdx + "INTERESSES PESSOAIS".length).trim();
+    const positives = intRaw.split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `  ✅ ${l.split(":")[0].trim()}`);
+    if (positives.length > 0) {
+      lines.push(``);
+      lines.push(`💡 <b>Interesses Pessoais</b>`);
+      lines.push(...positives.slice(0, 10));
+    }
+  }
+
+  lines.push(``);
+  lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
+  lines.push(`<i>GeassZero API • Lelouch Britannia</i>`);
+
+  const text = lines.join("\n");
+  await ctx.telegram.editMessageText(
+    msg.chat.id, msg.message_id, undefined,
+    text.slice(0, 4090),
+    { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
+  );
 });
 
 // ── Launch ────────────────────────────────────────────────────────────────────

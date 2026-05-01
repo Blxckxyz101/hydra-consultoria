@@ -742,6 +742,38 @@ const COMMANDS = [
         .setRequired(true)
     ),
 
+  // ── /osint ────────────────────────────────────────────────────────────────
+  new SlashCommandBuilder()
+    .setName("osint")
+    .setDescription("🕵️ Consulta OSINT — CPF, placa, telefone, nome, email, PIX, CNPJ e mais")
+    .addStringOption(opt =>
+      opt.setName("tipo")
+        .setDescription("Tipo de consulta")
+        .setRequired(true)
+        .addChoices(
+          { name: "🪪 CPF",           value: "cpf"      },
+          { name: "👤 Nome",           value: "nome"     },
+          { name: "📱 Telefone",       value: "telefone" },
+          { name: "🚗 Placa",          value: "placa"    },
+          { name: "📍 CEP",            value: "cep"      },
+          { name: "🏢 CNPJ",           value: "cnpj"     },
+          { name: "📧 Email",          value: "email"    },
+          { name: "💰 Chave PIX",      value: "pix"      },
+          { name: "🚙 CNH",            value: "cnh"      },
+          { name: "🪪 RG",             value: "rg"       },
+          { name: "🔢 RENAVAM",        value: "renavam"  },
+          { name: "⚙️ Chassi",         value: "chassi"   },
+          { name: "👨 Nome do Pai",    value: "pai"      },
+          { name: "👩 Nome da Mãe",    value: "mae"      },
+          { name: "📸 Foto CNH (BR)",  value: "foto"     },
+        )
+    )
+    .addStringOption(opt =>
+      opt.setName("dado")
+        .setDescription("Valor para consultar (CPF, placa, nome, telefone…)")
+        .setRequired(true)
+    ),
+
   // ── /voice ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("voice")
@@ -6021,6 +6053,216 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
   }
 }
 
+// ── /osint — External OSINT lookup via GeassZero + DarkFlow ──────────────────
+const GEASS_ZERO_BASE = "http://149.56.18.68:25584/api/consulta";
+const GEASS_ZERO_KEY  = "GeassZero";
+const DARKFLOW_TOKEN  = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
+const DARKFLOW_BASE   = "https://darkflowapis.space/api.php";
+
+const OSINT_META: Record<string, { label: string; emoji: string; color: number }> = {
+  cpf:      { label: "CPF",            emoji: "🪪", color: 0x4ade80 },
+  nome:     { label: "NOME",           emoji: "👤", color: 0x60a5fa },
+  telefone: { label: "TELEFONE",       emoji: "📱", color: 0xf59e0b },
+  placa:    { label: "PLACA",          emoji: "🚗", color: 0xef4444 },
+  cep:      { label: "CEP",            emoji: "📍", color: 0xa78bfa },
+  cnpj:     { label: "CNPJ",           emoji: "🏢", color: 0x34d399 },
+  email:    { label: "EMAIL",          emoji: "📧", color: 0xfbbf24 },
+  pix:      { label: "PIX",            emoji: "💰", color: 0x10b981 },
+  cnh:      { label: "CNH",            emoji: "🚙", color: 0xf97316 },
+  rg:       { label: "RG",             emoji: "🪪", color: 0x818cf8 },
+  renavam:  { label: "RENAVAM",        emoji: "🔢", color: 0xec4899 },
+  chassi:   { label: "CHASSI",         emoji: "⚙️", color: 0x94a3b8 },
+  pai:      { label: "NOME DO PAI",    emoji: "👨", color: 0x6ee7b7 },
+  mae:      { label: "NOME DA MÃE",    emoji: "👩", color: 0xfda4af },
+  obito:    { label: "ÓBITO",          emoji: "💀", color: 0x6b7280 },
+  foto:     { label: "FOTO CNH BR",    emoji: "📸", color: 0xf472b6 },
+};
+
+// Known field names sorted by length (longest first) for reliable matching
+const OSINT_KNOWN_FIELDS = [
+  "STATUS NA RECEITA", "MUNICÍPIO DE NASCIMENTO", "TIPO SANGÚINEO",
+  "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR",
+  "ESTADO_ENDERECO", "ESTADO CIVIL", "CLASSE SOCIAL", "MARCA_MODEL0",
+  "TIPO_VEICULO", "ANO_FABRICACAO", "ANO_MODELO", "NOME MÃE", "NOME PAI",
+  "RECEBE INSS", "CPF_CNPJ", "NASCIMENTO", "ESCOLARIDADE", "PROFISSÃO",
+  "COMBUSTIVEL", "CATEGORIA", "SITUACAO", "RENAVAM", "CHASSI", "MOTOR",
+  "MULTAS", "SEGURO", "SERVICO", "LICENCIAMENTO", "IPVA", "ESTADO",
+  "COMPLEMENTO", "NUMERO", "BAIRRO", "CIDADE", "CNPJ", "EMAIL",
+  "SCORE", "RENDA", "SEXO", "RAÇA", "ÓBITO", "NOME", "PLACA",
+  "TITULO ELEITOR", "CPF", "CEP", "RUA", "UF", "RG", "PIS", "NIS", "CNS",
+  "COR", "MAE", "PAI",
+].sort((a, b) => b.length - a.length);
+
+function parseGeassResposta(raw: string): Array<[string, string]> {
+  const escaped = OSINT_KNOWN_FIELDS.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const rx = new RegExp(`(${escaped.join("|")}) ⎯ `, "g");
+  const matches: Array<{ key: string; start: number; vStart: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(raw)) !== null) {
+    matches.push({ key: m[1], start: m.index, vStart: m.index + m[0].length });
+  }
+  const pairs: Array<[string, string]> = [];
+  for (let i = 0; i < matches.length; i++) {
+    const { key, start, vStart } = matches[i];
+    const end = i + 1 < matches.length ? matches[i + 1].start : raw.length;
+    pairs.push([key, raw.slice(vStart, end).trimEnd()]);
+  }
+  return pairs;
+}
+
+function parseSections(raw: string): Array<{ name: string; count: number; items: string[] }> {
+  const rx = /([A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*):\s*\(\s*(\d+)\s*-\s*[Ee]ncontrados?\)([\s\S]*?)(?=(?:[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*):|\s*$)/g;
+  const sections: Array<{ name: string; count: number; items: string[] }> = [];
+  let sm: RegExpExecArray | null;
+  while ((sm = rx.exec(raw)) !== null) {
+    const items = sm[3].split(/\s*•\s*/).map(s => s.trim()).filter(Boolean);
+    sections.push({ name: sm[1], count: parseInt(sm[2]), items });
+  }
+  return sections;
+}
+
+const SECTION_EMOJI: Record<string, string> = {
+  EMAILS: "📧", TELEFONES: "📱", ENDERECOS: "🏠", PARENTES: "👨‍👩‍👧",
+  VEICULOS: "🚗", EMPREGOS: "💼", EMPRESAS: "🏢", BANCOS: "🏦",
+  SOCIOS: "🤝", FUNCIONARIOS: "👥", INTERESSES: "💡",
+};
+
+async function handleOsint(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const tipo = interaction.options.getString("tipo", true);
+  const dado = interaction.options.getString("dado", true).trim();
+  const meta = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
+
+  // ── DarkFlow (Foto BR) ──────────────────────────────────────────────────────
+  if (tipo === "foto") {
+    const cpfNum = dado.replace(/\D/g, "");
+    let darkRes: { url?: string; base64?: string; error?: string; status?: number };
+    try {
+      const r = await fetch(
+        `${DARKFLOW_BASE}?token=${DARKFLOW_TOKEN}&modulo=foto_br&consulta=${encodeURIComponent(cpfNum)}`,
+        { signal: AbortSignal.timeout(20_000) },
+      );
+      darkRes = await r.json() as typeof darkRes;
+    } catch (e) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DARKFLOW", String(e).slice(0, 200))] });
+      return;
+    }
+    if (darkRes.error || darkRes.status === 500) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("SEM FOTO", darkRes.error ?? "Serviço indisponível ou CPF sem foto cadastrada.")] });
+      return;
+    }
+    const embed = new EmbedBuilder()
+      .setColor(meta.color)
+      .setAuthor({ name: `📸 OSINT — FOTO CNH BR`, iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif" })
+      .setDescription(`**CPF:** \`${cpfNum}\`\n\n*Foto retornada pelo módulo \`foto_br\` da DarkFlow API.*`)
+      .setFooter({ text: `${AUTHOR} • DarkFlow API` })
+      .setTimestamp();
+    if (darkRes.url) embed.setImage(darkRes.url);
+    await interaction.editReply({ embeds: [embed] });
+    return;
+  }
+
+  // ── GeassZero API ───────────────────────────────────────────────────────────
+  let resposta: string;
+  try {
+    const url = `${GEASS_ZERO_BASE}/${tipo}?dados=${encodeURIComponent(dado)}&apikey=${GEASS_ZERO_KEY}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(18_000) });
+    const j = await r.json() as { status?: string; resposta?: string; error?: string };
+    resposta = (j.resposta ?? j.error ?? "Sem resposta").trim();
+  } catch (e) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DE CONSULTA", `Falha ao conectar à API: ${String(e).slice(0, 150)}`)] });
+    return;
+  }
+
+  // Error check
+  const rLow = resposta.toLowerCase();
+  if (rLow.includes("inválido") || rLow.includes("não encontrado") || rLow.includes("nao encontrado") || rLow.includes("verifique")) {
+    await interaction.editReply({ embeds: [buildErrorEmbed(`${meta.emoji} SEM RESULTADO`, resposta.slice(0, 500))] });
+    return;
+  }
+
+  // ── Parse + format ──────────────────────────────────────────────────────────
+  const kvPairs  = parseGeassResposta(resposta);
+  const sections = parseSections(resposta);
+
+  // Main section cut-off: before first "SECTION: (N - Encontrados)"
+  const sectionRx2 = /[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*:\s*\(\s*\d+\s*-\s*[Ee]ncontrados?\)/;
+  const secMatch = sectionRx2.exec(resposta);
+  const mainRaw  = secMatch ? resposta.slice(0, secMatch.index) : resposta;
+
+  // Build header description from KV pairs (main fields only)
+  const mainKv = parseGeassResposta(mainRaw);
+
+  // Important fields shown prominently at top
+  const PRIORITY_FIELDS = ["CPF", "NOME", "SEXO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "RENDA", "SCORE", "ESTADO CIVIL", "ÓBITO", "STATUS NA RECEITA", "RG", "PLACA", "CHASSI", "RENAVAM", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "SITUACAO", "COR", "COMBUSTIVEL", "BAIRRO", "CIDADE", "UF", "CEP", "IPVA", "MULTAS"];
+  const pMap   = new Map(kvPairs.map(([k, v]) => [k, v]));
+
+  // Description: first few key fields in code block style
+  const descLines: string[] = [];
+  for (const f of PRIORITY_FIELDS) {
+    const val = pMap.get(f);
+    if (val && val !== "—" && !val.includes("NÃO INFORMADO") && !val.includes("Sem Informação")) {
+      descLines.push(`**${f}:** \`${val.slice(0, 200)}\``);
+    }
+  }
+  // Fallback: show raw kv pairs if none matched
+  if (descLines.length === 0 && mainKv.length > 0) {
+    for (const [k, v] of mainKv.slice(0, 12)) {
+      descLines.push(`**${k}:** \`${v.slice(0, 200)}\``);
+    }
+  }
+  // Last fallback: show raw text
+  if (descLines.length === 0) {
+    descLines.push(`\`\`\`\n${resposta.slice(0, 1800)}\n\`\`\``);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(meta.color)
+    .setAuthor({
+      name: `${meta.emoji} OSINT — ${meta.label}`,
+      iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
+    })
+    .setDescription(descLines.join("\n").slice(0, 4000))
+    .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
+    .setFooter({ text: `${AUTHOR} • GeassZero API • ${dado}` })
+    .setTimestamp();
+
+  // Extra fields from KV pairs not in priority list
+  const extraKv = mainKv.filter(([k]) => !PRIORITY_FIELDS.includes(k) && k !== "");
+  if (extraKv.length > 0) {
+    const extraLines = extraKv.slice(0, 10).map(([k, v]) => `**${k}:** \`${v.slice(0, 120)}\``);
+    embed.addFields({ name: "⠀", value: extraLines.join("\n").slice(0, 1024), inline: false });
+  }
+
+  // Sections (phones, addresses, etc.)
+  for (const sec of sections.slice(0, 4)) {
+    const sEmoji = SECTION_EMOJI[sec.name] ?? "📋";
+    const shown  = sec.items.slice(0, 6).map(it => `• ${it.replace(/\s+/g, " ").slice(0, 120)}`);
+    if (sec.count > 6) shown.push(`… +${sec.count - 6} mais`);
+    if (shown.length > 0) {
+      embed.addFields({
+        name:  `${sEmoji} ${sec.name} (${sec.count})`,
+        value: shown.join("\n").slice(0, 1024),
+        inline: false,
+      });
+    }
+  }
+
+  // Interesses Pessoais section (different format)
+  if (resposta.includes("INTERESSES PESSOAIS")) {
+    const intIdx = resposta.indexOf("INTERESSES PESSOAIS");
+    const intRaw = resposta.slice(intIdx + "INTERESSES PESSOAIS".length).trim();
+    const intLines = intRaw.split(/\s*-\s*/).filter(l => l.includes(":")).slice(0, 10);
+    const positives = intLines.filter(l => l.includes(": Sim")).map(l => `✅ ${l.split(":")[0].trim()}`);
+    if (positives.length > 0) {
+      embed.addFields({ name: "💡 Interesses Positivos", value: positives.slice(0, 10).join("\n").slice(0, 1024), inline: false });
+    }
+  }
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
 // ── /url — Credential DB domain search + auto-checker ─────────────────────────
 async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void> {
   const callerId   = interaction.user.id;
@@ -7037,6 +7279,8 @@ async function main(): Promise<void> {
         await handleCpf(interaction);
       } else if (commandName === "consulta") {
         await handleConsulta(interaction);
+      } else if (commandName === "osint") {
+        await handleOsint(interaction);
       } else if (commandName === "url") {
         await handleUrl(interaction);
       } else if (commandName === "voice") {
