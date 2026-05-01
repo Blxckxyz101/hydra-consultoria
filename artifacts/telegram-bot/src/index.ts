@@ -1899,12 +1899,96 @@ const TG_SECTION_EMOJI: Record<string, string> = {
   VEICULOS: "🚗", EMPREGOS: "💼", EMPRESAS: "🏢", SOCIOS: "🤝", BANCOS: "🏦",
 };
 
-const TG_PRIORITY_FIELDS = [
-  "CPF", "NOME", "SEXO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "RENDA", "SCORE",
-  "ESTADO CIVIL", "ÓBITO", "STATUS NA RECEITA", "RG", "PLACA", "CHASSI", "RENAVAM",
-  "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "SITUACAO", "COR", "COMBUSTIVEL",
-  "BAIRRO", "CIDADE", "UF", "CEP", "IPVA", "MULTAS",
+const TG_OSINT_GROUPS = [
+  { name: "🪪 IDENTIFICAÇÃO",  fields: ["CPF", "RG", "NIS", "PIS", "CNS", "TITULO ELEITOR", "PLACA", "CHASSI", "RENAVAM", "CNPJ"] },
+  { name: "👤 DADOS PESSOAIS", fields: ["NOME", "SEXO", "NASCIMENTO", "ESTADO CIVIL", "RAÇA", "TIPO SANGÚINEO", "PROFISSÃO", "ESCOLARIDADE", "RECEBE INSS", "ÓBITO", "STATUS NA RECEITA", "CLASSE SOCIAL", "SCORE", "RENDA"] },
+  { name: "👨‍👩‍👧 FAMÍLIA",       fields: ["NOME MÃE", "NOME PAI", "MUNICÍPIO DE NASCIMENTO"] },
+  { name: "📍 LOCALIZAÇÃO",    fields: ["CEP", "RUA", "NUMERO", "COMPLEMENTO", "BAIRRO", "CIDADE", "UF", "ESTADO", "ESTADO_ENDERECO"] },
+  { name: "🚗 VEÍCULO",        fields: ["SITUACAO", "COR", "COMBUSTIVEL", "CATEGORIA", "TIPO_VEICULO", "ANO_MODELO", "ANO_FABRICACAO", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR", "IPVA", "MULTAS", "LICENCIAMENTO", "SEGURO", "MOTOR", "MARCA_MODEL0"] },
 ];
+const TG_OSINT_SKIP = new Set(["SEM INFORMAÇÃO", "NÃO INFORMADO", "NÃO", "0", "", "ZONA:", "SECAO:"]);
+
+function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, string]>, sections: Array<{ name: string; count: number; items: string[] }>): string {
+  const meta    = TG_OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍" };
+  const pMap    = new Map(kvPairs.map(([k, v]) => [k, v]));
+  const usedKs  = new Set<string>();
+  const lines: string[] = [];
+
+  lines.push(`👁 <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>`);
+  lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+  lines.push(`🔎 <b>Dado consultado:</b> <code>${dado}</code>`);
+
+  for (const group of TG_OSINT_GROUPS) {
+    const entries: [string, string][] = [];
+    for (const f of group.fields) {
+      const val = pMap.get(f);
+      if (val && val.trim().length > 1 && !TG_OSINT_SKIP.has(val.trim().toUpperCase())) {
+        entries.push([f.replace(/_/g, " "), val.trim()]);
+        usedKs.add(f);
+      }
+    }
+    if (entries.length === 0) continue;
+    lines.push(``);
+    lines.push(`<b>${group.name}</b>`);
+    for (let i = 0; i < entries.length; i++) {
+      const [k, v] = entries[i];
+      const tree   = i === entries.length - 1 ? "└" : "├";
+      const val    = v.length > 200 ? v.slice(0, 198) + "…" : v;
+      lines.push(`${tree} <b>${k}:</b> <code>${val.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`);
+    }
+  }
+
+  // Remaining fields not in any group
+  const extra = kvPairs.filter(([k]) => !usedKs.has(k) && k !== "");
+  if (extra.length > 0) {
+    lines.push(``);
+    lines.push(`<b>📋 OUTROS DADOS</b>`);
+    for (let i = 0; i < Math.min(extra.length, 8); i++) {
+      const [k, v] = extra[i];
+      const tree   = i === Math.min(extra.length, 8) - 1 ? "└" : "├";
+      const val    = v.length > 150 ? v.slice(0, 148) + "…" : v;
+      lines.push(`${tree} <b>${k.replace(/_/g, " ")}:</b> <code>${val.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`);
+    }
+  }
+
+  // Fallback if nothing parsed
+  if (lines.length <= 3) {
+    lines.push(``);
+    lines.push(`<pre>${kvPairs.map(([k, v]) => `${k}: ${v}`).join("\n").slice(0, 2500)}</pre>`);
+  }
+
+  // Sections (TELEFONES, ENDERECOS, etc.)
+  for (const sec of sections.slice(0, 4)) {
+    const sEmoji = TG_SECTION_EMOJI[sec.name] ?? "📋";
+    lines.push(``);
+    lines.push(`${sEmoji} <b>${sec.name}</b>  <i>(${sec.count} encontrados)</i>`);
+    const shown = sec.items.slice(0, 6);
+    for (let i = 0; i < shown.length; i++) {
+      const tree = i === shown.length - 1 && sec.count <= 6 ? "└" : "├";
+      lines.push(`${tree} <code>${shown[i].replace(/</g, "&lt;").replace(/>/g, "&gt;").slice(0, 200)}</code>`);
+    }
+    if (sec.count > 6) lines.push(`└ <i>… +${sec.count - 6} mais</i>`);
+  }
+
+  // Interesses Pessoais
+  if (kvPairs.some(([, v]) => v.includes("INTERESSES PESSOAIS"))) {
+    const intRaw   = kvPairs.map(([, v]) => v).join(" ");
+    const intStart = intRaw.indexOf("INTERESSES PESSOAIS");
+    if (intStart !== -1) {
+      const positives = intRaw.slice(intStart + 20).split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `├ ✅ ${l.split(":")[0].trim()}`).slice(0, 8);
+      if (positives.length > 0) {
+        lines.push(``);
+        lines.push(`<b>💡 INTERESSES PESSOAIS</b>`);
+        lines.push(...positives);
+      }
+    }
+  }
+
+  lines.push(``);
+  lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+  lines.push(`<i>🤖 GeassZero API  •  Lelouch Britannia</i>`);
+  return lines.join("\n");
+}
 
 bot.command("osint", async ctx => {
   const parts = (ctx.message.text ?? "").replace(/^\/osint\s*/i, "").trim().split(/\s+/);
@@ -1913,17 +1997,19 @@ bot.command("osint", async ctx => {
   const meta  = TG_OSINT_META[tipo];
 
   if (!meta || !dado) {
-    const tipos = Object.entries(TG_OSINT_META).map(([k, v]) => `<code>/osint ${k} [dado]</code> — ${v.emoji} ${v.label}`).join("\n");
+    const tipos = Object.entries(TG_OSINT_META).map(([k, v]) => `  <code>/osint ${k}</code> — ${v.emoji} ${v.label}`).join("\n");
     await ctx.replyWithHTML(
-      `🕵️ <b>OSINT — Tipos disponíveis:</b>\n\n${tipos}\n\n<i>Exemplos:</i>\n<code>/osint cpf 12345678901</code>\n<code>/osint placa ABC1D23</code>\n<code>/osint telefone 11999887766</code>`,
+      `👁 <b>OSINT — Consulta de Dados</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n<b>Tipos disponíveis:</b>\n${tipos}\n\n<b>Exemplos:</b>\n<code>/osint cpf 12345678901</code>\n<code>/osint placa ABC1D23</code>\n<code>/osint telefone 11999887766</code>\n<code>/osint nome João Silva</code>`,
       Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
     );
     return;
   }
 
-  const msg = await ctx.replyWithHTML(`⏳ <b>Consultando ${meta.emoji} ${meta.label}…</b>\n\n<code>${dado}</code>`);
+  const msg = await ctx.replyWithHTML(
+    `⏳ <b>Consultando ${meta.emoji} ${meta.label}…</b>\n\n🔎 <code>${dado}</code>\n\n<i>Aguarde, buscando dados…</i>`,
+  );
 
-  // ── DarkFlow (foto) ─────────────────────────────────────────────────────────
+  // ── DarkFlow (foto CNH) ──────────────────────────────────────────────────────
   if (tipo === "foto") {
     const cpfNum = dado.replace(/\D/g, "");
     try {
@@ -1934,12 +2020,16 @@ bot.command("osint", async ctx => {
       const j = await r.json() as { url?: string; base64?: string; error?: string; status?: number };
       if (j.error || j.status === 500 || !j.url) {
         await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
-          `❌ <b>Foto não encontrada</b>\n\nCPF: <code>${cpfNum}</code>\n${j.error ?? "Sem foto cadastrada ou serviço indisponível."}`,
+          `👁 <b>OSINT — 📸 FOTO CNH BR</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n❌ <b>Foto não encontrada</b>\n└ CPF: <code>${cpfNum}</code>\n└ ${j.error ?? "Sem foto cadastrada na CNH ou serviço indisponível."}`,
           { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
         return;
       }
-      await ctx.replyWithPhoto(j.url, { caption: `📸 <b>Foto CNH BR</b> — CPF <code>${cpfNum}</code>`, parse_mode: "HTML" });
       await ctx.telegram.deleteMessage(msg.chat.id, msg.message_id).catch(() => {/* ignore */});
+      await ctx.replyWithPhoto(j.url, {
+        caption: `📸 <b>OSINT — FOTO CNH BR</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n└ CPF: <code>${cpfNum}</code>\n\n<i>DarkFlow API  •  Lelouch Britannia</i>`,
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
+      });
     } catch (e) {
       await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
         `❌ <b>Erro DarkFlow:</b> <code>${String(e).slice(0, 150)}</code>`,
@@ -1948,7 +2038,7 @@ bot.command("osint", async ctx => {
     return;
   }
 
-  // ── GeassZero API ────────────────────────────────────────────────────────────
+  // ── GeassZero API ─────────────────────────────────────────────────────────────
   let resposta: string;
   try {
     const url = `${TG_GEASS_BASE}/${tipo}?dados=${encodeURIComponent(dado)}&apikey=${TG_GEASS_KEY}`;
@@ -1957,7 +2047,7 @@ bot.command("osint", async ctx => {
     resposta  = (j.resposta ?? j.error ?? "Sem resposta").trim();
   } catch (e) {
     await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
-      `❌ <b>Erro de conexão:</b> <code>${String(e).slice(0, 150)}</code>`,
+      `❌ <b>Erro de conexão:</b>\n└ <code>${String(e).slice(0, 150)}</code>`,
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
     return;
   }
@@ -1965,77 +2055,15 @@ bot.command("osint", async ctx => {
   const rLow = resposta.toLowerCase();
   if (rLow.includes("inválido") || rLow.includes("não encontrado") || rLow.includes("nao encontrado") || rLow.includes("verifique")) {
     await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
-      `⚠️ <b>Sem resultado</b>\n\n${resposta.slice(0, 500)}`,
+      `👁 <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n⚠️ <b>Sem resultado</b>\n└ Nenhum dado encontrado para <code>${dado}</code>\n\n<i>Verifique se o valor está correto e tente novamente.</i>`,
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
     return;
   }
 
-  // ── Parse + Format ──────────────────────────────────────────────────────────
   const kvPairs  = tgParseGeass(resposta);
   const sections = tgParseSections(resposta);
-  const pMap     = new Map(kvPairs.map(([k, v]) => [k, v]));
+  const text     = buildTgOsintText(tipo, dado, kvPairs, sections);
 
-  const lines: string[] = [];
-  lines.push(`🕵️ <b>OSINT — ${meta.emoji} ${meta.label.toUpperCase()}</b>`);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🔎 <b>Dado consultado:</b> <code>${dado}</code>`);
-  lines.push(``);
-
-  // Priority fields
-  const shownPriority: string[] = [];
-  for (const f of TG_PRIORITY_FIELDS) {
-    const val = pMap.get(f);
-    if (val && !val.toUpperCase().includes("NÃO INFORMADO") && !val.includes("Sem Informação")) {
-      shownPriority.push(`<b>${f}:</b> <code>${val.slice(0, 300)}</code>`);
-    }
-  }
-
-  // Extra non-priority fields
-  const extraKv = kvPairs.filter(([k]) => !TG_PRIORITY_FIELDS.includes(k));
-  const extraLines = extraKv.slice(0, 10).map(([k, v]) => `<b>${k}:</b> <code>${v.slice(0, 200)}</code>`);
-
-  if (shownPriority.length > 0) {
-    lines.push(...shownPriority);
-  } else if (extraLines.length > 0) {
-    lines.push(...extraLines.slice(0, 12));
-  } else {
-    // Raw fallback
-    lines.push(`<pre>${resposta.slice(0, 3000)}</pre>`);
-  }
-
-  if (extraLines.length > 0 && shownPriority.length > 0) {
-    lines.push(``);
-    lines.push(`<b>📋 Dados Adicionais</b>`);
-    lines.push(...extraLines.slice(0, 8));
-  }
-
-  // Sections (TELEFONES, ENDERECOS, etc.)
-  for (const sec of sections.slice(0, 4)) {
-    const sEmoji = TG_SECTION_EMOJI[sec.name] ?? "📋";
-    lines.push(``);
-    lines.push(`${sEmoji} <b>${sec.name} (${sec.count} encontrados)</b>`);
-    const shown = sec.items.slice(0, 6).map(it => `  • <code>${it.replace(/</g, "&lt;").replace(/>/g, "&gt;").slice(0, 200)}</code>`);
-    if (sec.count > 6) shown.push(`  … +${sec.count - 6} mais`);
-    lines.push(...shown);
-  }
-
-  // Interesses Pessoais section
-  if (resposta.includes("INTERESSES PESSOAIS")) {
-    const intIdx  = resposta.indexOf("INTERESSES PESSOAIS");
-    const intRaw  = resposta.slice(intIdx + "INTERESSES PESSOAIS".length).trim();
-    const positives = intRaw.split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `  ✅ ${l.split(":")[0].trim()}`);
-    if (positives.length > 0) {
-      lines.push(``);
-      lines.push(`💡 <b>Interesses Pessoais</b>`);
-      lines.push(...positives.slice(0, 10));
-    }
-  }
-
-  lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`<i>GeassZero API • Lelouch Britannia</i>`);
-
-  const text = lines.join("\n");
   await ctx.telegram.editMessageText(
     msg.chat.id, msg.message_id, undefined,
     text.slice(0, 4090),

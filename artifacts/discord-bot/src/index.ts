@@ -6121,11 +6121,134 @@ function parseSections(raw: string): Array<{ name: string; count: number; items:
   return sections;
 }
 
-const SECTION_EMOJI: Record<string, string> = {
+const OSINT_FIELD_GROUPS = [
+  {
+    name: "🪪  IDENTIFICAÇÃO",
+    fields: ["CPF", "RG", "NIS", "PIS", "CNS", "TITULO ELEITOR", "PLACA", "CHASSI", "RENAVAM", "CNPJ", "MAE", "PAI"],
+  },
+  {
+    name: "👤  DADOS PESSOAIS",
+    fields: ["NOME", "SEXO", "NASCIMENTO", "ESTADO CIVIL", "RAÇA", "TIPO SANGÚINEO", "PROFISSÃO", "ESCOLARIDADE", "RECEBE INSS", "ÓBITO", "STATUS NA RECEITA", "CLASSE SOCIAL", "SCORE", "RENDA"],
+  },
+  {
+    name: "👨‍👩‍👧  FAMÍLIA",
+    fields: ["NOME MÃE", "NOME PAI", "MUNICÍPIO DE NASCIMENTO"],
+  },
+  {
+    name: "📍  LOCALIZAÇÃO",
+    fields: ["CEP", "RUA", "NUMERO", "COMPLEMENTO", "BAIRRO", "CIDADE", "UF", "ESTADO", "ESTADO_ENDERECO"],
+  },
+  {
+    name: "🚗  VEÍCULO",
+    fields: ["SITUACAO", "COR", "COMBUSTIVEL", "CATEGORIA", "TIPO_VEICULO", "ANO_MODELO", "ANO_FABRICACAO", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "HABILITADO_PARA_DIRIGIR", "IPVA", "MULTAS", "LICENCIAMENTO", "SEGURO", "MOTOR", "MARCA_MODEL0"],
+  },
+] as const;
+
+const OSINT_SKIP = new Set(["SEM INFORMAÇÃO", "NÃO INFORMADO", "NÃO", "0", "", "ZONA:", "SECAO:"]);
+const OSINT_SECTION_EMOJI: Record<string, string> = {
   EMAILS: "📧", TELEFONES: "📱", ENDERECOS: "🏠", PARENTES: "👨‍👩‍👧",
   VEICULOS: "🚗", EMPREGOS: "💼", EMPRESAS: "🏢", BANCOS: "🏦",
-  SOCIOS: "🤝", FUNCIONARIOS: "👥", INTERESSES: "💡",
+  SOCIOS: "🤝", FUNCIONARIOS: "👥",
 };
+
+function buildOsintEmbed(
+  tipo: string, dado: string,
+  kvPairs: Array<[string, string]>,
+  sections: Array<{ name: string; count: number; items: string[] }>,
+): EmbedBuilder {
+  const meta   = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
+  const pMap   = new Map(kvPairs.map(([k, v]) => [k, v]));
+  const usedKs = new Set<string>();
+
+  const embed = new EmbedBuilder()
+    .setColor(meta.color)
+    .setAuthor({
+      name: `${meta.emoji}  OSINT — ${meta.label}`,
+      iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
+    })
+    .setDescription(
+      `> 🔎  Consultando  **\`${dado}\`**\n` +
+      `> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    )
+    .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
+    .setFooter({ text: `${AUTHOR}  •  GeassZero API  •  ${new Date().toLocaleDateString("pt-BR")}` })
+    .setTimestamp();
+
+  let fieldCount = 0;
+
+  // ── Grouped fields ──────────────────────────────────────────────────────────
+  for (const group of OSINT_FIELD_GROUPS) {
+    if (fieldCount >= 20) break;
+    const entries: [string, string][] = [];
+    for (const f of group.fields) {
+      const val = pMap.get(f);
+      if (val && val.trim().length > 1 && !OSINT_SKIP.has(val.trim().toUpperCase())) {
+        entries.push([f, val.trim()]);
+        usedKs.add(f);
+      }
+    }
+    if (entries.length === 0) continue;
+
+    const lines = entries.slice(0, 10).map(([k, v], i, arr) => {
+      const tree = i === arr.length - 1 ? "└" : "├";
+      const display = k.replace(/_/g, " ");
+      const value   = v.length > 70 ? v.slice(0, 68) + "…" : v;
+      return `${tree} **${display}**  \`${value}\``;
+    });
+
+    embed.addFields({
+      name:   group.name,
+      value:  lines.join("\n"),
+      inline: entries.length <= 4,
+    });
+    fieldCount++;
+  }
+
+  // ── Remaining fields not in any group ───────────────────────────────────────
+  const extra = kvPairs.filter(([k]) => !usedKs.has(k) && k !== "");
+  if (extra.length > 0 && fieldCount < 20) {
+    const lines = extra.slice(0, 8).map(([k, v], i, arr) => {
+      const tree  = i === arr.length - 1 ? "└" : "├";
+      const value = v.length > 70 ? v.slice(0, 68) + "…" : v;
+      return `${tree} **${k.replace(/_/g, " ")}**  \`${value}\``;
+    });
+    embed.addFields({ name: "📋  OUTROS DADOS", value: lines.join("\n"), inline: false });
+    fieldCount++;
+  }
+
+  // ── Fallback if nothing parsed ───────────────────────────────────────────────
+  if (fieldCount === 0) {
+    embed.addFields({ name: "📄  Resposta bruta", value: `\`\`\`\n${kvPairs.map(([k, v]) => `${k}: ${v}`).join("\n").slice(0, 900)}\n\`\`\``, inline: false });
+  }
+
+  // ── Dynamic sections (TELEFONES, ENDERECOS, etc.) ───────────────────────────
+  for (const sec of sections.slice(0, 4)) {
+    if (fieldCount >= 23) break;
+    const sEmoji = OSINT_SECTION_EMOJI[sec.name] ?? "📋";
+    const shown  = sec.items.slice(0, 6).map((it, i, arr) => {
+      const tree = i === arr.length - 1 && sec.count <= 6 ? "└" : "├";
+      return `${tree} \`${it.replace(/\s+/g, " ").slice(0, 110)}\``;
+    });
+    if (sec.count > 6) shown.push(`└ *… +${sec.count - 6} mais*`);
+    if (shown.length > 0) {
+      embed.addFields({
+        name:   `${sEmoji}  ${sec.name}  —  ${sec.count} encontrados`,
+        value:  shown.join("\n"),
+        inline: false,
+      });
+      fieldCount++;
+    }
+  }
+
+  // ── Interesses Pessoais ──────────────────────────────────────────────────────
+  const intMatch = /INTERESSES PESSOAIS([\s\S]+?)(?=\n[A-Z]|$)/.exec(kvPairs.map(([, v]) => v).join(" "));
+  if (intMatch && fieldCount < 23) {
+    const positives = intMatch[1].split(/\s*-\s*/).filter(l => l.includes(": Sim")).map(l => `✅ ${l.split(":")[0].trim()}`).slice(0, 10);
+    if (positives.length > 0) embed.addFields({ name: "💡  Interesses", value: positives.join("\n"), inline: false });
+  }
+
+  return embed;
+}
 
 async function handleOsint(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -6134,7 +6257,7 @@ async function handleOsint(interaction: ChatInputCommandInteraction): Promise<vo
   const dado = interaction.options.getString("dado", true).trim();
   const meta = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
 
-  // ── DarkFlow (Foto BR) ──────────────────────────────────────────────────────
+  // ── DarkFlow (Foto CNH BR) ──────────────────────────────────────────────────
   if (tipo === "foto") {
     const cpfNum = dado.replace(/\D/g, "");
     let darkRes: { url?: string; base64?: string; error?: string; status?: number };
@@ -6148,17 +6271,17 @@ async function handleOsint(interaction: ChatInputCommandInteraction): Promise<vo
       await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DARKFLOW", String(e).slice(0, 200))] });
       return;
     }
-    if (darkRes.error || darkRes.status === 500) {
-      await interaction.editReply({ embeds: [buildErrorEmbed("SEM FOTO", darkRes.error ?? "Serviço indisponível ou CPF sem foto cadastrada.")] });
+    if (darkRes.error || darkRes.status === 500 || !darkRes.url) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("📸 SEM FOTO", darkRes.error ?? "CPF sem foto cadastrada na CNH ou serviço temporariamente indisponível.")] });
       return;
     }
     const embed = new EmbedBuilder()
       .setColor(meta.color)
-      .setAuthor({ name: `📸 OSINT — FOTO CNH BR`, iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif" })
-      .setDescription(`**CPF:** \`${cpfNum}\`\n\n*Foto retornada pelo módulo \`foto_br\` da DarkFlow API.*`)
-      .setFooter({ text: `${AUTHOR} • DarkFlow API` })
+      .setAuthor({ name: `📸  OSINT — FOTO CNH BR`, iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif" })
+      .setDescription(`> 🔎  CPF  **\`${cpfNum}\`**\n> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Foto retornada pelo módulo \`foto_br\` — DarkFlow API*`)
+      .setImage(darkRes.url)
+      .setFooter({ text: `${AUTHOR}  •  DarkFlow API  •  ${new Date().toLocaleDateString("pt-BR")}` })
       .setTimestamp();
-    if (darkRes.url) embed.setImage(darkRes.url);
     await interaction.editReply({ embeds: [embed] });
     return;
   }
@@ -6167,100 +6290,23 @@ async function handleOsint(interaction: ChatInputCommandInteraction): Promise<vo
   let resposta: string;
   try {
     const url = `${GEASS_ZERO_BASE}/${tipo}?dados=${encodeURIComponent(dado)}&apikey=${GEASS_ZERO_KEY}`;
-    const r = await fetch(url, { signal: AbortSignal.timeout(18_000) });
-    const j = await r.json() as { status?: string; resposta?: string; error?: string };
-    resposta = (j.resposta ?? j.error ?? "Sem resposta").trim();
+    const r   = await fetch(url, { signal: AbortSignal.timeout(18_000) });
+    const j   = await r.json() as { status?: string; resposta?: string; error?: string };
+    resposta  = (j.resposta ?? j.error ?? "Sem resposta").trim();
   } catch (e) {
-    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DE CONSULTA", `Falha ao conectar à API: ${String(e).slice(0, 150)}`)] });
+    await interaction.editReply({ embeds: [buildErrorEmbed("ERRO DE CONSULTA", `Falha ao conectar à API GeassZero:\n\`${String(e).slice(0, 150)}\``)] });
     return;
   }
 
-  // Error check
   const rLow = resposta.toLowerCase();
   if (rLow.includes("inválido") || rLow.includes("não encontrado") || rLow.includes("nao encontrado") || rLow.includes("verifique")) {
-    await interaction.editReply({ embeds: [buildErrorEmbed(`${meta.emoji} SEM RESULTADO`, resposta.slice(0, 500))] });
+    await interaction.editReply({ embeds: [buildErrorEmbed(`${meta.emoji} SEM RESULTADO`, `Nenhum dado encontrado para **\`${dado}\`**.\n\n*Verifique se o valor está correto e tente novamente.*`)] });
     return;
   }
 
-  // ── Parse + format ──────────────────────────────────────────────────────────
   const kvPairs  = parseGeassResposta(resposta);
   const sections = parseSections(resposta);
-
-  // Main section cut-off: before first "SECTION: (N - Encontrados)"
-  const sectionRx2 = /[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+(?:\s[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ]+)*:\s*\(\s*\d+\s*-\s*[Ee]ncontrados?\)/;
-  const secMatch = sectionRx2.exec(resposta);
-  const mainRaw  = secMatch ? resposta.slice(0, secMatch.index) : resposta;
-
-  // Build header description from KV pairs (main fields only)
-  const mainKv = parseGeassResposta(mainRaw);
-
-  // Important fields shown prominently at top
-  const PRIORITY_FIELDS = ["CPF", "NOME", "SEXO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "RENDA", "SCORE", "ESTADO CIVIL", "ÓBITO", "STATUS NA RECEITA", "RG", "PLACA", "CHASSI", "RENAVAM", "PROPRIETARIO_NOME", "PROPRIETARIO_CPF", "SITUACAO", "COR", "COMBUSTIVEL", "BAIRRO", "CIDADE", "UF", "CEP", "IPVA", "MULTAS"];
-  const pMap   = new Map(kvPairs.map(([k, v]) => [k, v]));
-
-  // Description: first few key fields in code block style
-  const descLines: string[] = [];
-  for (const f of PRIORITY_FIELDS) {
-    const val = pMap.get(f);
-    if (val && val !== "—" && !val.includes("NÃO INFORMADO") && !val.includes("Sem Informação")) {
-      descLines.push(`**${f}:** \`${val.slice(0, 200)}\``);
-    }
-  }
-  // Fallback: show raw kv pairs if none matched
-  if (descLines.length === 0 && mainKv.length > 0) {
-    for (const [k, v] of mainKv.slice(0, 12)) {
-      descLines.push(`**${k}:** \`${v.slice(0, 200)}\``);
-    }
-  }
-  // Last fallback: show raw text
-  if (descLines.length === 0) {
-    descLines.push(`\`\`\`\n${resposta.slice(0, 1800)}\n\`\`\``);
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor(meta.color)
-    .setAuthor({
-      name: `${meta.emoji} OSINT — ${meta.label}`,
-      iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif",
-    })
-    .setDescription(descLines.join("\n").slice(0, 4000))
-    .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
-    .setFooter({ text: `${AUTHOR} • GeassZero API • ${dado}` })
-    .setTimestamp();
-
-  // Extra fields from KV pairs not in priority list
-  const extraKv = mainKv.filter(([k]) => !PRIORITY_FIELDS.includes(k) && k !== "");
-  if (extraKv.length > 0) {
-    const extraLines = extraKv.slice(0, 10).map(([k, v]) => `**${k}:** \`${v.slice(0, 120)}\``);
-    embed.addFields({ name: "⠀", value: extraLines.join("\n").slice(0, 1024), inline: false });
-  }
-
-  // Sections (phones, addresses, etc.)
-  for (const sec of sections.slice(0, 4)) {
-    const sEmoji = SECTION_EMOJI[sec.name] ?? "📋";
-    const shown  = sec.items.slice(0, 6).map(it => `• ${it.replace(/\s+/g, " ").slice(0, 120)}`);
-    if (sec.count > 6) shown.push(`… +${sec.count - 6} mais`);
-    if (shown.length > 0) {
-      embed.addFields({
-        name:  `${sEmoji} ${sec.name} (${sec.count})`,
-        value: shown.join("\n").slice(0, 1024),
-        inline: false,
-      });
-    }
-  }
-
-  // Interesses Pessoais section (different format)
-  if (resposta.includes("INTERESSES PESSOAIS")) {
-    const intIdx = resposta.indexOf("INTERESSES PESSOAIS");
-    const intRaw = resposta.slice(intIdx + "INTERESSES PESSOAIS".length).trim();
-    const intLines = intRaw.split(/\s*-\s*/).filter(l => l.includes(":")).slice(0, 10);
-    const positives = intLines.filter(l => l.includes(": Sim")).map(l => `✅ ${l.split(":")[0].trim()}`);
-    if (positives.length > 0) {
-      embed.addFields({ name: "💡 Interesses Positivos", value: positives.slice(0, 10).join("\n").slice(0, 1024), inline: false });
-    }
-  }
-
-  await interaction.editReply({ embeds: [embed] });
+  await interaction.editReply({ embeds: [buildOsintEmbed(tipo, dado, kvPairs, sections)] });
 }
 
 // ── /url — Credential DB domain search + auto-checker ─────────────────────────
