@@ -725,20 +725,29 @@ router.get("/overview", requireAuth, async (req, res) => {
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const username = req.infinityUser!.username;
 
+  // ── Stats filtered to the current user ────────────────────────────────
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
-    .from(infinityConsultasTable);
+    .from(infinityConsultasTable)
+    .where(eq(infinityConsultasTable.username, username));
 
   const [{ hoje }] = await db
     .select({ hoje: sql<number>`count(*)::int` })
     .from(infinityConsultasTable)
-    .where(gte(infinityConsultasTable.createdAt, startOfDay));
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      gte(infinityConsultasTable.createdAt, startOfDay),
+    ));
 
   const [{ semana }] = await db
     .select({ semana: sql<number>`count(*)::int` })
     .from(infinityConsultasTable)
-    .where(gte(infinityConsultasTable.createdAt, weekAgo));
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      gte(infinityConsultasTable.createdAt, weekAgo),
+    ));
 
   const [{ usuarios }] = await db
     .select({ usuarios: sql<number>`count(*)::int` })
@@ -750,9 +759,10 @@ router.get("/overview", requireAuth, async (req, res) => {
       count: sql<number>`count(*)::int`,
     })
     .from(infinityConsultasTable)
+    .where(eq(infinityConsultasTable.username, username))
     .groupBy(infinityConsultasTable.tipo);
 
-  // Operator ranking (all time)
+  // Operator ranking (all time) — global, used for leaderboard card
   const porOperador = await db
     .select({
       username: infinityConsultasTable.username,
@@ -763,16 +773,20 @@ router.get("/overview", requireAuth, async (req, res) => {
     .orderBy(desc(sql<number>`count(*)`))
     .limit(10);
 
-  // Global daily count (for rate limit display)
+  // Global daily count (for platform-wide rate limit display)
   const [{ todayTotal }] = await db
     .select({ todayTotal: sql<number>`count(*)::int` })
     .from(infinityConsultasTable)
     .where(gte(infinityConsultasTable.createdAt, startOfDay));
 
+  // Recent activity filtered to the current user
   const recentes = await db
     .select()
     .from(infinityConsultasTable)
-    .where(gte(infinityConsultasTable.createdAt, periodStart))
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      gte(infinityConsultasTable.createdAt, periodStart),
+    ))
     .orderBy(desc(infinityConsultasTable.createdAt))
     .limit(500);
 
@@ -812,6 +826,7 @@ router.get("/consultas", requireAuth, async (req, res) => {
       query: r.query,
       username: r.username,
       success: r.success,
+      result: r.result ?? null,
       createdAt: r.createdAt.toISOString(),
     })),
   );

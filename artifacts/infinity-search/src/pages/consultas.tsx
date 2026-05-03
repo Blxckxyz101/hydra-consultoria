@@ -6,7 +6,7 @@ import {
   IdCard, Building2, Phone, Syringe, User, CreditCard, Heart,
   MapPin, Car, Users, Briefcase, Mail, Cog, Skull, ScrollText,
   Wallet, Cpu, Network, Database, Activity, ShieldCheck,
-  ChevronRight, X, WifiOff, RotateCcw,
+  ChevronRight, X, WifiOff, RotateCcw, Eye,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
@@ -65,7 +65,7 @@ const CATEGORY_GRADIENT: Record<string, string> = {
   Outros: "from-sky-400 to-cyan-300",
 };
 
-type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; createdAt: string }>;
+type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; result: unknown | null; createdAt: string }>;
 
 const PANEL_EXTERNAL_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
 type ExternalBase = "sipni" | "sisreg";
@@ -149,6 +149,17 @@ export default function Consultas() {
     setResult(null);
     // Execute without base selector for speed
     executeQuery(tabDef.id, dados, null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // "Ver resultado salvo" — loads stored result without a new API call
+  const loadSavedResult = (item: Historico[number]) => {
+    if (!item.result) return;
+    const saved = item.result as { success: boolean; error?: string | null; data?: unknown };
+    setResult(saved);
+    const tabDef = TABS.find((t) => t.id === item.tipo);
+    if (tabDef) { setActiveCategory(tabDef.category); setTab(tabDef.id); }
+    setQuery(item.query);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -432,6 +443,15 @@ export default function Consultas() {
                     <CheckCircle2 className="w-4 h-4 text-emerald-300" />
                   ) : (
                     <AlertTriangle className="w-4 h-4 text-amber-300" />
+                  )}
+                  {item.result && item.success && (
+                    <button
+                      onClick={() => loadSavedResult(item)}
+                      title="Ver resultado salvo"
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 transition-all"
+                    >
+                      <Eye className="w-3 h-3" />
+                    </button>
                   )}
                   <button
                     onClick={() => repeatQuery(item.tipo, item.query)}
