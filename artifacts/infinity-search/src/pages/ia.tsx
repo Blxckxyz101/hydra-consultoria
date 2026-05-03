@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, Bot, User, Mic, MicOff, Sparkles, Trash2, Plus,
   MessageSquare, Clock, ChevronRight, Copy, Check, Search,
-  Zap, X,
+  Zap, X, Volume2, VolumeX,
 } from "lucide-react";
 import robotUrl from "@/assets/robot.png";
-import { VoiceOrb } from "@/components/ui/VoiceOrb";
+import { VoiceOrb, type OrbState } from "@/components/ui/VoiceOrb";
+import { ThinkingPanel } from "@/components/ui/ThinkingPanel";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Message = {
@@ -31,19 +32,15 @@ const MAX_SESSIONS = 30;
 function newSession(): ChatSession {
   return { id: crypto.randomUUID(), title: "Nova conversa", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
 }
-
 function loadSessions(): ChatSession[] {
   try { return JSON.parse(localStorage.getItem(LS_SESSIONS) ?? "[]"); } catch { return []; }
 }
-
 function saveSessions(sessions: ChatSession[]) {
   localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
 }
-
 function titleFromMsg(text: string) {
   return text.replace(/\*\*|`|#|>/g, "").slice(0, 42).trim() || "Nova conversa";
 }
-
 function relativeTime(ts: number) {
   const diff = Date.now() - ts;
   if (diff < 60_000) return "agora";
@@ -52,58 +49,44 @@ function relativeTime(ts: number) {
   return `${Math.floor(diff / 86_400_000)}d atrás`;
 }
 
-// ─── Markdown renderer (simple) ───────────────────────────────────────────────
+// ─── Voice synthesis helper ───────────────────────────────────────────────────
+function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
+  return new Promise((resolve) => {
+    const v = window.speechSynthesis.getVoices();
+    if (v.length) { resolve(v); return; }
+    window.speechSynthesis.addEventListener("voiceschanged", () => resolve(window.speechSynthesis.getVoices()), { once: true });
+  });
+}
+
+// ─── Markdown renderer ────────────────────────────────────────────────────────
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
   const result: React.ReactNode[] = [];
   let i = 0;
-
   while (i < lines.length) {
     const line = lines[i];
-
-    // code block
     if (line.startsWith("```")) {
       const lang = line.slice(3).trim();
       const codeLines: string[] = [];
       i++;
-      while (i < lines.length && !lines[i].startsWith("```")) {
-        codeLines.push(lines[i]);
-        i++;
-      }
+      while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
       result.push(
         <div key={i} className="my-2 rounded-xl overflow-hidden border border-white/10">
           {lang && <div className="px-3 py-1 bg-white/5 text-[9px] uppercase tracking-widest text-primary/60 font-mono">{lang}</div>}
-          <pre className="bg-black/50 px-4 py-3 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap">
-            {codeLines.join("\n")}
-          </pre>
+          <pre className="bg-black/50 px-4 py-3 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap">{codeLines.join("\n")}</pre>
         </div>
       );
-      i++;
-      continue;
+      i++; continue;
     }
-
-    // heading
-    if (line.startsWith("### ")) {
-      result.push(<p key={i} className="font-bold text-primary text-sm mt-3 mb-1">{inlineRender(line.slice(4))}</p>);
-    } else if (line.startsWith("## ")) {
-      result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
-    } else if (line.startsWith("# ")) {
-      result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
-    } else if (line.startsWith("- ") || line.startsWith("• ")) {
-      result.push(
-        <div key={i} className="flex gap-2 items-start my-0.5">
-          <span className="text-primary/60 mt-0.5 shrink-0">·</span>
-          <span>{inlineRender(line.slice(2))}</span>
-        </div>
-      );
-    } else if (line === "") {
-      result.push(<div key={i} className="h-2" />);
-    } else {
-      result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
-    }
+    if (line.startsWith("### "))      result.push(<p key={i} className="font-bold text-primary text-sm mt-3 mb-1">{inlineRender(line.slice(4))}</p>);
+    else if (line.startsWith("## ")) result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
+    else if (line.startsWith("# "))  result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
+    else if (line.startsWith("- ") || line.startsWith("• "))
+      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/60 mt-0.5 shrink-0">·</span><span>{inlineRender(line.slice(2))}</span></div>);
+    else if (line === "") result.push(<div key={i} className="h-2" />);
+    else result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
     i++;
   }
-
   return <div className="text-sm space-y-0.5">{result}</div>;
 }
 
@@ -118,34 +101,12 @@ function inlineRender(text: string): React.ReactNode {
   });
 }
 
-// ─── ThinkingDots ─────────────────────────────────────────────────────────────
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1 px-1 py-1">
-      {[0, 1, 2].map((i) => (
-        <motion.div
-          key={i}
-          className="w-2.5 h-2.5 rounded-full bg-gradient-to-br from-sky-400 to-cyan-300"
-          animate={{ y: [0, -7, 0], opacity: [0.4, 1, 0.4], scale: [0.9, 1.1, 0.9] }}
-          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
-        />
-      ))}
-    </div>
-  );
-}
-
 // ─── CopyButton ───────────────────────────────────────────────────────────────
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
   return (
     <button
-      onClick={copy}
+      onClick={() => { navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
       className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-white"
     >
       {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
@@ -160,6 +121,23 @@ const SUGGESTIONS = [
   { icon: Bot, label: "O que você pode fazer?", text: "O que você consegue consultar e pesquisar?" },
   { icon: Sparkles, label: "Dossier completo", text: "Faça um dossiê completo sobre o CPF 11144477735" },
 ];
+
+// ─── Waveform bars (speaking indicator) ──────────────────────────────────────
+function WaveformBars({ color = "sky" }: { color?: string }) {
+  const cls = color === "violet" ? "bg-violet-400" : "bg-sky-400";
+  return (
+    <div className="flex items-center gap-0.5 h-4">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <motion.div
+          key={i}
+          className={`w-0.5 rounded-full ${cls}`}
+          animate={{ height: ["4px", `${8 + Math.random() * 8}px`, "4px"] }}
+          transition={{ duration: 0.5 + Math.random() * 0.3, repeat: Infinity, delay: i * 0.1, ease: "easeInOut" }}
+        />
+      ))}
+    </div>
+  );
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function IA() {
@@ -178,6 +156,7 @@ export default function IA() {
   const [intensity, setIntensity] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historySearch, setHistorySearch] = useState("");
+  const [voiceMuted, setVoiceMuted] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -187,8 +166,13 @@ export default function IA() {
   const rafRef = useRef<number | null>(null);
   const continuousRef = useRef(false);
   const voiceModeRef = useRef(false);
+  const voiceMutedRef = useRef(false);
   useEffect(() => { continuousRef.current = continuous; }, [continuous]);
   useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+  useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
+
+  // Preload TTS voices on mount
+  useEffect(() => { if ("speechSynthesis" in window) getVoicesAsync().catch(() => {}); }, []);
 
   // Ensure currentId has a session
   useEffect(() => {
@@ -239,21 +223,16 @@ export default function IA() {
     if (!userMsg || isStreaming) return;
     const ts = Date.now();
     const userEntry: Message = { role: "user", content: userMsg, ts };
-
-    // Update session with user message + set title on first message
     updateSession(currentId, (s) => ({
       ...s,
       title: s.messages.length === 0 ? titleFromMsg(userMsg) : s.title,
       messages: [...s.messages, userEntry],
       updatedAt: ts,
     }));
-
     setIsThinking(true);
     setIsStreaming(true);
     let finalReply = "";
     const assistantTs = Date.now();
-
-    // Insert empty assistant placeholder
     updateSession(currentId, (s) => ({
       ...s,
       messages: [...s.messages, { role: "assistant", content: "", ts: assistantTs }],
@@ -311,15 +290,14 @@ export default function IA() {
     } finally {
       setIsThinking(false);
       setIsStreaming(false);
-      if (voiceModeRef.current && finalReply) speakAndContinue(finalReply);
+      if (voiceModeRef.current && finalReply && !voiceMutedRef.current) speakAndContinue(finalReply);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
-    const t = input.trim();
-    setInput("");
+    const t = input.trim(); setInput("");
     await sendMessage(t);
   };
 
@@ -327,18 +305,22 @@ export default function IA() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); }
   };
 
-  // ─── Voice ─────────────────────────────────────────────────────────────────
-  const speakAndContinue = (text: string) => {
+  // ─── Voice synthesis ────────────────────────────────────────────────────────
+  const speakAndContinue = async (text: string) => {
     if (!("speechSynthesis" in window) || !text) return;
     try {
       window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.replace(/\*\*|`|#|>/g, ""));
-      u.lang = "pt-BR"; u.rate = 1.05; u.pitch = 1.0;
-      const voices = window.speechSynthesis.getVoices();
-      const ptVoice = voices.find((v) => v.lang.startsWith("pt"));
+      const clean = text.replace(/\*\*|`|#|>|🔍/g, "").trim();
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = "pt-BR"; u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
+      const voices = await getVoicesAsync();
+      const ptVoice = voices.find((v) => v.lang === "pt-BR") ?? voices.find((v) => v.lang.startsWith("pt"));
       if (ptVoice) u.voice = ptVoice;
       setSpeaking(true);
-      u.onend = () => { setSpeaking(false); if (continuousRef.current && voiceModeRef.current) setTimeout(() => startVoice(), 350); };
+      u.onend = () => {
+        setSpeaking(false);
+        if (continuousRef.current && voiceModeRef.current && !voiceMutedRef.current) setTimeout(() => startVoice(), 380);
+      };
       u.onerror = () => setSpeaking(false);
       window.speechSynthesis.speak(u);
     } catch { setSpeaking(false); }
@@ -346,7 +328,7 @@ export default function IA() {
 
   const stopVoice = () => {
     setListening(false); setIntensity(0);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = null;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null;
     audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
     analyserRef.current = null;
@@ -374,7 +356,7 @@ export default function IA() {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
         const rec = new SR(); rec.lang = "pt-BR"; rec.interimResults = false; rec.continuous = false;
-        rec.onresult = (e: any) => { const text = e.results?.[0]?.[0]?.transcript || ""; if (text) { stopVoice(); sendMessage(text); } };
+        rec.onresult = (e: any) => { const t = e.results?.[0]?.[0]?.transcript || ""; if (t) { stopVoice(); sendMessage(t); } };
         rec.onerror = () => stopVoice();
         rec.onend = () => { if (listening) stopVoice(); };
         recognitionRef.current = rec; rec.start();
@@ -390,51 +372,117 @@ export default function IA() {
     !historySearch || s.title.toLowerCase().includes(historySearch.toLowerCase())
   );
 
+  // ─── Orb state ─────────────────────────────────────────────────────────────
+  const orbState: OrbState = speaking ? "speaking" : isThinking || isStreaming ? "thinking" : listening ? "listening" : "idle";
+
   // ─── Voice mode ────────────────────────────────────────────────────────────
   if (voiceMode) {
+    const stateLabel = speaking ? "Falando…" : isStreaming ? "Processando…" : isThinking ? "Pensando…" : listening ? "Ouvindo você" : continuous ? "Aguardando…" : "Toque para falar";
+    const stateColor = speaking ? "text-violet-300" : isThinking || isStreaming ? "text-amber-300" : listening ? "text-sky-300" : "text-muted-foreground";
+
     return (
-      <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center gap-8 sm:gap-10 relative py-8">
+      <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center relative py-8 gap-0">
+        {/* Back */}
         <button
-          onClick={() => { stopVoice(); setVoiceMode(false); }}
+          onClick={() => { stopVoice(); window.speechSynthesis?.cancel(); setSpeaking(false); setVoiceMode(false); }}
           className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
         >
-          <X size={12} /> Voltar ao chat
+          <X size={12} /> Sair
         </button>
 
-        <div className="text-center">
-          <div className="text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-2 flex items-center justify-center gap-2">
+        {/* Mute */}
+        <button
+          onClick={() => setVoiceMuted((v) => !v)}
+          className={`absolute top-4 left-4 p-2.5 rounded-xl border transition-all ${voiceMuted ? "bg-destructive/15 border-destructive/40 text-destructive" : "bg-white/5 border-white/10 text-muted-foreground hover:text-white"}`}
+          title={voiceMuted ? "Ativar voz" : "Mutar voz"}
+        >
+          {voiceMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+        </button>
+
+        {/* State label */}
+        <div className="flex flex-col items-center gap-1 mb-6">
+          <div className="text-[10px] uppercase tracking-[0.55em] text-primary/70 flex items-center gap-2">
             Modo de Voz
-            {continuous && <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-200">contínuo</span>}
+            {continuous && <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[9px]">Contínuo</span>}
+            {voiceMuted && <span className="px-2 py-0.5 rounded-full bg-destructive/20 border border-destructive/30 text-destructive text-[9px]">Mudo</span>}
           </div>
-          <h2 className="text-2xl font-bold tracking-[0.2em] uppercase">
-            {speaking ? "Falando..." : isStreaming ? "Pensando..." : listening ? "Estou te ouvindo" : continuous ? "Aguardando você" : "Toque para falar"}
-          </h2>
+          <motion.h2
+            key={stateLabel}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`text-2xl font-bold tracking-[0.15em] uppercase ${stateColor}`}
+          >
+            {stateLabel}
+          </motion.h2>
+          {speaking && !voiceMuted && (
+            <div className="mt-1"><WaveformBars color="violet" /></div>
+          )}
         </div>
 
-        <button onClick={startVoice} disabled={speaking || isStreaming} className="relative disabled:opacity-70">
-          <VoiceOrb active={listening || speaking} intensity={speaking ? 0.6 : intensity} size={320} />
+        {/* Orb */}
+        <button
+          onClick={startVoice}
+          disabled={speaking || isStreaming || isThinking}
+          className="relative disabled:opacity-80 transition-opacity"
+          aria-label="Falar"
+        >
+          <VoiceOrb active={listening || speaking || isThinking} intensity={speaking ? 0.65 : intensity} size={340} orbState={orbState} />
+          {/* Center icon overlay */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            {!listening && !speaking && !isStreaming && !isThinking && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="w-14 h-14 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 flex items-center justify-center"
+              >
+                <Mic className="w-6 h-6 text-white/80" />
+              </motion.div>
+            )}
+          </div>
         </button>
 
-        <div className="flex items-center gap-4">
+        {/* Controls */}
+        <div className="flex items-center gap-3 mt-6">
           <button
-            onClick={() => { const next = !continuous; setContinuous(next); if (next && !listening && !speaking && !isStreaming) startVoice(); }}
-            className={`px-4 py-3 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${continuous ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.3)]" : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"}`}
+            onClick={() => {
+              const next = !continuous; setContinuous(next);
+              if (next && !listening && !speaking && !isStreaming) startVoice();
+            }}
+            className={`px-4 py-2.5 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${
+              continuous
+                ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300 shadow-[0_0_20px_rgba(52,211,153,0.25)]"
+                : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/8"
+            }`}
           >
-            {continuous ? "Modo contínuo ON" : "Ativar contínuo"}
+            {continuous ? "Contínuo ON" : "Ativar contínuo"}
           </button>
+
+          {/* Mic button */}
           <button
-            onClick={startVoice} disabled={speaking || isStreaming}
-            className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${listening ? "bg-destructive/20 border border-destructive/50 shadow-[0_0_30px_rgba(239,68,68,0.4)]" : "bg-primary/15 border border-primary/40 shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:scale-110"} disabled:opacity-50`}
+            onClick={startVoice}
+            disabled={speaking || isStreaming || isThinking}
+            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 ${
+              listening
+                ? "bg-destructive/20 border-2 border-destructive/60 shadow-[0_0_28px_rgba(239,68,68,0.4)]"
+                : "bg-sky-500/15 border-2 border-sky-500/50 shadow-[0_0_28px_rgba(56,189,248,0.35)] hover:scale-110 hover:shadow-[0_0_40px_rgba(56,189,248,0.55)]"
+            }`}
           >
-            {listening ? <MicOff className="w-7 h-7 text-destructive" /> : <Mic className="w-7 h-7 text-primary" />}
+            {listening ? <MicOff className="w-6 h-6 text-destructive" /> : <Mic className="w-6 h-6 text-sky-300" />}
           </button>
+
           {speaking && (
-            <button onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }} className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-foreground">
-              Pular fala
+            <button
+              onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }}
+              className="px-4 py-2.5 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-white transition-colors"
+            >
+              Pular
             </button>
           )}
         </div>
-        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60">Made by blxckxyz · Infinity Search</div>
+
+        <div className="mt-8 text-[9px] uppercase tracking-[0.45em] text-muted-foreground/40">
+          Infinity AI · Llama 3.3 70B
+        </div>
       </div>
     );
   }
@@ -455,7 +503,6 @@ export default function IA() {
             className="shrink-0 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
             style={{ width: 260 }}
           >
-            {/* Sidebar header */}
             <div className="px-4 pt-4 pb-3 border-b border-white/5">
               <button
                 onClick={createNew}
@@ -466,7 +513,6 @@ export default function IA() {
               </button>
             </div>
 
-            {/* Search */}
             <div className="px-4 py-2.5 border-b border-white/5">
               <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/8">
                 <Search size={12} className="text-muted-foreground shrink-0" />
@@ -480,7 +526,6 @@ export default function IA() {
               </div>
             </div>
 
-            {/* Sessions list */}
             <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
               {filteredSessions.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-24 gap-2 text-muted-foreground/50">
@@ -512,7 +557,6 @@ export default function IA() {
               ))}
             </div>
 
-            {/* Sidebar footer */}
             <div className="px-4 py-3 border-t border-white/5 text-[9px] uppercase tracking-widest text-muted-foreground/40 text-center">
               {sessions.length} conversa{sessions.length !== 1 ? "s" : ""}
             </div>
@@ -579,10 +623,7 @@ export default function IA() {
               className="flex flex-col items-center justify-center h-full gap-8 pb-10"
             >
               <div className="text-center">
-                <motion.div
-                  animate={{ y: [0, -8, 0] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                >
+                <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}>
                   <img src={robotUrl} alt="AI" className="w-28 h-28 object-contain mx-auto drop-shadow-[0_0_40px_rgba(56,189,248,0.5)]" />
                 </motion.div>
                 <div className="mt-5 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/70">
@@ -593,8 +634,6 @@ export default function IA() {
                   Consultas OSINT, análises, pesquisas — tudo via linguagem natural.
                 </p>
               </div>
-
-              {/* Suggestions */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
                 {SUGGESTIONS.map((s) => (
                   <motion.button
@@ -627,7 +666,6 @@ export default function IA() {
               transition={{ duration: 0.25 }}
               className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
-              {/* Avatar */}
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
                 msg.role === "user"
                   ? "bg-gradient-to-br from-sky-500 to-cyan-400 text-black shadow-[0_0_16px_rgba(56,189,248,0.4)]"
@@ -636,7 +674,6 @@ export default function IA() {
                 {msg.role === "user" ? <User size={14} /> : <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />}
               </div>
 
-              {/* Bubble */}
               <div className={`group relative max-w-[75%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
                 <div className={`px-4 py-3 rounded-2xl ${
                   msg.role === "user"
@@ -648,12 +685,11 @@ export default function IA() {
                     : (msg.content
                         ? renderMarkdown(msg.content)
                         : isStreaming && idx === messages.length - 1
-                          ? <ThinkingDots />
+                          ? <div className="flex gap-1 py-1">{[0,1,2].map((i) => <motion.div key={i} className="w-2 h-2 rounded-full bg-sky-400/60" animate={{ opacity: [0.3,1,0.3] }} transition={{ duration: 0.9, repeat: Infinity, delay: i*0.18 }} />)}</div>
                           : null
                       )
                   }
                 </div>
-                {/* Timestamp + copy */}
                 <div className={`flex items-center gap-1 mt-1 px-1 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
                   <span className="text-[9px] text-muted-foreground/40">
                     {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
@@ -664,7 +700,7 @@ export default function IA() {
             </motion.div>
           ))}
 
-          {/* Thinking state (before first delta) */}
+          {/* ── Thinking Panel (Replit-style) ── */}
           <AnimatePresence>
             {isThinking && (
               <motion.div
@@ -673,18 +709,11 @@ export default function IA() {
                 exit={{ opacity: 0, y: -4 }}
                 className="flex gap-3"
               >
-                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0 mt-1">
                   <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />
                 </div>
-                <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 backdrop-blur-sm flex items-center gap-3">
-                  <ThinkingDots />
-                  <motion.span
-                    className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60"
-                    animate={{ opacity: [0.4, 1, 0.4] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                  >
-                    Pensando...
-                  </motion.span>
+                <div className="flex-1 min-w-0">
+                  <ThinkingPanel />
                 </div>
               </motion.div>
             )}
@@ -703,7 +732,7 @@ export default function IA() {
                 onChange={(e) => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
                 onKeyDown={handleKeyDown}
                 disabled={isStreaming}
-                placeholder="Digite sua requisição... (Enter para enviar)"
+                placeholder="Digite sua requisição… (Enter para enviar)"
                 rows={1}
                 className="w-full bg-white/5 border border-white/10 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/15 rounded-2xl px-4 py-3.5 pr-12 text-sm outline-none transition-all resize-none placeholder:text-muted-foreground/40 disabled:opacity-50"
                 style={{ minHeight: 52, maxHeight: 120 }}
@@ -721,7 +750,7 @@ export default function IA() {
               disabled={!input.trim() || isStreaming}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className="w-13 h-13 w-[52px] h-[52px] rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] hover:shadow-[0_0_32px_rgba(56,189,248,0.6)] disabled:opacity-40 disabled:cursor-not-allowed transition-shadow shrink-0"
+              className="w-[52px] h-[52px] rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] hover:shadow-[0_0_32px_rgba(56,189,248,0.6)] disabled:opacity-40 disabled:cursor-not-allowed transition-shadow shrink-0"
             >
               <Send size={18} />
             </motion.button>
