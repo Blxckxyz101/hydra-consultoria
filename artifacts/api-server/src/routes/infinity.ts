@@ -118,9 +118,53 @@ function extractTrailingKey(seg: string): { value: string; key: string } {
   return { value: trimmed, key: "" };
 }
 
+/** Parse "BASE N KEY: VALUE KEY: VALUE BASE N+1 ..." responses (e.g. telefone) */
+function parseBaseNFormat(raw: string): Parsed {
+  const result: Parsed = { fields: [], sections: [], raw };
+  const segments = raw.split(/\s*BASE\s+\d+\s*/i).filter((p) => p.trim().includes(":"));
+  const items: string[] = [];
+  for (const seg of segments) {
+    const pairs: string[] = [];
+    const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(seg)) !== null) {
+      const k = m[1].trim();
+      const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
+      if (k && v) pairs.push(`${k}: ${v}`);
+    }
+    if (pairs.length > 0) items.push(pairs.join(" · "));
+  }
+  if (items.length > 0) result.sections.push({ name: "REGISTROS", items });
+  return result;
+}
+
+/** Parse simple "KEY: VALUE KEY: VALUE" colon-separated responses */
+function parseColonFormat(raw: string): Parsed {
+  const result: Parsed = { fields: [], sections: [], raw };
+  const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    const k = m[1].trim();
+    const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
+    if (k.length >= 2 && v) result.fields.push({ key: k, value: v });
+  }
+  return result;
+}
+
 function parseProviderText(raw: string): Parsed {
   const result: Parsed = { fields: [], sections: [], raw };
-  if (!raw || !raw.includes("\u23AF")) return result;
+
+  // BASE N multi-record format (e.g. telefone)
+  if (/\bBASE\s+\d+\b/i.test(raw)) return parseBaseNFormat(raw);
+
+  if (!raw || !raw.includes("\u23AF")) {
+    // Fallback: try simple KEY: VALUE colon format
+    if (raw && raw.includes(":")) {
+      const colon = parseColonFormat(raw);
+      if (colon.fields.length > 0) return colon;
+    }
+    return result;
+  }
 
   const parts = raw.split(SEP);
   // parts[0] = "RESULTADO ... FIRST_KEY"
@@ -421,77 +465,71 @@ router.post("/consultas/:tipo", requireAuth, async (req, res) => {
   });
 });
 
-// ─── AI chat (streaming via SSE) ───────────────────────────────────────────
-router.post("/ai/chat", requireAuth, async (req, res) => {
-  const messages = req.body?.messages;
-  if (!Array.isArray(messages) || messages.length === 0) {
-    res.status(400).json({ error: "messages obrigatório" });
-    return;
-  }
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: "GROQ_API_KEY não configurada" });
-    return;
-  }
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
-
-  const systemPrompt =
-    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. Ajude o operador a interpretar consultas de CPF, CNPJ, telefone, placa, CNH, vacinas, óbito, parentes, e outras fontes. Nunca invente dados; quando não souber, diga que não sabe. Suas respostas serão lidas em voz alta — então seja conciso e use frases naturais sem markdown pesado.";
-
-  const payload = {
-    model: "llama-3.3-70b-versatile",
-    stream: true,
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...messages.filter((m: { role?: string; content?: string }) => m && typeof m.content === "string"),
-    ],
-  };
-
-  try {
-    const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+// ─── AI chat (streaming via SSE, with tool-calling for consultations) ────────
+const CONSULTA_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "consultar_infinity",
+    description:
+      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, etc.",
+    parameters: {
+      type: "object",
+      properties: {
+        tipo: {
+          type: "string",
+          enum: [
+            "cpf", "nome", "placa", "chassi", "telefone", "pix", "nis", "cns",
+            "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
+            "socios", "empregos", "cnh", "renavam", "obito", "rg", "email", "motor", "vacinas",
+          ],
+          description: "Tipo de consulta OSINT",
+        },
+        dados: { type: "string", description: "O dado a ser consultado" },
       },
-      body: JSON.stringify(payload),
-    });
-    if (!upstream.ok || !upstream.body) {
-      const text = await upstream.text().catch(() => "");
-      res.write(`data: ${JSON.stringify({ error: `Groq HTTP ${upstream.status}`, detail: text.slice(0, 200) })}\n\n`);
-      res.end();
-      return;
-    }
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
-      for (const part of parts) {
-        const line = part.trim();
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") {
-          res.write(`data: [DONE]\n\n`);
-          res.end();
-          return;
-        }
-        try {
-          const j = JSON.parse(data);
-          const delta = j.choices?.[0]?.delta?.content ?? "";
-          if (delta) {
-            res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-          }
-        } catch {
+      required: ["tipo", "dados"],
+    },
+  },
+};
+
+async function streamGroq(
+  apiKey: string,
+  messages: unknown[],
+  res: import("express").Response
+): Promise<void> {
+  const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages }),
+  });
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => "");
+    res.write(`data: ${JSON.stringify({ error: `Groq HTTP ${upstream.status}`, detail: text.slice(0, 200) })}\n\n`);
+    res.end();
+    return;
+  }
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") {
+        res.write(`data: [DONE]\n\n`);
+        res.end();
+        return;
+      }
+      try {
+        const j = JSON.parse(data);
+        const delta = j.choices?.[0]?.delta?.content ?? "";
+        if (delta) res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      } catch {
           /* ignore */
         }
       }
