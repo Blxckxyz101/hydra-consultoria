@@ -244,8 +244,14 @@ function parseProviderText(raw: string): Parsed {
     if (content.includes("•")) {
       // Bullet-delimited items: TELEFONES, ENDERECOS, VEICULOS, EMAILS, etc.
       content.split("•").slice(1).forEach((b) => {
-        const item = b.trim().replace(/\s+/g, " ");
-        if (item) items.push(item);
+        const item = b
+          .trim()
+          .replace(/\s+/g, " ")
+          // Strip trailing orphan dash/hyphen left when WhatsApp status is empty
+          .replace(/\s+[-–]\s*$/, "")
+          .trim();
+        // Drop items with Python "None" literal or that are blank
+        if (item && !/\bNone\b/.test(item)) items.push(item);
       });
     } else if (content.includes("\u23AF")) {
       // ⎯-delimited pairs: PARENTES, EMPREGOS, BANCOS…
@@ -292,6 +298,17 @@ function parseProviderText(raw: string): Parsed {
       result.sections.push({ name: "INTERESSES PESSOAIS", items: show });
     }
   }
+
+  // ── 5. Strip known template / junk field values from the API ────────────
+  // e.g. RENDA = "R$" (no income), TITULO ELEITOR = "ZONA: SECAO:" (unfilled)
+  result.fields = result.fields.filter(({ value }) => {
+    const v = value.trim();
+    if (!v) return false;
+    if (/^R\$\s*$/.test(v)) return false;           // empty income
+    if (/^ZONA:\s*SECAO:\s*$/.test(v)) return false; // empty titulo eleitor
+    if (/^None$/.test(v)) return false;              // Python None literal
+    return true;
+  });
 
   return result;
 }
