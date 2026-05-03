@@ -80,9 +80,10 @@ export function VoiceOrb({ active, size = 280, intensity = 0, orbState = "idle" 
       const targetEnergy = active ? 0.35 + intensityRef.current * 0.75 : 0.11;
       energy += (targetEnergy - energy) * 0.06;
 
-      const blendGlow = (key: keyof typeof COLORS) => {
-        const p = parseRGB(prevColors[key as keyof typeof prevColors] as string);
-        const tg = parseRGB(targetColors[key as keyof typeof targetColors] as string);
+      type ColorStrKey = "glow" | "ring" | "particle";
+      const blendGlow = (key: ColorStrKey) => {
+        const p = parseRGB(prevColors[key]);
+        const tg = parseRGB(targetColors[key]);
         const [r, g, b] = lerpRGB(p, tg, colorT);
         return `rgba(${r},${g},${b},`;
       };

@@ -210,7 +210,7 @@ function buildCatKeyboard(cat: (typeof CATEGORIES)[number]) {
       ...(arr[i + 1] ? [Markup.button.callback(arr[i + 1].label, `tipo:${arr[i + 1].id}`)] : []),
     ]);
   }
-  tipoRows.push([Markup.button.callback("◀️ Voltar", "home"), Markup.button.url("💬 Suporte", SUPPORT_URL)]);
+  tipoRows.push([Markup.button.callback("◀️ Voltar", "home"), Markup.button.url("💬 Suporte", SUPPORT_URL)] as any);
   return Markup.inlineKeyboard(tipoRows);
 }
 
@@ -257,6 +257,13 @@ export function startInfinityBot(): void {
     `Realize consultas OSINT em tempo real.\n\n` +
     `Selecione uma categoria para começar:`;
 
+  // Register commands in Telegram menu
+  void bot.telegram.setMyCommands([
+    { command: "start",     description: "🌐 Menu principal de consultas OSINT" },
+    { command: "consultar", description: "🔍 Iniciar nova consulta OSINT" },
+    { command: "ajuda",     description: "❓ Lista de tipos de consulta disponíveis" },
+  ]).catch(() => {});
+
   // /start
   bot.command("start", async (ctx) => {
     getSession(ctx.from.id).state = "idle";
@@ -267,6 +274,43 @@ export function startInfinityBot(): void {
   bot.command("consultar", async (ctx) => {
     getSession(ctx.from.id).state = "idle";
     await ctx.reply(HOME_TEXT, { parse_mode: "Markdown", ...buildHomeKeyboard() });
+  });
+
+  // /ajuda
+  bot.command("ajuda", async (ctx) => {
+    const lines: string[] = [
+      `🌐 *INFINITY SEARCH — AJUDA*`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      ``,
+      `*Como usar:*`,
+      `Use /start e selecione uma categoria, ou envie /consultar.`,
+      ``,
+      `*👤 Pessoa:*`,
+      `CPF · Nome · Mãe · Pai · Parentes · RG · CNS · NIS`,
+      ``,
+      `*🚗 Veículo:*`,
+      `Placa · Chassi · Renavam · Motor · Frota · CNH`,
+      ``,
+      `*🏢 Empresa:*`,
+      `CNPJ · Funcionários · Sócios · Empregos`,
+      ``,
+      `*📱 Contato:*`,
+      `Telefone · E-mail · PIX`,
+      ``,
+      `*📋 Outros:*`,
+      `CEP · Óbito · Vacinas`,
+      ``,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `_Resultados entregues em arquivo .txt_`,
+      `_Suporte: ${SUPPORT_URL}_`,
+    ];
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🌐 Iniciar Consulta", "home_new")],
+        [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+      ]),
+    });
   });
 
   // Category selection
