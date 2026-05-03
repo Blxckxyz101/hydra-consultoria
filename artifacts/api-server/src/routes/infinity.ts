@@ -12,7 +12,16 @@ import {
 
 const router: IRouter = Router();
 
-// ─── helpers ───────────────────────────────────────────────────────────────
+const PROVIDER_BASE = "http://149.56.18.68:25584/api/consulta";
+const PROVIDER_KEY = process.env.DARKFLOW_TOKEN ?? process.env.GEASS_API_KEY ?? "GeassZero";
+
+const SUPPORTED_TIPOS = new Set([
+  "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
+  "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
+  "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
+  "motor", "vacinas",
+]);
+
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
 function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null }) {
@@ -37,6 +46,93 @@ async function logConsulta(args: {
     });
   } catch {
     /* swallow */
+  }
+}
+
+// ─── Provider parser ───────────────────────────────────────────────────────
+type ParsedSection = { name: string; items: string[] };
+type Parsed = {
+  fields: Array<{ key: string; value: string }>;
+  sections: ParsedSection[];
+  raw: string;
+};
+
+const SECTION_RE = /([A-ZÁÉÍÓÚÂÊÔÃÕÇa-z_]+):\s*\(\s*(\d+)\s*-\s*Encontrados?\s*\)\s*((?:\s*•[^•]*?)+?)(?=\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇa-z_]+:\s*\(|\s*$)/g;
+const KEY_RE = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ_][A-ZÁÉÍÓÚÂÊÔÃÕÇ_0-9]*(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ_][A-ZÁÉÍÓÚÂÊÔÃÕÇ_0-9]*)*)\s*⎯\s*/g;
+
+function parseProviderText(raw: string): Parsed {
+  const result: Parsed = { fields: [], sections: [], raw };
+  let work = raw;
+
+  // Extract sections like "EMAILS: ( 5 - Encontrados) • a • b • c"
+  let m: RegExpExecArray | null;
+  const sectionMatches: Array<{ start: number; end: number; section: ParsedSection }> = [];
+  SECTION_RE.lastIndex = 0;
+  while ((m = SECTION_RE.exec(raw)) !== null) {
+    const items = m[3]
+      .split("•")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    sectionMatches.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      section: { name: m[1].trim(), items },
+    });
+  }
+  result.sections = sectionMatches.map((s) => s.section);
+
+  // Remove section ranges from work string (descending)
+  for (const s of [...sectionMatches].reverse()) {
+    work = work.slice(0, s.start) + " " + work.slice(s.end);
+  }
+
+  // Now extract KEY ⎯ value pairs
+  const keyHits: Array<{ key: string; idx: number; end: number }> = [];
+  KEY_RE.lastIndex = 0;
+  while ((m = KEY_RE.exec(work)) !== null) {
+    keyHits.push({ key: m[1].trim(), idx: m.index, end: m.index + m[0].length });
+  }
+  for (let i = 0; i < keyHits.length; i++) {
+    const hit = keyHits[i];
+    const next = keyHits[i + 1];
+    const value = work.slice(hit.end, next ? next.idx : work.length).trim().replace(/\s+/g, " ");
+    if (value) result.fields.push({ key: hit.key, value });
+  }
+
+  return result;
+}
+
+async function callProvider(tipo: string, dados: string, signal: AbortSignal): Promise<{
+  ok: boolean;
+  parsed?: Parsed;
+  error?: string;
+  http?: number;
+  raw?: unknown;
+}> {
+  const url = `${PROVIDER_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(PROVIDER_KEY)}`;
+  try {
+    const r = await fetch(url, { signal });
+    const text = await r.text();
+    if (!r.ok) {
+      return { ok: false, http: r.status, error: `Provedor HTTP ${r.status}`, raw: text.slice(0, 1000) };
+    }
+    let json: { status?: string; resposta?: string; criador?: string };
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, error: "Provedor retornou texto inválido", raw: text.slice(0, 500) };
+    }
+    if (!json.resposta || typeof json.resposta !== "string") {
+      return { ok: false, error: "Sem resultado para esta consulta", raw: json };
+    }
+    const parsed = parseProviderText(json.resposta);
+    if (parsed.fields.length === 0 && parsed.sections.length === 0 && parsed.raw.trim().length === 0) {
+      return { ok: false, error: "Sem dados retornados", parsed };
+    }
+    return { ok: true, parsed };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "erro de rede";
+    return { ok: false, error: msg };
   }
 }
 
@@ -107,7 +203,7 @@ router.post("/users", requireAdmin, async (req, res) => {
       .values({ username: String(username), passwordHash, role: finalRole })
       .returning();
     res.status(201).json(serializeUser(created));
-  } catch (err) {
+  } catch {
     res.status(400).json({ error: "Usuário já existe ou dados inválidos" });
   }
 });
@@ -196,121 +292,73 @@ router.get("/consultas", requireAuth, async (req, res) => {
   );
 });
 
-// ─── consultas ─────────────────────────────────────────────────────────────
-function consultaResponse(args: {
-  success: boolean; tipo: string; query: string; data: object; error?: string | null;
-}) {
-  return {
-    success: args.success,
-    tipo: args.tipo,
-    query: args.query,
-    data: args.data,
-    error: args.error ?? null,
-  };
-}
-
-router.post("/consultas/cpf", requireAuth, async (req, res) => {
-  const cpf = onlyDigits(String(req.body?.cpf ?? ""));
-  if (cpf.length !== 11) {
-    res.status(400).json({ error: "CPF inválido" });
+// ─── consultas universal ───────────────────────────────────────────────────
+router.post("/consultas/:tipo", requireAuth, async (req, res) => {
+  const tipo = String(req.params.tipo).toLowerCase();
+  if (!SUPPORTED_TIPOS.has(tipo)) {
+    res.status(404).json({ error: `Tipo de consulta "${tipo}" não suportado` });
     return;
   }
-  const data = {
-    cpf,
-    nome: "Consulta indisponível — provedor externo offline",
-    nascimento: null as string | null,
-    sexo: null as string | null,
-    nomeMae: null as string | null,
-    fontes: ["pendente_de_provedor"],
-  };
-  await logConsulta({ tipo: "cpf", query: cpf, username: req.infinityUser!.username, success: false, result: data });
-  res.json(consultaResponse({
-    success: false,
-    tipo: "cpf",
-    query: cpf,
+  const dadosRaw = String(req.body?.dados ?? req.body?.query ?? "").trim();
+  if (!dadosRaw) {
+    res.status(400).json({ error: "Campo 'dados' obrigatório" });
+    return;
+  }
+
+  // Light validation per tipo (provider does final validation)
+  let dados = dadosRaw;
+  if (["cpf", "nis", "cns", "mae", "pai", "parentes", "obito", "vacinas"].includes(tipo)) {
+    dados = onlyDigits(dadosRaw);
+    if (dados.length !== 11) {
+      res.status(400).json({ error: "CPF inválido (11 dígitos)" });
+      return;
+    }
+  } else if (tipo === "cnpj" || tipo === "fucionarios" || tipo === "socios") {
+    dados = onlyDigits(dadosRaw);
+    if (dados.length !== 14) {
+      res.status(400).json({ error: "CNPJ inválido (14 dígitos)" });
+      return;
+    }
+  } else if (tipo === "telefone" || tipo === "pix") {
+    dados = onlyDigits(dadosRaw);
+  } else if (tipo === "cep") {
+    dados = onlyDigits(dadosRaw);
+    if (dados.length !== 8) {
+      res.status(400).json({ error: "CEP inválido (8 dígitos)" });
+      return;
+    }
+  } else if (tipo === "placa") {
+    dados = dadosRaw.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+  }
+
+  const username = req.infinityUser!.username;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30_000);
+
+  const provider = await callProvider(tipo, dados, ctrl.signal);
+  clearTimeout(timer);
+
+  const success = provider.ok && !!provider.parsed;
+  const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
+
+  await logConsulta({
+    tipo,
+    query: dados,
+    username,
+    success,
+    result: data,
+  });
+
+  res.json({
+    success,
+    tipo,
+    query: dados,
     data,
-    error: "Provedor de CPF ainda não configurado. Configure uma fonte em /infinity/configuracoes.",
-  }));
+    error: provider.error ?? null,
+  });
 });
 
-router.post("/consultas/cnpj", requireAuth, async (req, res) => {
-  const cnpj = onlyDigits(String(req.body?.cnpj ?? ""));
-  if (cnpj.length !== 14) {
-    res.status(400).json({ error: "CNPJ inválido" });
-    return;
-  }
-  // Use ReceitaWS public endpoint
-  try {
-    const r = await fetch(`https://www.receitaws.com.br/v1/cnpj/${cnpj}`, {
-      headers: { "User-Agent": "InfinitySearch/1.0" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = (await r.json()) as Record<string, unknown>;
-    const success = j.status !== "ERROR";
-    await logConsulta({ tipo: "cnpj", query: cnpj, username: req.infinityUser!.username, success, result: j });
-    res.json(consultaResponse({
-      success,
-      tipo: "cnpj",
-      query: cnpj,
-      data: j,
-      error: success ? null : String(j.message ?? "Erro desconhecido"),
-    }));
-  } catch (e) {
-    const err = e instanceof Error ? e.message : "Erro ao consultar";
-    await logConsulta({ tipo: "cnpj", query: cnpj, username: req.infinityUser!.username, success: false, result: { error: err } });
-    res.json(consultaResponse({ success: false, tipo: "cnpj", query: cnpj, data: {}, error: err }));
-  }
-});
-
-router.post("/consultas/telefone", requireAuth, async (req, res) => {
-  const tel = onlyDigits(String(req.body?.telefone ?? ""));
-  if (tel.length < 10 || tel.length > 13) {
-    res.status(400).json({ error: "Telefone inválido" });
-    return;
-  }
-  // Best-effort enrichment via numverify-style — not configured by default
-  const data = {
-    telefone: tel,
-    operadora: null as string | null,
-    portabilidade: null as string | null,
-    fontes: ["pendente_de_provedor"],
-  };
-  await logConsulta({ tipo: "telefone", query: tel, username: req.infinityUser!.username, success: false, result: data });
-  res.json(consultaResponse({
-    success: false,
-    tipo: "telefone",
-    query: tel,
-    data,
-    error: "Provedor de telefone ainda não configurado.",
-  }));
-});
-
-router.post("/consultas/sipni", requireAuth, async (req, res) => {
-  const cpf = onlyDigits(String(req.body?.cpf ?? ""));
-  if (cpf.length !== 11) {
-    res.status(400).json({ error: "CPF inválido" });
-    return;
-  }
-  // SIPNI cloud API — currently returns 404 from server IP. Returns
-  // structured error so the UI can show it gracefully.
-  const data = {
-    cpf,
-    paciente: null as null | { nome: string; nascimento: string; sexo: string; nomeMae: string },
-    vacinas: [] as Array<{ data: string; vacina: string; dose: string; lote: string; estabelecimento: string }>,
-    fonte: "sipni_cloud",
-  };
-  await logConsulta({ tipo: "sipni", query: cpf, username: req.infinityUser!.username, success: false, result: data });
-  res.json(consultaResponse({
-    success: false,
-    tipo: "sipni",
-    query: cpf,
-    data,
-    error: "API SIPNI indisponível no momento (404 do endpoint cloud). Aguardando ajuste de credenciais ou rota.",
-  }));
-});
-
-// ─── AI chat (streaming via SSE; not in OpenAPI) ───────────────────────────
+// ─── AI chat (streaming via SSE) ───────────────────────────────────────────
 router.post("/ai/chat", requireAuth, async (req, res) => {
   const messages = req.body?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -330,7 +378,7 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. Ajude o operador a interpretar consultas de CPF, CNPJ, telefone, SIPNI e outras fontes. Nunca invente dados; quando não souber, diga que não sabe.";
+    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. Ajude o operador a interpretar consultas de CPF, CNPJ, telefone, placa, CNH, vacinas, óbito, parentes, e outras fontes. Nunca invente dados; quando não souber, diga que não sabe. Suas respostas serão lidas em voz alta — então seja conciso e use frases naturais sem markdown pesado.";
 
   const payload = {
     model: "llama-3.3-70b-versatile",

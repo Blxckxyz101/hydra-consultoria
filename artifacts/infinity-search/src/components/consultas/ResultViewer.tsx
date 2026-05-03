@@ -1,30 +1,27 @@
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Copy,
   Check,
-  User,
-  Calendar,
-  MapPin,
-  Phone,
-  Building2,
-  Briefcase,
-  Hash,
-  Mail,
-  Syringe,
-  ShieldCheck,
+  Download,
+  FileJson,
+  Eye,
+  EyeOff,
+  Sparkles,
 } from "lucide-react";
 
-type Tipo = "cpf" | "cnpj" | "telefone" | "sipni";
+type ParsedField = { key: string; value: string };
+type ParsedSection = { name: string; items: string[] };
+type Parsed = { fields: ParsedField[]; sections: ParsedSection[]; raw: string };
 
 type Props = {
-  tipo: Tipo;
-  result: { success: boolean; error?: string | null; data?: any };
+  tipo: string;
+  result: { success: boolean; error?: string | null; data?: Parsed | unknown };
 };
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = "Copiar" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
@@ -35,306 +32,262 @@ function CopyButton({ text }: { text: string }) {
           setTimeout(() => setDone(false), 1200);
         });
       }}
-      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
+      className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
     >
       {done ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-      {done ? "Copiado" : "Copiar"}
+      {done ? "Copiado" : label}
     </button>
   );
 }
 
-function Field({
-  icon: Icon,
-  label,
-  value,
-  mono,
-}: {
-  icon: any;
-  label: string;
-  value?: string | number | null;
-  mono?: boolean;
-}) {
-  if (value === undefined || value === null || value === "") return null;
-  const v = String(value);
+function isParsed(d: unknown): d is Parsed {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="rounded-xl border border-white/5 bg-black/30 p-4 backdrop-blur-sm hover:border-primary/30 transition-colors group"
-    >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
-          <Icon className="w-3 h-3 text-primary/70" />
-          {label}
-        </div>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-          <CopyButton text={v} />
-        </div>
-      </div>
-      <div className={`text-sm text-foreground break-words ${mono ? "font-mono" : ""}`}>{v}</div>
-    </motion.div>
+    typeof d === "object" && d !== null &&
+    "fields" in d && Array.isArray((d as Parsed).fields) &&
+    "sections" in d && Array.isArray((d as Parsed).sections)
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-3">
-      <div className="text-[10px] uppercase tracking-[0.4em] text-primary/60">{title}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{children}</div>
-    </div>
-  );
+function isImportantField(key: string): boolean {
+  const k = key.toUpperCase();
+  return ["NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG", "DATA NASCIMENTO", "NASCIMENTO", "NOME MÃE", "NOME PAI"].some((imp) => k.includes(imp));
 }
 
-function CnpjView({ data }: { data: any }) {
-  if (!data) return null;
-  return (
-    <div className="space-y-6">
-      <Section title="Identificação">
-        <Field icon={Building2} label="Razão Social" value={data.nome || data.razao_social} />
-        <Field icon={Briefcase} label="Nome Fantasia" value={data.fantasia || data.nome_fantasia} />
-        <Field icon={Hash} label="CNPJ" value={data.cnpj} mono />
-        <Field icon={ShieldCheck} label="Situação" value={data.situacao || data.situacao_cadastral} />
-        <Field icon={Calendar} label="Abertura" value={data.abertura || data.data_inicio_atividade} />
-        <Field icon={Briefcase} label="Tipo" value={data.tipo || data.porte} />
-        <Field icon={Briefcase} label="Natureza Jurídica" value={data.natureza_juridica} />
-        <Field icon={Hash} label="Capital Social" value={data.capital_social} />
-      </Section>
-
-      {(data.atividade_principal?.[0] || data.cnae_fiscal_descricao) && (
-        <Section title="Atividade Principal">
-          <Field
-            icon={Briefcase}
-            label="CNAE"
-            value={
-              data.atividade_principal?.[0]?.code ||
-              data.cnae_fiscal ||
-              data.atividade_principal?.[0]?.text
-            }
-          />
-          <Field
-            icon={Briefcase}
-            label="Descrição"
-            value={
-              data.atividade_principal?.[0]?.text ||
-              data.cnae_fiscal_descricao
-            }
-          />
-        </Section>
-      )}
-
-      {(data.logradouro || data.municipio) && (
-        <Section title="Endereço">
-          <Field icon={MapPin} label="Logradouro" value={`${data.logradouro || ""} ${data.numero || ""}`.trim()} />
-          <Field icon={MapPin} label="Complemento" value={data.complemento} />
-          <Field icon={MapPin} label="Bairro" value={data.bairro} />
-          <Field icon={MapPin} label="CEP" value={data.cep} mono />
-          <Field icon={MapPin} label="Município" value={data.municipio} />
-          <Field icon={MapPin} label="UF" value={data.uf} />
-        </Section>
-      )}
-
-      {(data.email || data.telefone) && (
-        <Section title="Contato">
-          <Field icon={Mail} label="E-mail" value={data.email} />
-          <Field icon={Phone} label="Telefone" value={data.telefone} mono />
-        </Section>
-      )}
-
-      {Array.isArray(data.qsa) && data.qsa.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-[10px] uppercase tracking-[0.4em] text-primary/60">Quadro Societário</div>
-          <div className="space-y-2">
-            {data.qsa.map((q: any, i: number) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.04 }}
-                className="rounded-lg border border-white/5 bg-black/30 p-3 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
-                    <User className="w-4 h-4 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm truncate">{q.nome}</div>
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground truncate">
-                      {q.qual}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function fieldGradient(key: string): string {
+  const k = key.toUpperCase();
+  if (k.includes("CPF") || k.includes("RG") || k.includes("CNS")) return "from-sky-400/20 to-cyan-400/5";
+  if (k.includes("CNPJ") || k.includes("RAZÃO") || k.includes("EMPRESA")) return "from-violet-400/20 to-fuchsia-400/5";
+  if (k.includes("TELEFONE") || k.includes("EMAIL") || k.includes("PIX")) return "from-emerald-400/20 to-teal-400/5";
+  if (k.includes("PLACA") || k.includes("CHASSI") || k.includes("RENAVAM") || k.includes("MOTOR")) return "from-amber-400/20 to-orange-400/5";
+  if (k.includes("NOME") || k.includes("NASCIMENTO") || k.includes("MÃE") || k.includes("PAI")) return "from-rose-400/20 to-pink-400/5";
+  return "from-white/10 to-white/0";
 }
 
-function CpfView({ data }: { data: any }) {
-  if (!data) return null;
-  return (
-    <Section title="Pessoa Física">
-      <Field icon={User} label="Nome" value={data.nome} />
-      <Field icon={Hash} label="CPF" value={data.cpf} mono />
-      <Field icon={Calendar} label="Nascimento" value={data.nascimento || data.dataNascimento} />
-      <Field icon={User} label="Sexo" value={data.sexo} />
-      <Field icon={User} label="Nome da Mãe" value={data.nomeMae || data.mae} />
-      <Field icon={MapPin} label="UF" value={data.uf} />
-      <Field icon={ShieldCheck} label="Situação" value={data.situacao} />
-    </Section>
-  );
-}
-
-function TelefoneView({ data }: { data: any }) {
-  if (!data) return null;
-  return (
-    <Section title="Telefone">
-      <Field icon={Phone} label="Número" value={data.telefone || data.numero} mono />
-      <Field icon={User} label="Titular" value={data.titular || data.nome} />
-      <Field icon={Building2} label="Operadora" value={data.operadora} />
-      <Field icon={MapPin} label="Localidade" value={data.localidade || data.cidade} />
-      <Field icon={MapPin} label="UF" value={data.uf} />
-    </Section>
-  );
-}
-
-function SipniView({ data }: { data: any }) {
-  if (!data) return null;
-  const paciente = data.paciente;
-  const vacinas: any[] = Array.isArray(data.vacinas) ? data.vacinas : [];
-  return (
-    <div className="space-y-6">
-      {paciente && (
-        <Section title="Paciente">
-          <Field icon={User} label="Nome" value={paciente.nome} />
-          <Field icon={Hash} label="CPF" value={data.cpf} mono />
-          <Field icon={Calendar} label="Nascimento" value={paciente.nascimento} />
-          <Field icon={User} label="Sexo" value={paciente.sexo} />
-          <Field icon={User} label="Nome da Mãe" value={paciente.nomeMae} />
-        </Section>
-      )}
-
-      <div className="space-y-3">
-        <div className="text-[10px] uppercase tracking-[0.4em] text-primary/60">
-          Histórico de Vacinas — {vacinas.length} registro(s)
-        </div>
-        {vacinas.length === 0 ? (
-          <div className="rounded-xl border border-white/5 bg-black/30 p-6 text-center text-sm text-muted-foreground">
-            Nenhum registro de vacinação retornado pelo SIPNI.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {vacinas.map((v, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className="rounded-lg border border-white/5 bg-black/30 p-3 grid grid-cols-2 md:grid-cols-5 gap-3"
-              >
-                <div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Data</div>
-                  <div className="text-sm font-mono">{v.data}</div>
-                </div>
-                <div className="md:col-span-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1 flex items-center gap-1">
-                    <Syringe className="w-3 h-3 text-primary/70" /> Vacina
-                  </div>
-                  <div className="text-sm">{v.vacina}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Dose</div>
-                  <div className="text-sm">{v.dose}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Lote</div>
-                  <div className="text-sm font-mono">{v.lote}</div>
-                </div>
-                {v.estabelecimento && (
-                  <div className="col-span-2 md:col-span-5">
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Estabelecimento</div>
-                    <div className="text-sm">{v.estabelecimento}</div>
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function fieldAccent(key: string): string {
+  const k = key.toUpperCase();
+  if (k.includes("CPF") || k.includes("RG")) return "text-sky-300";
+  if (k.includes("CNPJ") || k.includes("RAZÃO")) return "text-violet-300";
+  if (k.includes("TELEFONE") || k.includes("EMAIL")) return "text-emerald-300";
+  if (k.includes("PLACA") || k.includes("CHASSI")) return "text-amber-300";
+  if (k.includes("NOME")) return "text-rose-300";
+  return "text-primary";
 }
 
 export function ResultViewer({ tipo, result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
-  const { success, error, data } = result;
-  const hasData = data && Object.keys(data).length > 0;
+
+  const parsed: Parsed = useMemo(() => {
+    if (isParsed(result.data)) return result.data;
+    return { fields: [], sections: [], raw: typeof result.data === "string" ? result.data : JSON.stringify(result.data ?? {}) };
+  }, [result.data]);
+
+  const headlineFields = parsed.fields.filter((f) => isImportantField(f.key)).slice(0, 4);
+  const otherFields = parsed.fields.filter((f) => !headlineFields.includes(f));
+
+  const exportText = useMemo(() => {
+    const lines = [
+      `═══ INFINITY SEARCH ═══`,
+      `Tipo: ${tipo.toUpperCase()}`,
+      `Data: ${new Date().toLocaleString("pt-BR")}`,
+      ``,
+    ];
+    parsed.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+    parsed.sections.forEach((s) => {
+      lines.push("");
+      lines.push(`━ ${s.name} (${s.items.length}) ━`);
+      s.items.forEach((it) => lines.push(`  • ${it}`));
+    });
+    lines.push("");
+    lines.push("Made by blxckxyz · Infinity Search");
+    return lines.join("\n");
+  }, [parsed, tipo]);
+
+  const downloadTxt = () => {
+    const blob = new Blob([exportText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `infinity-${tipo}-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!result.success && parsed.fields.length === 0 && parsed.sections.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/5 backdrop-blur-xl p-5 sm:p-6"
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold uppercase tracking-widest text-amber-200">Sem resultado</div>
+            <p className="text-xs text-amber-100/80 mt-1">{result.error ?? "O provedor não retornou dados para esta consulta."}</p>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mt-6 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
+      className="mt-6 space-y-4"
     >
-      <div
-        className={`px-6 py-4 flex items-center justify-between border-b border-white/5 ${
-          success ? "bg-primary/5" : "bg-destructive/5"
-        }`}
-      >
+      {/* Status header */}
+      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <div className={`w-2 h-2 rounded-full ${result.success ? "bg-emerald-400" : "bg-amber-400"}`} />
+            <div className={`absolute inset-0 w-2 h-2 rounded-full ${result.success ? "bg-emerald-400" : "bg-amber-400"} animate-ping`} />
+          </div>
+          <span className={`text-[10px] uppercase tracking-[0.4em] font-semibold ${result.success ? "text-emerald-300" : "text-amber-300"}`}>
+            {result.success ? "Resultado encontrado" : "Sem dados"}
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            · {parsed.fields.length} campos · {parsed.sections.length} listas
+          </span>
+        </div>
         <div className="flex items-center gap-3">
-          {success ? (
-            <CheckCircle2 className="w-5 h-5 text-primary" />
-          ) : (
-            <AlertTriangle className="w-5 h-5 text-destructive" />
-          )}
-          <div>
-            <div className="text-sm font-semibold uppercase tracking-widest">
-              {success ? "Consulta concluída" : "Falha na consulta"}
-            </div>
-            {!success && error && (
-              <div className="text-xs text-destructive/80 mt-1">{error}</div>
-            )}
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
+          >
+            {showRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            {showRaw ? "Ocultar bruto" : "Ver bruto"}
+          </button>
+          <button
+            onClick={downloadTxt}
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
+          >
+            <Download className="w-3 h-3" /> Exportar
+          </button>
+          <CopyButton text={exportText} label="Copiar tudo" />
+        </div>
+      </div>
+
+      {/* Headline cards (most important fields) */}
+      {headlineFields.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {headlineFields.map((f, i) => (
+            <motion.div
+              key={`${f.key}-${i}`}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: i * 0.05 }}
+              whileHover={{ y: -2 }}
+              className={`relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br ${fieldGradient(f.key)} backdrop-blur-xl p-4`}
+            >
+              <div className="absolute inset-0 bg-black/30" />
+              <div className="relative">
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className={`text-[9px] uppercase tracking-[0.3em] font-semibold ${fieldAccent(f.key)}`}>{f.key}</p>
+                  <Sparkles className={`w-3 h-3 ${fieldAccent(f.key)} opacity-60`} />
+                </div>
+                <p className="text-base sm:text-lg font-bold break-words leading-tight">{f.value || "—"}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      {/* All fields grid */}
+      {otherFields.length > 0 && (
+        <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6">
+          <h3 className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-4">Detalhes</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3">
+            {otherFields.map((f, i) => (
+              <motion.div
+                key={`${f.key}-${i}`}
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(i * 0.02, 0.4) }}
+                className="group flex flex-col gap-0.5 py-2 border-b border-white/5 last:border-0"
+              >
+                <div className="flex items-center justify-between">
+                  <p className={`text-[9px] uppercase tracking-[0.25em] ${fieldAccent(f.key)} opacity-80`}>{f.key}</p>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(f.value)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Copiar"
+                  >
+                    <Copy className="w-3 h-3 text-muted-foreground hover:text-primary" />
+                  </button>
+                </div>
+                <p className="text-sm font-medium break-words">{f.value || "—"}</p>
+              </motion.div>
+            ))}
           </div>
         </div>
-        {hasData && (
-          <button
-            type="button"
-            onClick={() => setShowRaw((s) => !s)}
-            className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
-          >
-            {showRaw ? "Ver formatado" : "Ver JSON bruto"}
-          </button>
-        )}
-      </div>
+      )}
 
-      <div className="p-6">
-        {!hasData && !error && (
-          <div className="text-center text-sm text-muted-foreground py-8">
-            Nenhum dado retornado.
+      {/* Sections (lists like SÓCIOS, EMAILS, TELEFONES) */}
+      {parsed.sections.map((sec, idx) => (
+        <motion.div
+          key={`${sec.name}-${idx}`}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 + idx * 0.05 }}
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold uppercase tracking-[0.3em] text-primary">{sec.name}</h3>
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md">
+                {sec.items.length}
+              </span>
+            </div>
+            <CopyButton text={sec.items.join("\n")} label={`Copiar ${sec.name.toLowerCase()}`} />
           </div>
-        )}
+          <div className="space-y-1.5 max-h-96 overflow-y-auto pr-2">
+            {sec.items.map((item, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(i * 0.015, 0.5) }}
+                className="group flex items-start gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-primary/20 transition-all"
+              >
+                <div className="w-6 h-6 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 mt-0.5">
+                  {i + 1}
+                </div>
+                <p className="text-sm flex-1 break-words leading-relaxed font-mono">{item}</p>
+                <button
+                  onClick={() => navigator.clipboard.writeText(item)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1"
+                >
+                  <Copy className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" />
+                </button>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      ))}
 
-        {hasData && showRaw && (
-          <pre className="text-xs font-mono bg-black/50 border border-white/5 rounded-xl p-4 overflow-auto max-h-[480px] text-foreground/80">
-            {JSON.stringify(data, null, 2)}
+      {/* Raw response (toggle) */}
+      {showRaw && parsed.raw && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          className="rounded-2xl border border-white/10 bg-black/40 backdrop-blur-2xl p-5 overflow-hidden"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <FileJson className="w-3.5 h-3.5 text-muted-foreground" />
+              <h3 className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground">Resposta bruta do provedor</h3>
+            </div>
+            <CopyButton text={parsed.raw} />
+          </div>
+          <pre className="text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground/80 max-h-96 overflow-y-auto">
+            {parsed.raw}
           </pre>
-        )}
+        </motion.div>
+      )}
 
-        {hasData && !showRaw && (
-          <>
-            {tipo === "cnpj" && <CnpjView data={data} />}
-            {tipo === "cpf" && <CpfView data={data} />}
-            {tipo === "telefone" && <TelefoneView data={data} />}
-            {tipo === "sipni" && <SipniView data={data} />}
-          </>
-        )}
-      </div>
-
-      <div className="px-6 py-3 border-t border-white/5 flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-muted-foreground bg-black/20">
-        <span>Made by blxckxyz</span>
-        <span className="text-primary/60">Infinity Search</span>
+      <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-2">
+        Made by blxckxyz · Infinity Search
       </div>
     </motion.div>
   );
