@@ -12,6 +12,10 @@ import Dossie from "@/pages/dossie";
 import Perfil from "@/pages/perfil";
 import Bases from "@/pages/bases";
 import Favoritos from "@/pages/favoritos";
+import Personalizar, { initSavedTheme } from "@/pages/personalizar";
+
+// Apply saved color theme immediately on load
+initSavedTheme();
 
 function NotFound() {
   return (
@@ -41,6 +45,7 @@ function Router() {
               <Route path="/bases" component={Bases} />
               <Route path="/perfil" component={Perfil} />
               <Route path="/configuracoes" component={Configuracoes} />
+              <Route path="/personalizar" component={Personalizar} />
               <Route component={NotFound} />
             </Switch>
           </Layout>

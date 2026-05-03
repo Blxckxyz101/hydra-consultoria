@@ -136,6 +136,7 @@ export default function IA() {
   const [listening, setListening] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem("infinity_ia_sound") !== "0");
   const [intensity, setIntensity] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historySearch, setHistorySearch] = useState("");
@@ -277,7 +278,10 @@ export default function IA() {
       setIsThinking(false);
       setConsultingStatus(null);
       setIsStreaming(false);
-      if (voiceModeRef.current && finalReply && !voiceMutedRef.current) speakAndContinue(finalReply);
+      if (finalReply) {
+        if (voiceModeRef.current && !voiceMutedRef.current) speakAndContinue(finalReply);
+        else if (soundEnabled) speakAndContinue(finalReply);
+      }
     }
   };
 
@@ -503,6 +507,23 @@ export default function IA() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                localStorage.setItem("infinity_ia_sound", next ? "1" : "0");
+                if (!next) window.speechSynthesis?.cancel();
+              }}
+              title={soundEnabled ? "Desativar narração" : "Ativar narração por voz"}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] uppercase tracking-widest font-semibold transition-colors ${
+                soundEnabled
+                  ? "bg-sky-400/10 border-sky-400/20 text-sky-300 hover:bg-sky-400/15"
+                  : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
+              {soundEnabled ? "Som" : "Mudo"}
+            </button>
             <button
               onClick={() => { setVoiceMode(true); }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-400/10 border border-violet-400/20 text-violet-300 text-[10px] uppercase tracking-widest font-semibold hover:bg-violet-400/15 transition-colors"

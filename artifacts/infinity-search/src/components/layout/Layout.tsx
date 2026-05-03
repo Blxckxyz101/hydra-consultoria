@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
@@ -50,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/bases", label: "Monitor de Bases", icon: Server },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
     { href: "/configuracoes", label: "Configurações", icon: Settings },
+    { href: "/personalizar", label: "Personalizar", icon: Palette },
   ];
 
   const roleLabel = (role: string) => {
