@@ -1,6 +1,6 @@
 kind = "web"
   previewPath = "/admin/"
-  title = "LelouchBritannia Panel"
+  title = "Infinity Panel"
   version = "1.0.0"
   id = "artifacts/mikubeam-panel"
   router = "path"
@@ -29,4 +29,3 @@ kind = "web"
   [services.env]
   PORT = "22453"
   BASE_PATH = "/admin/"
-  
