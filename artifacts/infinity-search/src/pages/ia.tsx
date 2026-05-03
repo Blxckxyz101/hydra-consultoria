@@ -13,6 +13,8 @@ export default function IA() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [listening, setListening] = useState(false);
+  const [continuous, setContinuous] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [intensity, setIntensity] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -20,6 +22,35 @@ export default function IA() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+  const continuousRef = useRef(false);
+  const voiceModeRef = useRef(false);
+  useEffect(() => { continuousRef.current = continuous; }, [continuous]);
+  useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+
+  const speakAndContinue = (text: string) => {
+    if (!("speechSynthesis" in window) || !text) return;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text.replace(/\*\*|`|#|>/g, ""));
+      u.lang = "pt-BR";
+      u.rate = 1.05;
+      u.pitch = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const ptVoice = voices.find((v) => v.lang.startsWith("pt"));
+      if (ptVoice) u.voice = ptVoice;
+      setSpeaking(true);
+      u.onend = () => {
+        setSpeaking(false);
+        if (continuousRef.current && voiceModeRef.current) {
+          setTimeout(() => startVoice(), 350);
+        }
+      };
+      u.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(u);
+    } catch {
+      setSpeaking(false);
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -31,6 +62,7 @@ export default function IA() {
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setIsStreaming(true);
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+    let finalReply = "";
 
     try {
       const token = localStorage.getItem("infinity_token");
@@ -63,6 +95,7 @@ export default function IA() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.delta) {
+                finalReply += parsed.delta;
                 setMessages((prev) => {
                   const next = [...prev];
                   const last = next[next.length - 1];
@@ -87,6 +120,9 @@ export default function IA() {
       });
     } finally {
       setIsStreaming(false);
+      if (voiceModeRef.current && finalReply) {
+        speakAndContinue(finalReply);
+      }
     }
   };
 
@@ -182,26 +218,42 @@ export default function IA() {
         </button>
 
         <div className="text-center">
-          <div className="text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-2">
+          <div className="text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-2 flex items-center justify-center gap-2">
             Modo de Voz
+            {continuous && <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-200">contínuo</span>}
           </div>
           <h2 className="text-2xl font-bold tracking-[0.2em] uppercase">
-            {listening ? "Estou te ouvindo" : "Toque para falar"}
+            {speaking ? "Falando..." : isStreaming ? "Pensando..." : listening ? "Estou te ouvindo" : continuous ? "Aguardando você" : "Toque para falar"}
           </h2>
         </div>
 
-        <button onClick={startVoice} className="relative">
-          <VoiceOrb active={listening} intensity={intensity} size={320} />
+        <button onClick={startVoice} disabled={speaking || isStreaming} className="relative disabled:opacity-70">
+          <VoiceOrb active={listening || speaking} intensity={speaking ? 0.6 : intensity} size={320} />
         </button>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => {
+              const next = !continuous;
+              setContinuous(next);
+              if (next && !listening && !speaking && !isStreaming) startVoice();
+            }}
+            className={`px-4 py-3 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${
+              continuous
+                ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
+                : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {continuous ? "Modo contínuo ON" : "Ativar contínuo"}
+          </button>
           <button
             onClick={startVoice}
+            disabled={speaking || isStreaming}
             className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${
               listening
                 ? "bg-destructive/20 border border-destructive/50 shadow-[0_0_30px_rgba(239,68,68,0.4)]"
                 : "bg-primary/15 border border-primary/40 shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:scale-110"
-            }`}
+            } disabled:opacity-50`}
           >
             {listening ? (
               <MicOff className="w-7 h-7 text-destructive" />
@@ -209,9 +261,22 @@ export default function IA() {
               <Mic className="w-7 h-7 text-primary" />
             )}
           </button>
+          {speaking && (
+            <button
+              onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }}
+              className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-foreground"
+            >
+              Pular fala
+            </button>
+          )}
         </div>
 
-        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
+        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground text-center px-4">
+          {continuous
+            ? "Diga algo · A IA responde · Volta a te ouvir automaticamente"
+            : "Toque para falar uma vez"}
+        </div>
+        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60">
           Made by blxckxyz · Infinity Search
         </div>
       </div>
