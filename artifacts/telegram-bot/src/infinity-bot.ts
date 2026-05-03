@@ -94,6 +94,48 @@ const TIPOS = [
 
 type TipoId = (typeof TIPOS)[number]["id"];
 
+// ── Styled query prompts ───────────────────────────────────────────────────────
+const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
+  cpf:         { title: "CONSULTA DE CPF",          lines: ["DIGITE O CPF QUE DESEJA CONSULTAR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  nome:        { title: "CONSULTA POR NOME",         lines: ["DIGITE O NOME COMPLETO DA PESSOA"] },
+  telefone:    { title: "CONSULTA DE TELEFONE",      lines: ["DIGITE O TELEFONE COM DDD", "EX: 11999887766 (SEM ESPAÇOS)"] },
+  email:       { title: "CONSULTA DE E-MAIL",        lines: ["DIGITE O ENDEREÇO DE E-MAIL"] },
+  placa:       { title: "CONSULTA DE PLACA",         lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  cnpj:        { title: "CONSULTA DE CNPJ",          lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  cep:         { title: "CONSULTA DE CEP",           lines: ["DIGITE O CEP", "OBS: 8 DÍGITOS, APENAS NÚMEROS"] },
+  pix:         { title: "CONSULTA DE CHAVE PIX",     lines: ["DIGITE A CHAVE PIX", "OBS: CPF, E-MAIL, TELEFONE OU ALEATÓRIA"] },
+  rg:          { title: "CONSULTA DE RG",            lines: ["DIGITE O NÚMERO DO RG"] },
+  mae:         { title: "CONSULTA DE MÃE",           lines: ["DIGITE O CPF OU NOME DA MÃE"] },
+  pai:         { title: "CONSULTA DE PAI",           lines: ["DIGITE O CPF OU NOME DO PAI"] },
+  parentes:    { title: "CONSULTA DE PARENTES",      lines: ["DIGITE O CPF DA PESSOA"] },
+  chassi:      { title: "CONSULTA DE CHASSI",        lines: ["DIGITE O NÚMERO DO CHASSI DO VEÍCULO"] },
+  renavam:     { title: "CONSULTA DE RENAVAM",       lines: ["DIGITE O NÚMERO DO RENAVAM DO VEÍCULO"] },
+  cnh:         { title: "CONSULTA DE CNH",           lines: ["DIGITE O NÚMERO DA CNH OU CPF"] },
+  socios:      { title: "CONSULTA DE SÓCIOS",        lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  fucionarios: { title: "CONSULTA DE FUNCIONÁRIOS",  lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  empregos:    { title: "CONSULTA DE EMPREGOS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cns:         { title: "CONSULTA DE CNS",           lines: ["DIGITE O NÚMERO DO CARTÃO NACIONAL DE SAÚDE"] },
+  nis:         { title: "CONSULTA DE NIS/PIS",       lines: ["DIGITE O NÚMERO DO NIS OU PIS"] },
+  obito:       { title: "CONSULTA DE ÓBITO",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  vacinas:     { title: "CONSULTA DE VACINAS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+};
+
+function buildQueryPrompt(tipoId: string): string {
+  const p = TIPO_PROMPT[tipoId];
+  if (!p) {
+    const tipo = TIPOS.find((t) => t.id === tipoId);
+    return `Envie o <b>${tipo?.prompt ?? tipoId}</b>:`;
+  }
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ • ${p.title}\n` +
+    `┠────────────────────────────\n` +
+    p.lines.map((l) => `┃ ${l}`).join("\n") + "\n" +
+    `╰────────────────────────────╯`
+  );
+}
+
 // ── Session ───────────────────────────────────────────────────────────────────
 interface BotSession {
   state: "idle" | "awaiting_query";
@@ -520,7 +562,7 @@ export function startInfinityBot(): void {
         session.state = "awaiting_query";
         session.tipo = tipoId;
         await ctx.replyWithHTML(
-          `${tipo.label}\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\nEnvie o <b>${tipo.prompt}</b>:`,
+          buildQueryPrompt(tipoId),
           Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home_new")]]),
         );
       }
@@ -629,7 +671,7 @@ export function startInfinityBot(): void {
     session.state = "awaiting_query";
     session.tipo = tipoId;
     await ctx.editMessageText(
-      `${tipo.label}\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\nEnvie o <b>${tipo.prompt}</b>:`,
+      buildQueryPrompt(tipoId),
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home")]]) }
     );
   });
