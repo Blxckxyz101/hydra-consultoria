@@ -188,34 +188,111 @@ function parseProviderText(raw: string): Parsed {
     }
     return result;
   }
-  const parts = raw.split(SEP);
-  const firstExtract = extractTrailingKey(parts[0]);
-  let currentKey = firstExtract.key || parts[0].trim();
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    if (part.includes("•")) {
-      const secMatch = SEC_HEADER_RE.exec(part.trim());
-      if (secMatch) {
-        const bulletIdx = part.indexOf("•");
-        const itemsRaw = part.slice(bulletIdx);
-        const items = itemsRaw.split("•").map((s) => s.trim()).filter(Boolean);
-        result.sections.push({ name: secMatch[1].trim().toUpperCase(), items });
-        const lastItem = items[items.length - 1] ?? "";
-        const lm = LAST_WORD_RE.exec(lastItem);
-        currentKey = lm ? lm[1].trim() : "";
-        continue;
-      }
-    }
-    if (i === parts.length - 1) {
-      const value = part.trim().replace(/\s+/g, " ");
-      if (currentKey && value) result.fields.push({ key: currentKey, value });
-      break;
-    }
-    const { value, key: nextKey } = extractTrailingKey(part);
-    const cleanValue = value.replace(/\s+/g, " ");
-    if (currentKey && cleanValue) result.fields.push({ key: currentKey, value: cleanValue });
-    currentKey = nextKey;
+
+  // ── 1. Map every section header so we know exact boundaries ─────────────
+  // Pattern: "SECTION NAME: ( N - Encontrados)"
+  // Note: no digits allowed in section name to avoid "CORSA SEDAN 2003 ENDERECOS" false match
+  const SEC_HDR_FULL = /([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Za-z ]{3,}):\s*\(\s*(\d+)\s*-\s*Encontrados?\s*\)/g;
+  const secBounds: Array<{ name: string; count: number; start: number; headerEnd: number }> = [];
+  let sm: RegExpExecArray | null;
+  while ((sm = SEC_HDR_FULL.exec(raw)) !== null) {
+    secBounds.push({
+      name: sm[1].trim().toUpperCase(),
+      count: parseInt(sm[2]),
+      start: sm.index,
+      headerEnd: sm.index + sm[0].length,
+    });
   }
+
+  // ── 2. Parse fields (text before the first section header) ──────────────
+  const fieldsEnd = secBounds.length > 0 ? secBounds[0].start : raw.length;
+  const fieldsRaw = raw.slice(0, fieldsEnd);
+
+  if (fieldsRaw.includes("\u23AF")) {
+    const parts = fieldsRaw.split(SEP);
+    const firstEx = extractTrailingKey(parts[0]);
+    let curKey = firstEx.key || parts[0].trim();
+
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      if (i === parts.length - 1) {
+        // Strip any trailing ⎯ left by the slice boundary, then skip if it's just a key name
+        const val = part.trim().replace(/\s*\u23AF\s*$/, "").replace(/\s+/g, " ").trim();
+        if (curKey && val && !PURE_KEY_RE.test(val)) {
+          result.fields.push({ key: curKey, value: val });
+        }
+        break;
+      }
+      const { value, key: nextKey } = extractTrailingKey(part);
+      const cleanVal = value.replace(/\s+/g, " ");
+      if (curKey && cleanVal) result.fields.push({ key: curKey, value: cleanVal });
+      curKey = nextKey;
+    }
+  }
+
+  // ── 3. Parse each section using its exact content range ─────────────────
+  for (let si = 0; si < secBounds.length; si++) {
+    const sb = secBounds[si];
+    if (sb.count === 0) continue; // skip empty sections
+
+    const contentEnd = si + 1 < secBounds.length ? secBounds[si + 1].start : raw.length;
+    const content = raw.slice(sb.headerEnd, contentEnd).trim();
+    if (!content) continue;
+
+    const items: string[] = [];
+
+    if (content.includes("•")) {
+      // Bullet-delimited items: TELEFONES, ENDERECOS, VEICULOS, EMAILS, etc.
+      content.split("•").slice(1).forEach((b) => {
+        const item = b.trim().replace(/\s+/g, " ");
+        if (item) items.push(item);
+      });
+    } else if (content.includes("\u23AF")) {
+      // ⎯-delimited pairs: PARENTES, EMPREGOS, BANCOS…
+      // Format inside section is KEY ⎯ VALUE ⎯ KEY ⎯ VALUE ⎯ (trailing sep possible)
+      const subParts = content
+        .replace(/\s*\u23AF\s*$/, "") // strip trailing ⎯
+        .split(SEP)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      // Treat as consecutive key → value pairs
+      for (let j = 0; j + 1 < subParts.length; j += 2) {
+        const k = subParts[j];
+        const v = subParts[j + 1];
+        if (k && v) items.push(`${k}: ${v}`);
+        else if (k) items.push(k);
+      }
+      // Odd remainder (trailing key with no value)
+      if (subParts.length % 2 === 1) {
+        const last = subParts[subParts.length - 1];
+        if (last) items.push(last);
+      }
+    } else {
+      const plain = content.replace(/\s+/g, " ");
+      if (plain) items.push(plain);
+    }
+
+    if (items.length > 0) {
+      result.sections.push({ name: sb.name, items });
+    }
+  }
+
+  // ── 4. INTERESSES PESSOAIS — special "- Key: Value" format ──────────────
+  // Not captured by SEC_HDR_FULL (no "Encontrados" counter)
+  const intIdx = raw.indexOf("INTERESSES PESSOAIS:");
+  if (intIdx !== -1) {
+    const intContent = raw.slice(intIdx + "INTERESSES PESSOAIS:".length);
+    const intItems = intContent
+      .split(/\s*-\s+/)
+      .map((s) => s.trim().replace(/\s+/g, " "))
+      .filter((s) => s.includes(":"));
+    const simItems = intItems.filter((s) => /:\s*Sim\b/i.test(s));
+    const show = simItems.length > 0 ? simItems : intItems.slice(0, 10);
+    if (show.length > 0) {
+      result.sections.push({ name: "INTERESSES PESSOAIS", items: show });
+    }
+  }
+
   return result;
 }
 
