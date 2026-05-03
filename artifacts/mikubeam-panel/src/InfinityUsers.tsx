@@ -5,7 +5,7 @@ const USER_KEY = "lelouch_infinity_user";
 
 type InfUser = {
   username: string;
-  role: "admin" | "user";
+  role: "admin" | "vip" | "user";
   createdAt: string;
   lastLoginAt: string | null;
   accountExpiresAt: string | null;
@@ -29,7 +29,7 @@ export function InfinityUsers() {
   const [loginErr, setLoginErr] = useState("");
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
-  const [newRole, setNewRole] = useState<"user" | "admin">("user");
+  const [newRole, setNewRole] = useState<"user" | "vip" | "admin">("vip");
   const [newExpiry, setNewExpiry] = useState<number>(30);
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -334,28 +334,33 @@ export function InfinityUsers() {
             />
           </div>
           <div>
-            <label style={label}>Papel</label>
+            <label style={label}>Cargo</label>
             <div style={{ display: "flex", gap: 8 }}>
-              {(["user", "admin"] as const).map((r) => (
+              {([
+                { value: "vip",   label: "⭐ VIP",   active: "rgba(56,189,248,0.25)",  border: "rgba(56,189,248,0.7)",  color: "#7dd3fc" },
+                { value: "admin", label: "👑 Admin",  active: "rgba(212,175,55,0.25)",  border: "rgba(212,175,55,0.7)",  color: "#fde68a" },
+                { value: "user",  label: "👤 User",   active: "rgba(155,89,182,0.25)", border: "rgba(155,89,182,0.7)", color: "#d8b4fe" },
+              ] as const).map((r) => (
                 <button
-                  key={r}
+                  key={r.value}
                   type="button"
-                  onClick={() => setNewRole(r)}
+                  onClick={() => setNewRole(r.value)}
                   style={{
                     flex: 1,
-                    padding: "10px",
-                    background: newRole === r ? "rgba(155,89,182,0.25)" : "rgba(0,0,0,0.3)",
-                    border: `1px solid ${newRole === r ? "rgba(155,89,182,0.7)" : "rgba(155,89,182,0.2)"}`,
-                    color: newRole === r ? "#fff" : "rgba(230,216,255,0.6)",
+                    padding: "10px 6px",
+                    background: newRole === r.value ? r.active : "rgba(0,0,0,0.3)",
+                    border: `1px solid ${newRole === r.value ? r.border : "rgba(155,89,182,0.2)"}`,
+                    color: newRole === r.value ? r.color : "rgba(230,216,255,0.5)",
                     borderRadius: 8,
                     cursor: "pointer",
                     fontSize: 11,
-                    letterSpacing: 2,
+                    letterSpacing: 1.5,
                     textTransform: "uppercase",
                     fontWeight: 600,
+                    transition: "all 0.15s",
                   }}
                 >
-                  {r}
+                  {r.label}
                 </button>
               ))}
             </div>
@@ -454,6 +459,8 @@ export function InfinityUsers() {
                         borderRadius: "50%",
                         background: u.role === "admin"
                           ? "linear-gradient(135deg, #d4af37, #6d2db5)"
+                          : u.role === "vip"
+                          ? "linear-gradient(135deg, #38bdf8, #6d2db5)"
                           : "linear-gradient(135deg, #9b59b6, #6d2db5)",
                         display: "flex",
                         alignItems: "center",
@@ -469,8 +476,12 @@ export function InfinityUsers() {
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
                         {u.username} {isMe && <span style={{ color: "rgba(230,216,255,0.5)", fontSize: 11 }}>(você)</span>}
                       </div>
-                      <div style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: u.role === "admin" ? "#d4af37" : "rgba(230,216,255,0.55)" }}>
-                        {u.role} · criado em {new Date(u.createdAt).toLocaleDateString("pt-BR")}
+                      <div style={{
+                        fontSize: 10, letterSpacing: 2, textTransform: "uppercase",
+                        color: u.role === "admin" ? "#d4af37" : u.role === "vip" ? "#7dd3fc" : "rgba(230,216,255,0.55)"
+                      }}>
+                        {u.role === "admin" ? "👑 Admin" : u.role === "vip" ? "⭐ VIP" : "👤 User"}
+                        {" · criado em "}{new Date(u.createdAt).toLocaleDateString("pt-BR")}
                         {u.lastLoginAt && ` · último login ${new Date(u.lastLoginAt).toLocaleString("pt-BR")}`}
                       </div>
                       {u.role !== "admin" && (

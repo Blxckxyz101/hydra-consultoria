@@ -1411,8 +1411,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
