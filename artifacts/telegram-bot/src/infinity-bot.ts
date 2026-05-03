@@ -353,9 +353,13 @@ export function startInfinityBot(): void {
   }
 
   const TIPO_MENU_TEXT =
-    `🔍 <b>SELECIONE O TIPO</b>\n` +
-    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n` +
-    `Escolha o tipo de dado para consultar:`;
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ ESCOLHA O MÓDULO DE CONSULTA\n` +
+    `┃ QUE DESEJA UTILIZAR\n` +
+    `┠────────────────────────────\n` +
+    `┃  SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+    `╰────────────────────────────╯`;
 
   // ── Middleware: group authorization check ──────────────────────────────────
   bot.use(async (ctx, next) => {
