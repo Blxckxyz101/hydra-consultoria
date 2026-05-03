@@ -3668,7 +3668,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
           )}
           <div className="lb-title-row">
             <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" />
-            <h1 className="lb-title">Infinity Panel</h1>
+            <h1 className="lb-title">Lelouch Painel</h1>
             <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
@@ -7448,7 +7448,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
 
         <footer className="lb-footer">
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt=""/>
-          <span>v3.0 — Infinity Command Panel</span>
+          <span>v3.0 — Lelouch Command Painel</span>
           <span className="lb-footer-credit">Made by blxckxyz</span>
           <img src={GEASS_SYMBOL} className="lb-footer-symbol" alt="" aria-hidden="true"/>
         </footer>

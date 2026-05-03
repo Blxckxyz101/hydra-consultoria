@@ -1,7 +1,7 @@
 {
-  "name": "Infinity Panel",
-  "short_name": "Infinity",
-  "description": "Network stress testing control panel — Infinity Edition",
+  "name": "Lelouch Painel",
+  "short_name": "Lelouch",
+  "description": "Network stress testing control panel — Lelouch Edition",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0A0010",

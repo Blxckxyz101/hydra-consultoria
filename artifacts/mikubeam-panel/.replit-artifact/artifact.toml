@@ -1,6 +1,6 @@
 kind = "web"
   previewPath = "/admin/"
-  title = "Infinity Panel"
+  title = "Lelouch Painel"
   version = "1.0.0"
   id = "artifacts/mikubeam-panel"
   router = "path"
