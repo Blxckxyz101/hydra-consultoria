@@ -3,11 +3,12 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
 export const infinityUsersTable = pgTable("infinity_users", {
-  username:    text("username").primaryKey(),
-  passwordHash: text("password_hash").notNull(),
-  role:        text("role").notNull().default("user"),
-  createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  username:         text("username").primaryKey(),
+  passwordHash:     text("password_hash").notNull(),
+  role:             text("role").notNull().default("user"),
+  createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt:      timestamp("last_login_at", { withTimezone: true }),
+  accountExpiresAt: timestamp("account_expires_at", { withTimezone: true }),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {

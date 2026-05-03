@@ -4,6 +4,7 @@ import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, Ar
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
 import { Link } from "wouter";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
+import { ExpiryBadge } from "@/components/ui/ExpiryBadge";
 
 const TIPO_LABEL: Record<string, string> = {
   cpf: "CPF", cnpj: "CNPJ", telefone: "Telefone", sipni: "SIPNI",
@@ -121,7 +122,14 @@ export default function Overview() {
                 : "Nenhuma consulta hoje ainda — comece pelo módulo de Consultas."}
             </p>
 
-            <div className="mt-5 flex flex-wrap gap-2">
+            <div className="mt-4">
+              <ExpiryBadge
+                accountExpiresAt={(me as any)?.accountExpiresAt ?? null}
+                role={me?.role ?? "user"}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
               <Link
                 href="/consultas"
                 className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-400 to-cyan-300 text-black font-semibold text-xs uppercase tracking-widest shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:shadow-[0_0_40px_rgba(56,189,248,0.7)] transition-all"

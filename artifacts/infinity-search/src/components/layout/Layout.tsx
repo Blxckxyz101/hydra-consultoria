@@ -5,6 +5,14 @@ import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
+import { LockScreen } from "@/components/ui/LockScreen";
+
+function isAccountExpired(user: { role?: string; accountExpiresAt?: string | null } | undefined): boolean {
+  if (!user) return false;
+  if (user.role === "admin") return false;
+  if (!(user as any).accountExpiresAt) return false;
+  return new Date((user as any).accountExpiresAt).getTime() < Date.now();
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
@@ -135,6 +143,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </div>
     </>
   );
+
+  if (isAccountExpired(user as any)) {
+    return <LockScreen />;
+  }
 
   return (
     <div className="min-h-screen w-full flex text-foreground overflow-hidden relative">

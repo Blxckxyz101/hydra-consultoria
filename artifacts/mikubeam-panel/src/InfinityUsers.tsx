@@ -8,6 +8,7 @@ type InfUser = {
   role: "admin" | "user";
   createdAt: string;
   lastLoginAt: string | null;
+  accountExpiresAt: string | null;
 };
 
 type Toast = { id: number; type: "ok" | "err"; text: string } | null;
@@ -29,6 +30,7 @@ export function InfinityUsers() {
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
   const [newRole, setNewRole] = useState<"user" | "admin">("user");
+  const [newExpiry, setNewExpiry] = useState<number>(30);
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
 
@@ -108,7 +110,7 @@ export function InfinityUsers() {
       const r = await fetch("/api/infinity/users", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ username: newUser, password: newPass, role: newRole }),
+        body: JSON.stringify({ username: newUser, password: newPass, role: newRole, expiresInDays: newExpiry }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -118,6 +120,7 @@ export function InfinityUsers() {
         setNewUser("");
         setNewPass("");
         setNewRole("user");
+        setNewExpiry(30);
         fetchUsers(token);
       }
     } catch {
@@ -334,6 +337,44 @@ export function InfinityUsers() {
               ))}
             </div>
           </div>
+          <div>
+            <label style={label}>Expiração do acesso</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+              {([
+                { label: "7 dias", value: 7 },
+                { label: "15 dias", value: 15 },
+                { label: "30 dias", value: 30 },
+                { label: "60 dias", value: 60 },
+                { label: "90 dias", value: 90 },
+                { label: "Sem limite", value: 0 },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setNewExpiry(opt.value)}
+                  style={{
+                    padding: "9px 6px",
+                    background: newExpiry === opt.value ? "rgba(155,89,182,0.25)" : "rgba(0,0,0,0.3)",
+                    border: `1px solid ${newExpiry === opt.value ? "rgba(155,89,182,0.7)" : "rgba(155,89,182,0.2)"}`,
+                    color: newExpiry === opt.value ? "#fff" : "rgba(230,216,255,0.6)",
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    fontSize: 10,
+                    letterSpacing: 1.5,
+                    textTransform: "uppercase",
+                    fontWeight: 600,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {newExpiry === 0 && (
+              <p style={{ marginTop: 6, fontSize: 10, color: "rgba(230,216,255,0.45)", letterSpacing: 1 }}>
+                Sem data de expiração — acesso permanente.
+              </p>
+            )}
+          </div>
           <button type="submit" disabled={creating} style={{ ...btn, opacity: creating ? 0.5 : 1 }}>
             {creating ? "Criando..." : "Criar Usuário"}
           </button>
@@ -409,6 +450,35 @@ export function InfinityUsers() {
                         {u.role} · criado em {new Date(u.createdAt).toLocaleDateString("pt-BR")}
                         {u.lastLoginAt && ` · último login ${new Date(u.lastLoginAt).toLocaleString("pt-BR")}`}
                       </div>
+                      {u.role !== "admin" && (
+                        <div style={{
+                          marginTop: 4,
+                          fontSize: 10,
+                          letterSpacing: 1.5,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "2px 8px",
+                          borderRadius: 20,
+                          ...(() => {
+                            if (!u.accountExpiresAt) return { background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)", color: "#7dd3fc" };
+                            const diff = new Date(u.accountExpiresAt).getTime() - Date.now();
+                            if (diff <= 0) return { background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", color: "#fca5a5" };
+                            if (diff < 3 * 86_400_000) return { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", color: "#fcd34d" };
+                            return { background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)", color: "#6ee7b7" };
+                          })(),
+                        }}>
+                          {!u.accountExpiresAt
+                            ? "∞ Sem expiração"
+                            : (() => {
+                                const diff = new Date(u.accountExpiresAt).getTime() - Date.now();
+                                if (diff <= 0) return `⛔ Expirado em ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`;
+                                const days = Math.floor(diff / 86_400_000);
+                                return `⏳ Expira em ${days}d — ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`;
+                              })()
+                          }
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button

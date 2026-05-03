@@ -50,6 +50,7 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
     .select({
       username: infinityUsersTable.username,
       role: infinityUsersTable.role,
+      accountExpiresAt: infinityUsersTable.accountExpiresAt,
     })
     .from(infinitySessionsTable)
     .innerJoin(infinityUsersTable, eq(infinityUsersTable.username, infinitySessionsTable.username))
@@ -57,6 +58,8 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
     .limit(1);
   const row = rows[0];
   if (!row) return null;
+  // Block access if user account has expired (admins are never blocked)
+  if (row.role !== "admin" && row.accountExpiresAt && row.accountExpiresAt < now) return null;
   return { username: row.username, role: (row.role === "admin" ? "admin" : "user") };
 }
 

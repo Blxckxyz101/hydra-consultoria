@@ -25,12 +25,13 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null }) {
+function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null }) {
   return {
     username: row.username,
     role: row.role === "admin" ? "admin" : "user",
     createdAt: row.createdAt.toISOString(),
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
+    accountExpiresAt: row.accountExpiresAt ? row.accountExpiresAt.toISOString() : null,
   };
 }
 
@@ -297,17 +298,21 @@ router.get("/users", requireAdmin, async (_req, res) => {
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
-  const { username, password, role } = req.body ?? {};
+  const { username, password, role, expiresInDays } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
   }
   const finalRole = role === "admin" ? "admin" : "user";
   const passwordHash = await bcrypt.hash(String(password), 10);
+  let accountExpiresAt: Date | null = null;
+  if (expiresInDays && Number(expiresInDays) > 0) {
+    accountExpiresAt = new Date(Date.now() + Number(expiresInDays) * 24 * 60 * 60 * 1000);
+  }
   try {
     const [created] = await db
       .insert(infinityUsersTable)
-      .values({ username: String(username), passwordHash, role: finalRole })
+      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt })
       .returning();
     res.status(201).json(serializeUser(created));
   } catch {
