@@ -197,7 +197,7 @@ function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍  Nova Consulta", "consultar")],
     [Markup.button.callback("❓ Ajuda", "show_ajuda")],
-    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
+    [Markup.button.url("💬 Suporte: @Blxckxyz & @xxmathexx", SUPPORT_URL)] as any,
   ]);
 }
 
