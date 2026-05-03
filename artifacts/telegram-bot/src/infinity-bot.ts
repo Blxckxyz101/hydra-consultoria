@@ -5,6 +5,7 @@ const INFINITY_BOT_TOKEN = process.env.INFINITY_BOT_TOKEN ?? "";
 const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL = "https://t.me/Blxckxyz";
+const SUPPORT_URL2 = "https://t.me/xxmathexx";
 const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
@@ -19,7 +20,7 @@ let CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
   : null;
 
 // Admin usernames (lowercase, no @)
-const ADMIN_USERNAMES = new Set(["blxckxyz"]);
+const ADMIN_USERNAMES = new Set(["blxckxyz", "xxmathexx"]);
 // Admin user IDs (more reliable than username)
 const ADMIN_IDS = new Set<number>();
 
@@ -195,7 +196,8 @@ function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string,
 function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍  Nova Consulta", "consultar")],
-    [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+    [Markup.button.callback("❓ Ajuda", "show_ajuda")],
+    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
   ]);
 }
 
@@ -606,14 +608,15 @@ export function startInfinityBot(): void {
     await ctx.telegram.deleteMessage(chatId, msgId).catch(() => {});
   });
 
-  // ── Text handler ──────────────────────────────────────────────────────────
+  // ── Text handler — only active during awaiting_query flow ────────────────
   bot.on(message("text"), async (ctx) => {
+    // Ignore commands (handled above)
     if (ctx.message.text.startsWith("/")) return;
 
     const session = getSession(ctx.from.id);
 
+    // Only respond when waiting for query data — ignore all other text silently
     if (session.state !== "awaiting_query" || !session.tipo) {
-      await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
       return;
     }
 
