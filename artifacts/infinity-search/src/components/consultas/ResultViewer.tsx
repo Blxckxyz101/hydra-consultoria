@@ -12,6 +12,7 @@ import {
   FolderOpen,
   CheckCircle2,
   Star,
+  FileText,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -234,6 +235,75 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     URL.revokeObjectURL(url);
   };
 
+  const downloadPdf = () => {
+    const date = new Date().toLocaleString("pt-BR");
+    const fieldsHtml = parsed.fields.map(f => `
+      <tr>
+        <td class="key">${f.key}</td>
+        <td class="val">${f.value || "—"}</td>
+      </tr>`).join("");
+
+    const sectionsHtml = parsed.sections.map(s => `
+      <div class="section">
+        <div class="sec-title">${s.name} <span class="badge">${s.items.length}</span></div>
+        <ul>${s.items.map(it => `<li>${it}</li>`).join("")}</ul>
+      </div>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Infinity Search · ${tipo.toUpperCase()} · ${query}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111;padding:28px 36px;font-size:13px}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2.5px solid #0891b2;padding-bottom:14px;margin-bottom:20px}
+    .logo{font-size:22px;font-weight:900;letter-spacing:4px;text-transform:uppercase;color:#0891b2}
+    .meta{text-align:right;color:#555;font-size:11px;line-height:1.7}
+    .meta strong{color:#111}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px}
+    tr:nth-child(even){background:#f4fbfd}
+    td{padding:7px 10px;border-bottom:1px solid #e0f2f8;vertical-align:top}
+    td.key{font-weight:700;color:#0e7490;text-transform:uppercase;font-size:11px;letter-spacing:1px;width:36%;white-space:nowrap}
+    td.val{color:#111;font-size:13px;word-break:break-all}
+    .section{margin-bottom:18px}
+    .sec-title{font-weight:800;text-transform:uppercase;letter-spacing:2px;font-size:11px;color:#0891b2;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+    .badge{background:#0891b2;color:#fff;border-radius:9px;padding:1px 7px;font-size:10px}
+    ul{list-style:none;padding:0}
+    li{padding:5px 10px;background:#f4fbfd;border-left:3px solid #0891b2;margin-bottom:4px;font-size:12px;font-family:monospace;word-break:break-all}
+    .footer{margin-top:24px;border-top:1px solid #e0f2f8;padding-top:10px;text-align:center;color:#aaa;font-size:10px;letter-spacing:2px;text-transform:uppercase}
+    @media print{body{padding:10px 16px}button{display:none}}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="logo">∞ Infinity Search</div>
+      <div style="margin-top:4px;font-size:11px;color:#555">Relatório OSINT gerado automaticamente</div>
+    </div>
+    <div class="meta">
+      <div><strong>Tipo:</strong> ${tipo.toUpperCase()}</div>
+      <div><strong>Consulta:</strong> ${query}</div>
+      <div><strong>Data:</strong> ${date}</div>
+      <div><strong>Campos:</strong> ${parsed.fields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div>
+    </div>
+  </div>
+
+  ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}
+  ${sectionsHtml}
+
+  <div class="footer">Made by blxckxyz · Infinity Search · ${date}</div>
+  <script>setTimeout(()=>window.print(),300)</script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  };
+
   if (!result.success && parsed.fields.length === 0 && parsed.sections.length === 0) {
     return (
       <motion.div
@@ -286,6 +356,12 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
             className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
           >
             <Download className="w-3 h-3" /> Exportar
+          </button>
+          <button
+            onClick={downloadPdf}
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors"
+          >
+            <FileText className="w-3 h-3" /> PDF
           </button>
           <CopyButton text={exportText} label="Copiar tudo" />
           <SaveToDossieButton tipo={tipo} query={query} data={result.data} />

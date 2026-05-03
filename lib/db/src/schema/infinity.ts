@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, serial, boolean, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, serial, boolean, jsonb, index, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,6 +9,7 @@ export const infinityUsersTable = pgTable("infinity_users", {
   createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt:      timestamp("last_login_at", { withTimezone: true }),
   accountExpiresAt: timestamp("account_expires_at", { withTimezone: true }),
+  queryDailyLimit:  integer("query_daily_limit"),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {

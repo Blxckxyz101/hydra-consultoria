@@ -9,6 +9,7 @@ type InfUser = {
   createdAt: string;
   lastLoginAt: string | null;
   accountExpiresAt: string | null;
+  queryDailyLimit: number | null;
 };
 
 type Toast = { id: number; type: "ok" | "err"; text: string } | null;
@@ -357,7 +358,10 @@ export function InfinityUsers() {
   const [newPass, setNewPass] = useState("");
   const [newRole, setNewRole] = useState<"vip" | "admin" | "user">("vip");
   const [newExpiry, setNewExpiry] = useState<number>(30);
+  const [newLimit, setNewLimit] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  const [editingLimit, setEditingLimit] = useState<string | null>(null);
+  const [limitInputs, setLimitInputs] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<Toast>(null);
   const [search, setSearch] = useState("");
 
@@ -411,14 +415,14 @@ export function InfinityUsers() {
       const r = await fetch(`${API}/users`, {
         method: "POST",
         headers: hdrs(),
-        body: JSON.stringify({ username: newUser.trim(), password: newPass, role: newRole, expiresInDays: newExpiry }),
+        body: JSON.stringify({ username: newUser.trim(), password: newPass, role: newRole, expiresInDays: newExpiry, queryDailyLimit: newLimit !== "" ? Number(newLimit) : null }),
       });
       if (r.status === 403) { handleExpired(); return; }
       const data = await r.json();
       if (!r.ok) { showToast("err", data?.error ?? "Falha ao criar"); }
       else {
         showToast("ok", `✅ "${newUser.trim()}" criado!`);
-        setNewUser(""); setNewPass(""); setNewRole("vip"); setNewExpiry(30);
+        setNewUser(""); setNewPass(""); setNewRole("vip"); setNewExpiry(30); setNewLimit("");
         fetchUsers();
       }
     } catch { showToast("err", "Erro de conexão"); }
@@ -445,6 +449,22 @@ export function InfinityUsers() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { showToast("err", d?.error ?? "Falha"); return; }
       showToast("ok", isRevoked ? `"${username}" reativado` : `"${username}" revogado`);
+      fetchUsers();
+    } catch { showToast("err", "Erro de conexão"); }
+  };
+
+  const handleSetLimit = async (username: string, limitStr: string) => {
+    const limitNum = limitStr === "" || Number(limitStr) <= 0 ? null : Number(limitStr);
+    try {
+      const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, {
+        method: "PATCH", headers: hdrs(),
+        body: JSON.stringify({ queryDailyLimit: limitNum }),
+      });
+      if (r.status === 403) { handleExpired(); return; }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast("err", d?.error ?? "Falha"); return; }
+      showToast("ok", limitNum === null ? `"${username}" limite removido (padrão)` : `"${username}" limite: ${limitNum}/dia`);
+      setEditingLimit(null);
       fetchUsers();
     } catch { showToast("err", "Erro de conexão"); }
   };
@@ -601,6 +621,18 @@ export function InfinityUsers() {
               </div>
             </div>
 
+            <div>
+              <label className="iu-label">Limite diário de consultas</label>
+              <input
+                className="iu-input"
+                type="number"
+                min={0}
+                value={newLimit}
+                onChange={e => setNewLimit(e.target.value)}
+                placeholder="0 ou vazio = padrão (100)"
+              />
+            </div>
+
             <button type="submit" className="iu-btn-primary" disabled={creating}
               style={{ opacity: creating ? 0.5 : 1 }}
             >
@@ -677,6 +709,54 @@ export function InfinityUsers() {
                             {badge.text}
                           </div>
                         )}
+                        {/* Limit badge + inline editor */}
+                        <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          {editingLimit === u.username ? (
+                            <>
+                              <input
+                                type="number"
+                                min={0}
+                                autoFocus
+                                value={limitInputs[u.username] ?? ""}
+                                onChange={e => setLimitInputs(prev => ({ ...prev, [u.username]: e.target.value }))}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") handleSetLimit(u.username, limitInputs[u.username] ?? "");
+                                  if (e.key === "Escape") setEditingLimit(null);
+                                }}
+                                placeholder="0 = padrão"
+                                style={{
+                                  width: 90, padding: "3px 8px", background: "rgba(0,0,0,0.5)",
+                                  border: "1px solid rgba(155,89,182,0.5)", borderRadius: 6,
+                                  color: "#fff", fontSize: 12, outline: "none",
+                                }}
+                              />
+                              <button
+                                onClick={() => handleSetLimit(u.username, limitInputs[u.username] ?? "")}
+                                style={{ padding: "3px 8px", background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.4)", color: "#6ee7b7", borderRadius: 6, cursor: "pointer", fontSize: 11 }}
+                              >✓</button>
+                              <button
+                                onClick={() => setEditingLimit(null)}
+                                style={{ padding: "3px 8px", background: "rgba(155,89,182,0.1)", border: "1px solid rgba(155,89,182,0.3)", color: "#cba8ff", borderRadius: 6, cursor: "pointer", fontSize: 11 }}
+                              >✕</button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingLimit(u.username);
+                                setLimitInputs(prev => ({ ...prev, [u.username]: u.queryDailyLimit != null ? String(u.queryDailyLimit) : "" }));
+                              }}
+                              style={{
+                                padding: "3px 10px", borderRadius: 20, fontSize: 10, letterSpacing: 1.5,
+                                background: u.queryDailyLimit != null ? "rgba(139,92,246,0.15)" : "rgba(100,116,139,0.1)",
+                                border: `1px solid ${u.queryDailyLimit != null ? "rgba(139,92,246,0.4)" : "rgba(100,116,139,0.3)"}`,
+                                color: u.queryDailyLimit != null ? "#c4b5fd" : "rgba(230,216,255,0.35)",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {u.queryDailyLimit != null ? `⚡ ${u.queryDailyLimit}/dia` : "⚡ padrão (100/dia)"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 

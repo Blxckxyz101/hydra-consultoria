@@ -67,13 +67,14 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null }) {
+function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null }) {
   return {
     username: row.username,
     role: row.role,
     createdAt: row.createdAt.toISOString(),
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     accountExpiresAt: row.accountExpiresAt ? row.accountExpiresAt.toISOString() : null,
+    queryDailyLimit: row.queryDailyLimit ?? null,
   };
 }
 
@@ -665,7 +666,7 @@ router.get("/users", requireAdmin, async (_req, res) => {
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
-  const { username, password, role, expiresInDays, expiresAt } = req.body ?? {};
+  const { username, password, role, expiresInDays, expiresAt, queryDailyLimit } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
@@ -681,10 +682,14 @@ router.post("/users", requireAdmin, async (req, res) => {
     accountExpiresAt = new Date(Date.now() + Number(expiresInDays) * 24 * 60 * 60 * 1000);
   }
 
+  const queryDailyLimitVal = queryDailyLimit !== undefined && queryDailyLimit !== null && queryDailyLimit !== ""
+    ? Number(queryDailyLimit) || null
+    : null;
+
   try {
     const [created] = await db
       .insert(infinityUsersTable)
-      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt })
+      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt, queryDailyLimit: queryDailyLimitVal })
       .returning();
     res.status(201).json(serializeUser(created));
   } catch {
@@ -704,24 +709,34 @@ router.delete("/users/:username", requireAdmin, async (req, res) => {
 
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays, expiresAt } = req.body ?? {};
+  const { action, expiresInDays, expiresAt, queryDailyLimit } = req.body ?? {};
 
-  let updateData: { accountExpiresAt: Date | null };
+  // Build update object flexibly
+  const updateData: Partial<{
+    accountExpiresAt: Date | null;
+    queryDailyLimit: number | null;
+  }> = {};
 
   if (action === "revoke") {
-    updateData = { accountExpiresAt: new Date(Date.now() - 1000) };
+    updateData.accountExpiresAt = new Date(Date.now() - 1000);
   } else if (action === "restore") {
-    updateData = { accountExpiresAt: null };
+    updateData.accountExpiresAt = null;
   } else if (expiresAt !== undefined) {
-    updateData = { accountExpiresAt: expiresAt ? new Date(expiresAt) : null };
+    updateData.accountExpiresAt = expiresAt ? new Date(expiresAt) : null;
   } else if (expiresInDays !== undefined) {
-    updateData = {
-      accountExpiresAt: Number(expiresInDays) > 0
-        ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
-        : null,
-    };
-  } else {
-    res.status(400).json({ error: "Ação inválida." });
+    updateData.accountExpiresAt = Number(expiresInDays) > 0
+      ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
+      : null;
+  }
+
+  if (queryDailyLimit !== undefined) {
+    updateData.queryDailyLimit = queryDailyLimit === null || queryDailyLimit === "" || Number(queryDailyLimit) <= 0
+      ? null
+      : Number(queryDailyLimit);
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    res.status(400).json({ error: "Nenhum campo para atualizar." });
     return;
   }
 
@@ -918,10 +933,12 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     });
     return;
   }
-  if (userCount >= PER_USER_DAILY_LIMIT) {
+  const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
+  if (userCount >= userLimit) {
     res.status(429).json({
-      error: `Seu limite diário de ${PER_USER_DAILY_LIMIT} consultas foi atingido. Tente novamente amanhã.`,
+      error: `Seu limite diário de ${userLimit} consultas foi atingido. Tente novamente amanhã.`,
       rateLimited: true,
+      limitInfo: { used: userCount, limit: userLimit },
     });
     return;
   }
@@ -1294,7 +1311,7 @@ router.get("/panel/users", requirePanelToken, async (_req, res) => {
 });
 
 router.post("/panel/users", requirePanelToken, async (req, res) => {
-  const { username, password, role, expiresInDays } = req.body ?? {};
+  const { username, password, role, expiresInDays, queryDailyLimit } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
@@ -1306,10 +1323,13 @@ router.post("/panel/users", requirePanelToken, async (req, res) => {
     expiresInDays && Number(expiresInDays) > 0
       ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
       : null;
+  const queryDailyLimitVal = queryDailyLimit !== undefined && queryDailyLimit !== null && queryDailyLimit !== ""
+    ? Number(queryDailyLimit) || null
+    : null;
   try {
     const [created] = await db
       .insert(infinityUsersTable)
-      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt })
+      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt, queryDailyLimit: queryDailyLimitVal })
       .returning();
     res.status(201).json(serializeUser(created));
   } catch {
@@ -1323,20 +1343,34 @@ router.delete("/panel/users/:username", requirePanelToken, async (req, res) => {
 });
 
 router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
-  const { action, expiresInDays } = req.body ?? {};
-  let accountExpiresAt: Date | null;
+  const { action, expiresInDays, queryDailyLimit } = req.body ?? {};
+
+  const updateData: Partial<{ accountExpiresAt: Date | null; queryDailyLimit: number | null }> = {};
+
   if (action === "revoke") {
-    accountExpiresAt = new Date(Date.now() - 1000);
+    updateData.accountExpiresAt = new Date(Date.now() - 1000);
   } else if (action === "restore") {
-    accountExpiresAt = null;
-  } else {
-    accountExpiresAt = Number(expiresInDays) > 0
+    updateData.accountExpiresAt = null;
+  } else if (expiresInDays !== undefined) {
+    updateData.accountExpiresAt = Number(expiresInDays) > 0
       ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
       : null;
   }
+
+  if (queryDailyLimit !== undefined) {
+    updateData.queryDailyLimit = queryDailyLimit === null || queryDailyLimit === "" || Number(queryDailyLimit) <= 0
+      ? null
+      : Number(queryDailyLimit);
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    res.status(400).json({ error: "Nenhum campo para atualizar." });
+    return;
+  }
+
   const [updated] = await db
     .update(infinityUsersTable)
-    .set({ accountExpiresAt })
+    .set(updateData)
     .where(eq(infinityUsersTable.username, String(req.params.username)))
     .returning();
   if (!updated) { res.status(404).json({ error: "Usuário não encontrado" }); return; }

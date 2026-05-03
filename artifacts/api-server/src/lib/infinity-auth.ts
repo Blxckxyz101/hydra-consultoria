@@ -8,6 +8,7 @@ export type InfinityRole = "admin" | "user";
 export interface InfinityAuthUser {
   username: string;
   role: InfinityRole;
+  queryDailyLimit: number | null;
 }
 
 declare global {
@@ -51,6 +52,7 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
       username: infinityUsersTable.username,
       role: infinityUsersTable.role,
       accountExpiresAt: infinityUsersTable.accountExpiresAt,
+      queryDailyLimit: infinityUsersTable.queryDailyLimit,
     })
     .from(infinitySessionsTable)
     .innerJoin(infinityUsersTable, eq(infinityUsersTable.username, infinitySessionsTable.username))
@@ -60,7 +62,11 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
   if (!row) return null;
   // Block access if user account has expired (admins are never blocked)
   if (row.role !== "admin" && row.accountExpiresAt && row.accountExpiresAt < now) return null;
-  return { username: row.username, role: (row.role === "admin" ? "admin" : "user") };
+  return {
+    username: row.username,
+    role: (row.role === "admin" ? "admin" : "user"),
+    queryDailyLimit: row.queryDailyLimit ?? null,
+  };
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
