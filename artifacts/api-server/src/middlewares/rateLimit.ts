@@ -43,6 +43,16 @@ export const loginLimiter = rateLimit({
   message:            { error: "Muitas tentativas de login. Aguarde 15 minutos." },
 });
 
+export const panelAuthLimiter = rateLimit({
+  windowMs:           15 * 60_000,
+  max:                5,
+  standardHeaders:    true,
+  legacyHeaders:      false,
+  keyGenerator:       ip,
+  skipSuccessfulRequests: true,
+  message:            { error: "Muitas tentativas de acesso ao painel. Aguarde 15 minutos." },
+});
+
 export const consultaLimiter = rateLimit({
   windowMs:        60_000,
   max:             30,
