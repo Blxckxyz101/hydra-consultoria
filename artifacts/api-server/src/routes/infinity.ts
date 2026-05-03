@@ -566,7 +566,11 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. Quando o usuário pedir para consultar/buscar um CPF, CNPJ, telefone, placa ou qualquer dado, use a ferramenta consultar_infinity para executar a consulta real e depois interprete os resultados. Nunca invente dados. Suas respostas serão lidas em voz alta — seja conciso e use frases naturais.";
+    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. " +
+    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, etc.). " +
+    "NÃO use a ferramenta em resposta a: agradecimentos, saudações, perguntas sobre resultados anteriores, confirmações ou qualquer mensagem que não contenha um pedido claro de nova consulta. " +
+    "Nunca repita consultas de mensagens anteriores. Nunca invente dados. " +
+    "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
 
   const cleanMessages = messages.filter(
     (m: { role?: string; content?: string }) => m && typeof m.content === "string"
@@ -607,7 +611,7 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         const dados = String(args.dados ?? "");
 
         if (tipo && dados) {
-          res.write(`data: ${JSON.stringify({ delta: `🔍 Consultando **${tipo.toUpperCase()}**: \`${dados}\`...\n\n` })}\n\n`);
+          res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}: ${dados}...` })}\n\n`);
 
           const consultResult = await callProvider(tipo, dados, new AbortController().signal);
           let toolContent = "";

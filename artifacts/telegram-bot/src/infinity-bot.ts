@@ -9,6 +9,62 @@ const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
 
+// ── Access control ────────────────────────────────────────────────────────────
+// Channel users must join to use the bot (private invite channel)
+const CHANNEL_INVITE = "https://t.me/+7sBxmhOFPhJlYzcx";
+// Numeric ID of the channel — set INFINITY_CHANNEL_ID env var
+// (admin can discover it by sending /channelid in the channel after adding the bot)
+let CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
+  ? Number(process.env.INFINITY_CHANNEL_ID)
+  : null;
+
+// Admin usernames (lowercase, no @)
+const ADMIN_USERNAMES = new Set(["blxckxyz"]);
+// Admin user IDs (more reliable than username)
+const ADMIN_IDS = new Set<number>();
+
+// Verified channel members (user IDs — persists in-memory)
+const verifiedUsers = new Set<number>();
+// Authorized group/supergroup chat IDs
+const authorizedGroups = new Set<number>();
+
+function isAdmin(userId: number, username?: string): boolean {
+  if (ADMIN_IDS.has(userId)) return true;
+  if (username && ADMIN_USERNAMES.has(username.toLowerCase())) {
+    ADMIN_IDS.add(userId); // cache for next time
+    return true;
+  }
+  return false;
+}
+
+async function checkChannelMembership(
+  telegram: Telegraf["telegram"],
+  userId: number
+): Promise<boolean> {
+  if (!CHANNEL_ID) return true; // no channel configured → allow all (dev mode)
+  try {
+    const member = await telegram.getChatMember(CHANNEL_ID, userId);
+    return ["member", "administrator", "creator"].includes(member.status);
+  } catch {
+    return false;
+  }
+}
+
+async function isAuthorizedUser(
+  telegram: Telegraf["telegram"],
+  userId: number,
+  username?: string
+): Promise<boolean> {
+  // Admins always allowed
+  if (isAdmin(userId, username)) return true;
+  // Already verified
+  if (verifiedUsers.has(userId)) return true;
+  // Check channel membership
+  const ok = await checkChannelMembership(telegram, userId);
+  if (ok) verifiedUsers.add(userId);
+  return ok;
+}
+
 // ── All tipos (flat list) ─────────────────────────────────────────────────────
 const TIPOS = [
   { id: "cpf",         label: "🪪 CPF",           prompt: "CPF (11 dígitos, só números)" },
@@ -163,6 +219,19 @@ function resultKeyboard(chatId: number, msgId: number) {
   ]);
 }
 
+// ── Not authorized reply ──────────────────────────────────────────────────────
+async function sendNotAuthorized(ctx: { replyWithHTML: (t: string, extra?: object) => Promise<any> }) {
+  await ctx.replyWithHTML(
+    `🔒 <b>Acesso restrito</b>\n\n` +
+    `Para usar o <b>Infinity Search Bot</b>, você precisa ser membro do canal oficial.\n\n` +
+    `Entre no canal e tente novamente:`,
+    Markup.inlineKeyboard([
+      [Markup.button.url("📢 Entrar no Canal", CHANNEL_INVITE)],
+      [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+    ])
+  );
+}
+
 // ── Core query executor ───────────────────────────────────────────────────────
 async function executeQuery(
   ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
@@ -196,7 +265,6 @@ async function executeQuery(
     const totalRegistros = parsed.sections.reduce((a, s) => a + s.items.length, 0);
     const txtContent = formatResultTxt(tipo, dados, parsed, raw);
 
-    // Build inline summary (HTML)
     const summaryParts: string[] = [
       `✅ <b>Resultado encontrado</b>`,
       ``,
@@ -206,19 +274,15 @@ async function executeQuery(
     if (parsed.fields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${parsed.fields.length}`);
     if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
 
-    // Show top fields preview
     const preview = parsed.fields.slice(0, 6);
     if (preview.length > 0) {
       summaryParts.push(``, `<b>Prévia:</b>`);
-      for (const [k, v] of preview) {
-        summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
-      }
+      for (const [k, v] of preview) summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
     } else if (parsed.sections.length > 0 && parsed.sections[0].items.length > 0) {
       summaryParts.push(``, `<b>Prévia (${parsed.sections[0].name}):</b>`);
       parsed.sections[0].items.slice(0, 3).forEach(item => summaryParts.push(`  • ${item.slice(0, 80)}`));
     }
 
-    // Delete the loading message, send .txt with summary as caption
     await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
 
     const filename = `infinity-${tipo}-${Date.now()}.txt`;
@@ -227,13 +291,10 @@ async function executeQuery(
       {
         caption: summaryParts.join("\n").slice(0, 1024),
         parse_mode: "HTML",
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback("🔍 Nova Consulta", "consultar")],
-        ]),
+        ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]),
       }
     );
 
-    // Edit the document message to add delete button with its own msg id
     const kb = resultKeyboard(chatId, sentDoc.message_id);
     await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
 
@@ -284,6 +345,115 @@ export function startInfinityBot(): void {
     `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n` +
     `Escolha o tipo de dado para consultar:`;
 
+  // ── Middleware: group authorization check ──────────────────────────────────
+  bot.use(async (ctx, next) => {
+    const chat = ctx.chat;
+    if (!chat) return next();
+
+    // In groups/supergroups: check group authorization
+    if (chat.type === "group" || chat.type === "supergroup") {
+      if (!authorizedGroups.has(chat.id)) {
+        // Only respond to admins trying to liberate; ignore everything else silently
+        const from = ctx.from;
+        if (from && isAdmin(from.id, from.username)) return next();
+        return; // ignore non-admin messages in unauthorized groups
+      }
+    }
+
+    // In private chats: check channel membership
+    if (chat.type === "private") {
+      const from = ctx.from;
+      if (!from) return next();
+      if (isAdmin(from.id, from.username)) return next();
+
+      const authorized = await isAuthorizedUser(bot.telegram, from.id, from.username);
+      if (!authorized) {
+        // Only send the not-authorized message for commands/messages, not callbacks (avoid spam)
+        if ("message" in ctx || "callback_query" in ctx) {
+          await sendNotAuthorized(ctx as any);
+        }
+        return;
+      }
+    }
+
+    return next();
+  });
+
+  // ── Admin-only commands ────────────────────────────────────────────────────
+
+  // /liberar — authorize current group (admin only)
+  bot.command("liberar", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) {
+      await ctx.replyWithHTML("❌ <b>Sem permissão.</b> Apenas admins podem liberar grupos.");
+      return;
+    }
+    const chat = ctx.chat;
+    if (chat.type === "private") {
+      await ctx.replyWithHTML("ℹ️ Este comando funciona em grupos. Adicione o bot ao grupo e use /liberar lá.");
+      return;
+    }
+    authorizedGroups.add(chat.id);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(
+      `✅ <b>Grupo liberado!</b>\n\n` +
+      `O bot está ativo neste grupo.\n` +
+      `ID: <code>${chat.id}</code>`,
+      Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]])
+    );
+  });
+
+  // /bloquear — remove group authorization (admin only)
+  bot.command("bloquear", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) {
+      await ctx.replyWithHTML("❌ <b>Sem permissão.</b>");
+      return;
+    }
+    const chat = ctx.chat;
+    authorizedGroups.delete(chat.id);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b>\nID: <code>${chat.id}</code>`);
+  });
+
+  // /channelid — discover channel ID (admin only, use inside the channel)
+  bot.command("channelid", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const chat = ctx.chat;
+    CHANNEL_ID = chat.id;
+    await ctx.replyWithHTML(
+      `📡 <b>Canal detectado!</b>\n\nID: <code>${chat.id}</code>\n\n` +
+      `Defina <code>INFINITY_CHANNEL_ID=${chat.id}</code> para persistir entre reinicializações.`
+    );
+  });
+
+  // /addadmin — add admin by user ID (admin only)
+  bot.command("addadmin", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const args = ctx.message.text.split(" ").slice(1);
+    const uid = Number(args[0]);
+    if (!uid) { await ctx.replyWithHTML("Uso: <code>/addadmin 123456789</code>"); return; }
+    ADMIN_IDS.add(uid);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(`✅ <code>${uid}</code> adicionado como admin.`);
+  });
+
+  // /status_bot — show access control status (admin only)
+  bot.command("status_bot", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    await ctx.replyWithHTML([
+      `📊 <b>Status do Bot</b>`,
+      ``,
+      `Canal ID: <code>${CHANNEL_ID ?? "não configurado"}</code>`,
+      `Usuários verificados: <b>${verifiedUsers.size}</b>`,
+      `Grupos autorizados: <b>${authorizedGroups.size}</b>`,
+      `IDs dos grupos: ${[...authorizedGroups].map(id => `<code>${id}</code>`).join(", ") || "nenhum"}`,
+    ].join("\n"));
+  });
+
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command("start", async (ctx) => {
     resetSession(ctx.from.id);
@@ -318,14 +488,12 @@ export function startInfinityBot(): void {
       try { await ctx.deleteMessage(); } catch {}
 
       if (args) {
-        // Inline: /cpf 12345678901 → execute directly
         resetSession(ctx.from.id);
         const loadMsg = await ctx.replyWithHTML(
           `⏳ <b>Consultando ${tipo.label}...</b>\n<code>${args}</code>`
         );
         await executeQuery(ctx, tipoId, args, loadMsg.message_id);
       } else {
-        // No args → set awaiting_query
         const session = getSession(ctx.from.id);
         session.state = "awaiting_query";
         session.tipo = tipoId;
@@ -358,9 +526,9 @@ export function startInfinityBot(): void {
       `<b>Menu interativo:</b>`,
       `/consultar — abre o seletor com todos os tipos`,
       ``,
-      `<b>Todos os tipos disponíveis:</b>`,
-      `👤 Pessoa · 🚗 Veículo · 🏢 Empresa`,
-      `📱 Contato · 📋 Outros (saúde, óbito, vacinas)`,
+      `<b>Acesso:</b>`,
+      `Membros do canal oficial têm acesso automático.`,
+      `Grupos precisam ser liberados por um admin.`,
       ``,
       `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
       `<i>Resultados entregues em arquivo .txt formatado</i>`,
@@ -405,8 +573,13 @@ export function startInfinityBot(): void {
       `<code>/email</code> · <code>/cep</code> · <code>/pix</code> · <code>/rg</code> · <code>/nome</code>`,
       ``,
       `Envie o comando + dado direto: <code>/cpf 12345678901</code>`,
+      ``,
+      `<b>Acesso:</b> entre no canal para usar o bot.`,
     ].join("\n"),
-      Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]]),
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🔍 Consultar", "consultar")],
+        [Markup.button.url("📢 Canal", CHANNEL_INVITE)] as any,
+      ]),
     );
   });
 
@@ -435,23 +608,19 @@ export function startInfinityBot(): void {
 
   // ── Text handler ──────────────────────────────────────────────────────────
   bot.on(message("text"), async (ctx) => {
-    // Ignore commands (handled above)
     if (ctx.message.text.startsWith("/")) return;
 
     const session = getSession(ctx.from.id);
 
     if (session.state !== "awaiting_query" || !session.tipo) {
-      // Not in a query flow — show home
       await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
       return;
     }
 
     const dados = ctx.message.text.trim();
     const tipo = session.tipo;
-    // Reset BEFORE async so no re-entry
     resetSession(ctx.from.id);
 
-    // Delete user's message
     try { await ctx.deleteMessage(); } catch {}
 
     const tipoObj = TIPOS.find((t) => t.id === tipo);
@@ -462,8 +631,25 @@ export function startInfinityBot(): void {
     await executeQuery(ctx, tipo, dados, loadMsg.message_id);
   });
 
+  // ── Listen for chat_member updates (auto-verify on channel join) ───────────
+  bot.on("chat_member", async (ctx) => {
+    const update = ctx.update.chat_member;
+    if (!update) return;
+    // If this update is from our channel, and user became a member
+    if (CHANNEL_ID && update.chat.id === CHANNEL_ID) {
+      const newStatus = update.new_chat_member.status;
+      const userId = update.new_chat_member.user.id;
+      if (["member", "administrator", "creator"].includes(newStatus)) {
+        verifiedUsers.add(userId);
+      } else {
+        // Left/kicked → remove from verified
+        verifiedUsers.delete(userId);
+      }
+    }
+  });
+
   // ── Launch ────────────────────────────────────────────────────────────────
-  bot.launch(() => {
+  bot.launch({ allowedUpdates: ["message", "callback_query", "chat_member", "my_chat_member"] }, () => {
     console.log("🌐 Infinity Search Bot iniciado com sucesso!");
   }).catch((err: unknown) => {
     const msg = String((err as Error)?.message ?? err);

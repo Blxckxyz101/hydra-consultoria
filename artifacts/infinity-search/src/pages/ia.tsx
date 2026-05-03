@@ -157,6 +157,7 @@ export default function IA() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historySearch, setHistorySearch] = useState("");
   const [voiceMuted, setVoiceMuted] = useState(false);
+  const [consultingStatus, setConsultingStatus] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -167,9 +168,11 @@ export default function IA() {
   const continuousRef = useRef(false);
   const voiceModeRef = useRef(false);
   const voiceMutedRef = useRef(false);
+  const listeningRef = useRef(false);
   useEffect(() => { continuousRef.current = continuous; }, [continuous]);
   useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
   useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
+  useEffect(() => { listeningRef.current = listening; }, [listening]);
 
   // Preload TTS voices on mount
   useEffect(() => { if ("speechSynthesis" in window) getVoicesAsync().catch(() => {}); }, []);
@@ -262,10 +265,16 @@ export default function IA() {
             const line = part.split("\n").find((l) => l.startsWith("data: "));
             if (!line) continue;
             const data = line.slice(6);
-            if (data === "[DONE]") continue;
+            if (data === "[DONE]") { setConsultingStatus(null); continue; }
             try {
               const parsed = JSON.parse(data);
+              // status = consulting indicator (do NOT append to message content)
+              if (parsed.status) {
+                setConsultingStatus(parsed.status);
+                continue;
+              }
               if (parsed.delta) {
+                setConsultingStatus(null);
                 if (firstChunk) { setIsThinking(false); firstChunk = false; }
                 finalReply += parsed.delta;
                 updateSession(currentId, (s) => {
@@ -281,6 +290,7 @@ export default function IA() {
       }
     } catch {
       setIsThinking(false);
+      setConsultingStatus(null);
       updateSession(currentId, (s) => {
         const msgs = [...s.messages];
         const last = msgs[msgs.length - 1];
@@ -289,6 +299,7 @@ export default function IA() {
       });
     } finally {
       setIsThinking(false);
+      setConsultingStatus(null);
       setIsStreaming(false);
       if (voiceModeRef.current && finalReply && !voiceMutedRef.current) speakAndContinue(finalReply);
     }
@@ -336,7 +347,7 @@ export default function IA() {
   };
 
   const startVoice = async () => {
-    if (listening) { stopVoice(); return; }
+    if (listeningRef.current) { stopVoice(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -356,13 +367,23 @@ export default function IA() {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
         const rec = new SR(); rec.lang = "pt-BR"; rec.interimResults = false; rec.continuous = false;
-        rec.onresult = (e: any) => { const t = e.results?.[0]?.[0]?.transcript || ""; if (t) { stopVoice(); sendMessage(t); } };
+        rec.onresult = (e: any) => {
+          const t = e.results?.[0]?.[0]?.transcript || "";
+          if (t) { stopVoice(); sendMessage(t); }
+        };
         rec.onerror = () => stopVoice();
-        rec.onend = () => { if (listening) stopVoice(); };
+        // Use ref so closure always has current value
+        rec.onend = () => { if (listeningRef.current) stopVoice(); };
         recognitionRef.current = rec; rec.start();
+      } else {
+        // Browser doesn't support speech recognition — still show mic active
+        console.warn("[VoiceMode] SpeechRecognition não suportado neste navegador.");
       }
       setListening(true);
-    } catch { stopVoice(); }
+    } catch (err) {
+      console.warn("[VoiceMode] Erro ao acessar microfone:", err);
+      stopVoice();
+    }
   };
 
   useEffect(() => () => stopVoice(), []);
@@ -699,6 +720,30 @@ export default function IA() {
               </div>
             </motion.div>
           ))}
+
+          {/* ── Consulting status indicator ── */}
+          <AnimatePresence>
+            {consultingStatus && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="flex gap-3"
+              >
+                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0 mt-1">
+                  <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />
+                </div>
+                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl rounded-tl-sm bg-white/[0.03] border border-white/[0.07] backdrop-blur-sm">
+                  <motion.div
+                    className="w-1.5 h-1.5 rounded-full bg-sky-400"
+                    animate={{ scale: [1, 1.6, 1], opacity: [1, 0.4, 1] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                  />
+                  <span className="text-xs text-sky-300/90 font-mono">{consultingStatus}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* ── Thinking Panel (Replit-style) ── */}
           <AnimatePresence>
