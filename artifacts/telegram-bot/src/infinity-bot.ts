@@ -319,6 +319,7 @@ function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string,
   lines.push(LINE);
   lines.push(`  Made by ${AUTHOR} | Infinity Search`);
   lines.push(`  Suporte : ${SUPPORT_URL}`);
+  lines.push(`  Suporte : ${SUPPORT_URL2}`);
   lines.push(LINE);
   return lines.join("\n");
 }
@@ -456,7 +457,7 @@ export function startInfinityBot(): void {
   const bot = new Telegraf(INFINITY_BOT_TOKEN);
 
   // ── Register commands ──────────────────────────────────────────────────────
-  void bot.telegram.setMyCommands([
+  const USER_COMMANDS = [
     { command: "start",     description: "🌐 Menu principal" },
     { command: "consultar", description: "🔍 Nova consulta OSINT" },
     { command: "cpf",       description: "🪪 Consultar CPF" },
@@ -468,8 +469,18 @@ export function startInfinityBot(): void {
     { command: "cep",       description: "📍 Consultar CEP" },
     { command: "pix",       description: "💳 Consultar chave PIX" },
     { command: "rg",        description: "🪪 Consultar RG" },
-    { command: "ajuda",     description: "❓ Lista de tipos disponíveis" },
-  ]).catch(() => {});
+    { command: "ajuda",     description: "❓ Ajuda e lista de comandos" },
+  ];
+  const ADMIN_COMMANDS = [
+    ...USER_COMMANDS,
+    { command: "groupid",    description: "🆔 Ver ID do grupo/chat atual" },
+    { command: "liberar",    description: "✅ Liberar bot neste grupo" },
+    { command: "bloquear",   description: "🔒 Bloquear bot neste grupo" },
+    { command: "channelid",  description: "📡 Capturar ID do canal" },
+    { command: "addadmin",   description: "👑 Adicionar admin por ID" },
+    { command: "status_bot", description: "📊 Status do bot e grupos" },
+  ];
+  void bot.telegram.setMyCommands(USER_COMMANDS).catch(() => {});
 
   function buildHomeText(from: { username?: string; first_name?: string; id: number }): string {
     const name = from.username ? `@${from.username}` : (from.first_name || "usuário");
@@ -569,6 +580,30 @@ export function startInfinityBot(): void {
     await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b>\nID: <code>${chat.id}</code>`);
   });
 
+  // /groupid — show current chat ID (admin only, useful before /liberar)
+  bot.command("groupid", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const chat = ctx.chat;
+    const tipo = chat.type === "private" ? "privado" : chat.type === "supergroup" ? "supergrupo" : chat.type;
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(
+      `🆔 <b>ID deste chat</b>\n\n` +
+      `ID: <code>${chat.id}</code>\n` +
+      `Tipo: <code>${tipo}</code>\n` +
+      `${"title" in chat && chat.title ? `Nome: <b>${chat.title}</b>\n` : ""}` +
+      `\n` +
+      `Use esse ID para liberar o bot:\n` +
+      `<code>/liberar</code> — neste grupo\n` +
+      `<code>/bloquear</code> — para remover acesso`,
+      Markup.inlineKeyboard(
+        chat.type !== "private"
+          ? [[Markup.button.callback("✅ Liberar agora", "admin_liberar")]]
+          : []
+      )
+    );
+  });
+
   // /channelid — discover channel ID (admin only, use inside the channel)
   bot.command("channelid", async (ctx) => {
     const from = ctx.from;
@@ -611,6 +646,12 @@ export function startInfinityBot(): void {
   bot.command("start", async (ctx) => {
     resetSession(ctx.from.id);
     try { await ctx.deleteMessage(); } catch {}
+    // For admins, also register extended command list scoped to their chat
+    if (isAdmin(ctx.from.id, ctx.from.username)) {
+      void bot.telegram.setMyCommands(ADMIN_COMMANDS, {
+        scope: { type: "chat", chat_id: ctx.from.id },
+      }).catch(() => {});
+    }
     await ctx.replyWithHTML(buildHomeText(ctx.from), buildHomeKeyboard());
   });
 
@@ -661,11 +702,12 @@ export function startInfinityBot(): void {
   // ── /ajuda ────────────────────────────────────────────────────────────────
   bot.command("ajuda", async (ctx) => {
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML([
+    const admin = isAdmin(ctx.from.id, ctx.from.username);
+    const lines = [
       `❓ <b>INFINITY SEARCH — AJUDA</b>`,
       `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
       ``,
-      `<b>Comandos rápidos (com ou sem dado):</b>`,
+      `<b>Comandos rápidos (dado opcional):</b>`,
       `<code>/cpf 12345678901</code>`,
       `<code>/telefone 11999887766</code>`,
       `<code>/placa ABC1D23</code>`,
@@ -677,19 +719,57 @@ export function startInfinityBot(): void {
       `<code>/nome João Silva</code>`,
       ``,
       `<b>Menu interativo:</b>`,
-      `/consultar — abre o seletor com todos os tipos`,
+      `<code>/consultar</code> — abre seletor com todos os tipos`,
+      ``,
+      `<b>Bases de dados disponíveis:</b>`,
+      `∞ <b>Infinity</b> — OSINT completo (todos os tipos)`,
+      `🏥 <b>SISREG-III</b> — Regulação em saúde (CPF/Nome)`,
+      `💉 <b>SI-PNI</b> — Vacinação nacional (CPF/CNS/Nome)`,
       ``,
       `<b>Acesso:</b>`,
-      `Membros do canal oficial têm acesso automático.`,
+      `Membros do canal têm acesso automático.`,
       `Grupos precisam ser liberados por um admin.`,
-      ``,
-      `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
-      `<i>Resultados entregues em arquivo .txt formatado</i>`,
-    ].join("\n"),
+    ];
+
+    if (admin) {
+      lines.push(``);
+      lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+      lines.push(`👑 <b>COMANDOS DE ADMIN</b>`);
+      lines.push(``);
+      lines.push(`<code>/groupid</code> — ver ID do grupo/chat atual`);
+      lines.push(`<code>/liberar</code> — liberar bot neste grupo`);
+      lines.push(`<code>/bloquear</code> — bloquear bot neste grupo`);
+      lines.push(`<code>/channelid</code> — capturar ID do canal`);
+      lines.push(`<code>/addadmin 123456</code> — promover usuário por ID`);
+      lines.push(`<code>/status_bot</code> — status de grupos e usuários`);
+    }
+
+    lines.push(``);
+    lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+    lines.push(`<i>Resultados entregues em arquivo .txt formatado</i>`);
+
+    await ctx.replyWithHTML(lines.join("\n"),
       Markup.inlineKeyboard([
         [Markup.button.callback("🔍 Consultar Agora", "consultar")],
-        [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+        [Markup.button.url("💬 Suporte", SUPPORT_URL), Markup.button.url("💬 Suporte", SUPPORT_URL2)] as any,
       ]),
+    );
+  });
+
+  // ── Callback: admin_liberar (from /groupid button) ───────────────────────
+  bot.action("admin_liberar", async (ctx) => {
+    await ctx.answerCbQuery();
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) {
+      await ctx.answerCbQuery("❌ Apenas admins podem liberar grupos.");
+      return;
+    }
+    const chat = ctx.chat;
+    if (!chat || chat.type === "private") return;
+    authorizedGroups.add(chat.id);
+    await ctx.editMessageText(
+      `✅ <b>Grupo liberado!</b>\n\nID: <code>${chat.id}</code>\nO bot está ativo neste grupo.`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]]) }
     );
   });
 
