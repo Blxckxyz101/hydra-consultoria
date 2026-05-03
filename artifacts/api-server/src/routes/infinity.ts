@@ -442,6 +442,81 @@ async function callCnpjWs(cnpj: string, signal: AbortSignal): Promise<{
   }
 }
 
+// ─── BrasilAPI fallback (CNPJ) ─────────────────────────────────────────────
+interface BrasilApiCnpjResponse {
+  cnpj?: string; razao_social?: string; nome_fantasia?: string;
+  descricao_situacao_cadastral?: string; descricao_tipo_de_logradouro?: string;
+  logradouro?: string; numero?: string; complemento?: string; bairro?: string;
+  municipio?: string; uf?: string; cep?: string; ddd_telefone_1?: string;
+  ddd_telefone_2?: string; email?: string; porte?: string;
+  descricao_porte?: string; natureza_juridica?: string;
+  capital_social?: number; data_inicio_atividade?: string;
+  cnae_fiscal_descricao?: string; data_situacao_cadastral?: string;
+  qsa?: Array<{
+    nome_socio?: string; qualificacao_socio?: string;
+    faixa_etaria?: string; data_entrada_sociedade?: string;
+  }>;
+}
+
+async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
+  ok: boolean; parsed?: Parsed; error?: string;
+}> {
+  try {
+    const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
+      signal,
+      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+    });
+    if (!r.ok) return { ok: false, error: `BrasilAPI HTTP ${r.status}` };
+    const d = await r.json() as BrasilApiCnpjResponse;
+    if (!d.cnpj && !d.razao_social) return { ok: false, error: "BrasilAPI: sem dados" };
+
+    const fields: Parsed["fields"] = [];
+    const add = (k: string, v: string | number | undefined | null) => {
+      const s = String(v ?? "").trim(); if (s && s !== "0") fields.push({ key: k, value: s });
+    };
+    add("CNPJ",              d.cnpj);
+    add("Razão Social",      d.razao_social);
+    add("Nome Fantasia",     d.nome_fantasia);
+    add("Situação",          d.descricao_situacao_cadastral);
+    add("Situação desde",    d.data_situacao_cadastral);
+    add("Início Atividade",  d.data_inicio_atividade);
+    add("Porte",             d.descricao_porte ?? d.porte);
+    add("Nat. Jurídica",     d.natureza_juridica);
+    add("Capital Social",    d.capital_social ? `R$ ${Number(d.capital_social).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : undefined);
+    add("Atividade Principal", d.cnae_fiscal_descricao);
+    const logr = [d.descricao_tipo_de_logradouro, d.logradouro, d.numero].filter(Boolean).join(" ");
+    add("Logradouro",        logr);
+    add("Complemento",       d.complemento);
+    add("Bairro",            d.bairro);
+    add("Município",         d.municipio);
+    add("UF",                d.uf);
+    add("CEP",               d.cep);
+    add("Telefone",          d.ddd_telefone_1);
+    add("Telefone 2",        d.ddd_telefone_2);
+    add("E-mail",            d.email);
+
+    const sections: Parsed["sections"] = [];
+    if (d.qsa?.length) {
+      sections.push({
+        name: "QUADRO SOCIETÁRIO (QSA)",
+        items: d.qsa.map((s) =>
+          [s.nome_socio, s.qualificacao_socio, s.faixa_etaria, s.data_entrada_sociedade ? `Entrada: ${s.data_entrada_sociedade}` : ""]
+            .filter(Boolean).join(" · ")
+        ),
+      });
+    }
+
+    const parsed: Parsed = {
+      fields,
+      sections,
+      raw: `[BrasilAPI] CNPJ: ${d.cnpj ?? cnpj} · ${d.razao_social} · ${d.descricao_situacao_cadastral}`,
+    };
+    return { ok: fields.length > 0, parsed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "erro BrasilAPI" };
+  }
+}
+
 // ─── auth ──────────────────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
@@ -671,9 +746,10 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
     { id: "geass",    name: "Geass API",       description: "Provedor OSINT principal · 24 tipos",           url: PROVIDER_BASE.replace("/api/consulta", "/") },
     { id: "sipni",    name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações",              url: "https://sipni.datasus.gov.br" },
     { id: "sisreg",   name: "SISREG-III",       description: "Sistema de Regulação em Saúde",                 url: "https://sisregiii.saude.gov.br" },
-    { id: "viacep",   name: "ViaCEP",           description: "Consulta de endereços por CEP · fallback CEP",  url: "https://viacep.com.br/ws/01001000/json/" },
-    { id: "receitaws",name: "ReceitaWS",         description: "CNPJ via Receita Federal · fallback CNPJ",     url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
-    { id: "cnpjws",   name: "CNPJ.ws",          description: "Consulta pública de CNPJ · fallback secundário",url: "https://publica.cnpj.ws/v1/" },
+    { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
+    { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
+    { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
+    { id: "cnpjws",    name: "CNPJ.ws",     description: "Consulta pública de CNPJ · fallback CNPJ terciário", url: "https://publica.cnpj.ws/v1/" },
   ];
 
   const checks = await Promise.allSettled(
@@ -782,15 +858,20 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     else provider = { ...provider, error: `Geass: ${provider.error} | ViaCEP: ${viacep.error}` };
   }
 
-  // ─── CNPJ fallback: ReceitaWS → CNPJ.ws ──────────────────────────────────
+  // ─── CNPJ fallback: ReceitaWS → BrasilAPI → CNPJ.ws ─────────────────────
   if (!provider.ok && (tipo === "cnpj" || tipo === "fucionarios" || tipo === "socios") && !ctrl.signal.aborted) {
     const receita = await callReceitaWs(dados, ctrl.signal);
     if (receita.ok) {
       provider = { ok: true, parsed: receita.parsed };
     } else if (!ctrl.signal.aborted) {
-      const cnpjws = await callCnpjWs(dados, ctrl.signal);
-      if (cnpjws.ok) provider = { ok: true, parsed: cnpjws.parsed };
-      else provider = { ...provider, error: `Geass: ${provider.error} | ReceitaWS: ${receita.error} | CNPJ.ws: ${cnpjws.error}` };
+      const brasilapi = await callBrasilApiCnpj(dados, ctrl.signal);
+      if (brasilapi.ok) {
+        provider = { ok: true, parsed: brasilapi.parsed };
+      } else if (!ctrl.signal.aborted) {
+        const cnpjws = await callCnpjWs(dados, ctrl.signal);
+        if (cnpjws.ok) provider = { ok: true, parsed: cnpjws.parsed };
+        else provider = { ...provider, error: `Geass: ${provider.error} | ReceitaWS: ${receita.error} | BrasilAPI: ${brasilapi.error} | CNPJ.ws: ${cnpjws.error}` };
+      }
     }
   }
 

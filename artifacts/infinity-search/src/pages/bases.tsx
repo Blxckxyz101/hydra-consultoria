@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   Activity, RefreshCw, Wifi, WifiOff, Clock, Database,
   Syringe, Building2, Server, AlertTriangle, CheckCircle2,
-  MapPin, FileText, Building,
+  MapPin, FileText, Building, Globe,
 } from "lucide-react";
 
 type BaseStatus = {
@@ -19,9 +19,10 @@ const BASE_META: Record<string, { icon: React.ComponentType<{ className?: string
   geass:     { icon: Database,  color: "from-sky-500/20 to-cyan-400/5",      accent: "text-sky-300" },
   sipni:     { icon: Syringe,   color: "from-violet-500/20 to-fuchsia-400/5", accent: "text-violet-300" },
   sisreg:    { icon: Building2, color: "from-rose-500/20 to-pink-400/5",      accent: "text-rose-300" },
-  viacep:    { icon: MapPin,    color: "from-emerald-500/20 to-teal-400/5",   accent: "text-emerald-300" },
-  receitaws: { icon: FileText,  color: "from-amber-500/20 to-yellow-400/5",   accent: "text-amber-300" },
-  cnpjws:    { icon: Building,  color: "from-orange-500/20 to-amber-400/5",   accent: "text-orange-300" },
+  viacep:    { icon: MapPin,    color: "from-emerald-500/20 to-teal-400/5",    accent: "text-emerald-300" },
+  receitaws: { icon: FileText,  color: "from-amber-500/20 to-yellow-400/5",    accent: "text-amber-300" },
+  brasilapi: { icon: Globe,     color: "from-green-500/20 to-emerald-400/5",   accent: "text-green-300" },
+  cnpjws:    { icon: Building,  color: "from-orange-500/20 to-amber-400/5",    accent: "text-orange-300" },
 };
 
 function latencyColor(ms: number, online: boolean): string {
