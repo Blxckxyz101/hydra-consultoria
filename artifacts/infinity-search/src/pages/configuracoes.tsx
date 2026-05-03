@@ -11,7 +11,112 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check } from "lucide-react";
+
+const ROLE_CONFIG = {
+  admin: { label: "Admin", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/30", icon: Shield },
+  vip: { label: "VIP", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/30", icon: Crown },
+  user: { label: "VIP", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/30", icon: Crown },
+};
+
+function getRoleConf(role: string) {
+  return ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.vip;
+}
+
+function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; currentExpiry: string | null; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [dateVal, setDateVal] = useState(() => {
+    if (!currentExpiry) return "";
+    return new Date(currentExpiry).toISOString().slice(0, 16);
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const saveExpiry = async () => {
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ expiresAt: dateVal || null }),
+      });
+      setSaved(true);
+      setTimeout(() => { setSaved(false); setEditing(false); onSaved(); }, 1000);
+    } catch {
+      // silent
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeExpiry = async () => {
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ expiresAt: null }),
+      });
+      setDateVal("");
+      setSaved(true);
+      setTimeout(() => { setSaved(false); setEditing(false); onSaved(); }, 1000);
+    } catch {
+      // silent
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-amber-300 transition-colors"
+      >
+        <Calendar className="w-3 h-3" />
+        {currentExpiry
+          ? new Date(currentExpiry).toLocaleDateString("pt-BR")
+          : "Sem expiração"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <input
+        type="datetime-local"
+        value={dateVal}
+        onChange={(e) => setDateVal(e.target.value)}
+        className="bg-black/60 border border-white/10 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-amber-400/50 transition-colors"
+      />
+      <button
+        onClick={saveExpiry}
+        disabled={saving}
+        className="p-1.5 rounded-lg bg-emerald-400/10 border border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/20 transition-colors disabled:opacity-50"
+      >
+        {saved ? <Check className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+      </button>
+      {currentExpiry && (
+        <button
+          onClick={removeExpiry}
+          disabled={saving}
+          className="p-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50"
+          title="Remover expiração"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
+      <button
+        onClick={() => setEditing(false)}
+        className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        cancelar
+      </button>
+    </div>
+  );
+}
 
 export default function Configuracoes() {
   const [, setLocation] = useLocation();
@@ -20,7 +125,7 @@ export default function Configuracoes() {
 
   const isAdmin = me?.role === "admin";
 
-  const { data: users } = useInfinityListUsers({
+  const { data: users, refetch: refetchUsers } = useInfinityListUsers({
     query: {
       queryKey: getInfinityListUsersQueryKey(),
       enabled: isAdmin,
@@ -33,7 +138,8 @@ export default function Configuracoes() {
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "user">("user");
+  const [newRole, setNewRole] = useState<"admin" | "vip">("vip");
+  const [expiresAt, setExpiresAt] = useState("");
   const [formError, setFormError] = useState("");
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -42,11 +148,17 @@ export default function Configuracoes() {
     if (!newUsername.trim() || !newPassword.trim()) return;
     try {
       await createUser.mutateAsync({
-        data: { username: newUsername.trim(), password: newPassword, role: newRole },
+        data: {
+          username: newUsername.trim(),
+          password: newPassword,
+          role: newRole,
+          ...(expiresAt ? { expiresAt } : {}),
+        } as any,
       });
       setNewUsername("");
       setNewPassword("");
-      setNewRole("user");
+      setNewRole("vip");
+      setExpiresAt("");
       queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
     } catch (err: any) {
       setFormError(err?.data?.message || err?.message || "Falha ao criar operador");
@@ -59,55 +171,70 @@ export default function Configuracoes() {
     try {
       await deleteUser.mutateAsync({ username });
       queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
-    } catch (err) {
+    } catch {
       // silent
     }
   };
 
   const handleLogout = async () => {
-    try {
-      await logout.mutateAsync({});
-    } catch {}
+    try { await logout.mutateAsync({}); } catch {}
     localStorage.removeItem("infinity_token");
     setLocation("/login");
   };
 
+  const meRoleConf = getRoleConf(me?.role ?? "vip");
+  const MeRoleIcon = meRoleConf.icon;
+
   return (
     <div className="space-y-6">
+      {/* Hero */}
       <div>
-        <h1 className="text-2xl font-bold tracking-widest neon-text uppercase">Configurações</h1>
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-2">
+        <motion.h1
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-2xl sm:text-3xl font-bold tracking-[0.25em] uppercase bg-gradient-to-r from-sky-300 to-cyan-200 bg-clip-text text-transparent"
+        >
+          Configurações
+        </motion.h1>
+        <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
           Gerência de operadores e sessão
         </p>
       </div>
 
+      {/* Current session */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-panel rounded-xl p-6"
+        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
       >
         <div className="flex items-center gap-2 mb-4">
           <UserIcon className="w-4 h-4 text-primary" />
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            Sessão Atual
-          </h2>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Sessão Atual</h2>
         </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-lg font-bold">{me?.username}</div>
-            <div className="text-xs uppercase tracking-widest text-primary/70 mt-1">{me?.role}</div>
-            {me?.lastLoginAt && (
-              <div className="text-xs text-muted-foreground mt-2">
-                Último acesso: {new Date(me.lastLoginAt).toLocaleString("pt-BR")}
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-500/20 to-cyan-400/10 border border-white/10 flex items-center justify-center">
+              <span className="text-xl font-bold text-sky-300">{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
+            </div>
+            <div>
+              <div className="text-lg font-bold">{me?.username}</div>
+              <div className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-semibold mt-1 px-2.5 py-1 rounded-full border ${meRoleConf.bg} ${meRoleConf.color}`}>
+                <MeRoleIcon className="w-3 h-3" />
+                {meRoleConf.label}
               </div>
-            )}
+              {(me as any)?.lastLoginAt && (
+                <div className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Último acesso: {new Date((me as any).lastLoginAt).toLocaleString("pt-BR")}
+                </div>
+              )}
+            </div>
           </div>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors uppercase tracking-widest text-xs font-bold"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors uppercase tracking-widest text-xs font-bold"
           >
-            <LogOut className="w-4 h-4" />
-            Encerrar Sessão
+            <LogOut className="w-4 h-4" /> Encerrar Sessão
           </button>
         </div>
       </motion.div>
@@ -116,7 +243,7 @@ export default function Configuracoes() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="glass-panel rounded-xl p-12 flex flex-col items-center text-center"
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-12 flex flex-col items-center text-center"
         >
           <ShieldAlert className="w-12 h-12 text-destructive/70 mb-4" />
           <h3 className="text-lg font-bold uppercase tracking-widest">Acesso Restrito</h3>
@@ -126,105 +253,167 @@ export default function Configuracoes() {
         </motion.div>
       ) : (
         <>
+          {/* Create user */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="glass-panel rounded-xl p-6"
+            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
           >
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-5">
               <UserPlus className="w-4 h-4 text-primary" />
-              <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-                Novo Operador
-              </h2>
+              <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Novo Operador</h2>
             </div>
-            <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <input
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder="Usuário"
-                className="bg-black/40 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-primary/50 transition-all"
-              />
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Senha"
-                className="bg-black/40 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-primary/50 transition-all"
-              />
-              <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as any)}
-                className="bg-black/40 border border-white/10 rounded-lg px-4 py-3 focus:outline-none focus:border-primary/50 transition-all uppercase text-xs tracking-widest"
-              >
-                <option value="user">Operador</option>
-                <option value="admin">Administrador</option>
-              </select>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="Usuário"
+                  className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all"
+                />
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Senha"
+                  className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all"
+                />
+              </div>
+
+              {/* Role selector */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewRole("vip")}
+                  className={`flex-1 flex items-center gap-2 justify-center px-4 py-3 rounded-xl border text-sm font-semibold transition-all ${
+                    newRole === "vip"
+                      ? "bg-amber-400/15 border-amber-400/50 text-amber-300 shadow-[0_0_20px_-4px_rgba(251,191,36,0.4)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <Crown className="w-4 h-4" /> VIP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewRole("admin")}
+                  className={`flex-1 flex items-center gap-2 justify-center px-4 py-3 rounded-xl border text-sm font-semibold transition-all ${
+                    newRole === "admin"
+                      ? "bg-sky-400/15 border-sky-400/50 text-sky-300 shadow-[0_0_20px_-4px_rgba(56,189,248,0.4)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <Shield className="w-4 h-4" /> Admin
+                </button>
+              </div>
+
+              {/* Expiry date */}
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground block mb-2 flex items-center gap-1.5">
+                  <Calendar className="w-3 h-3" /> Data de expiração (opcional)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all"
+                />
+                {expiresAt && (
+                  <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Conta expira em {new Date(expiresAt).toLocaleString("pt-BR")}
+                  </p>
+                )}
+              </div>
+
               <button
                 type="submit"
                 disabled={createUser.isPending || !newUsername.trim() || !newPassword.trim()}
-                className="bg-primary text-primary-foreground font-bold uppercase tracking-widest py-3 rounded-lg hover:bg-primary/90 transition-all disabled:opacity-50"
+                className="w-full bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-3.5 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.4)] transition-all disabled:opacity-50"
               >
-                {createUser.isPending ? "Criando..." : "Criar"}
+                {createUser.isPending ? "Criando..." : "Criar Operador"}
               </button>
+
+              {formError && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">{formError}</div>
+              )}
             </form>
-            {formError && (
-              <div className="mt-3 text-sm text-destructive">{formError}</div>
-            )}
           </motion.div>
 
+          {/* Operator list */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="glass-panel rounded-xl p-6"
+            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
           >
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-5">
               Operadores Ativos ({users?.length ?? 0})
             </h2>
             <div className="space-y-2">
               <AnimatePresence>
-                {users?.map((u, i) => (
-                  <motion.div
-                    key={u.username}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="bg-black/30 border border-white/5 rounded-lg p-4 flex items-center justify-between hover:border-primary/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-4 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center shrink-0">
-                        <UserIcon className="w-4 h-4 text-primary" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-semibold truncate">{u.username}</div>
-                        <div className="text-xs uppercase tracking-widest text-primary/70">
-                          {u.role}
-                          {u.username === me?.username && (
-                            <span className="ml-2 text-muted-foreground">(você)</span>
-                          )}
+                {users?.map((u, i) => {
+                  const rConf = getRoleConf(u.role);
+                  const RIcon = rConf.icon;
+                  const isExpired = (u as any).accountExpiresAt && new Date((u as any).accountExpiresAt) < new Date();
+                  return (
+                    <motion.div
+                      key={u.username}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      transition={{ delay: i * 0.03 }}
+                      className={`rounded-xl border p-4 transition-colors ${isExpired ? "bg-destructive/5 border-destructive/20" : "bg-black/30 border-white/5 hover:border-white/15"}`}
+                    >
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-sky-500/20 to-cyan-400/10 border border-white/10 flex items-center justify-center shrink-0">
+                            <span className="text-sm font-bold">{u.username[0]?.toUpperCase()}</span>
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate flex items-center gap-2">
+                              {u.username}
+                              {u.username === me?.username && (
+                                <span className="text-[9px] text-muted-foreground">(você)</span>
+                              )}
+                              {isExpired && (
+                                <span className="text-[9px] text-destructive bg-destructive/10 border border-destructive/20 px-1.5 py-0.5 rounded-md uppercase tracking-wider">expirado</span>
+                              )}
+                            </div>
+                            <div className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-semibold mt-1 px-2 py-0.5 rounded-full border ${rConf.bg} ${rConf.color}`}>
+                              <RIcon className="w-2.5 h-2.5" />
+                              {rConf.label}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 shrink-0 flex-wrap">
+                          <div className="text-xs text-muted-foreground text-right space-y-1">
+                            <div>Criado: {new Date(u.createdAt).toLocaleDateString("pt-BR")}</div>
+                            {u.lastLoginAt && (
+                              <div>Último acesso: {new Date(u.lastLoginAt).toLocaleDateString("pt-BR")}</div>
+                            )}
+                            <ExpiryEditor
+                              username={u.username}
+                              currentExpiry={(u as any).accountExpiresAt ?? null}
+                              onSaved={() => {
+                                queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+                                refetchUsers();
+                              }}
+                            />
+                          </div>
+                          <button
+                            disabled={u.username === me?.username || deleteUser.isPending}
+                            onClick={() => handleDelete(u.username)}
+                            className="p-2.5 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed border border-transparent hover:border-destructive/30"
+                            title={u.username === me?.username ? "Não é possível remover a si mesmo" : "Remover"}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <div className="text-right text-xs text-muted-foreground hidden md:block">
-                        <div>Criado em {new Date(u.createdAt).toLocaleDateString("pt-BR")}</div>
-                        {u.lastLoginAt && (
-                          <div>Último acesso {new Date(u.lastLoginAt).toLocaleDateString("pt-BR")}</div>
-                        )}
-                      </div>
-                      <button
-                        disabled={u.username === me?.username || deleteUser.isPending}
-                        onClick={() => handleDelete(u.username)}
-                        className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        title={u.username === me?.username ? "Não é possível remover a si mesmo" : "Remover"}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           </motion.div>

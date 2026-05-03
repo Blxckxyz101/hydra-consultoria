@@ -10,6 +10,8 @@ import Consultas from "@/pages/consultas";
 import Configuracoes from "@/pages/configuracoes";
 import Dossie from "@/pages/dossie";
 import Perfil from "@/pages/perfil";
+import Bases from "@/pages/bases";
+import Favoritos from "@/pages/favoritos";
 
 function NotFound() {
   return (
@@ -35,6 +37,8 @@ function Router() {
               <Route path="/consultas" component={Consultas} />
               <Route path="/ia" component={IA} />
               <Route path="/dossie" component={Dossie} />
+              <Route path="/favoritos" component={Favoritos} />
+              <Route path="/bases" component={Bases} />
               <Route path="/perfil" component={Perfil} />
               <Route path="/configuracoes" component={Configuracoes} />
               <Route component={NotFound} />

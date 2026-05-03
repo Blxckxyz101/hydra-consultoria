@@ -11,7 +11,9 @@ import {
   Sparkles,
   FolderOpen,
   CheckCircle2,
+  Star,
 } from "lucide-react";
+import { addFavorito, isFavorito } from "@/pages/favoritos";
 
 const STORAGE_KEY = "infinity_dossies";
 
@@ -90,6 +92,44 @@ function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string
         </div>
       )}
     </div>
+  );
+}
+
+function FavoriteButton({ tipo, query, data }: { tipo: string; query: string; data: unknown }) {
+  const [fav, setFav] = useState(() => isFavorito(tipo, query));
+  const [added, setAdded] = useState(false);
+
+  const toggle = () => {
+    if (fav) return;
+    const parsed = (data as { fields?: unknown[]; sections?: unknown[]; raw?: string }) ?? {};
+    const ok = addFavorito({
+      tipo, query,
+      note: "",
+      fields: (parsed.fields ?? []) as Array<{ key: string; value: string }>,
+      sections: (parsed.sections ?? []) as Array<{ name: string; items: string[] }>,
+      raw: parsed.raw ?? "",
+    });
+    if (ok) {
+      setFav(true);
+      setAdded(true);
+      setTimeout(() => setAdded(false), 1500);
+    }
+  };
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={fav}
+      title={fav ? "Já é favorito" : "Adicionar aos favoritos"}
+      className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors ${
+        fav
+          ? "text-amber-400 cursor-default"
+          : "text-muted-foreground hover:text-amber-400"
+      }`}
+    >
+      <Star className={`w-3 h-3 ${fav ? "fill-amber-400" : ""}`} />
+      {added ? "Favoritado" : fav ? "Favorito" : "Favoritar"}
+    </button>
   );
 }
 
@@ -232,7 +272,8 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
             · {parsed.fields.length} campos · {parsed.sections.length} listas
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <FavoriteButton tipo={tipo} query={query} data={result.data} />
           <button
             onClick={() => setShowRaw((v) => !v)}
             className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"

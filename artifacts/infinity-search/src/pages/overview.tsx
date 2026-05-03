@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { useInfinityOverview, useInfinityMe, getInfinityOverviewQueryKey, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
-import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, ArrowUpRight, Zap } from "lucide-react";
+import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, ArrowUpRight, Zap, Trophy, Gauge } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
 import { Link } from "wouter";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
@@ -18,47 +17,126 @@ const TIPO_GRADIENT: Record<string, string> = {
   sipni: "from-amber-400 to-orange-300",
 };
 
-function buildHeatmap(recentes: Array<{ createdAt: string }>) {
+const PERIOD_OPTIONS = [
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "1 ano", days: 365 },
+];
+
+type RecentItem = { id: number; tipo: string; query: string; username: string; success: boolean; createdAt: string };
+type TipoPct = { tipo: string; count: number };
+type OperadorPct = { username: string; count: number };
+
+type OverviewData = {
+  totalConsultas: number;
+  consultasHoje: number;
+  consultasSemana: number;
+  usuariosAtivos: number;
+  consultasPorTipo: TipoPct[];
+  consultasPorOperador: OperadorPct[];
+  rateLimitHoje: number;
+  rateLimitMax: number;
+  recentes: RecentItem[];
+};
+
+type MeData = {
+  username: string;
+  role: string;
+  accountExpiresAt?: string | null;
+};
+
+function buildHeatmap(recentes: RecentItem[], days: number) {
   const today = new Date();
-  const days: Array<{ date: Date; count: number; iso: string }> = [];
-  for (let i = 83; i >= 0; i--) {
+  const result: Array<{ date: Date; count: number; iso: string }> = [];
+  for (let i = days - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
     d.setHours(0, 0, 0, 0);
-    days.push({ date: d, count: 0, iso: d.toISOString().slice(0, 10) });
+    result.push({ date: d, count: 0, iso: d.toISOString().slice(0, 10) });
   }
-  const idx = new Map(days.map((d, i) => [d.iso, i]));
+  const idx = new Map(result.map((d, i) => [d.iso, i]));
   for (const r of recentes) {
     const iso = new Date(r.createdAt).toISOString().slice(0, 10);
     const i = idx.get(iso);
-    if (i !== undefined) days[i].count++;
+    if (i !== undefined) result[i].count++;
   }
-  return days;
+  return result;
 }
 
-function buildTrend(recentes: Array<{ createdAt: string }>) {
-  const buckets = new Array(7).fill(0).map((_, i) => {
+function buildTrend(recentes: RecentItem[], days: number) {
+  const bucketCount = Math.min(days, 14);
+  const buckets = new Array(bucketCount).fill(0).map((_, i) => {
     const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return { day: d.toLocaleDateString("pt-BR", { weekday: "short" }).slice(0, 3), v: 0 };
+    d.setDate(d.getDate() - (bucketCount - 1 - i));
+    const label = bucketCount <= 7
+      ? d.toLocaleDateString("pt-BR", { weekday: "short" }).slice(0, 3)
+      : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+    return { day: label, v: 0 };
   });
-  const today = new Date();
+  const now = new Date();
   for (const r of recentes) {
-    const diff = Math.floor((today.getTime() - new Date(r.createdAt).getTime()) / 86400000);
-    if (diff >= 0 && diff < 7) buckets[6 - diff].v++;
+    const diff = Math.floor((now.getTime() - new Date(r.createdAt).getTime()) / 86400000);
+    if (diff >= 0 && diff < bucketCount) buckets[bucketCount - 1 - diff].v++;
   }
   return buckets;
 }
 
-export default function Overview() {
-  const { data, isLoading, error } = useInfinityOverview({
-    query: { queryKey: getInfinityOverviewQueryKey() },
+function useOverview(days: number) {
+  const [data, setData] = useState<OverviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useState(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(false);
+    const token = localStorage.getItem("infinity_token");
+    fetch(`/api/infinity/overview?days=${days}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) { setError(true); setLoading(false); } });
+    return () => { cancelled = true; };
   });
-  const { data: me } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
+
+  const refetch = () => {
+    setLoading(true);
+    const token = localStorage.getItem("infinity_token");
+    fetch(`/api/infinity/overview?days=${days}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false); })
+      .catch(() => { setError(true); setLoading(false); });
+  };
+
+  return { data, loading, error, refetch };
+}
+
+function useMe() {
+  const [me, setMe] = useState<MeData | null>(null);
+  useState(() => {
+    const token = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then(setMe)
+      .catch(() => {});
+  });
+  return me;
+}
+
+export default function Overview() {
+  const [period, setPeriod] = useState(84);
+  const { data, loading, error } = useOverview(period);
+  const me = useMe();
   const [profilePhoto] = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
   const [profileBanner] = useState<string | null>(() => localStorage.getItem("infinity_profile_banner"));
 
-  if (isLoading) {
+  const isAdmin = me?.role === "admin";
+
+  if (loading) {
     return (
       <div className="py-24 flex items-center justify-center">
         <InfinityLoader label="Sincronizando comando" />
@@ -74,14 +152,17 @@ export default function Overview() {
     );
   }
 
-  const heatmap = buildHeatmap(data.recentes);
-  const trend = buildTrend(data.recentes);
+  const heatmap = buildHeatmap(data.recentes, period);
+  const trend = buildTrend(data.recentes, period);
   const maxHeat = Math.max(1, ...heatmap.map((h) => h.count));
-  const successRate = data.totalConsultas > 0
+  const successRate = data.recentes.length > 0
     ? Math.round((data.recentes.filter((r) => r.success).length / data.recentes.length) * 100)
     : 0;
   const hour = new Date().getHours();
   const greet = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+
+  const rateLimitPct = data.rateLimitMax > 0 ? (data.rateLimitHoje / data.rateLimitMax) * 100 : 0;
+  const rateLimitColor = rateLimitPct >= 90 ? "text-rose-300" : rateLimitPct >= 70 ? "text-amber-300" : "text-emerald-300";
 
   const statCards = [
     { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300" },
@@ -98,7 +179,6 @@ export default function Overview() {
         animate={{ opacity: 1, y: 0 }}
         className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-sky-500/15 via-cyan-400/5 to-violet-500/10 backdrop-blur-2xl"
       >
-        {/* Banner */}
         <div className="relative h-32 sm:h-40 w-full overflow-hidden rounded-t-3xl">
           {profileBanner ? (
             <img src={profileBanner} alt="banner" className="w-full h-full object-cover" />
@@ -112,15 +192,8 @@ export default function Overview() {
             animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] }}
             transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
           />
-          <motion.div
-            aria-hidden
-            className="absolute -bottom-10 -left-10 w-56 h-56 rounded-full bg-violet-400/20 blur-3xl"
-            animate={{ scale: [1.1, 1, 1.1], opacity: [0.4, 0.7, 0.4] }}
-            transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-          />
         </div>
 
-        {/* Avatar row */}
         <div className="relative px-6 sm:px-10 -mt-10 mb-2 flex items-end gap-4">
           <div className="relative shrink-0">
             <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-[#06091a] overflow-hidden bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-2xl shadow-[0_0_30px_rgba(56,189,248,0.4)]">
@@ -130,76 +203,74 @@ export default function Overview() {
                 <span>{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
               )}
             </div>
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] shadow" title="Online" />
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] shadow" />
           </div>
           <div className="pb-2 min-w-0">
             <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.username ?? "operador"}</div>
-            <div className="text-[10px] uppercase tracking-[0.35em] text-primary/70">{me?.role ?? "user"}</div>
+            <div className="text-[10px] uppercase tracking-[0.35em] text-primary/70">{me?.role === "vip" ? "VIP" : me?.role ?? "user"}</div>
           </div>
         </div>
 
         <div className="px-6 sm:px-10 pb-6 sm:pb-10 pt-2">
-        <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-3">
-              <Sparkles className="w-3 h-3" /> Centro de Comando
-            </div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">
-              {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.username ?? "operador"}</span>
-            </h1>
-            <p className="mt-2 text-sm sm:text-base text-muted-foreground max-w-xl">
-              Aqui está o panorama da sua operação. {data.consultasHoje > 0
-                ? `Você já realizou ${data.consultasHoje} consulta${data.consultasHoje === 1 ? "" : "s"} hoje.`
-                : "Nenhuma consulta hoje ainda — comece pelo módulo de Consultas."}
-            </p>
-
-            <div className="mt-4">
-              <ExpiryBadge
-                accountExpiresAt={(me as any)?.accountExpiresAt ?? null}
-                role={me?.role ?? "user"}
-              />
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link
-                href="/consultas"
-                className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-400 to-cyan-300 text-black font-semibold text-xs uppercase tracking-widest shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:shadow-[0_0_40px_rgba(56,189,248,0.7)] transition-all"
-              >
-                Nova consulta <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-              </Link>
-              <Link
-                href="/ia"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-foreground text-xs uppercase tracking-widest hover:bg-white/10 transition-all"
-              >
-                <Zap className="w-3.5 h-3.5 text-violet-300" /> Conversar com a IA
-              </Link>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-6 self-start lg:self-end">
-            <div className="text-right">
-              <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-1">Tendência 7d</div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-bold text-emerald-300">{successRate}%</span>
-                <TrendingUp className="w-4 h-4 text-emerald-300" />
+          <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-3">
+                <Sparkles className="w-3 h-3" /> Centro de Comando
               </div>
-              <div className="text-[10px] text-muted-foreground">taxa de sucesso</div>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">
+                {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.username ?? "operador"}</span>
+              </h1>
+              <p className="mt-2 text-sm sm:text-base text-muted-foreground max-w-xl">
+                {data.consultasHoje > 0
+                  ? `Você já realizou ${data.consultasHoje} consulta${data.consultasHoje === 1 ? "" : "s"} hoje.`
+                  : "Nenhuma consulta hoje ainda — comece pelo módulo de Consultas."}
+              </p>
+              <div className="mt-4">
+                <ExpiryBadge
+                  accountExpiresAt={(me as any)?.accountExpiresAt ?? null}
+                  role={me?.role ?? "user"}
+                />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link
+                  href="/consultas"
+                  className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-400 to-cyan-300 text-black font-semibold text-xs uppercase tracking-widest shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:shadow-[0_0_40px_rgba(56,189,248,0.7)] transition-all"
+                >
+                  Nova consulta <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </Link>
+                <Link
+                  href="/ia"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-foreground text-xs uppercase tracking-widest hover:bg-white/10 transition-all"
+                >
+                  <Zap className="w-3.5 h-3.5 text-violet-300" /> Conversar com a IA
+                </Link>
+              </div>
             </div>
-            <div className="w-32 h-16">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trend}>
-                  <defs>
-                    <linearGradient id="hero-spark" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity={0.7} />
-                      <stop offset="100%" stopColor="rgb(56,189,248)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <Area type="monotone" dataKey="v" stroke="rgb(56,189,248)" strokeWidth={2} fill="url(#hero-spark)" />
-                </AreaChart>
-              </ResponsiveContainer>
+
+            <div className="flex items-center gap-6 self-start lg:self-end">
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-1">Tendência</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-emerald-300">{successRate}%</span>
+                  <TrendingUp className="w-4 h-4 text-emerald-300" />
+                </div>
+                <div className="text-[10px] text-muted-foreground">taxa de sucesso</div>
+              </div>
+              <div className="w-32 h-16">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trend}>
+                    <defs>
+                      <linearGradient id="hero-spark" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity={0.7} />
+                        <stop offset="100%" stopColor="rgb(56,189,248)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <Area type="monotone" dataKey="v" stroke="rgb(56,189,248)" strokeWidth={2} fill="url(#hero-spark)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
-        </div>
         </div>
       </motion.div>
 
@@ -229,25 +300,69 @@ export default function Overview() {
         ))}
       </div>
 
-      {/* Heatmap */}
+      {/* Rate limit bar */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-4 sm:p-5"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Gauge className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Cota Diária Global</span>
+          </div>
+          <span className={`text-sm font-bold ${rateLimitColor}`}>
+            {data.rateLimitHoje} <span className="text-muted-foreground font-normal text-xs">/ {data.rateLimitMax}</span>
+          </span>
+        </div>
+        <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.min(rateLimitPct, 100)}%` }}
+            transition={{ duration: 1, ease: "easeOut" }}
+            className={`h-full rounded-full ${rateLimitPct >= 90 ? "bg-rose-400" : rateLimitPct >= 70 ? "bg-amber-400" : "bg-emerald-400"}`}
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground/60 mt-2">
+          {data.rateLimitMax - data.rateLimitHoje} consultas restantes hoje · Reinicia à meia-noite
+        </p>
+      </motion.div>
+
+      {/* Heatmap with period filter */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
         className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
       >
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
           <div>
-            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-foreground">Atividade · Últimos 84 dias</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-foreground">Atividade · {period} dias</h2>
             <p className="text-[10px] text-muted-foreground mt-1">Cada quadrado é um dia. Mais escuro = mais consultas.</p>
           </div>
-          <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-muted-foreground">
-            <span>menos</span>
-            {[0, 0.25, 0.5, 0.75, 1].map((v, i) => (
-              <div key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(56,189,248,${0.1 + v * 0.6})` }} />
+          <div className="flex items-center gap-2">
+            {PERIOD_OPTIONS.map((opt) => (
+              <button
+                key={opt.days}
+                onClick={() => setPeriod(opt.days)}
+                className={`px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-widest font-semibold transition-all border ${
+                  period === opt.days
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
             ))}
-            <span>mais</span>
           </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-muted-foreground mb-3 justify-end">
+          <span>menos</span>
+          {[0, 0.25, 0.5, 0.75, 1].map((v, i) => (
+            <div key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(56,189,248,${0.1 + v * 0.6})` }} />
+          ))}
+          <span>mais</span>
         </div>
         <div className="grid grid-rows-7 grid-flow-col gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar">
           {heatmap.map((d) => {
@@ -256,7 +371,7 @@ export default function Overview() {
               <motion.div
                 key={d.iso}
                 whileHover={{ scale: 1.4 }}
-                className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-sm cursor-help relative group"
+                className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-sm cursor-help"
                 style={{
                   backgroundColor: d.count > 0
                     ? `rgba(56,189,248,${0.2 + intensity * 0.7})`
@@ -270,7 +385,7 @@ export default function Overview() {
         </div>
       </motion.div>
 
-      {/* Charts row */}
+      {/* Charts + Ranking row */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -281,7 +396,7 @@ export default function Overview() {
           <h2 className="text-sm font-semibold uppercase tracking-[0.3em] mb-5">Por Tipo de Consulta</h2>
           <div className="space-y-3">
             {data.consultasPorTipo.length === 0 && (
-              <div className="text-xs text-muted-foreground text-center py-8">Sem dados ainda. Realize sua primeira consulta.</div>
+              <div className="text-xs text-muted-foreground text-center py-8">Sem dados ainda.</div>
             )}
             {data.consultasPorTipo.map((p) => {
               const total = data.consultasPorTipo.reduce((a, b) => a + b.count, 0);
@@ -312,39 +427,85 @@ export default function Overview() {
           transition={{ delay: 0.45 }}
           className="lg:col-span-3 rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
         >
-          <h2 className="text-sm font-semibold uppercase tracking-[0.3em] mb-5">Volume por Categoria</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.3em] mb-5">Volume por Período</h2>
           <div className="h-56 sm:h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.consultasPorTipo.map((p) => ({ ...p, tipo: TIPO_LABEL[p.tipo] ?? p.tipo }))}>
+              <BarChart data={trend}>
                 <defs>
                   <linearGradient id="bar-grad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity={0.95} />
                     <stop offset="100%" stopColor="rgb(139,92,246)" stopOpacity={0.6} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="tipo" stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="rgba(255,255,255,0.5)" fontSize={11} tickLine={false} axisLine={false} />
+                <XAxis dataKey="day" stroke="rgba(255,255,255,0.5)" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="rgba(255,255,255,0.5)" fontSize={10} tickLine={false} axisLine={false} />
                 <Tooltip
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                  contentStyle={{
-                    backgroundColor: "rgba(10,15,25,0.95)",
-                    border: "1px solid rgba(56,189,248,0.3)",
-                    borderRadius: 12,
-                    backdropFilter: "blur(12px)",
-                  }}
+                  contentStyle={{ backgroundColor: "rgba(10,15,25,0.95)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 12, backdropFilter: "blur(12px)" }}
                 />
-                <Bar dataKey="count" fill="url(#bar-grad)" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="v" name="Consultas" fill="url(#bar-grad)" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </motion.div>
       </div>
 
+      {/* Operator ranking — admin only */}
+      {isAdmin && data.consultasPorOperador && data.consultasPorOperador.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
+        >
+          <div className="flex items-center gap-2 mb-5">
+            <Trophy className="w-4 h-4 text-amber-300" />
+            <h2 className="text-sm font-semibold uppercase tracking-[0.3em]">Ranking de Operadores</h2>
+            <span className="text-[10px] uppercase tracking-widest text-muted-foreground bg-white/5 border border-white/10 px-2 py-0.5 rounded-md ml-1">Admin</span>
+          </div>
+          <div className="space-y-2">
+            {data.consultasPorOperador.map((op, i) => {
+              const maxCount = data.consultasPorOperador[0].count;
+              const pct = maxCount > 0 ? (op.count / maxCount) * 100 : 0;
+              const medals = ["🥇", "🥈", "🥉"];
+              return (
+                <motion.div
+                  key={op.username}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.55 + i * 0.04 }}
+                  className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all"
+                >
+                  <span className="text-base w-6 text-center shrink-0">{medals[i] ?? `${i + 1}.`}</span>
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500/40 to-cyan-400/20 border border-white/10 flex items-center justify-center text-xs font-bold shrink-0">
+                    {op.username[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold truncate">{op.username}</span>
+                      <span className="text-xs text-muted-foreground shrink-0 ml-2">{op.count.toLocaleString("pt-BR")}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.8, delay: 0.6 + i * 0.04, ease: "easeOut" }}
+                        className={`h-full rounded-full ${i === 0 ? "bg-amber-400" : i === 1 ? "bg-slate-300" : i === 2 ? "bg-amber-600" : "bg-primary/60"}`}
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+
       {/* Recent activity */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
+        transition={{ delay: 0.55 }}
         className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
       >
         <div className="flex items-center justify-between mb-5">
@@ -357,12 +518,12 @@ export default function Overview() {
           <div className="text-xs text-muted-foreground text-center py-8">Nenhuma consulta registrada ainda.</div>
         ) : (
           <div className="space-y-2">
-            {data.recentes.map((item, i) => (
+            {data.recentes.slice(0, 10).map((item, i) => (
               <motion.div
                 key={item.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.55 + i * 0.04 }}
+                transition={{ delay: 0.6 + i * 0.04 }}
                 className="group flex items-center justify-between gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all"
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -376,7 +537,7 @@ export default function Overview() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="shrink-0">
                   {item.success ? (
                     <span className="text-[10px] uppercase tracking-widest text-emerald-300 bg-emerald-400/10 border border-emerald-400/30 px-2 py-1 rounded-md">Sucesso</span>
                   ) : (

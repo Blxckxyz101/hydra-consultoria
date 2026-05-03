@@ -3,32 +3,18 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, Bot, User, Mic, MicOff, Sparkles, Trash2, Plus,
   MessageSquare, Clock, ChevronRight, Copy, Check, Search,
-  Zap, X, Volume2, VolumeX,
+  Zap, X, Volume2, VolumeX, Star, IdCard, Phone, Building2, Car,
 } from "lucide-react";
 import robotUrl from "@/assets/robot.png";
 import { VoiceOrb, type OrbState } from "@/components/ui/VoiceOrb";
 import { ThinkingPanel } from "@/components/ui/ThinkingPanel";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-  ts: number;
-};
+type Message = { role: "user" | "assistant"; content: string; ts: number; };
+type ChatSession = { id: string; title: string; messages: Message[]; createdAt: number; updatedAt: number; };
 
-type ChatSession = {
-  id: string;
-  title: string;
-  messages: Message[];
-  createdAt: number;
-  updatedAt: number;
-};
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 const LS_SESSIONS = "infinity_chat_sessions";
 const MAX_SESSIONS = 30;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 function newSession(): ChatSession {
   return { id: crypto.randomUUID(), title: "Nova conversa", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
 }
@@ -49,7 +35,6 @@ function relativeTime(ts: number) {
   return `${Math.floor(diff / 86_400_000)}d atrás`;
 }
 
-// ─── Voice synthesis helper ───────────────────────────────────────────────────
 function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
   return new Promise((resolve) => {
     const v = window.speechSynthesis.getVoices();
@@ -58,7 +43,6 @@ function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-// ─── Markdown renderer ────────────────────────────────────────────────────────
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
   const result: React.ReactNode[] = [];
@@ -101,7 +85,6 @@ function inlineRender(text: string): React.ReactNode {
   });
 }
 
-// ─── CopyButton ───────────────────────────────────────────────────────────────
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -114,15 +97,16 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// ─── Suggested prompts ────────────────────────────────────────────────────────
+// Persistent suggestions — always visible
 const SUGGESTIONS = [
-  { icon: Search, label: "Consultar CPF", text: "Consulte o CPF 11144477735" },
-  { icon: Zap, label: "Consultar telefone", text: "Consulte o telefone 62999173029" },
-  { icon: Bot, label: "O que você pode fazer?", text: "O que você consegue consultar e pesquisar?" },
-  { icon: Sparkles, label: "Dossier completo", text: "Faça um dossiê completo sobre o CPF 11144477735" },
+  { icon: IdCard, label: "Consultar CPF", text: "Consulte o CPF 11144477735", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/15" },
+  { icon: Phone, label: "Consultar telefone", text: "Consulte o telefone 62999173029", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/15" },
+  { icon: Building2, label: "Consultar CNPJ", text: "Consulte o CNPJ 00000000000191", color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/15" },
+  { icon: Car, label: "Consultar Placa", text: "Consulte a placa ABC1234", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/15" },
+  { icon: Star, label: "Dossiê completo", text: "Faça um dossiê completo sobre o CPF 11144477735", color: "text-rose-300", bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/15" },
+  { icon: Bot, label: "O que posso fazer?", text: "O que você consegue consultar e pesquisar?", color: "text-primary", bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
 ];
 
-// ─── Waveform bars (speaking indicator) ──────────────────────────────────────
 function WaveformBars({ color = "sky" }: { color?: string }) {
   const cls = color === "violet" ? "bg-violet-400" : "bg-sky-400";
   return (
@@ -139,7 +123,6 @@ function WaveformBars({ color = "sky" }: { color?: string }) {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function IA() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [currentId, setCurrentId] = useState<string>(() => {
@@ -174,10 +157,8 @@ export default function IA() {
   useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
   useEffect(() => { listeningRef.current = listening; }, [listening]);
 
-  // Preload TTS voices on mount
   useEffect(() => { if ("speechSynthesis" in window) getVoicesAsync().catch(() => {}); }, []);
 
-  // Ensure currentId has a session
   useEffect(() => {
     setSessions((prev) => {
       if (prev.find((s) => s.id === currentId)) return prev;
@@ -220,7 +201,6 @@ export default function IA() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isThinking]);
 
-  // ─── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = async (text: string) => {
     const userMsg = text.trim();
     if (!userMsg || isStreaming) return;
@@ -268,11 +248,7 @@ export default function IA() {
             if (data === "[DONE]") { setConsultingStatus(null); continue; }
             try {
               const parsed = JSON.parse(data);
-              // status = consulting indicator (do NOT append to message content)
-              if (parsed.status) {
-                setConsultingStatus(parsed.status);
-                continue;
-              }
+              if (parsed.status) { setConsultingStatus(parsed.status); continue; }
               if (parsed.delta) {
                 setConsultingStatus(null);
                 if (firstChunk) { setIsThinking(false); firstChunk = false; }
@@ -316,7 +292,6 @@ export default function IA() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); }
   };
 
-  // ─── Voice synthesis ────────────────────────────────────────────────────────
   const speakAndContinue = async (text: string) => {
     if (!("speechSynthesis" in window) || !text) return;
     try {
@@ -328,10 +303,7 @@ export default function IA() {
       const ptVoice = voices.find((v) => v.lang === "pt-BR") ?? voices.find((v) => v.lang.startsWith("pt"));
       if (ptVoice) u.voice = ptVoice;
       setSpeaking(true);
-      u.onend = () => {
-        setSpeaking(false);
-        if (continuousRef.current && voiceModeRef.current && !voiceMutedRef.current) setTimeout(() => startVoice(), 380);
-      };
+      u.onend = () => { setSpeaking(false); if (continuousRef.current && voiceModeRef.current && !voiceMutedRef.current) setTimeout(() => startVoice(), 380); };
       u.onerror = () => setSpeaking(false);
       window.speechSynthesis.speak(u);
     } catch { setSpeaking(false); }
@@ -367,441 +339,342 @@ export default function IA() {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
         const rec = new SR(); rec.lang = "pt-BR"; rec.interimResults = false; rec.continuous = false;
-        rec.onresult = (e: any) => {
-          const t = e.results?.[0]?.[0]?.transcript || "";
-          if (t) { stopVoice(); sendMessage(t); }
-        };
+        rec.onresult = (e: any) => { const t = e.results?.[0]?.[0]?.transcript || ""; if (t) { stopVoice(); sendMessage(t); } };
         rec.onerror = () => stopVoice();
-        // Use ref so closure always has current value
         rec.onend = () => { if (listeningRef.current) stopVoice(); };
         recognitionRef.current = rec; rec.start();
-      } else {
-        // Browser doesn't support speech recognition — still show mic active
-        console.warn("[VoiceMode] SpeechRecognition não suportado neste navegador.");
       }
       setListening(true);
-    } catch (err) {
-      console.warn("[VoiceMode] Erro ao acessar microfone:", err);
-      stopVoice();
-    }
+    } catch { stopVoice(); }
   };
 
   useEffect(() => () => stopVoice(), []);
 
-  // ─── Filtered sessions ─────────────────────────────────────────────────────
   const filteredSessions = sessions.filter((s) =>
     !historySearch || s.title.toLowerCase().includes(historySearch.toLowerCase())
   );
 
-  // ─── Orb state ─────────────────────────────────────────────────────────────
   const orbState: OrbState = speaking ? "speaking" : isThinking || isStreaming ? "thinking" : listening ? "listening" : "idle";
 
-  // ─── Voice mode ────────────────────────────────────────────────────────────
   if (voiceMode) {
     const stateLabel = speaking ? "Falando…" : isStreaming ? "Processando…" : isThinking ? "Pensando…" : listening ? "Ouvindo você" : continuous ? "Aguardando…" : "Toque para falar";
     const stateColor = speaking ? "text-violet-300" : isThinking || isStreaming ? "text-amber-300" : listening ? "text-sky-300" : "text-muted-foreground";
-
     return (
       <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center relative py-8 gap-0">
-        {/* Back */}
         <button
           onClick={() => { stopVoice(); window.speechSynthesis?.cancel(); setSpeaking(false); setVoiceMode(false); }}
           className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
         >
           <X size={12} /> Sair
         </button>
-
-        {/* Mute */}
         <button
           onClick={() => setVoiceMuted((v) => !v)}
           className={`absolute top-4 left-4 p-2.5 rounded-xl border transition-all ${voiceMuted ? "bg-destructive/15 border-destructive/40 text-destructive" : "bg-white/5 border-white/10 text-muted-foreground hover:text-white"}`}
-          title={voiceMuted ? "Ativar voz" : "Mutar voz"}
         >
           {voiceMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
         </button>
-
-        {/* State label */}
         <div className="flex flex-col items-center gap-1 mb-6">
           <div className="text-[10px] uppercase tracking-[0.55em] text-primary/70 flex items-center gap-2">
             Modo de Voz
             {continuous && <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[9px]">Contínuo</span>}
-            {voiceMuted && <span className="px-2 py-0.5 rounded-full bg-destructive/20 border border-destructive/30 text-destructive text-[9px]">Mudo</span>}
           </div>
-          <motion.h2
-            key={stateLabel}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`text-2xl font-bold tracking-[0.15em] uppercase ${stateColor}`}
-          >
+          <motion.h2 key={stateLabel} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className={`text-2xl font-bold tracking-[0.15em] uppercase ${stateColor}`}>
             {stateLabel}
           </motion.h2>
-          {speaking && !voiceMuted && (
-            <div className="mt-1"><WaveformBars color="violet" /></div>
-          )}
+          {speaking && !voiceMuted && <div className="mt-1"><WaveformBars color="violet" /></div>}
         </div>
-
-        {/* Orb */}
         <button
           onClick={startVoice}
           disabled={speaking || isStreaming || isThinking}
           className="relative disabled:opacity-80 transition-opacity"
-          aria-label="Falar"
         >
           <VoiceOrb active={listening || speaking || isThinking} intensity={speaking ? 0.65 : intensity} size={340} orbState={orbState} />
-          {/* Center icon overlay */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             {!listening && !speaking && !isStreaming && !isThinking && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="w-14 h-14 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 flex items-center justify-center"
-              >
+              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="w-14 h-14 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 flex items-center justify-center">
                 <Mic className="w-6 h-6 text-white/80" />
               </motion.div>
             )}
           </div>
         </button>
-
-        {/* Controls */}
         <div className="flex items-center gap-3 mt-6">
           <button
-            onClick={() => {
-              const next = !continuous; setContinuous(next);
-              if (next && !listening && !speaking && !isStreaming) startVoice();
-            }}
-            className={`px-4 py-2.5 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${
-              continuous
-                ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300 shadow-[0_0_20px_rgba(52,211,153,0.25)]"
-                : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/8"
-            }`}
+            onClick={() => { const next = !continuous; setContinuous(next); if (next && !listening && !speaking && !isStreaming) startVoice(); }}
+            className={`px-4 py-2.5 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${continuous ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300" : "bg-white/5 border-white/10 text-muted-foreground"}`}
           >
             {continuous ? "Contínuo ON" : "Ativar contínuo"}
           </button>
-
-          {/* Mic button */}
           <button
             onClick={startVoice}
             disabled={speaking || isStreaming || isThinking}
-            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 ${
-              listening
-                ? "bg-destructive/20 border-2 border-destructive/60 shadow-[0_0_28px_rgba(239,68,68,0.4)]"
-                : "bg-sky-500/15 border-2 border-sky-500/50 shadow-[0_0_28px_rgba(56,189,248,0.35)] hover:scale-110 hover:shadow-[0_0_40px_rgba(56,189,248,0.55)]"
-            }`}
+            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 ${listening ? "bg-destructive/20 border-2 border-destructive/60" : "bg-sky-500/15 border-2 border-sky-500/50"}`}
           >
             {listening ? <MicOff className="w-6 h-6 text-destructive" /> : <Mic className="w-6 h-6 text-sky-300" />}
           </button>
-
-          {speaking && (
-            <button
-              onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }}
-              className="px-4 py-2.5 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-white transition-colors"
-            >
-              Pular
-            </button>
-          )}
         </div>
-
-        <div className="mt-8 text-[9px] uppercase tracking-[0.45em] text-muted-foreground/40">
-          Infinity AI · Llama 3.3 70B
-        </div>
+        {messages.length > 0 && (
+          <div className="mt-6 max-w-md w-full px-4">
+            <div className="text-xs text-muted-foreground/60 text-center mb-2 uppercase tracking-widest">Última resposta</div>
+            <div className="bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-muted-foreground/80 max-h-24 overflow-y-auto">
+              {messages[messages.length - 1]?.content?.slice(0, 200)}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
-  // ─── Chat mode ─────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] flex gap-3 overflow-hidden">
-
-      {/* ── Sidebar ── */}
+    <div className="flex gap-4 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
+      {/* Sessions sidebar */}
       <AnimatePresence>
         {sidebarOpen && (
-          <motion.aside
+          <motion.div
             key="sidebar"
             initial={{ opacity: 0, x: -20, width: 0 }}
             animate={{ opacity: 1, x: 0, width: 260 }}
             exit={{ opacity: 0, x: -20, width: 0 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="shrink-0 flex flex-col rounded-2xl border border-white/[0.07] bg-black/20 backdrop-blur-2xl overflow-hidden"
-            style={{ width: 260 }}
+            className="shrink-0 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
           >
-            <div className="px-4 pt-4 pb-3 border-b border-white/5">
-              <button
-                onClick={createNew}
-                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-r from-sky-500/20 to-cyan-400/10 border border-sky-500/30 hover:border-sky-500/60 hover:from-sky-500/30 transition-all text-sm font-medium text-sky-300 group"
-              >
-                <Plus size={15} className="group-hover:rotate-90 transition-transform" />
-                Nova conversa
-              </button>
-            </div>
-
-            <div className="px-4 py-2.5 border-b border-white/5">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/8">
-                <Search size={12} className="text-muted-foreground shrink-0" />
+            <div className="p-3 border-b border-white/5 flex items-center justify-between gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
                 <input
-                  type="text"
-                  placeholder="Buscar..."
                   value={historySearch}
                   onChange={(e) => setHistorySearch(e.target.value)}
-                  className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                  placeholder="Buscar..."
+                  className="w-full bg-black/40 border border-white/8 rounded-lg pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-primary/40 transition-colors"
                 />
               </div>
+              <button
+                onClick={createNew}
+                className="w-8 h-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-primary hover:bg-primary/25 transition-colors shrink-0"
+                title="Nova conversa"
+              >
+                <Plus size={14} />
+              </button>
             </div>
-
-            <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
-              {filteredSessions.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-24 gap-2 text-muted-foreground/50">
-                  <MessageSquare size={18} />
-                  <span className="text-[10px] uppercase tracking-widest">Sem conversas</span>
-                </div>
-              )}
-              {filteredSessions.map((s) => (
-                <motion.button
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {filteredSessions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground/50 text-xs">Nenhuma conversa ainda</div>
+              ) : filteredSessions.map((s) => (
+                <button
                   key={s.id}
-                  layout
-                  onClick={() => { setCurrentId(s.id); setSidebarOpen(true); }}
-                  className={`group w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all ${s.id === currentId ? "bg-sky-500/15 border border-sky-500/30 text-white" : "hover:bg-white/5 border border-transparent text-muted-foreground hover:text-white"}`}
+                  onClick={() => { setCurrentId(s.id); setSidebarOpen(false); }}
+                  className={`group w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all ${s.id === currentId ? "bg-primary/15 border border-primary/30 text-primary" : "hover:bg-white/5 border border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
-                  <MessageSquare size={13} className={`mt-0.5 shrink-0 ${s.id === currentId ? "text-sky-400" : ""}`} />
-                  <div className="min-w-0 flex-1">
+                  <MessageSquare size={12} className="shrink-0" />
+                  <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium truncate">{s.title}</div>
-                    <div className="text-[9px] text-muted-foreground/50 flex items-center gap-1 mt-0.5">
+                    <div className="text-[9px] opacity-50 flex items-center gap-1 mt-0.5">
                       <Clock size={8} /> {relativeTime(s.updatedAt)}
                     </div>
                   </div>
                   <button
                     onClick={(e) => deleteSession(s.id, e)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-destructive/20 hover:text-destructive text-muted-foreground/50 shrink-0"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:text-destructive transition-all"
                   >
-                    <Trash2 size={11} />
+                    <Trash2 size={10} />
                   </button>
-                </motion.button>
+                </button>
               ))}
             </div>
-
-            <div className="px-4 py-3 border-t border-white/5 text-[9px] uppercase tracking-widest text-muted-foreground/40 text-center">
-              {sessions.length} conversa{sessions.length !== 1 ? "s" : ""}
-            </div>
-          </motion.aside>
+          </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col rounded-2xl border border-white/[0.07] bg-black/15 backdrop-blur-2xl overflow-hidden min-w-0">
-
+      {/* Chat area */}
+      <div className="flex-1 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden min-w-0">
         {/* Header */}
-        <div className="px-5 py-3.5 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-black/20 to-transparent shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen((v) => !v)}
-              className="p-2 rounded-xl hover:bg-white/5 transition-colors text-muted-foreground hover:text-white"
-              title="Histórico"
+              className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
             >
-              <MessageSquare size={16} />
+              <MessageSquare size={14} />
             </button>
-            <div className="relative">
-              <div className="absolute inset-0 rounded-xl bg-primary/30 blur-lg" />
-              <img src={robotUrl} alt="IA" className="relative w-9 h-9 rounded-xl object-cover" />
-            </div>
-            <div>
-              <div className="font-bold tracking-widest text-sm">INFINITY SEARCH IA</div>
-              <div className="text-[9px] uppercase tracking-[0.4em] text-primary/70 flex items-center gap-1.5">
-                <motion.span
-                  className="w-1.5 h-1.5 rounded-full bg-primary inline-block"
-                  animate={{ opacity: [1, 0.3, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                />
-                {isThinking ? "Pensando..." : isStreaming ? "Respondendo..." : "Online"}
+            <div className="flex items-center gap-2">
+              <img src={robotUrl} alt="" className="w-7 h-7 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]" />
+              <div>
+                <div className="text-sm font-semibold">Assistente Infinity</div>
+                <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">IA · Online</div>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {messages.length > 0 && (
-              <button
-                onClick={() => updateSession(currentId, (s) => ({ ...s, messages: [] }))}
-                className="p-2 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                title="Limpar conversa"
-              >
-                <Trash2 size={15} />
-              </button>
-            )}
             <button
-              onClick={() => setVoiceMode(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-primary/30 text-primary hover:bg-primary/10 transition-colors text-xs uppercase tracking-widest"
+              onClick={() => { setVoiceMode(true); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-400/10 border border-violet-400/20 text-violet-300 text-[10px] uppercase tracking-widest font-semibold hover:bg-violet-400/15 transition-colors"
             >
-              <Mic size={13} /> Voz
+              <Mic size={12} /> Voz
+            </button>
+            <button
+              onClick={createNew}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-muted-foreground text-[10px] uppercase tracking-widest hover:text-foreground transition-colors"
+            >
+              <Plus size={12} /> Novo
             </button>
           </div>
         </div>
 
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4 relative">
-
-          {/* Empty state */}
-          {messages.length === 0 && !isThinking && (
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex flex-col items-center justify-center h-full gap-8 pb-10"
-            >
-              <div className="text-center">
-                <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}>
-                  <img src={robotUrl} alt="AI" className="w-28 h-28 object-contain mx-auto drop-shadow-[0_0_40px_rgba(56,189,248,0.5)]" />
-                </motion.div>
-                <div className="mt-5 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/70">
-                  <Sparkles size={11} /> Infinity Search IA
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full gap-6 py-8">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex flex-col items-center gap-3"
+              >
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                    <img src={robotUrl} alt="" className="w-10 h-10 object-contain" />
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] flex items-center justify-center">
+                    <Sparkles size={9} className="text-black" />
+                  </div>
                 </div>
-                <h2 className="mt-2 text-xl font-bold uppercase tracking-[0.2em]">Como posso ajudar?</h2>
-                <p className="mt-2 text-xs text-muted-foreground max-w-xs mx-auto">
-                  Consultas OSINT, análises, pesquisas — tudo via linguagem natural.
-                </p>
+                <div className="text-center">
+                  <div className="font-bold tracking-widest text-sm">Infinity IA</div>
+                  <div className="text-[10px] text-muted-foreground mt-1">Como posso ajudar hoje?</div>
+                </div>
+              </motion.div>
+
+              {/* Persistent suggestions */}
+              <div className="w-full max-w-lg">
+                <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60 text-center mb-3">Sugestões rápidas</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {SUGGESTIONS.map((s, i) => {
+                    const Icon = s.icon;
+                    return (
+                      <motion.button
+                        key={i}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.06 }}
+                        onClick={() => sendMessage(s.text)}
+                        disabled={isStreaming}
+                        className={`flex flex-col items-start gap-2 p-3 rounded-xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
+                      >
+                        <Icon size={14} className={s.color} />
+                        <span className="text-[10px] font-semibold text-foreground/80 leading-tight">{s.label}</span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
-                {SUGGESTIONS.map((s) => (
-                  <motion.button
-                    key={s.label}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => { setInput(s.text); inputRef.current?.focus(); }}
-                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] hover:bg-white/[0.06] hover:border-sky-500/25 transition-all text-left group backdrop-blur-sm"
-                  >
-                    <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0 group-hover:bg-sky-500/20 transition-colors">
-                      <s.icon size={14} className="text-sky-400" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium">{s.label}</div>
-                      <div className="text-[10px] text-muted-foreground/60 mt-0.5 truncate max-w-[160px]">{s.text}</div>
-                    </div>
-                    <ChevronRight size={13} className="ml-auto text-muted-foreground/30 group-hover:text-sky-400 transition-colors shrink-0" />
-                  </motion.button>
-                ))}
-              </div>
-            </motion.div>
+            </div>
           )}
 
-          {/* Messages */}
-          {messages.map((msg, idx) => (
+          {messages.map((msg, i) => (
             <motion.div
-              key={idx}
-              initial={{ opacity: 0, y: 10 }}
+              key={`${msg.ts}-${i}`}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25 }}
-              className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
+              className={`group flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
-              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-                msg.role === "user"
-                  ? "bg-gradient-to-br from-sky-500 to-cyan-400 text-black shadow-[0_0_16px_rgba(56,189,248,0.4)]"
-                  : "bg-black/50 border border-white/10"
-              }`}>
-                {msg.role === "user" ? <User size={14} /> : <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />}
-              </div>
-
-              <div className={`group relative max-w-[75%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                <div className={`px-4 py-3 rounded-2xl ${
+              {msg.role === "assistant" && (
+                <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0 mt-0.5">
+                  <img src={robotUrl} alt="" className="w-5 h-5 object-contain" />
+                </div>
+              )}
+              <div className={`max-w-[80%] ${msg.role === "user" ? "order-first" : ""}`}>
+                <div className={`relative rounded-2xl px-4 py-3 ${
                   msg.role === "user"
-                    ? "bg-gradient-to-br from-sky-500/70 to-cyan-500/60 text-white rounded-tr-sm shadow-[0_4px_20px_rgba(56,189,248,0.18)] text-sm font-medium backdrop-blur-sm border border-sky-400/30"
-                    : "bg-white/[0.03] border border-white/[0.07] backdrop-blur-sm rounded-tl-sm shadow-[0_4px_20px_rgba(0,0,0,0.2)]"
+                    ? "bg-gradient-to-br from-sky-500/20 to-cyan-400/10 border border-sky-500/20 ml-8"
+                    : "bg-black/40 border border-white/8"
                 }`}>
-                  {msg.role === "user"
-                    ? <p className="text-sm leading-relaxed">{msg.content}</p>
-                    : (msg.content
-                        ? renderMarkdown(msg.content)
-                        : isStreaming && idx === messages.length - 1
-                          ? <div className="flex gap-1 py-1">{[0,1,2].map((i) => <motion.div key={i} className="w-2 h-2 rounded-full bg-sky-400/60" animate={{ opacity: [0.3,1,0.3] }} transition={{ duration: 0.9, repeat: Infinity, delay: i*0.18 }} />)}</div>
-                          : null
-                      )
-                  }
+                  {msg.content ? renderMarkdown(msg.content) : (
+                    msg.role === "assistant" ? <ThinkingPanel /> : null
+                  )}
+                  <CopyButton text={msg.content} />
                 </div>
-                <div className={`flex items-center gap-1 mt-1 px-1 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-                  <span className="text-[9px] text-muted-foreground/40">
-                    {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                  {msg.role === "assistant" && msg.content && <CopyButton text={msg.content} />}
+                <div className={`text-[9px] text-muted-foreground/40 mt-1 ${msg.role === "user" ? "text-right" : "text-left"}`}>
+                  {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </div>
+              {msg.role === "user" && (
+                <div className="w-8 h-8 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                  <User size={14} className="text-muted-foreground" />
+                </div>
+              )}
             </motion.div>
           ))}
 
-          {/* ── Consulting status indicator ── */}
-          <AnimatePresence>
-            {consultingStatus && (
-              <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                className="flex gap-3"
-              >
-                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0 mt-1">
-                  <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />
-                </div>
-                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-2xl rounded-tl-sm bg-white/[0.03] border border-white/[0.07] backdrop-blur-sm">
-                  <motion.div
-                    className="w-1.5 h-1.5 rounded-full bg-sky-400"
-                    animate={{ scale: [1, 1.6, 1], opacity: [1, 0.4, 1] }}
-                    transition={{ duration: 1, repeat: Infinity }}
-                  />
-                  <span className="text-xs text-sky-300/90 font-mono">{consultingStatus}</span>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {isThinking && (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
+                <img src={robotUrl} alt="" className="w-5 h-5 object-contain" />
+              </div>
+              <div className="bg-black/40 border border-white/8 rounded-2xl px-4 py-3">
+                <ThinkingPanel />
+              </div>
+            </div>
+          )}
 
-          {/* ── Thinking Panel (Replit-style) ── */}
-          <AnimatePresence>
-            {isThinking && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                className="flex gap-3"
-              >
-                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0 mt-1">
-                  <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <ThinkingPanel />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {consultingStatus && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2 text-xs text-primary/80 bg-primary/5 border border-primary/15 rounded-xl px-4 py-2.5"
+            >
+              <div className="relative w-1.5 h-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
+              </div>
+              {consultingStatus}
+            </motion.div>
+          )}
 
           <div ref={bottomRef} />
         </div>
 
-        {/* Composer */}
-        <div className="p-4 border-t border-white/5 bg-black/20 shrink-0">
+        {/* Persistent suggestions row — shown even when there are messages */}
+        {messages.length > 0 && !isStreaming && (
+          <div className="px-4 pb-2 flex gap-2 overflow-x-auto no-scrollbar">
+            {SUGGESTIONS.slice(0, 4).map((s, i) => {
+              const Icon = s.icon;
+              return (
+                <button
+                  key={i}
+                  onClick={() => sendMessage(s.text)}
+                  disabled={isStreaming}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-semibold uppercase tracking-widest transition-all disabled:opacity-50 ${s.bg} ${s.color}`}
+                >
+                  <Icon size={11} />
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-3 border-t border-white/5 shrink-0">
           <form onSubmit={handleSubmit} className="flex gap-2 items-end">
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
+                onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={isStreaming}
-                placeholder="Digite sua requisição… (Enter para enviar)"
+                placeholder="Digite uma mensagem... (Enter para enviar)"
                 rows={1}
-                className="w-full bg-white/5 border border-white/10 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/15 rounded-2xl px-4 py-3.5 pr-12 text-sm outline-none transition-all resize-none placeholder:text-muted-foreground/40 disabled:opacity-50"
-                style={{ minHeight: 52, maxHeight: 120 }}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 pr-4 text-sm resize-none focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
+                style={{ maxHeight: "120px" }}
               />
-              <button
-                type="button"
-                onClick={startVoice}
-                className={`absolute right-3 bottom-3 p-1.5 rounded-lg transition-all ${listening ? "text-destructive bg-destructive/15" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
-              >
-                {listening ? <MicOff size={15} /> : <Mic size={15} />}
-              </button>
             </div>
-            <motion.button
+            <button
               type="submit"
               disabled={!input.trim() || isStreaming}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="w-[52px] h-[52px] rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] hover:shadow-[0_0_32px_rgba(56,189,248,0.6)] disabled:opacity-40 disabled:cursor-not-allowed transition-shadow shrink-0"
+              className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black hover:shadow-[0_0_20px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 shrink-0"
             >
-              <Send size={18} />
-            </motion.button>
+              <Send size={16} />
+            </button>
           </form>
-          <div className="mt-2 flex items-center justify-center text-[9px] uppercase tracking-[0.35em] text-muted-foreground/30">
-            <span>Infinity Search IA · Consultas OSINT em linguagem natural</span>
+          <div className="text-[9px] text-muted-foreground/40 text-center mt-2 uppercase tracking-widest">
+            Infinity IA · Powered by Llama 3.3 70B
           </div>
         </div>
       </div>

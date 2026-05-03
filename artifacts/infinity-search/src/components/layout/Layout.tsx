@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
@@ -46,8 +46,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/consultas", label: "Consultas", icon: Search },
     { href: "/ia", label: "Assistente IA", icon: Bot },
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
+    { href: "/favoritos", label: "Favoritos", icon: Star },
+    { href: "/bases", label: "Monitor de Bases", icon: Server },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
+    { href: "/configuracoes", label: "Configurações", icon: Settings },
   ];
+
+  const roleLabel = (role: string) => {
+    if (role === "admin") return "Admin";
+    if (role === "vip") return "VIP";
+    return role;
+  };
 
   const SidebarBody = (
     <>
@@ -75,7 +84,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               key={item.href}
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: i * 0.04 }}
             >
               <Link
                 href={item.href}
@@ -112,7 +121,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold text-sm truncate">{user?.username}</div>
-              <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">{user?.role}</div>
+              <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">{user?.role ? roleLabel(user.role) : ""}</div>
             </div>
           </div>
         </div>

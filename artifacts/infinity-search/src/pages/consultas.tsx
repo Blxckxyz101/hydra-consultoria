@@ -2,35 +2,11 @@ import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Search,
-  AlertTriangle,
-  CheckCircle2,
-  History,
-  FileText,
-  IdCard,
-  Building2,
-  Phone,
-  Syringe,
-  User,
-  CreditCard,
-  Heart,
-  MapPin,
-  Car,
-  Users,
-  Briefcase,
-  Mail,
-  Cog,
-  Skull,
-  ScrollText,
-  Wallet,
-  Cpu,
-  Network,
-  Database,
-  Activity,
-  ShieldCheck,
-  ChevronRight,
-  X,
-  WifiOff,
+  Search, AlertTriangle, CheckCircle2, History, FileText,
+  IdCard, Building2, Phone, Syringe, User, CreditCard, Heart,
+  MapPin, Car, Users, Briefcase, Mail, Cog, Skull, ScrollText,
+  Wallet, Cpu, Network, Database, Activity, ShieldCheck,
+  ChevronRight, X, WifiOff, RotateCcw,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
@@ -53,7 +29,6 @@ type TabDef = {
 };
 
 const TABS: TabDef[] = [
-  // Pessoa
   { id: "cpf", label: "CPF", category: "Pessoa", placeholder: "00000000000", hint: "11 dígitos", inputMode: "numeric", icon: IdCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "nome", label: "Nome", category: "Pessoa", placeholder: "Nome completo", hint: "texto livre", icon: User, sanitize: (s) => s.slice(0, 80) },
   { id: "rg", label: "RG", category: "Pessoa", placeholder: "RG ou identidade", hint: "texto/numérico", icon: ScrollText },
@@ -61,23 +36,19 @@ const TABS: TabDef[] = [
   { id: "pai", label: "Pai", category: "Pessoa", placeholder: "CPF do filho(a)", hint: "11 dígitos — busca pelo pai", inputMode: "numeric", icon: Heart, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "parentes", label: "Parentes", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos — rede familiar", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "obito", label: "Óbito", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos", inputMode: "numeric", icon: Skull, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  // Contato
   { id: "telefone", label: "Telefone", category: "Outros", placeholder: "5511999999999", hint: "DDI + DDD + número", inputMode: "numeric", icon: Phone, sanitize: (s) => s.replace(/\D/g, "").slice(0, 13) },
   { id: "email", label: "Email", category: "Outros", placeholder: "exemplo@dominio.com", hint: "texto livre", icon: Mail },
   { id: "pix", label: "PIX", category: "Outros", placeholder: "Chave PIX", hint: "CPF/email/telefone/aleatória", icon: Wallet },
   { id: "cep", label: "CEP", category: "Outros", placeholder: "00000000", hint: "8 dígitos", inputMode: "numeric", icon: MapPin, sanitize: (s) => s.replace(/\D/g, "").slice(0, 8) },
-  // Saúde / Social
   { id: "nis", label: "NIS", category: "Saúde", placeholder: "NIS/PIS", hint: "11 dígitos", inputMode: "numeric", icon: CreditCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "cns", label: "CNS", category: "Saúde", placeholder: "Cartão SUS", hint: "15 dígitos", inputMode: "numeric", icon: Heart, sanitize: (s) => s.replace(/\D/g, "").slice(0, 15) },
   { id: "vacinas", label: "Vacinas", category: "Saúde", placeholder: "CPF", hint: "11 dígitos", inputMode: "numeric", icon: Syringe, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  // Veículo
   { id: "placa", label: "Placa", category: "Veículo", placeholder: "ABC1234", hint: "Mercosul ou antiga", icon: Car, sanitize: (s) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 8) },
   { id: "chassi", label: "Chassi", category: "Veículo", placeholder: "9BWZZZ...", hint: "VIN 17 caracteres", icon: Cog, sanitize: (s) => s.toUpperCase().slice(0, 17) },
   { id: "renavam", label: "Renavam", category: "Veículo", placeholder: "00000000000", hint: "11 dígitos", inputMode: "numeric", icon: ScrollText, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "motor", label: "Motor", category: "Veículo", placeholder: "Nº do motor", hint: "alfanumérico", icon: Cpu },
   { id: "cnh", label: "CNH", category: "Veículo", placeholder: "CPF do condutor", hint: "11 dígitos", inputMode: "numeric", icon: IdCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "frota", label: "Frota", category: "Veículo", placeholder: "CPF/CNPJ", hint: "frota do titular", icon: Network, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
-  // Empresa
   { id: "cnpj", label: "CNPJ", category: "Empresa", placeholder: "00000000000000", hint: "14 dígitos", inputMode: "numeric", icon: Building2, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
   { id: "socios", label: "Sócios", category: "Empresa", placeholder: "CNPJ", hint: "14 dígitos", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
   { id: "fucionarios", label: "Funcionários", category: "Empresa", placeholder: "CNPJ", hint: "14 dígitos", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
@@ -96,9 +67,7 @@ const CATEGORY_GRADIENT: Record<string, string> = {
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; createdAt: string }>;
 
-// Tipos that support external base selection in the panel
 const PANEL_EXTERNAL_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
-
 type ExternalBase = "sipni" | "sisreg";
 
 export default function Consultas() {
@@ -131,13 +100,11 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
-
     if (PANEL_EXTERNAL_TIPOS.has(tab)) {
       setPendingQuery({ tipo: tab, dados: query.trim() });
       setShowBaseSelector(true);
       return;
     }
-
     await executeQuery(tab, query.trim(), null);
   };
 
@@ -148,19 +115,16 @@ export default function Consultas() {
     setPendingQuery(null);
     try {
       const token = localStorage.getItem("infinity_token");
-      const endpoint = base
-        ? `/api/infinity/external/${base}`
-        : `/api/infinity/consultas/${tipo}`;
+      const endpoint = base ? `/api/infinity/external/${base}` : `/api/infinity/consultas/${tipo}`;
       const r = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ tipo, dados }),
       });
-      const data = await r.json() as { success: boolean; error?: string | null; data?: unknown };
-      if (base && data.success && typeof data.data === "string") {
+      const data = await r.json() as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
+      if (data.rateLimited) {
+        setResult({ success: false, error: data.error ?? "Limite diário atingido." });
+      } else if (base && data.success && typeof data.data === "string") {
         setResult({ success: true, data: { fields: [], sections: [], raw: data.data } });
       } else {
         setResult(data);
@@ -171,6 +135,20 @@ export default function Consultas() {
       setPending(false);
       queryClient.invalidateQueries({ queryKey: historyKey });
     }
+  };
+
+  // "Repetir consulta" — repopulates tab + query and executes directly
+  const repeatQuery = (tipo: string, dados: string) => {
+    const tabDef = TABS.find((t) => t.id === tipo);
+    if (!tabDef) return;
+    const cat = tabDef.category;
+    setActiveCategory(cat);
+    setTab(tabDef.id);
+    setQuery(dados);
+    setResult(null);
+    // Execute without base selector for speed
+    executeQuery(tabDef.id, dados, null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const tabsInCategory = TABS.filter((t) => t.category === activeCategory);
@@ -220,7 +198,7 @@ export default function Consultas() {
         })}
       </div>
 
-      {/* Tab grid for selected category */}
+      {/* Tab grid */}
       <motion.div
         key={activeCategory}
         initial={{ opacity: 0, y: 6 }}
@@ -283,7 +261,6 @@ export default function Consultas() {
         </form>
 
         <AnimatePresence mode="wait">
-          {/* Base selector — shown for CPF/Nome/CNS/Vacinas */}
           {showBaseSelector && pendingQuery && !pending && (
             <motion.div
               key="base-selector"
@@ -293,16 +270,11 @@ export default function Consultas() {
               transition={{ duration: 0.2 }}
               className="mt-5"
             >
-              {/* Header */}
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-[9px] uppercase tracking-[0.5em] text-muted-foreground/50 mb-1">
-                    Origem dos dados
-                  </p>
+                  <p className="text-[9px] uppercase tracking-[0.5em] text-muted-foreground/50 mb-1">Origem dos dados</p>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-foreground/90 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-md">
-                      {pendingQuery.dados}
-                    </span>
+                    <span className="font-mono text-sm text-foreground/90 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-md">{pendingQuery.dados}</span>
                     <span className="text-[10px] text-muted-foreground">— selecione a base</span>
                   </div>
                 </div>
@@ -314,10 +286,7 @@ export default function Consultas() {
                 </button>
               </div>
 
-              {/* Base cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-
-                {/* SISREG-III */}
                 {(pendingQuery.tipo === "cpf" || pendingQuery.tipo === "nome") && (
                   <motion.button
                     whileHover={{ scale: 1.015 }}
@@ -325,7 +294,6 @@ export default function Consultas() {
                     onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sisreg")}
                     className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-rose-400/30 hover:from-rose-500/[0.07] transition-all duration-200 text-left overflow-hidden"
                   >
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-br from-rose-500/5 to-transparent pointer-events-none" />
                     <div className="flex items-start justify-between">
                       <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 group-hover:bg-rose-500/15 transition-colors">
                         <Building2 className="w-4 h-4 text-rose-400" />
@@ -336,12 +304,8 @@ export default function Consultas() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">
-                        SISREG-III
-                      </p>
-                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">
-                        Sistema de Regulação em Saúde · Ministério da Saúde
-                      </p>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">SISREG-III</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">Sistema de Regulação em Saúde · Ministério da Saúde</p>
                     </div>
                     <div className="flex items-center gap-1 text-[9px] text-muted-foreground/40 group-hover:text-rose-400/60 transition-colors">
                       <span>Consultar mesmo assim</span>
@@ -350,7 +314,6 @@ export default function Consultas() {
                   </motion.button>
                 )}
 
-                {/* SI-PNI */}
                 {(["cpf", "cns", "nome", "vacinas"] as Tipo[]).includes(pendingQuery.tipo) && (
                   <motion.button
                     whileHover={{ scale: 1.015 }}
@@ -358,7 +321,6 @@ export default function Consultas() {
                     onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sipni")}
                     className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-violet-400/30 hover:from-violet-500/[0.07] transition-all duration-200 text-left overflow-hidden"
                   >
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-br from-violet-500/5 to-transparent pointer-events-none" />
                     <div className="flex items-start justify-between">
                       <div className="p-2 rounded-xl bg-violet-500/10 border border-violet-500/20 group-hover:bg-violet-500/15 transition-colors">
                         <Syringe className="w-4 h-4 text-violet-400" />
@@ -369,12 +331,8 @@ export default function Consultas() {
                       </div>
                     </div>
                     <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">
-                        SI-PNI
-                      </p>
-                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">
-                        Programa Nacional de Imunizações · DATASUS
-                      </p>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">SI-PNI</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">Programa Nacional de Imunizações · DATASUS</p>
                     </div>
                     <div className="flex items-center gap-1 text-[9px] text-muted-foreground/40 group-hover:text-violet-400/60 transition-colors">
                       <span>Consultar mesmo assim</span>
@@ -383,14 +341,12 @@ export default function Consultas() {
                   </motion.button>
                 )}
 
-                {/* Infinity */}
                 <motion.button
                   whileHover={{ scale: 1.015 }}
                   whileTap={{ scale: 0.985 }}
                   onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, null)}
                   className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.08] to-transparent hover:border-primary/40 hover:from-primary/[0.12] transition-all duration-200 text-left overflow-hidden"
                 >
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-br from-sky-400/8 to-transparent pointer-events-none" />
                   <div className="flex items-start justify-between">
                     <div className="p-2 rounded-xl bg-primary/15 border border-primary/25 group-hover:bg-primary/20 transition-colors">
                       <Database className="w-4 h-4 text-primary" />
@@ -401,19 +357,14 @@ export default function Consultas() {
                     </div>
                   </div>
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">
-                      Infinity Search
-                    </p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">
-                      OSINT completo via Geass API · recomendado
-                    </p>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Infinity Search</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Geass API · recomendado</p>
                   </div>
                   <div className="flex items-center gap-1 text-[9px] text-primary/50 group-hover:text-primary transition-colors">
                     <ShieldCheck className="w-3 h-3" />
                     <span>Fonte principal</span>
                   </div>
                 </motion.button>
-
               </div>
             </motion.div>
           )}
@@ -444,9 +395,7 @@ export default function Consultas() {
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2">
             <History className="w-4 h-4 text-primary" />
-            <h2 className="text-xs font-semibold uppercase tracking-[0.4em] text-muted-foreground">
-              Histórico Recente
-            </h2>
+            <h2 className="text-xs font-semibold uppercase tracking-[0.4em] text-muted-foreground">Histórico Recente</h2>
           </div>
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
             {history?.length ?? 0} registro(s)
@@ -465,7 +414,7 @@ export default function Consultas() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: Math.min(i * 0.03, 0.4) }}
-                className="bg-black/30 border border-white/5 rounded-xl p-3 sm:p-4 flex items-center justify-between hover:border-primary/30 hover:bg-black/40 transition-all"
+                className="bg-black/30 border border-white/5 rounded-xl p-3 sm:p-4 flex items-center justify-between hover:border-primary/30 hover:bg-black/40 transition-all group"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-md shrink-0">
@@ -474,7 +423,7 @@ export default function Consultas() {
                   <span className="font-mono text-sm truncate">{item.query}</span>
                   <span className="text-xs text-muted-foreground truncate hidden md:inline">— {item.username}</span>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                   <span className="text-[10px] text-muted-foreground hidden sm:inline">
                     {new Date(item.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
                   </span>
@@ -483,6 +432,13 @@ export default function Consultas() {
                   ) : (
                     <AlertTriangle className="w-4 h-4 text-amber-300" />
                   )}
+                  <button
+                    onClick={() => repeatQuery(item.tipo, item.query)}
+                    title="Repetir consulta"
+                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-all"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
                 </div>
               </motion.div>
             ))}

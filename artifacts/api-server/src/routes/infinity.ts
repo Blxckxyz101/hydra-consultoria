@@ -13,8 +13,9 @@ import {
 const router: IRouter = Router();
 
 const PROVIDER_BASE = "http://149.56.18.68:25584/api/consulta";
-// GEASS_API_KEY secret holds the provider key; fallback is the known public key
 const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
+
+const DAILY_RATE_LIMIT = 350;
 
 const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
@@ -28,7 +29,7 @@ const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null }) {
   return {
     username: row.username,
-    role: row.role === "admin" ? "admin" : "user",
+    role: row.role,
     createdAt: row.createdAt.toISOString(),
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     accountExpiresAt: row.accountExpiresAt ? row.accountExpiresAt.toISOString() : null,
@@ -59,14 +60,10 @@ type Parsed = {
   raw: string;
 };
 
-// ⎯ is U+23AF HORIZONTAL LINE EXTENSION — the separator used by this provider
 const SEP = " \u23AF ";
-// Single uppercase word at end of a segment (last resort fallback key)
 const LAST_WORD_RE = /\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$/;
-// Section header: "NAME: ( N - Encontrados)" followed by bullet items
 const SEC_HEADER_RE = /^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Za-z_0-9 ]+):\s*\(\s*\d+\s*-\s*Encontrados?\s*\)/;
 
-// Known multi-word field names used by this provider (expanded as more tipos are tested)
 const KNOWN_MULTIWORD_KEYS = new Set([
   "NOME MÃE", "NOME PAI", "NOME MAE", "NOME PAI",
   "MUNICÍPIO DE NASCIMENTO", "MUNICIPIO DE NASCIMENTO",
@@ -89,21 +86,12 @@ const KNOWN_MULTIWORD_KEYS = new Set([
   "SITUACAO ESPECIAL", "DATA SITUACAO",
 ]);
 
-// All-caps single token (no digits, no spaces) — standalone key pattern
 const PURE_KEY_RE = /^[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_]+$/;
 
-/** Extract the trailing key from the END of a segment.
- *  Handles empty-value fields (consecutive separators) and known multi-word keys. */
 function extractTrailingKey(seg: string): { value: string; key: string } {
   const trimmed = seg.trim();
-
-  // Empty-value case: the entire segment IS a key (no value)
-  // 1. Known multi-word key exactly matching the full segment
   if (KNOWN_MULTIWORD_KEYS.has(trimmed)) return { value: "", key: trimmed };
-  // 2. Single pure-caps word with no digits (e.g. "RG", "CPF", "SCORE")
   if (PURE_KEY_RE.test(trimmed)) return { value: "", key: trimmed };
-
-  // Try known multi-word keys at the END of the segment (value before, key after)
   for (const n of [3, 2]) {
     const re = new RegExp(
       `^(.*?)\\s+((?:[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*\\s+){${n - 1}}[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$`
@@ -113,13 +101,11 @@ function extractTrailingKey(seg: string): { value: string; key: string } {
       return { value: m[1].trim(), key: m[2].trim() };
     }
   }
-  // Fallback: last single uppercase word
   const lm = LAST_WORD_RE.exec(trimmed);
   if (lm) return { value: trimmed.slice(0, lm.index).trim(), key: lm[1].trim() };
   return { value: trimmed, key: "" };
 }
 
-/** Parse "BASE N KEY: VALUE KEY: VALUE BASE N+1 ..." responses (e.g. telefone) */
 function parseBaseNFormat(raw: string): Parsed {
   const result: Parsed = { fields: [], sections: [], raw };
   const segments = raw.split(/\s*BASE\s+\d+\s*/i).filter((p) => p.trim().includes(":"));
@@ -139,7 +125,6 @@ function parseBaseNFormat(raw: string): Parsed {
   return result;
 }
 
-/** Parse simple "KEY: VALUE KEY: VALUE" colon-separated responses */
 function parseColonFormat(raw: string): Parsed {
   const result: Parsed = { fields: [], sections: [], raw };
   const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
@@ -154,31 +139,19 @@ function parseColonFormat(raw: string): Parsed {
 
 function parseProviderText(raw: string): Parsed {
   const result: Parsed = { fields: [], sections: [], raw };
-
-  // BASE N multi-record format (e.g. telefone)
   if (/\bBASE\s+\d+\b/i.test(raw)) return parseBaseNFormat(raw);
-
   if (!raw || !raw.includes("\u23AF")) {
-    // Fallback: try simple KEY: VALUE colon format
     if (raw && raw.includes(":")) {
       const colon = parseColonFormat(raw);
       if (colon.fields.length > 0) return colon;
     }
     return result;
   }
-
   const parts = raw.split(SEP);
-  // parts[0] = "RESULTADO ... FIRST_KEY"
-  // parts[i>0] = "VALUE [NEXT_KEY]"
-
-  // First key: last word(s) of parts[0]
   const firstExtract = extractTrailingKey(parts[0]);
   let currentKey = firstExtract.key || parts[0].trim();
-
   for (let i = 1; i < parts.length; i++) {
     const part = parts[i];
-
-    // Detect section list: "SECTIONNAME: ( N - Encontrados) • item • item ..."
     if (part.includes("•")) {
       const secMatch = SEC_HEADER_RE.exec(part.trim());
       if (secMatch) {
@@ -186,27 +159,22 @@ function parseProviderText(raw: string): Parsed {
         const itemsRaw = part.slice(bulletIdx);
         const items = itemsRaw.split("•").map((s) => s.trim()).filter(Boolean);
         result.sections.push({ name: secMatch[1].trim().toUpperCase(), items });
-        // Find trailing key after the last bullet
         const lastItem = items[items.length - 1] ?? "";
         const lm = LAST_WORD_RE.exec(lastItem);
         currentKey = lm ? lm[1].trim() : "";
         continue;
       }
     }
-
-    // Last part has no next key
     if (i === parts.length - 1) {
       const value = part.trim().replace(/\s+/g, " ");
       if (currentKey && value) result.fields.push({ key: currentKey, value });
       break;
     }
-
     const { value, key: nextKey } = extractTrailingKey(part);
     const cleanValue = value.replace(/\s+/g, " ");
     if (currentKey && cleanValue) result.fields.push({ key: currentKey, value: cleanValue });
     currentKey = nextKey;
   }
-
   return result;
 }
 
@@ -298,17 +266,22 @@ router.get("/users", requireAdmin, async (_req, res) => {
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
-  const { username, password, role, expiresInDays } = req.body ?? {};
+  const { username, password, role, expiresInDays, expiresAt } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
   }
-  const finalRole = role === "admin" ? "admin" : "user";
+  const validRoles = ["admin", "vip", "user"];
+  const finalRole = validRoles.includes(role) ? role : "vip";
   const passwordHash = await bcrypt.hash(String(password), 10);
+
   let accountExpiresAt: Date | null = null;
-  if (expiresInDays && Number(expiresInDays) > 0) {
+  if (expiresAt) {
+    accountExpiresAt = new Date(expiresAt);
+  } else if (expiresInDays && Number(expiresInDays) > 0) {
     accountExpiresAt = new Date(Date.now() + Number(expiresInDays) * 24 * 60 * 60 * 1000);
   }
+
   try {
     const [created] = await db
       .insert(infinityUsersTable)
@@ -332,7 +305,7 @@ router.delete("/users/:username", requireAdmin, async (req, res) => {
 
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays } = req.body ?? {};
+  const { action, expiresInDays, expiresAt } = req.body ?? {};
 
   let updateData: { accountExpiresAt: Date | null };
 
@@ -340,6 +313,8 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
     updateData = { accountExpiresAt: new Date(Date.now() - 1000) };
   } else if (action === "restore") {
     updateData = { accountExpiresAt: null };
+  } else if (expiresAt !== undefined) {
+    updateData = { accountExpiresAt: expiresAt ? new Date(expiresAt) : null };
   } else if (expiresInDays !== undefined) {
     updateData = {
       accountExpiresAt: Number(expiresInDays) > 0
@@ -347,7 +322,7 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
         : null,
     };
   } else {
-    res.status(400).json({ error: "Ação inválida. Use action=revoke, action=restore ou expiresInDays." });
+    res.status(400).json({ error: "Ação inválida." });
     return;
   }
 
@@ -362,10 +337,12 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
 });
 
 // ─── overview ──────────────────────────────────────────────────────────────
-router.get("/overview", requireAuth, async (_req, res) => {
+router.get("/overview", requireAuth, async (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days ?? 84), 7), 365);
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -393,11 +370,29 @@ router.get("/overview", requireAuth, async (_req, res) => {
     .from(infinityConsultasTable)
     .groupBy(infinityConsultasTable.tipo);
 
+  // Operator ranking (all time)
+  const porOperador = await db
+    .select({
+      username: infinityConsultasTable.username,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(infinityConsultasTable)
+    .groupBy(infinityConsultasTable.username)
+    .orderBy(desc(sql<number>`count(*)`))
+    .limit(10);
+
+  // Global daily count (for rate limit display)
+  const [{ todayTotal }] = await db
+    .select({ todayTotal: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(gte(infinityConsultasTable.createdAt, startOfDay));
+
   const recentes = await db
     .select()
     .from(infinityConsultasTable)
+    .where(gte(infinityConsultasTable.createdAt, periodStart))
     .orderBy(desc(infinityConsultasTable.createdAt))
-    .limit(10);
+    .limit(500);
 
   res.json({
     totalConsultas: total ?? 0,
@@ -405,6 +400,9 @@ router.get("/overview", requireAuth, async (_req, res) => {
     consultasSemana: semana ?? 0,
     usuariosAtivos: usuarios ?? 0,
     consultasPorTipo: porTipo.map((p) => ({ tipo: p.tipo, count: p.count })),
+    consultasPorOperador: porOperador.map((p) => ({ username: p.username, count: p.count })),
+    rateLimitHoje: todayTotal ?? 0,
+    rateLimitMax: DAILY_RATE_LIMIT,
     recentes: recentes.map((r) => ({
       id: r.id,
       tipo: r.tipo,
@@ -435,6 +433,44 @@ router.get("/consultas", requireAuth, async (req, res) => {
   );
 });
 
+// ─── bases status ──────────────────────────────────────────────────────────
+router.get("/bases/status", requireAuth, async (_req, res) => {
+  const bases = [
+    { id: "geass", name: "Geass API", description: "Provedor OSINT principal · 24 tipos", url: PROVIDER_BASE.replace("/api/consulta", "/") },
+    { id: "sipni", name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações", url: "https://sipni.datasus.gov.br" },
+    { id: "sisreg", name: "SISREG-III", description: "Sistema de Regulação em Saúde", url: "https://sisregiii.saude.gov.br" },
+  ];
+
+  const checks = await Promise.allSettled(
+    bases.map(async (base) => {
+      const start = Date.now();
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 6000);
+        const r = await fetch(base.url, {
+          method: "GET",
+          signal: ctrl.signal,
+          headers: { "User-Agent": "Mozilla/5.0" },
+          redirect: "follow",
+        });
+        clearTimeout(timer);
+        const ms = Date.now() - start;
+        const online = r.status < 500;
+        return { id: base.id, name: base.name, description: base.description, online, ms, http: r.status };
+      } catch {
+        return { id: base.id, name: base.name, description: base.description, online: false, ms: Date.now() - start, http: 0 };
+      }
+    })
+  );
+
+  const results = checks.map((c, i) => {
+    if (c.status === "fulfilled") return c.value;
+    return { id: bases[i].id, name: bases[i].name, description: bases[i].description, online: false, ms: 0, http: 0 };
+  });
+
+  res.json(results);
+});
+
 // ─── consultas universal ───────────────────────────────────────────────────
 router.post("/consultas/:tipo", requireAuth, async (req, res) => {
   const tipo = String(req.params.tipo).toLowerCase();
@@ -448,7 +484,22 @@ router.post("/consultas/:tipo", requireAuth, async (req, res) => {
     return;
   }
 
-  // Light validation per tipo (provider does final validation)
+  // Global daily rate limit
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const [{ todayCount }] = await db
+    .select({ todayCount: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(gte(infinityConsultasTable.createdAt, todayStart));
+  if ((todayCount ?? 0) >= DAILY_RATE_LIMIT) {
+    res.status(429).json({
+      error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido para toda a plataforma. Tente novamente amanhã.`,
+      rateLimited: true,
+    });
+    return;
+  }
+
+  // Light validation per tipo
   let dados = dadosRaw;
   if (["cpf", "nis", "cns", "mae", "pai", "parentes", "obito", "vacinas"].includes(tipo)) {
     dados = onlyDigits(dadosRaw);
@@ -484,13 +535,7 @@ router.post("/consultas/:tipo", requireAuth, async (req, res) => {
   const success = provider.ok && !!provider.parsed;
   const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
 
-  await logConsulta({
-    tipo,
-    query: dados,
-    username,
-    success,
-    result: data,
-  });
+  await logConsulta({ tipo, query: dados, username, success, result: data });
 
   res.json({
     success,
@@ -613,7 +658,6 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
     ...cleanMessages,
   ];
 
-  // ── Phase 1: detect tool-call intent (non-streaming) ──────────────────────
   try {
     const phase1Resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -643,7 +687,6 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
 
         if (tipo && dados) {
           res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}: ${dados}...` })}\n\n`);
-
           const consultResult = await callProvider(tipo, dados, new AbortController().signal);
           let toolContent = "";
           if (consultResult.ok && consultResult.parsed) {
@@ -658,7 +701,6 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
           } else {
             toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
           }
-
           finalMessages = [
             { role: "system", content: systemPrompt },
             ...cleanMessages,
@@ -670,13 +712,10 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
     }
   } catch { /* phase 1 failed — fall through to normal streaming */ }
 
-  // ── Phase 2: stream final response ────────────────────────────────────────
   await streamGroq(apiKey, finalMessages, res);
 });
 
 // ─── External scraper routes ───────────────────────────────────────────────
-// POST /api/infinity/external/:source — SIPNI or SISREG query
-// Auth: infinity user JWT (same as consultas) OR X-Internal-Key: infinity-bot
 const INTERNAL_KEY = "infinity-bot";
 
 function requireAuthOrInternal(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction): void {
