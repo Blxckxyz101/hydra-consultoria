@@ -19,6 +19,7 @@ import skynetchatRouter from "./skynetchat";
 import whatsappRouter from "./whatsapp";
 import socialRouter    from "./social";
 import usersRouter     from "./users";
+import infinityRouter  from "./infinity";
 
 const router: IRouter = Router();
 
@@ -42,5 +43,6 @@ router.use(skynetchatRouter);
 router.use("/whatsapp", whatsappRouter);
 router.use("/social",  socialRouter);
 router.use("/users",   usersRouter);
+router.use("/infinity", infinityRouter);
 
 export default router;

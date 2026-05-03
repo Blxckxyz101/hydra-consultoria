@@ -12,6 +12,10 @@ tags:
   - name: methods
   - name: check
   - name: analyze
+  - name: infinity_auth
+  - name: infinity_users
+  - name: infinity_consultas
+  - name: infinity_overview
 paths:
   /healthz:
     get:
@@ -181,6 +185,210 @@ paths:
                 $ref: "#/components/schemas/AnalyzeResult"
         "400":
           description: Invalid input
+
+  # ─────────────────────────── Infinity Search ───────────────────────────
+  /infinity/login:
+    post:
+      operationId: infinityLogin
+      tags: [infinity_auth]
+      summary: Login to Infinity Search panel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityLoginBody"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinitySession"
+        "401":
+          description: Invalid credentials
+
+  /infinity/logout:
+    post:
+      operationId: infinityLogout
+      tags: [infinity_auth]
+      summary: Logout
+      responses:
+        "204":
+          description: Logged out
+
+  /infinity/me:
+    get:
+      operationId: infinityMe
+      tags: [infinity_auth]
+      summary: Get current logged-in user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityUser"
+        "401":
+          description: Not authenticated
+
+  /infinity/users:
+    get:
+      operationId: infinityListUsers
+      tags: [infinity_users]
+      summary: List all panel users (admin only)
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InfinityUser"
+        "403":
+          description: Forbidden
+    post:
+      operationId: infinityCreateUser
+      tags: [infinity_users]
+      summary: Create a new panel user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityCreateUserBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityUser"
+
+  /infinity/users/{username}:
+    delete:
+      operationId: infinityDeleteUser
+      tags: [infinity_users]
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /infinity/overview:
+    get:
+      operationId: infinityOverview
+      tags: [infinity_overview]
+      summary: Dashboard overview stats
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityOverview"
+
+  /infinity/consultas:
+    get:
+      operationId: infinityListConsultas
+      tags: [infinity_consultas]
+      summary: List recent consultas
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Consulta history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InfinityConsulta"
+
+  /infinity/consultas/cpf:
+    post:
+      operationId: infinityConsultaCpf
+      tags: [infinity_consultas]
+      summary: Consulta de CPF
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityCpfBody"
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityConsultaResult"
+
+  /infinity/consultas/cnpj:
+    post:
+      operationId: infinityConsultaCnpj
+      tags: [infinity_consultas]
+      summary: Consulta de CNPJ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityCnpjBody"
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityConsultaResult"
+
+  /infinity/consultas/telefone:
+    post:
+      operationId: infinityConsultaTelefone
+      tags: [infinity_consultas]
+      summary: Consulta de telefone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityTelefoneBody"
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityConsultaResult"
+
+  /infinity/consultas/sipni:
+    post:
+      operationId: infinityConsultaSipni
+      tags: [infinity_consultas]
+      summary: Consulta SIPNI (vacinação) por CPF
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InfinityCpfBody"
+      responses:
+        "200":
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfinityConsultaResult"
 
 components:
   schemas:
@@ -363,6 +571,141 @@ components:
           items:
             $ref: "#/components/schemas/MethodRecommendation"
       required: [target,ip,isIP,httpAvailable,httpsAvailable,responseTimeMs,serverHeader,isCDN,cdnProvider,openPorts,recommendations]
+
+    InfinityLoginBody:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+
+    InfinityUser:
+      type: object
+      properties:
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: "null"
+      required: [username, role, createdAt, lastLoginAt]
+
+    InfinitySession:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/InfinityUser"
+      required: [token, user]
+
+    InfinityCreateUserBody:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+      required: [username, password, role]
+
+    InfinityOverview:
+      type: object
+      properties:
+        totalConsultas:
+          type: integer
+        consultasHoje:
+          type: integer
+        consultasSemana:
+          type: integer
+        usuariosAtivos:
+          type: integer
+        consultasPorTipo:
+          type: array
+          items:
+            $ref: "#/components/schemas/InfinityTypeCount"
+        recentes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InfinityConsulta"
+      required: [totalConsultas, consultasHoje, consultasSemana, usuariosAtivos, consultasPorTipo, recentes]
+
+    InfinityTypeCount:
+      type: object
+      properties:
+        tipo:
+          type: string
+        count:
+          type: integer
+      required: [tipo, count]
+
+    InfinityConsulta:
+      type: object
+      properties:
+        id:
+          type: integer
+        tipo:
+          type: string
+        query:
+          type: string
+        username:
+          type: string
+        success:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, tipo, query, username, success, createdAt]
+
+    InfinityCpfBody:
+      type: object
+      properties:
+        cpf:
+          type: string
+      required: [cpf]
+
+    InfinityCnpjBody:
+      type: object
+      properties:
+        cnpj:
+          type: string
+      required: [cnpj]
+
+    InfinityTelefoneBody:
+      type: object
+      properties:
+        telefone:
+          type: string
+      required: [telefone]
+
+    InfinityConsultaResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        tipo:
+          type: string
+        query:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        error:
+          anyOf:
+            - type: string
+            - type: "null"
+      required: [success, tipo, query, data, error]
 
     MethodRecommendation:
       type: object

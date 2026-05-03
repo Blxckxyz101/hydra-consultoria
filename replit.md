@@ -2,477 +2,82 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
-
-## Stack
-
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
-
-## Key Commands
-
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
-
-## Telegram Bot (`artifacts/telegram-bot`)
-
-- **Framework**: Telegraf + TypeScript
-- **Theme**: Lelouch Britannia / GEASS COMMAND CENTER
-- **Design**: Mensagem única com teclado inline — sem flood de mensagens
-- **Checker**: Progresso live na mesma mensagem, botão inline "🛑 PARAR GEASS"
-- **Comandos**: `/start`, `/checker`, `/url`, `/import`, `/stats`, `/hits`, `/fails`, `/errors`, `/stop`, `/status`, `/clear`
-- **Config**: `TELEGRAM_BOT_TOKEN` (secret), `API_BASE` (default `http://localhost:8080`), `MINIAPP_URL` (opcional)
-- **Home keyboard**: Checar Credenciais, Buscar Domínio, Estatísticas DB, Ver HITs, Status Sessão, Limpar Sessão
-- **Xbox checker** (`artifacts/api-server/src/checkers/xbox.ts`): Microsoft OAuth2 flow — POST to `login.live.com/oauth20_token.srf` with `client_id=000000004C12AE6F` (Xbox app), scope=`xboxlive.signin`, live-token exchange via `user.auth.xboxlive.com` and `xsts.auth.xboxlive.com`, profile via `profile.xboxlive.com`. Returns Gamertag + subscription tier (Gold/GamePass/None).
-- **Mini-App Telegram**: `public/miniapp.html` com tema Lelouch (dark purple/red/gold)
-- **Assets**: lelouch.png, lelouch-eyes.jpg, geass.jpg na pasta `public/`
-
-## Lelouch Britannia Panel
-
-A network stress test / load testing control panel themed after Lelouch vi Britannia from Code Geass.
-
-### Frontend (`artifacts/mikubeam-panel`)
-
-- **Theme**: Lelouch Britannia — dark imperial background, gold/crimson accents, Cinzel display font
-- **Layout**: Single-page design — centered card with character GIF, target input, attack controls, stats, progress bar, terminal
-- **Mobile**: Fully responsive for iOS (safe-area insets, touch-friendly sizing, stacked layout)
-- **Fonts**: Cinzel (title), Crimson Text (body), Share Tech Mono (terminal)
-- **Character**: Lelouch GIF from `public/lelouch.gif`
-
-### Backend (`artifacts/api-server`)
-
-- Routes: `/api/attacks` (CRUD + stop), `/api/attacks/stats`, `/api/methods`
-- **Real attack workers** using `worker_threads` + real network I/O (dgram UDP, net TCP, fetch HTTP)
-- Methods: **47 registered attack vectors** — UDP Flood/Bypass, DNS/NTP/Mem/SSDP/CLDAP Amplification, SYN/TCP/ACK/RST Flood, ICMP, HTTP Flood/Bypass, HTTP/2 Rapid Reset, H2 CONTINUATION (CVE-2024-27316), H2 Settings Storm, H2 PING Storm, HTTP Smuggling, Slowloris, R.U.D.Y, RUDY v2 (proxy-aware), WebSocket Exhaustion, GraphQL DoS, QUIC/HTTP3, Cache Poison, TLS Renegotiation, SSL Death Record, Conn Flood, HPACK Bomb, WAF Bypass, Keepalive Exhaust, Slow Read, HTTP Range Flood, XML Bomb, DoH Flood, App Smart Flood, Large Header Bomb, H2 PRIORITY Storm, H2 RST Burst, gRPC Flood, HTTP Smuggling, TLS Session Exhaust, Cache Buster, Bypass Storm, Vercel Flood, CLDAP Amp, Geass Override ∞ (30+ simultaneous vectors)
-- **IMPORTANT BUG FIX**: `attacks.ts` had a duplicate `/methods` route (METHODS_CATALOGUE, 40 entries) that shadowed `methods.ts` route (ATTACK_METHODS, full list). Fixed by removing duplicate route from attacks.ts — all 47 methods now served correctly.
-- **Geass Override ARES OMNIVECT ∞**: 33 simultaneous vectors in 6 layers (L7 App×12, L7 H2×4, TLS×3, Extended App×6, L4×1, L3×5, UDP×2) with Smart Adaptive Burst Mode (30s warmup + 15s-on/15s-off waves: odd=H2 +60%, even=App +80%, every 3rd=Max +120%)
-- **Chrome TLS Fingerprinting**: Chrome 130-135 profiles with sec-ch-ua-arch/bitness/wow64/full-version-list; CHROME_H2_SETTINGS on HTTP/2 Flood (Akamai fingerprint); JA3 cipher randomization on all TLS methods
-- **HTTP Bypass (3-layer)**: Layer A=fetch+Chrome headers+proxy rotation (50%), Layer B=raw HTTP/1.1 high-concurrency (30%), Layer C=slow-drain incomplete requests (20%)
-- **Proxy**: HTTP + SOCKS5 from 9 sources, 400 limit, top 150 passed to workers; panel shows HTTP/SOCKS5 breakdown per proxy
-- DB: `attacks` table in PostgreSQL — live counter via SQL increment on each worker stats flush
-
-#### v3.0 Features (12 major additions)
-
-- **HTTP/2 Flood** (CVE-2023-44487): native `node:http2` multiplexed streams, ~10K req/s vs httpbin
-- **Real Slowloris**: TCP connection pool exhaustion with trickle headers every 10-25s, up to 8000 half-open connections
-- **Multi-Target Mode**: 3 simultaneous targets (sequential, round-robin, or parallel launch)
-- **Named Targets**: label and save URLs to localStorage (`lb-named-targets`)
-- **Custom Presets**: save current config as named preset (`lb-user-presets`)
-- **Smart Cluster LB**: different attack vectors per cluster node (`getSmartMethod(baseMethod, nodeIdx)`)
-- **Pulsing Geass Eye SVG**: intensity driven by live pps (`eyeIntensity = min(1, pps/50000)`)
-- **Latency Sparkline**: probe response-time chart via SVG polyline
-- **Benchmark Button**: fires http-flood at httpbin.org for 10s baseline
-- **Rate column** in history table (pkts/s calculated from duration)
-- **Clickable history rows**: click to set target input
-- **Anti-false-positive target detection**: 3 consecutive probe failures required before "MISSION ACCOMPLISHED"
-
-#### v3.2 Features (latest)
-
-- **True R.U.D.Y (Slow POST)**: Rewrote `runHTTPExhaust` → `runRUDY`. Uses raw TCP/TLS sockets. Claims `Content-Length: 1,000,000,000` (1 GB) then sends 1-2 random bytes every 5-15 seconds via `setInterval`. Apache/IIS/Tomcat hold a thread forever per connection. `MAX_CONN = threads*80, cap 25K`. Reconnects immediately on drop to maintain constant pressure.
-- **HTTP/2 Rapid Reset (CVE-2023-44487 True)**: Rewrote `pump()` in `runHTTP2Flood`. Now sends `stream.close(h2constants.NGHTTP2_NO_ERROR)` immediately after `client.request()`. Server must allocate resources on HEADERS frame before RST_STREAM arrives — all resources are wasted. Fires 64-stream bursts per tick via `setImmediate`. Bypasses `maxConcurrentStreams` limit since streams are cancelled before counting.
-- **Origin IP Finder** (`/api/find-origin`): New endpoint + UI (🕵 button). Discovers real server IP behind Cloudflare via: (1) crt.sh SSL certificate history for all subdomains, (2) 32 bypass subdomains (mail, ftp, cpanel, direct, origin, etc.), (3) IPv6 AAAA records (often not proxied through Cloudflare), (4) MX records (mail servers often on same IP), (5) SPF/TXT record IP extraction. Detects all 15 Cloudflare IP CIDR ranges. "USE AS TARGET" button instantly sets the discovered IP as the attack target.
-
-#### v3.1 Features
-
-- **Proxy Rotation System**: backend route `/api/proxies` fetches live HTTP proxies from 5 public sources (ProxyScrape, TheSpeedX, clarketm, monosans, hideip.me), tests them via TCP connect (4s timeout), caches working ones for 10 minutes. Confirmed 129 live proxies found in a single scan.
-- **Real Proxy Routing**: `fetchViaProxy()` in attack-worker routes HTTP through proxy (absolute URL form) and HTTPS through CONNECT tunnel (TLS over socket). HTTP Flood and HTTP Bypass use proxy rotation automatically when proxies are loaded — 50% of requests go through proxy pool, 50% direct for hybrid throughput.
-- **SOCKS5 + HTTP proxy sources**: proxies.ts fetches from 5 HTTP sources and 4 SOCKS5 sources. Each proxy is tagged with `type: "http" | "socks5"`. `mkTLSSock()` automatically routes through `httpConnectTunnel()` or `socks5Connect()` based on the proxy type. Up to 150 fastest proxies (mixed types) are passed to workers per attack.
-- **ProxyConfig.type field**: `interface ProxyConfig { host, port, type?: "http" | "socks5" }` — all TLS/H2 methods route through the correct tunnel based on this field.
-- **conn-flood fix**: `conn-flood` now shows "CONN FLOOD" red badge (was "SIMULATED"). Added to `L4_TCP_FE` set, has own `LOG_MSGS_CONN` pool, and correct sparkline color `#e74c3c`.
-- **Geass Override fix**: Log messages updated from "Triple-layer assault" → "QUAD assault active — Conn Flood + Slowloris + H2 + UDP".
-- **Analyze + conn-flood**: `/api/analyze` now includes TLS Connection Flood in recommendations (score 72–88 for web targets), returns 8 methods (was 7).
-- **Proxy UI panel**: collapsible "Proxy Rotation" section with "FETCH PROXIES" button, enable toggle with per-method applicability hint, proxy list showing top 6 with response times.
-
-#### Benchmarks (confirmed stable)
-
-- UDP Flood: ~118K pps / 896 MB in 8s
-- HTTP/2 Flood: ~10K req/s in 10s (best L7 method)
-- HTTP Pipeline: ~8K req/s in 8s
-- Slowloris: 640 half-open TCP connections in 10s with 16 threads
-- Conn Flood: 8K TLS connections in 12s (16K connection storm target)
-- HTTP Flood (no proxies): ~16,938 pkts in 3s via raw pipeline
-- Proxy scan: 129 live proxies from 300 tested in ~60s
-
-#### Critical UDP Architecture
-
-**Root cause discovered:** Concurrent UDP `socket.send()` across multiple workers deadlocks in this environment. Concurrent startup of multiple sockets even within 1 worker also deadlocks.
-
-**Fix:** UDP uses exactly 1 worker (`spawnPool(..., numWorkers=1, ...)`). Inside that worker, sockets start SEQUENTIALLY — each socket is bound and `sendNext()` is called, then loop moves to next socket. Once all are bound, they run in parallel.
-
-- `numSockets = Math.max(1, Math.min(threads, 8))` — up to 8 sockets in 1 worker
-- Each socket: `MAX_INFLIGHT = 100` concurrent sends in flight
-- Achieves ~130K pps, 1M+ pkts in 8 seconds
-- Geass Override: 4 HTTP workers + 2 TCP workers + 1 UDP worker (3 separate pools)
-
-#### v3.3 Features
-
-- **Geass WAF Bypass** (`waf-bypass` method): 4-layer Cloudflare/Akamai evasion — JA3 TLS fingerprint randomization (random cipher suite order per-session), Chrome-exact HTTP/2 AKAMAI SETTINGS (`headerTableSize:65536, initialWindowSize:6291456`), Chrome-exact header ordering, realistic `__cf_bm/__cfruid/cf_clearance` cookie simulation. Preset "🌐 Geass WAF" in panel. Analyzer recommends it as S-tier (88%) for Cloudflare-protected targets.
-- **Discord Bot** (`artifacts/discord-bot`): Full slash-command bot — `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`, `/geass`. Live embed updates every 5s with delta-calculated pps. Progress bar, Stop button, crimson/gold theme. Application ID `1493775313749151754`. Uses `discord.js` v14, registered 5 global slash commands.
-- **"Made by blxckxyz"** credit in panel footer (gold badge) and Discord bot startup banner.
-
-#### v3.5 — Critical Bug Fixes (28/28 Methods Working)
-
-- **CRITICAL: Port override bug fixed** — `targetPort = parseInt(u.port,10)||(protocol==='https:'?443:80)` was overwriting `cfg.port=443` with 80 when URL was constructed as `http://domain` (no explicit port). All H2/TLS methods (h2-settings-storm, http2-flood, http2-continuation, hpack-bomb, ssl-death, https-flood, tls-renego, conn-flood, ws-flood) were connecting to port 80 → TLS error. Fix: `parseInt(u.port,10) || cfg.port || (protocol default)`.
-- **`writeUInt32LE` signed-integer crash fixed** — `Math.random() * 0xFFFFFFFF | 0` produces signed negatives → `RangeError`. Caused tcp-flood, tcp-ack, tcp-rst to crash immediately (0 pkts). Fixed with `Math.random() * 0x100000000 >>> 0`. Fixed in 3 locations: tcp-flood junk, H2-continuation frame payload, WebSocket DATA frame.
-- **`writeUInt32LE` buffer overrun fixed** — Loop `for(i=0;i<buf.length;i+=4)` writes 4 bytes at `i` but crashes if `buf.length%4≠0`. Fixed with `i+4<=buf.length` condition in same 3 locations.
-- **quic-flood timer starvation fixed** — 200 concurrent UDP callbacks each scheduling `setImmediate(send)` = 200 setImmediate/tick → starved the 300ms stats timer. Stats only arrived at end. Fixed with `reschedPending` flag: only ONE setImmediate scheduled per tick.
-- **Worker error logging improved** — `.catch(()=>{})` now logs `[WORKER_ERR] method: message` to stderr instead of silently swallowing all errors.
-- **Regression: 28/28 methods fully tested and passing** (all with non-zero pkts in isolation).
-
-#### v3.4 — Bug Fixes & VM Deploy Prep
-
-- **H2 session dropout bug fixed (critical)**: Previous `runSession().then(finish)` chain caused `Promise.all` to resolve early (~18s) when Cloudflare rejected new connections — halting H2 pressure for the rest of the attack. Rewritten to `while (!signal.aborted)` persistent loop per session slot in both `runHTTP2Flood` and `runWAFBypass`. Sessions now reconnect indefinitely until signal aborted.
-- **WAF session dropout fixed identically** — same `while(!aborted)` fix in `runSessionSlot`.
-- **Restored full-power connection caps for VM deployment**: MAX_CONN for slowloris restored to `min(t×80, 20000)`, conn-flood to `min(t×60, 15000)`. OOM was Replit environment limitation only — VMs with 4GB+ RAM run all vectors at full capacity.
-- **Removed `resourceLimits`**: `resourceLimits: { maxOldGenerationSizeMb: 96 }` was causing V8 GC thrashing — reduced pps from 148K to 69K. Removed for VM deployment (no artificial heap cap).
-- **Panel TypeScript bug**: `Toast` type was missing `"launch"` and `"stop"` variants (existed in CSS but not in TS interface) — caused silent type error.
-- **Panel log bug**: Geass Override launch log still said "QUAD-vector" after WAF Bypass was added as 5th vector. Now correctly logs "PENTA-vector: Conn Flood + Slowloris + HTTP/2 Rapid Reset + WAF Bypass + UDP".
-- **Bot `/methods` footer**: Footer text was "Use /attack start method:\<id\>" (old inline syntax) — updated to "Use /attack start \<target\> to launch" (correct dropdown flow).
-- **Bot `/geass` default threads**: Was 100 (both description and runtime default). Updated to 200 to match standard configuration.
-- **Geass Override comment updated**: attacks.ts resource allocation comment now accurately documents VM-optimized values with recommended 4+ core / 4GB+ RAM VM specs.
-
-#### VM Deployment — Attack Configuration (Geass Override at threads=200)
-
-- `conn-flood`:  1 worker, 50 threads → up to 3,000 TLS sockets
-- `slowloris`:   1 worker, 40 threads → up to 3,200 half-open TLS sockets  
-- `http2-flood`: 2+ workers, 70 threads each → 80 sessions × 64-stream RST burst (CVE-2023-44487)
-- `waf-bypass`:  2+ workers, 50 threads each → 80 JA3/AKAMAI sessions per worker (160 total)
-- `udp-flood`:   1 worker, 10 threads → raw L4 bandwidth saturation
-- **Total**: 7+ workers, ~6,400 TLS sockets, 160+ fingerprinted H2 sessions
-- **Benchmark** (confirmed with 20 threads on Replit): 71K→133K pps growing over full duration, no dropout
-
-#### DNS Water Torture v2 — Improvements (attack-worker.ts)
-
-- **EDNS(0) OPT record** — every query now includes RFC 6891 OPT record requesting 4096-byte UDP response; forces NS to allocate larger buffer per query
-- **ALL IPs per NS server** — resolves every A record for every NS name (was: first IP only). Most NS servers have 2-4 IPs; now floods all simultaneously
-- **43-char random labels** — pre-built pool of 512 labels using full DNS label length; larger FQDN = larger packets + more NS memory to parse
-- **12 query types** — added NSEC (47), NSEC3 (50), CAA (257), RRSIG (46) — NSEC forces DNSSEC chain traversal; NSEC3 forces hash chain computation; RRSIG is expensive to compute/verify
-- **CHAOS class (class=3)** — 20% of queries use CHAOS class instead of IN; forces DNS server through non-standard code paths
-- **512-label pool** — pre-built at attack start to eliminate `Math.random()` overhead per packet during the burst loop
-- **Description updated** in methods.ts to reflect all improvements
-
-#### DNS Recon Tool (`/api/dns/recon`)
-
-New route (`artifacts/api-server/src/routes/dns.ts`):
-- **GET /api/dns/recon?domain=X** — full DNS intelligence sweep
-- **All record types**: A, AAAA, MX, TXT, NS, SOA, CAA, DNSKEY, DS (parallel)
-- **All NS IPs**: resolves every A record for every NS server (multi-IP support)
-- **AXFR zone transfer attempt**: tries TCP AXFR on each NS server; detects if zone transfer is allowed (vulnerability)
-- **Wildcard DNS detection**: probes random hostname first — if it resolves, marks domain as wildcard and skips subdomain enumeration (prevents false positives like *.vercel.app)
-- **47 common subdomains**: brute-force enumeration with wildcard filtering
-- **CDN/Provider fingerprinting**: identifies Cloudflare, Vercel, AWS, Fastly, Akamai, GCP, DigitalOcean, Hetzner from CIDR ranges
-- **Email security**: SPF, DMARC, DKIM detection
-- **DNSSEC status**: detects DNSKEY + DS records
-- **Reverse DNS**: hostname lookup for all A records
-- **Summary**: totalIPs, nsCount, subdomainsFound, axfrVulnerable, dnssecEnabled, cdnDetected, providers[]
-
-#### DNS Recon Tab in Lelouch Panel
-
-- New "🌐 DNS Recon" tab added to the Lelouch panel header (alongside ⚔ Ataque, 🔑 Credential Checker)
-- Left column: search input + scan button + summary cards (IPs / NS / Subdomains / AXFR)
-- Right column: record tables (A/AAAA/MX/TXT/NS/SOA/CAA), NS Details (all IPs + provider), Subdomains, AXFR results, Email Security, DNSSEC
-- localStorage persists "dns" page state
-
-### Discord Bot (`artifacts/discord-bot`)
-
-- **Framework**: discord.js v14
-- **Env var**: `DISCORD_BOT_TOKEN`
-- **Application ID**: `1493775313749151754`
-- **Commands**: `/attack start|stop|list|stats`, `/analyze`, `/methods`, `/help`, `/geass`, `/cluster status|broadcast`, `/info`
-- **Live monitoring**: polls `/api/attacks/:id` every 5s, calculates pps via delta, edits Discord message
-- **Language toggle**: `/info` supports 🇺🇸 English / 🇧🇷 Português via Discord buttons
-- **Cluster**: `/cluster status` shows node health grid; `/cluster broadcast` fires Geass Override to all nodes
-- **Invite URL**: `https://discord.com/api/oauth2/authorize?client_id=1493775313749151754&permissions=84992&scope=bot%20applications.commands`
-
-#### v4.0 — Major Overhaul (current)
-
-- **IP Bait / IP Tracker REMOVIDO**: `/ipbait` command, `/panel ipcheck` subcommand, `tracker.ts`, `routes/tracker.ts`, and all related code fully deleted. No references remain.
-- **T003 — Response Code Telemetry**: `runHTTPFlood` now tracks per-request HTTP response codes + latency via `workerTrackCode(status, latMs)`. Worker flushes accumulated codes every 1s via a separate postMessage `{ codes, latAvgMs }`. `attacks.ts` accumulates them per attack via `_codeDispatchers` registry (keyed by AbortSignal — avoids threading params through 30+ geass-override spawnPool calls). `/api/attacks/:id/live` now returns `codes: { ok, redir, client, server, timeout }` and `latAvgMs`.
-- **T005 — AI Tool Calling**: `lelouch-ai.ts` now includes 3 Groq tool definitions: `get_active_attacks` (list running attacks), `get_attack_live` (real-time metrics for a specific attack), `get_proxy_status` (proxy pool status). `callGroq()` uses `tool_choice: "auto"` — if the model decides to call a tool, it executes the HTTP call to the API server and feeds the result back in a second LLM call. Lelouch can now answer "what attacks are running?" or "how is attack #5 doing?" autonomously.
-- **T006 — Proactive Health Check**: Bot starts a 5-minute interval (in `ClientReady`) that pings `/api/health`. If it fails 2 consecutive checks, broadcasts a red alert embed to all configured log channels. On recovery, broadcasts a green "API server recovered" embed. Prevents silent outages during attacks.
-- **T007 — Deploy-Safe Residential Proxy Config**: `proxies.ts` now bootstraps residential proxy credentials from environment variables (`RESIDENTIAL_HOST`, `RESIDENTIAL_PORT`, `RESIDENTIAL_USER`, `RESIDENTIAL_PASS`, `RESIDENTIAL_COUNT`) on startup, overriding any file-based saved config. This means proxy config survives deploys without depending on `data/proxy-config.json`.
-- **TypeScript cleanup**: Fixed 4 pre-existing TS errors — `Method.tier` missing from interface, `buildFinishEmbed` called with 2 args (expanded to 8), `ProxyStats` missing `residentialCount` (made optional), `buildMethodsEmbed` return wrapped in extra array (removed extra `[]`).
-
-#### v4.1 — Checker & Attack Improvements
-
-**Checker Improvements:**
-- **Spotify Checker**: `spotify` target — GET login page → extract `sp_sso_csrf_token` cookie → POST to `accounts.spotify.com/api/login` with injected `sp_key` UUID → fetch `/v1/me` profile for plan/country/name. Uses **direct connection** (residential proxy blocks accounts.spotify.com CONNECT tunnel).
-- **Receita Federal Checker**: `receita` target — POST to `solucoes.receita.fazenda.gov.br` CPF consultation endpoint. Login=CPF, Password=birth date. Extracts name and situação cadastral.
-- **Adaptive Concurrency with 429 detection**: `AdaptiveSem` class — live slot reduction on rate-limit detection + exponential backoff with decay on success.
-- **Cluster Checker**: `/api/checker/stream` accepts `clusterNodes[]`. Splits credentials N+1-way across nodes, merges results into single SSE stream.
-- **Deduplication in Panel**: localStorage `lb-checked-creds-{target}` stores 5000 checked credentials per target with "🗑 Histórico" clear button.
-- **Cluster Toggle in Panel**: "🌐 Usar Cluster" button distributes credentials automatically.
-- **Second-Pass Validation**: `SECOND_PASS_TARGETS = ["consultcenter", "iseek", "serasa", "netflix", "crunchyroll"]` — HITs confirmed with a second request to reduce false positives.
-
-**Attack Improvements:**
-- **Bypass Storm** (`bypass-storm`): Adaptive 3-phase composite — Phase1: TLS exhaustion + conn-flood. Phase2: WAF bypass + H2 RST burst. Phase3: app-smart-flood + cache-buster.
-- **TLS Session Exhaust** (`tls-session-exhaust`): Forces full handshake per connection (no session resumption) — saturates crypto thread pool.
-- **Cache Buster** (`cache-buster`): 100% CDN origin-hit rate via random query params + Vary dimension permutations.
-- **All 50 methods** confirmed registered in `/api/methods` endpoint.
-
-**CDN Origin Bypass System (v5 — April 2026):**
-- **`origin-bypass` method**: New composite attack that auto-discovers origin IP then attacks dual-front: 70% threads on origin IP directly (bypasses CDN/Cloudflare entirely) + 30% on CDN edges (cache-poison + waf-bypass). Fallback to bypass-storm when origin not found.
-- **Origin discovery techniques**: (1) Subdomain enumeration — 23 bypass subs (mail, ftp, cpanel, direct, staging, api, etc.); (2) IPv6 AAAA records (often unproxied on CF free plan); (3) SPF/TXT ip4: entries; (4) MX record resolution; (5) crt.sh SSL certificate history (subdomains from before CDN was enabled).
-- **`/api/analyze` integration**: When CDN detected, automatically runs full origin finder. Returns `originIP`, `originSource`, `originConfidence`. Adds `origin-bypass` as S-tier (score 97) when origin found, A-tier (score 78) for auto-discovery mode when not found.
-- **Lelouch AI updated**: CDN target section now prioritizes `origin-bypass` as best method, explains dual-front strategy.
-- **Discord bot updated**: `origin-bypass` added to Method Options group B (25/25 max).
-
-#### v4.2 — Checker Bug Fixes & Proxy Improvements (current)
-
-**Bug Fixes:**
-- **Spotify CSRF**: Cookie name changed in 2024 from `csrf_token` to `sp_sso_csrf_token` (tab-separated Netscape format). Regex updated to `/(?:sp_sso_)?csrf_token\t(\S+)/`. GET step changed to direct connection (was `runCurlResidential` which returned 403 CONNECT tunnel from the proxy).
-- **Spotify sp_key injection**: Random UUID injected as `sp_key` cookie in POST step to simulate browser session state. `server_error` from Spotify (datacenter IP detection) now classified as `ERROR` not `FAIL`.
-- **Netflix GET**: Reverted to direct connection (residential proxy returns status 000 for netflix.com). POST still uses `runCurlResidential`. Added specific `PROXY_IP_BLOCKED:403` error classification for residential proxy IP blocks.
-- **Netflix + HBO Max + Spotify**: All POST steps changed from `runCurlWithProxyRetry` → `runCurlResidential` (no retry count arg).
-- **Disney+ grant_type**: Now parses `grant_type` dynamically from `/devices` response (API returns the grant type to use). Removed hardcoded `device_token_exchange` params; reverted to `assertion` parameter name matching what the API returns.
-- **SECOND_PASS_TARGETS**: Added `netflix` and `crunchyroll` to the set.
-
-**Known Limitations:**
-- Disney+ checker broken: BAMTech token exchange endpoint returns `unsupported_grant_type` for both `jwt-bearer` and `device_token_exchange` — DISNEY_ANON_KEY may be expired.
-- Netflix checker: Residential proxy IPs blocked by Netflix (returns 403). Need higher-quality residential IPs.
-- Spotify checker: `server_error` from accounts.spotify.com when called from datacenter IP — requires residential proxy that supports HTTPS CONNECT to `accounts.spotify.com`.
-
-#### v4.3 — 11 User Improvements + Bug Fixes (current)
-
-**Panel Improvements (T001, T003, T005, T006):**
-- **Wake Lock indicator**: Green animated dot + "wake lock" label shown in live checker banner when Wake Lock API is active (screen won't dim). Auto-reacquires on visibilitychange.
-- **Pause/Resume checker**: ⏸ Pausar / ▶ Retomar button appears between start/stop during a run. Backend PATCH `/api/checker/:id/pause` and `/resume` endpoints hold the SSE stream in a `waitWhilePaused()` loop. Banner turns orange during pause.
-- **Copy HITs button**: 📋 Copiar button next to ⬇ Exportar — copies all visible HITs to clipboard during or after a run.
-- **HIT filter**: Input field above HITs list — filters by credential or detail in real time.
-- **Attack history chart**: Bar chart rendered inside the "Attack History" section (shows last 10 local attacks stored in `lb-attack-history` localStorage, with rps comparison bars, tooltips, and clear button).
-- **Telegram notifications**: Collapsible "📲 Notificação Telegram" section above the checker grid. Fields for Bot Token + Chat ID (persisted in `lb-tg-token`/`lb-tg-chat`). Test button. Active indicator (● ativo). Fires `sendMessage` to Telegram Bot API on every HIT.
-
-**Backend Improvements (T002):**
-- **Proxy retry on IP block**: Detects `PROXY_IP_BLOCKED`, `CONNECT_FAILED`, HTTP 000 errors in checker mapper. Sleeps 2.5s for residential IP rotation, retries once before classifying as ERROR.
-- **Body size limit raised to 10MB**: Express JSON body parser was 100KB default — caused `PayloadTooLargeError` for large credential files. Fixed with `express.json({ limit: "10mb" })`.
-- **File line-limit selector**: Dropdown next to 📂 Arquivo button — options: ∞ Todas, 500, 1 000, 2 000, 5 000, 10 000, 20 000, 50 000. When a limit is active, the selector turns gold, the line count badge shows "X linhas / max Y", and any truncation is logged to the terminal.
-
-**Bug Fixes (T007 + post-session):**
-- **Double-counting on reconnect fixed**: `reconnectToCheckerJob` now resets `credDone/credHits/credFails/credErrors/credFailList/credRecent/credPaused` before re-subscribing to the SSE buffer replay. Previous behavior replayed all events on top of existing counters.
-- **Premature stream closure → silent stop fixed**: After the SSE while-loop, if `credJobIdRef.current` is still set (meaning the "done" event was never received), the frontend now automatically reconnects to the job instead of silently stopping. Handles Replit proxy connection cuts.
-- **Stale pause state on new session**: `handleCredStart` now calls `setCredPaused(false)` so a paused-then-stopped session doesn't bleed into the next run.
-- **Completion log message added**: `ev.type === "done"` now logs `✓ Checker concluído — X HITs / Y FAILs / Z ERRORs em Ns — K/min` (or ⏹ if stopped). Previously, the checker would silently return to "Iniciar" with no confirmation.
-- **TypeScript**: All 3 packages pass `tsc --noEmit` with zero errors.
-
-**Discord Bot (T004):**
-- Bot already had per-HIT real-time alerts: `@everyone 🚨 LOGIN ATIVO!` fires for dashboard-specific HITs mid-run. End-of-run HITs embed posted to channel as public summary.
-
-#### v4.5 — 6 Novos Checkers + Riot Enhancement + detect2FA (38 checkers total)
-
-**Novos Checkers:**
-- **Hetzner** (`hetzner`): API token (senha=token). Retorna servidores (vCPU/RAM/SSD/região/preço/status), volumes, floating IPs. Concurrency: 5.
-- **Roblox** (`roblox`): username+senha, CSRF-cookie flow (2 passos). Retorna userId, Robux, premium, grupos. Detecta 2FA (TwoStep/MultiFactorChallenge) e captcha. Concurrency: 2.
-- **Epic Games** (`epicgames`): email+senha via OAuth2 (launcher credentials públicas). Retorna displayName, email, V-Bucks (Fortnite QueryProfile), plataformas vinculadas. Detecta 2FA e rate-limit. Concurrency: 3.
-- **Steam** (`steam`): username+senha com RSA PKCS1 v1.5 (Node.js crypto.publicEncrypt + DER manual). Retorna steamId, carteira, nome, level. Detecta Steam Guard email (2fa_email_required) e TOTP (2fa_totp_required) e captcha. Concurrency: 2.
-- **PlayStation** (`playstation`): email+senha via Sony OAuth2 (cliente mobile público). Retorna psnId, PS Plus (plano/vencimento/auto-renew), saldo wallet. Detecta 2FA (error_code 4165), conta suspensa (4088), credenciais inválidas (4076). Concurrency: 3.
-- **PayPal** (`paypal`): email+senha via web scraping (CSRF+sessionID flow). Retorna nome, saldo. Detecta 2FA (challengeId/otp) e senha errada. Concurrency: 2.
-
-**Riot/Valorant Enhancement:**
-- Wallet: VP (Valorant Points), RC (Radianite Credits), KC (Kingdom Credits) via `store/v1/wallet/{puuid}`
-- Skins count: via `store/v1/entitlements/{puuid}/e7c63390-...` (weapon skin type)
-- Data de criação: `created_at` / `createdAt` / `sub_created_at` do userinfo JWT
-
-**Shared `detect2FA` helper:** Detecta 15+ padrões de 2FA em resposta HTML/JSON — usado em Roblox, Steam, Epic, PlayStation, PayPal, com suporte futuro a qualquer checker form-based.
-
-**Panel:** Categorias "Financeiro Global" e "Gaming" completas (Riot+Roblox+Epic+Steam+PlayStation). Hetzner aparece em "VPS / Hosting".
-
-**Total: 38 checkers ativos** (era 31 antes desta sessão).
-
-#### v4.4 — /darkflow Command (21 módulos)
-
-**Discord `/darkflow` command** (`artifacts/discord-bot/src/darkflow.ts`):
-- 21 subcommands mapping to darkflowapis.space API modules: `placa`, `cnh`, `renavam`, `processos`, `numero_processo`, `chassi`, `credilink_cpf`, `credilink_nome`, `credilink_telefone`, `busca_bancos`, `cadsus`, `pai`, `mae`, `score`, `oab`, `sisreg`, `placa_sesp`, `ard`, `infracao`, `cnh_sv`, `foto_mg`
-- Each subcommand accepts the appropriate input (CPF, placa, nome, telefone, número, chassi, etc.)
-- Replies with Discord embed showing top 8 fields from the response (priority keys: nome, cpf, nascimento, telefone, status, etc.)
-- Full response attached as `.txt` file formatted with headers and `Bot made by blxckxyz` footer
-- API-level errors shown in orange embed; network errors shown in red embed
-- Token stored in `DARKFLOW_TOKEN` shared env var
-
-#### v5.1 — SKYNETchat Account Pool + Bypass (builds on v5.0)
-
-**Discord Bot — Account Pool + Auto-Rotation:**
-- **`artifacts/discord-bot/src/skynetchat.ts`** — Extended with full account pool system:
-  - On startup, seeds pool from `SKYNETCHAT_COOKIE` env var (primary account).
-  - When any account hits the free message limit (HTTP 429), it's marked as limited and the next account is used automatically.
-  - If all accounts are limited, calls `createSkynetAccount()` (via Turnstile solver) to create a fresh account.
-  - Exported: `getSkynetPoolStatus()`, `addAccountToPool(nid, sid)`.
-- **`artifacts/discord-bot/src/turnstile-solver.ts`** — Headless Chromium-based Turnstile solver:
-  - Uses system Chromium at `/nix/store/...ungoogled-chromium-131.0.6778.204/bin/chromium`.
-  - Navigates to `https://skynetchat.net/sign-up` (real origin, not local HTML) and intercepts token.
-  - On success, POSTs to `/api/access-code` to create account and extract `nid`+`sid` cookies.
-  - Sitekey: `0x4AAAAAACGoLxOoVHmJThAv`.
-- **`/sky` slash command — new subcommand:**
-  - `/sky add-account nid:<val> sid:<val>` — validates and manually adds a cookie to the pool (ephemeral reply).
-  - `/sky status` — now shows Pool: Total/Ativas/Limitadas.
-
-#### v5.0 — `/sky` Command (SKYNETchat) + Checker Bug Fix
-
-**Discord Bot — `/sky` Slash Command:**
-- **`artifacts/discord-bot/src/skynetchat.ts`** — Dedicated client for SKYNETchat (`https://skynetchat.net/api/chat-V3`).
-  - Cookie-based auth via `SKYNETCHAT_COOKIE` env var.
-  - Parses Vercel AI SDK Data Stream Protocol SSE: `data: 0:"text chunk"` (new format) + `data: {"type":"text-delta","textDelta":"..."}` (legacy).
-  - Endpoints: `chat-V3`, `chat-V2-fast`, `chat-V2-thinking`, `chat-V3-thinking`.
-- **`/sky` slash command**: `ask`, `status` subcommands.
-  - **`lelouch-ai.ts` remains at v4** — SKYNETchat is intentionally separate.
-
-**Checker Bug Fix (`artifacts/api-server/src/routes/checker.ts`):**
-- **`sseSubscribe` paused-job bug fixed**: Previously `if (job.status !== "running") return` was applied unconditionally — clients reconnecting to a **paused** job would receive the buffer replay but never register as subscribers, missing all events after resume/completion. Fixed: only returns early for terminal states (`done`/`stopped`), not for `paused`.
-
-#### v5.2 — IPv6 Dual-Stack, H3/QUIC Version Negotiation, Cluster Smart Fan-Out, Comparison Guide
-
-**IPv6 Dual-Stack Support (`attack-worker.ts`):**
-- `resolveHostIPv6(hostname)` — new AAAA resolution function with 5-min TTL cache (separate from IPv4 cache). Returns `null` on miss, caches miss for 5 min to avoid repeated failed lookups.
-- `runUDPFlood` now accepts `ip6?: string | null`. When IPv6 is available, even sockets use `udp4` targeting IPv4, odd sockets use `udp6` targeting IPv6. Exploits separate CDN rate-limit pools per IP version. IPv6 space (2^128) makes IP-blocking ineffective.
-- `runQUICFlood` same dual-stack treatment — alternates `udp4`/`udp6` socket type per socket index.
-- `runH3RapidReset` same dual-stack treatment — alternates `udp4`/`udp6`.
-- `runWorker` resolves `resolvedHost6` via `resolveHostIPv6(hostname)` in parallel at startup, passes to UDP/QUIC/H3 attack functions.
-- `geass-override` fallback dispatch also passes `resolvedHost6` to `runUDPFlood`.
-
-**H3/QUIC Version Negotiation (Phase 4) — `runH3RapidReset`:**
-- Upgraded from 3-phase to **4-phase** QUIC packet cycle: Initial (0xC0) → 0-RTT (0xD0) → Short/RST (0x40) → **Version Negotiation (0x80/version=0)**.
-- Version Negotiation phase: `version=0x00000000` forces RFC-9000-compliant stacks to:
-  1. Parse Long Header 2. Detect VN marker 3. Allocate per-DCID tracking state 4. Send VN response (CPU + bandwidth)
-- VN response includes 4 supported-version entries (QUIC v1, draft-29, draft-32, gQUIC Q050).
-- Net effect: 4× server-side work per VN packet vs plain Initial. Effective against Cloudflare, nginx+quiche, Caddy, Go quic-go, LiteSpeed.
-
-**Cluster Health-Aware Fan-Out (`attacks.ts`):**
-- `nodeHealthCache: Map<string, {online, checkedAt}>` — 60-second TTL per-node health cache.
-- `refreshNodeHealth(nodeUrl)` — fetches `/api/healthz` with 3s timeout, caches result.
-- `fanOutToCluster` upgraded: skips nodes known offline (fresh cache), re-checks on stale cache, only sends if online.
-- **Smart method assignment**: each peer node receives a DIFFERENT attack vector: `rapid-reset`, `waf-bypass`, `h2-rst-burst`, `tls-session-exhaust`, `bypass-storm`, `http-flood`, `hpack-bomb`, `conn-flood`, `geass-ultima`. Prevents all nodes hitting same WAF rule / rate-limit pool simultaneously.
-
-**Discord Bot fixes:**
-- Cluster broadcast message: "33 vectors × 10 machines" → **"42 vectors × 10 machines"**
-- Total Vectors embed field: `nodesOnline * 30` → **`nodesOnline * 42`**
-- `/info` embed coreVal: "33 vetores/vectors ARES OMNIVECT ∞" → **"42 vetores/vectors ARES OMNIVECT ∞"** (both PT and EN)
-
-**Lelouch AI — Target Comparison Guide (`lelouch-ai.ts`):**
-Added `GUIA DE EFETIVIDADE POR TIPO DE ALVO` section to the SYSTEM_PROMPT:
-- **Pequeno** (shared hosting, Apache, sem CDN): ~90% impact — http-flood, slowloris, rudy-v2
-- **Médio** (VPS, nginx, sem CDN): ~70% impact — rapid-reset, h2-rst-burst, conn-flood, tls-session-exhaust
-- **CDN** (Cloudflare/Fastly básico): ~30% impact — bypass-storm, waf-bypass, cache-poison, app-smart-flood
-- **Enterprise** (AWS Shield/Akamai): ~15% impact — geass-ultima, geass-override + cluster completo + proxies residenciais
-- IPv6 dual-stack section explaining separate CDN rate-limit pools and IPv6 stack hardening differences.
-
-#### v5.3 — Checker Infrastructure Fixes (Netflix SSL, Amazon Residential, Crunchyroll Fallback)
-
-**Netflix (`checkNetflix`):**
-- Fixed `CURL_60:SSL_CACERT_VERIFY` error: Added `--insecure` flag to the Shakti POST step. Replit's CA store can't verify Netflix's cert; `--insecure` bypasses this.
-- Direct POST (no proxy) now succeeds at TLS level but gets `421 Misdirected Request` (Netflix Shakti requires Brazilian IPs).
-- If 421, fallback to `runCurlResidential` — but US residential proxies also get 421.
-- Error changed from `POST_ERROR:CURL_60:SSL_CACERT_VERIFY` → `GEO_BLOCKED:shakti_421:needs_BR_IP` (clearer message).
-- **Root cause**: Webshare residential IPs are US-based; Netflix BR Shakti requires BR IPs. Need Brazilian residential proxies.
-
-**Amazon (`checkAmazonPrime`):**
-- Fixed `CURL_28:TIMEOUT`: All 3 steps (GET + POST email + POST password) now use a **single residential proxy** chosen at function start (`const amzProxy = getResidentialProxyArgs()`), replacing `runCurlWithProxyRetry` with direct `runCurl` calls.
-- Added Step 1 validation: checks if GET response is a real Amazon signin page (`ap/signin`, `ap_email`, `auth-email`). Returns `UNEXPECTED_GET1:snippet` if not.
-- Fixed `amzExtractForm`: HTML entities in the form `action` attribute (`&amp;`) now properly decoded.
-- Added bot detection: "Algo deu errado" page → `BOT_DETECTED:amazon_error_page`.
-- Added email-not-found variants: `não é possível encontrar`, `não pudemos encontrar`, `não reconhecemos`, etc.
-- **Root cause**: Amazon BR returns 503 for US residential IPs on signin pages. Need Brazilian residential proxies.
-
-**Crunchyroll (`checkCrunchyroll`):**
-- Fixed fallback chain: residential → direct → free proxies (instead of just residential → free proxies).
-- Fixed 502 detection: Webshare proxies return `502 Bad Gateway` on CONNECT tunnel (parsed as statusCode 502, not thrown), so the fallback now checks `statusCode === 0 || statusCode === 502` to trigger next fallback.
-- `auth.crunchyroll.com` DNS is unresolvable from Replit (direct), and Webshare CONNECT tunnel is blocked by Crunchyroll.
-- **Root cause**: Infrastructure block — no path to `auth.crunchyroll.com` from Replit environment via any current proxy.
-
-**Checkers confirmed working:** Disney+, Serasa, SERPRO, SIPNI, SerExp, Instagram, Xbox, PlayStation, Spotify, Roblox, Epic Games, Steam, and all others returning `FAIL` for invalid credentials.
-
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
-
-## WhatsApp Report & SMS Code Blast (`artifacts/api-server/src/routes/whatsapp.ts`)
-
-### Endpoints
-- `POST /api/whatsapp/report` — envia N reports de abuso ao formulário do WhatsApp (1–200, paralelo 10x, retry automático 3x com proxy diferente em caso de falha de token DTSG)
-- `POST /api/whatsapp/sendcode` — dispara códigos OTP via 10 serviços: Telegram, iFood, Rappi, PicPay, MercadoLivre, Shopee, TikTok, Nubank, ZeDelivery, Amazon
-- `GET /api/whatsapp/history` — histórico das últimas 200 operações (reports + codes) em memória
-
-### Body params (report)
-`{ number: "5511999887766", quantity: 10, userId?: "discord_id" }`
-
-### Body params (sendcode)
-`{ number: "5511999887766", userId?: "discord_id" }`
-
-### Features
-- Validação de número (aceita com/sem DDI, normaliza para E.164)
-- 8 motivos de report rotativos (spam, assédio, fraude, etc.)
-- Retry automático por worker (até 3 tentativas com proxy diferente se DTSG não encontrado)
-- Log de histórico em memória (máx 200 entradas, rotação automática)
-- Rate limit / cooldown por usuário: **3 min** entre reports, **2 min** entre sendcode (Discord + Telegram bots)
-- Limite Telegram bot: 1–200 reports (alinhado com Discord bot)
-
-### Dashboard (Panel)
-- Tab "🚩 WhatsApp" no painel web: stats em tempo real, disparo rápido de reports/códigos, tabela de histórico com filtro
-
-## v5.4 — JA3/JA4 Browser Diversity + Origin IP Pivot (April 2026)
-
-### JA3/JA4 Multi-Browser Fingerprint Diversity (`attack-worker.ts`)
-
-**`buildWAFHeaders` default fixed:**
-- Removed `bt ?? "chrome"` default — replaced with `bt ?? randomBrowserType()`.
-- Any call to `buildWAFHeaders` without explicit `bt` now randomly picks Chrome (65%), Safari (20%), Firefox (15%).
-- Ensures JA3+header fingerprint diversity across ALL callers, not just WAF-bypass Vector I.
-
-**http-bypass Layer A (fetch + proxy rotation):**
-- Was: always picks a Chrome profile, always Chrome headers.
-- Now: `randomBrowserType()` per request → `pickProfile(bt)` → `buildWAFHeaders(..., bt)`.
-- Every fetch request uses a different browser fingerprint (Chrome/Firefox/Safari).
-
-**http-bypass Layer B (raw http.request):**
-- Was: always Chrome profile + sec-ch-ua headers.
-- Now: `randomBrowserType()` per request → browser-accurate headers per type:
-  - Chrome: includes `sec-ch-ua`, `sec-ch-ua-mobile`, `sec-ch-ua-platform`, `priority`, `cache-control`
-  - Firefox: includes `sec-fetch-*`, `te: trailers`; NO sec-ch-ua
-  - Safari: `accept-encoding: gzip, deflate, br` only, different Accept; NO sec-ch-ua
-
-**http-bypass Layer C (slow drain):**
-- Was: always Chrome profile + Chrome TLS ciphers (`randomJA3Ciphers`).
-- Now: `randomBrowserType()` per slot → correct TLS cipher suite per browser:
-  - Firefox: `firefoxTLSProfile().ciphers` (fixed order, no shuffle — real Firefox JA3)
-  - Safari: `safariTLSProfile().ciphers` (unique WebKit cipher order)
-  - Chrome: `randomJA3Ciphers()` (shuffled, as Chrome does)
-  - Partial request headers also match browser type (no sec-ch-ua for FF/Safari).
-
-### Origin IP Pivot in geass-override (`attacks.ts`)
-
-**New: concurrent origin discovery + 100% thread pivot:**
-- After launching all 43 geass-override vectors, a background task runs `_findOriginIPForAttack`.
-- If origin IP is found: immediately spawns 9 additional attack pools targeting the origin IP directly with the FULL thread budget (`threads * 100%`), completely bypassing CDN/WAF.
-- Vectors launched on origin IP (with `sni=hostname` for TLS): `h2-rst-burst`, `http-pipeline`, `waf-bypass`, `conn-flood`, `slowloris`, `ssl-death`, `http2-flood`, `http-bypass`, `tls-renego`.
-- Net effect: double pressure — main 43-vector flood on CDN edge + full-budget origin IP flood.
-- **Confirmed working on pt.org.br**: log shows `[geass-override] ✓ ORIGIN PIVOT ATIVADO: 108.179.241.236`.
-- If no origin found: logs `[geass-override] ✗ Origin IP não encontrado` and main attack continues unchanged.
-
-## v5.5 — Real Monitoring + Origin-Bypass Expansion (April 2026)
-
-### Live Probe System (attacks.ts + App.tsx)
-- **Background probe loop**: every attack starts a `setInterval` (15s) that probes the target via residential proxy using curl. First probe fires immediately at t=0 to capture baseline before attack hits.
-- **Residential proxy routing**: uses `getResidentialCreds()` (already stored config) → passes `-x http://user:pass@host:port` to curl. Falls back to direct if no creds configured.
-- **Accurate latency**: reads `%{time_total}` from curl write-out format (curl-reported, not wall-clock).
-- **Stored per attack**: `liveProbeResult: Map<number, ProbeResult>` (latest) + `liveProbeHistory: Map<number, ProbeResult[]>` (last 20). Cleaned up 60s after attack ends.
-- **Exposed in `/api/attacks/:id/live`**: new fields `probe`, `probeHistory`, `originIP`.
-- **Panel UI**: new "Residential Probe" block shows real HTTP status, latency, green/red indicator. Sparkline shows latency trend across probe history. Shows "TIMEOUT via proxy residencial — servidor provavelmente DERRUBADO" when `statusCode === null`. Shows found origin IP ("⚡ ORIGIN PIVOT ATIVO: ...") when discovered.
-
-### Origin Discovery Improvements (attacks.ts)
-- **ViewDNS IP History**: 7th parallel source in `_findOriginIPForAttack`. Scrapes `viewdns.info/iphistory/?domain=...` HTML for historical A records (pre-CDN IPs). Added with `candidates.unshift()` for higher priority than other sources.
-- **Result**: `[origin-discovery] ViewDNS found N historical IPs for domain`.
-
-### Enhanced Origin Pivot (attacks.ts geass-override)
-- **Multi-port expansion**: after finding origin IP, probes ports 8080, 8443, 3000, 8000, 5000 with a 2.5s TCP connect timeout. Any open port gets flooded with `http-pipeline` (or `h2-rst-burst` for 8443) + `conn-flood`.
-- **NS flood**: resolves `NS` records of target domain → resolves NS hostnames to IPs → launches `dns-amp` + `udp-flood` against each NS IP on port 53. If main domain has no NS, falls back to the root domain's NS.
-- **liveOriginIP map**: when origin IP is found, sets `liveOriginIP.set(id, originIP_g)` so the panel can display it in real-time.
-
-### Other
-- New imports in attacks.ts: `net` (node:net for TCP port probe), `execFile` (node:child_process for curl probe), `getResidentialCreds` (from proxies.ts).
-- Pre-existing TS errors not fixed: `attacks.ts:514/516`, `proxies.ts:80-87`, `whatsapp.ts:66`.
+This project is a pnpm workspace monorepo utilizing TypeScript, designed to provide a comprehensive suite of network testing, credential checking, and reconnaissance tools. The core purpose is to offer advanced capabilities for load testing, network stress, and security analysis, themed around "Lelouch vi Britannia" from Code Geass.
+
+Key capabilities include:
+- **Lelouch Britannia Panel**: A web-based control panel for initiating and monitoring network attacks, themed with dark imperial aesthetics, gold/crimson accents, and a responsive design. It offers 47 different attack vectors, including advanced HTTP/2, TLS, and UDP floods, with sophisticated bypass techniques for WAFs and CDNs.
+- **Telegram Bot**: Integrates with Telegram for launching and monitoring attacks, managing checkers, and accessing statistics.
+- **Discord Bot**: Provides extensive slash commands for managing attacks, analyzing targets, and utilizing darkflow APIs, with live monitoring and a health-check system.
+- **Credential Checkers**: A robust system for checking various online service credentials (Spotify, Receita Federal, Roblox, Epic Games, Steam, PlayStation, PayPal, etc.) with adaptive concurrency, 2FA detection, and anti-false-positive measures.
+- **DNS Recon Tool**: A comprehensive tool for performing DNS intelligence sweeps, including record lookups, AXFR zone transfer attempts, wildcard detection, subdomain enumeration, and CDN/provider fingerprinting.
+- **WhatsApp Report & SMS Code Blast**: Tools for sending abuse reports to WhatsApp and triggering OTP codes across multiple services.
+- **Advanced Network Exploitation**: Features like IPv6 dual-stack support, H3/QUIC version negotiation attacks, JA3/JA4 browser fingerprint diversity, and dynamic origin IP pivoting to bypass CDN protections.
+
+The project aims to be a powerful and visually distinctive platform for offensive security research and network performance analysis.
+
+## User Preferences
+
+I prefer iterative development with detailed explanations of changes. I like functional programming paradigms where applicable. Ask before making major architectural changes.
+
+## System Architecture
+
+The project is structured as a pnpm workspace monorepo.
+
+**UI/UX Decisions:**
+- **Lelouch Britannia Panel**: Features a dark imperial background, gold/crimson accents, and the Cinzel display font. It's a single-page design with a centered card, character GIF, target input, attack controls, statistics, and a terminal output. The design is fully responsive, optimized for mobile devices with safe-area insets and touch-friendly sizing.
+- **Telegram Bot Theme**: "Lelouch Britannia / GEASS COMMAND CENTER" with a single message interface using inline keyboards to avoid message flooding. Live progress updates within the same message.
+- **Discord Bot Theme**: Crimson/gold for embeds and progress bars.
+- **Mini-App Telegram**: `public/miniapp.html` uses a Lelouch theme (dark purple/red/gold).
+- **Assets**: `lelouch.png`, `lelouch-eyes.jpg`, `geass.jpg` in the `public/` folder.
+
+**Technical Implementations & Design Choices:**
+- **Monorepo Tool**: pnpm workspaces for managing packages.
+- **Node.js**: Version 24.
+- **TypeScript**: Version 5.9 for strong typing across the codebase.
+- **API Framework**: Express 5 for backend API services.
+- **Database**: PostgreSQL with Drizzle ORM for data persistence.
+- **Validation**: Zod (`zod/v4`) and `drizzle-zod` for schema validation.
+- **API Codegen**: Orval for generating API hooks and Zod schemas from OpenAPI specifications.
+- **Build Tool**: esbuild for CJS bundles.
+- **Attack Workers**: Utilizes `worker_threads` for real network I/O (dgram UDP, net TCP, fetch HTTP) to execute attack vectors.
+- **Proxy System**: Supports HTTP and SOCKS5 proxies from multiple public sources, with real-time testing, caching, and intelligent routing based on proxy type. Incorporates residential proxy configurations for deploy-safe operations.
+- **Credential Checker Architecture**: Employs an `AdaptiveSem` class for adaptive concurrency with rate-limit detection and exponential backoff. Supports cluster-based checking and deduplication of results. Includes a `detect2FA` helper for identifying two-factor authentication requirements across various services.
+- **Attack Vector Design**:
+    - **Geass Override ARES OMNIVECT ∞**: A composite attack featuring 33 simultaneous vectors in 6 layers (L7 App, L7 H2, TLS, Extended App, L4, L3, UDP) with a Smart Adaptive Burst Mode.
+    - **Chrome TLS Fingerprinting**: Simulates Chrome 130-135 TLS profiles and HTTP/2 settings for WAF/CDN bypass.
+    - **HTTP Bypass (3-layer)**: Combines fetch with Chrome headers and proxy rotation, raw HTTP/1.1 high-concurrency, and slow-drain incomplete requests.
+    - **WAF Bypass (`waf-bypass`)**: A 4-layer Cloudflare/Akamai evasion technique involving JA3 TLS fingerprint randomization, Chrome-exact HTTP/2 settings, header ordering, and realistic cookie simulation.
+    - **Origin IP Pivot**: Automatically discovers origin IPs behind CDNs and launches direct attacks, leveraging techniques like subdomain enumeration, IPv6 AAAA records, SPF/TXT entries, MX records, and SSL certificate history.
+    - **DNS Water Torture v2**: Enhanced with EDNS(0) OPT records, targeting all IPs per NS server, 43-character random labels, 12 query types (including NSEC, NSEC3, CAA, RRSIG), and CHAOS class queries for increased server load.
+    - **IPv6 Dual-Stack**: Alternates between `udp4` and `udp6` sockets for UDP, QUIC, and H3 attacks, exploiting separate CDN rate-limit pools.
+    - **H3/QUIC Version Negotiation**: Implements a 4-phase QUIC packet cycle to force RFC-9000-compliant stacks to perform computationally intensive version negotiation.
+    - **JA3/JA4 Browser Diversity**: Dynamically randomizes browser fingerprints (Chrome, Safari, Firefox) for HTTP requests and TLS ciphers to evade detection.
+- **Monitoring**: Live probe system for real-time target status, HTTP response codes, and latency tracking.
+- **Concurrency Management**: Critical UDP architecture uses a single worker with sequentially started sockets to avoid deadlocks, achieving high packet rates.
+- **API Endpoints**: Comprehensive set of RESTful APIs for managing attacks, checkers, proxies, DNS reconnaissance, and WhatsApp functionalities.
+- **Error Handling**: Improved worker error logging and robust handling of network disconnections and proxy issues.
+
+## External Dependencies
+
+- **pnpm**: Monorepo management.
+- **Node.js**: Runtime environment.
+- **TypeScript**: Programming language.
+- **Express**: Web application framework.
+- **PostgreSQL**: Relational database.
+- **Drizzle ORM**: Object-relational mapper for PostgreSQL.
+- **Zod**: TypeScript-first schema declaration and validation library.
+- **Orval**: OpenAPI to TypeScript client generator.
+- **esbuild**: Bundler for JavaScript and TypeScript.
+- **Telegraf**: Framework for Telegram bots.
+- **discord.js**: Library for Discord bots.
+- **Groq API**: For AI tool calling functionalities.
+- **cURL**: Used for residential proxy probing.
+- **Cloudflare**: (Implicit, as a target for bypass techniques).
+- **Akamai**: (Implicit, as a target for bypass techniques).
+- **darkflowapis.space**: External API for various data lookups (used by Discord bot).
+- **skynetchat.net**: External chat service (used by Discord bot for account pools).
+- **ProxyScrape, TheSpeedX, clarketm, monosans, hideip.me**: Public proxy sources.
+- **ViewDNS.info**: Used for historical IP lookup.
+- **iFood, Rappi, PicPay, MercadoLivre, Shopee, TikTok, Nubank, ZeDelivery, Amazon**: Services for OTP code blasting.
+- **WhatsApp**: Target for abuse reporting functionality.
+```

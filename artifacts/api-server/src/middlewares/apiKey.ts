@@ -25,6 +25,9 @@ export function apiKeyMiddleware(req: Request, res: Response, next: NextFunction
   // Always allow public routes
   if (PUBLIC_ROUTES.has(req.path)) { next(); return; }
 
+  // InfinitySearch panel uses its own session-cookie auth — bypass API key
+  if (req.path.startsWith("/api/infinity/")) { next(); return; }
+
   const authHeader = String(req.headers["authorization"] ?? "");
   const keyHeader  = String(req.headers["x-api-key"]     ?? "");
 
