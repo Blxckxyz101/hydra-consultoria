@@ -196,8 +196,14 @@ function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string,
 function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍  Nova Consulta", "consultar")],
-    [Markup.button.callback("❓ Ajuda", "show_ajuda")],
+    [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.callback("💬 Suporte", "show_suporte")],
+  ]);
+}
+
+function buildSupportKeyboard() {
+  return Markup.inlineKeyboard([
     [Markup.button.url("💬 @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
+    [Markup.button.callback("↩ Voltar", "home")],
   ]);
 }
 
@@ -355,10 +361,10 @@ export function startInfinityBot(): void {
   const TIPO_MENU_TEXT =
     `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
     `┃\n` +
-    `┃ ESCOLHA O MÓDULO DE CONSULTA\n` +
-    `┃ QUE DESEJA UTILIZAR\n` +
+    `┃ • ESCOLHA O MÓDULO DE CONSULTA\n` +
+    `┃ • QUE DESEJA UTILIZAR\n` +
     `┠────────────────────────────\n` +
-    `┃  SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+    `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
     `╰────────────────────────────╯`;
 
   // ── Middleware: group authorization check ──────────────────────────────────
@@ -596,6 +602,20 @@ export function startInfinityBot(): void {
         [Markup.button.callback("🔍 Consultar", "consultar")],
         [Markup.button.url("📢 Canal", CHANNEL_INVITE)] as any,
       ]),
+    );
+  });
+
+  // ── Callback: suporte ─────────────────────────────────────────────────────
+  bot.action("show_suporte", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+      `┃\n` +
+      `┃ • SUPORTE DISPONÍVEL\n` +
+      `┠────────────────────────────\n` +
+      `┃ Escolha um dos admins abaixo 👇🏻\n` +
+      `╰────────────────────────────╯`,
+      { parse_mode: "HTML", ...buildSupportKeyboard() },
     );
   });
 
