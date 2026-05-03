@@ -222,7 +222,7 @@ router.post("/login", async (req, res) => {
   const rows = await db
     .select()
     .from(infinityUsersTable)
-    .where(eq(infinityUsersTable.username, String(username)))
+    .where(sql`lower(${infinityUsersTable.username}) = lower(${String(username)})`)
     .limit(1);
   const u = rows[0];
   if (!u) {
