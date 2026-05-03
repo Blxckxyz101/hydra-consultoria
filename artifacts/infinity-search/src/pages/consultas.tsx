@@ -153,10 +153,10 @@ export default function Consultas() {
   };
 
   // "Ver resultado salvo" — loads stored result without a new API call
+  // DB stores only the parsed data { fields, sections, raw }; reconstruct the result wrapper
   const loadSavedResult = (item: Historico[number]) => {
     if (!item.result) return;
-    const saved = item.result as { success: boolean; error?: string | null; data?: unknown };
-    setResult(saved);
+    setResult({ success: item.success, error: null, data: item.result });
     const tabDef = TABS.find((t) => t.id === item.tipo);
     if (tabDef) { setActiveCategory(tabDef.category); setTab(tabDef.id); }
     setQuery(item.query);
