@@ -173,7 +173,7 @@ export default function IA() {
 
   if (voiceMode) {
     return (
-      <div className="h-[calc(100vh-6rem)] flex flex-col items-center justify-center gap-10 relative">
+      <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center gap-8 sm:gap-10 relative py-8">
         <button
           onClick={() => { stopVoice(); setVoiceMode(false); }}
           className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors"
@@ -219,7 +219,7 @@ export default function IA() {
   }
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden relative">
+    <div className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden relative">
       {/* Header */}
       <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-black/20">
         <div className="flex items-center gap-3">

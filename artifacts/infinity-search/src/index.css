@@ -145,4 +145,7 @@
   .neon-text {
     @apply text-primary drop-shadow-[0_0_8px_rgba(45,212,191,0.5)];
   }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }

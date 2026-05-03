@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { InfinityUsers } from "./InfinityUsers";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -1409,8 +1410,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
@@ -3774,8 +3775,16 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               📢 Redes
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "infinity" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("infinity")}
+            >
+              ∞ Infinity Users
+            </button>
           </div>
         </header>
+
+        {activePage === "infinity" && <InfinityUsers />}
 
         {/* ══════════════════════════════════════════════
             NITRO GENERATOR PAGE

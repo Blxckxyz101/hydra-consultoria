@@ -76,7 +76,7 @@ export default function Consultas() {
         </p>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-2 inline-flex gap-1">
+      <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-2 flex gap-1 overflow-x-auto no-scrollbar -mx-1 px-1 sm:inline-flex sm:mx-0">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = tab === t.id;
@@ -84,7 +84,7 @@ export default function Consultas() {
             <button
               key={t.id}
               onClick={() => { setTab(t.id); setQuery(""); setResult(null); }}
-              className={`relative px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-[0.25em] transition-all flex items-center gap-2 ${
+              className={`relative shrink-0 px-4 sm:px-5 py-2.5 rounded-xl text-[10px] sm:text-xs font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] transition-all flex items-center gap-2 ${
                 isActive
                   ? "text-primary"
                   : "text-muted-foreground hover:text-foreground"
@@ -114,20 +114,21 @@ export default function Consultas() {
             <ActiveIcon className="w-3.5 h-3.5" />
             {activeTab.label} — {activeTab.mask}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex-1 relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value.replace(/\D/g, ""))}
                 placeholder={activeTab.placeholder}
-                className="w-full bg-black/40 border border-white/10 rounded-xl pl-12 pr-4 py-4 font-mono tracking-wider text-lg focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
+                inputMode="numeric"
+                className="w-full bg-black/40 border border-white/10 rounded-xl pl-12 pr-4 py-3.5 sm:py-4 font-mono tracking-wider text-base sm:text-lg focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
               />
             </div>
             <button
               type="submit"
               disabled={!query.trim() || isPending}
-              className="bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs px-8 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+              className="bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs px-6 sm:px-8 py-3.5 sm:py-0 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isPending ? "Consultando" : "Consultar"}
             </button>

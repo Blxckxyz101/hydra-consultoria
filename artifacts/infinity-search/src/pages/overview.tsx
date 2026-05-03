@@ -34,22 +34,22 @@ export default function Overview() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-widest neon-text uppercase mb-8">Centro de Comando</h1>
+      <h1 className="text-xl sm:text-2xl font-bold tracking-widest neon-text uppercase mb-6 sm:mb-8">Centro de Comando</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         {statCards.map((stat, idx) => (
           <motion.div
             key={stat.label}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: idx * 0.1 }}
-            className="glass-panel p-6 rounded-xl flex items-center justify-between"
+            className="glass-panel p-4 sm:p-6 rounded-xl flex items-center justify-between gap-2"
           >
-            <div>
-              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">{stat.label}</p>
-              <p className="text-3xl font-bold text-foreground">{stat.value}</p>
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-xs uppercase tracking-widest text-muted-foreground mb-1 truncate">{stat.label}</p>
+              <p className="text-2xl sm:text-3xl font-bold text-foreground">{stat.value}</p>
             </div>
-            <stat.icon className="w-8 h-8 text-primary/50" />
+            <stat.icon className="w-6 h-6 sm:w-8 sm:h-8 text-primary/50 shrink-0" />
           </motion.div>
         ))}
       </div>
