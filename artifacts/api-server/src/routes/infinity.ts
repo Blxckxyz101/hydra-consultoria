@@ -526,16 +526,23 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     return;
   }
 
-  // Global daily rate limit
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const [{ todayCount }] = await db
-    .select({ todayCount: sql<number>`count(*)::int` })
-    .from(infinityConsultasTable)
-    .where(gte(infinityConsultasTable.createdAt, todayStart));
-  if ((todayCount ?? 0) >= DAILY_RATE_LIMIT) {
+  const username = req.infinityUser!.username;
+
+  // Global + per-user daily rate limits (cached in-memory)
+  const [globalCount, userCount] = await Promise.all([
+    getGlobalDailyCount(),
+    getUserDailyCount(username),
+  ]);
+  if (globalCount >= DAILY_RATE_LIMIT) {
     res.status(429).json({
       error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido para toda a plataforma. Tente novamente amanhã.`,
+      rateLimited: true,
+    });
+    return;
+  }
+  if (userCount >= PER_USER_DAILY_LIMIT) {
+    res.status(429).json({
+      error: `Seu limite diário de ${PER_USER_DAILY_LIMIT} consultas foi atingido. Tente novamente amanhã.`,
       rateLimited: true,
     });
     return;
@@ -565,9 +572,11 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     }
   } else if (tipo === "placa") {
     dados = dadosRaw.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+  } else {
+    // Generic text types: cap at 200 chars
+    dados = dadosRaw.slice(0, 200);
   }
 
-  const username = req.infinityUser!.username;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30_000);
 
@@ -578,6 +587,7 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
 
   await logConsulta({ tipo, query: dados, username, success, result: data });
+  bumpCaches(username);
 
   res.json({
     success,
