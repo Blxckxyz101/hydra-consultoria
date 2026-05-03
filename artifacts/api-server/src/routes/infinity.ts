@@ -772,4 +772,72 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   }
 });
 
+// ─── Panel secret routes (no JWT needed) ───────────────────────────────────
+const PANEL_SECRET = process.env.PANEL_SECRET ?? "";
+
+function requirePanelSecret(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
+  const header = req.headers["x-panel-secret"];
+  if (!PANEL_SECRET || header !== PANEL_SECRET) {
+    res.status(403).json({ error: "Acesso negado." });
+    return;
+  }
+  next();
+}
+
+router.get("/panel/users", requirePanelSecret, async (_req, res) => {
+  const rows = await db.select().from(infinityUsersTable).orderBy(desc(infinityUsersTable.createdAt));
+  res.json(rows.map(serializeUser));
+});
+
+router.post("/panel/users", requirePanelSecret, async (req, res) => {
+  const { username, password, role, expiresInDays } = req.body ?? {};
+  if (!username || !password || !role) {
+    res.status(400).json({ error: "username, password e role obrigatórios" });
+    return;
+  }
+  const validRoles = ["admin", "vip", "user"];
+  const finalRole = validRoles.includes(role) ? role : "vip";
+  const passwordHash = await bcrypt.hash(String(password), 10);
+  const accountExpiresAt =
+    expiresInDays && Number(expiresInDays) > 0
+      ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
+      : null;
+  try {
+    const [created] = await db
+      .insert(infinityUsersTable)
+      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt })
+      .returning();
+    res.status(201).json(serializeUser(created));
+  } catch {
+    res.status(400).json({ error: "Usuário já existe ou dados inválidos" });
+  }
+});
+
+router.delete("/panel/users/:username", requirePanelSecret, async (req, res) => {
+  await db.delete(infinityUsersTable).where(eq(infinityUsersTable.username, String(req.params.username)));
+  res.status(204).end();
+});
+
+router.patch("/panel/users/:username", requirePanelSecret, async (req, res) => {
+  const { action, expiresInDays } = req.body ?? {};
+  let accountExpiresAt: Date | null;
+  if (action === "revoke") {
+    accountExpiresAt = new Date(Date.now() - 1000);
+  } else if (action === "restore") {
+    accountExpiresAt = null;
+  } else {
+    accountExpiresAt = Number(expiresInDays) > 0
+      ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
+      : null;
+  }
+  const [updated] = await db
+    .update(infinityUsersTable)
+    .set({ accountExpiresAt })
+    .where(eq(infinityUsersTable.username, String(req.params.username)))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+  res.json(serializeUser(updated));
+});
+
 export default router;
+
