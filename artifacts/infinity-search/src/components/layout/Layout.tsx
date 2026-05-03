@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
@@ -28,6 +28,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/", label: "Visão Geral", icon: Activity },
     { href: "/consultas", label: "Consultas", icon: Search },
     { href: "/ia", label: "Assistente IA", icon: Bot },
+    { href: "/dossie", label: "Dossiê", icon: FolderOpen },
   ];
 
   const SidebarBody = (

@@ -2,7 +2,6 @@ import { motion } from "framer-motion";
 import { useState, useMemo } from "react";
 import {
   AlertTriangle,
-  CheckCircle2,
   Copy,
   Check,
   Download,
@@ -10,7 +9,89 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  FolderOpen,
+  CheckCircle2,
 } from "lucide-react";
+
+const STORAGE_KEY = "infinity_dossies";
+
+type DossieStub = { id: string; title: string };
+
+function loadDossieStubs(): DossieStub[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    return arr.map((d: { id: string; title: string }) => ({ id: d.id, title: d.title }));
+  } catch { return []; }
+}
+
+function saveToD(dossieId: string, item: object) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    const idx = arr.findIndex((d: { id: string }) => d.id === dossieId);
+    if (idx === -1) return false;
+    arr[idx].items = [item, ...(arr[idx].items ?? [])];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    return true;
+  } catch { return false; }
+}
+
+function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string; data: unknown }) {
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const stubs = loadDossieStubs();
+
+  if (stubs.length === 0) return (
+    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/40">
+      Crie um dossiê primeiro
+    </span>
+  );
+
+  if (saved) return (
+    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-400">
+      <CheckCircle2 className="w-3 h-3" /> Salvo
+    </span>
+  );
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-amber-300 transition-colors"
+      >
+        <FolderOpen className="w-3 h-3" /> Salvar no Dossiê
+      </button>
+      {open && (
+        <div className="absolute right-0 top-6 z-50 min-w-[200px] rounded-xl border border-white/10 bg-[#06091a]/95 backdrop-blur-2xl shadow-2xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-white/5">
+            <p className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground">Selecionar dossiê</p>
+          </div>
+          {stubs.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => {
+                const parsed = (data as { fields?: unknown[]; sections?: unknown[]; raw?: string }) ?? {};
+                const ok = saveToD(d.id, {
+                  id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+                  tipo, query,
+                  addedAt: new Date().toISOString(),
+                  note: "",
+                  fields: parsed.fields ?? [],
+                  sections: parsed.sections ?? [],
+                  raw: parsed.raw ?? "",
+                });
+                if (ok) { setSaved(true); setOpen(false); }
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-white/5 transition-colors"
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+              <span className="truncate">{d.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type ParsedField = { key: string; value: string };
 type ParsedSection = { name: string; items: string[] };
@@ -18,6 +99,7 @@ type Parsed = { fields: ParsedField[]; sections: ParsedSection[]; raw: string };
 
 type Props = {
   tipo: string;
+  query?: string;
   result: { success: boolean; error?: string | null; data?: Parsed | unknown };
 };
 
@@ -73,7 +155,7 @@ function fieldAccent(key: string): string {
   return "text-primary";
 }
 
-export function ResultViewer({ tipo, result }: Props) {
+export function ResultViewer({ tipo, query = "", result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
 
   const parsed: Parsed = useMemo(() => {
@@ -165,6 +247,7 @@ export function ResultViewer({ tipo, result }: Props) {
             <Download className="w-3 h-3" /> Exportar
           </button>
           <CopyButton text={exportText} label="Copiar tudo" />
+          <SaveToDossieButton tipo={tipo} query={query} data={result.data} />
         </div>
       </div>
 

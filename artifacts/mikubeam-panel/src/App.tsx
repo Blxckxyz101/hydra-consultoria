@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InfinityUsers } from "./InfinityUsers";
+import { Wallboard } from "./Wallboard";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -3781,10 +3782,46 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             >
               ∞ Infinity Users
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "wallboard" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("wallboard")}
+            >
+              👁 Wallboard
+              {isRunning && activePage !== "wallboard" && (
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  marginLeft: 6, padding: "1px 7px", borderRadius: 10,
+                  background: "rgba(155,89,182,0.2)",
+                  border: "1px solid rgba(155,89,182,0.5)",
+                  fontSize: 10, fontWeight: 600, color: "#9b59b6",
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#9b59b6",
+                    animation: "lb-pulse 1.4s ease-in-out infinite",
+                    flexShrink: 0,
+                  }} />
+                  LIVE
+                </span>
+              )}
+            </button>
           </div>
         </header>
 
         {activePage === "infinity" && <InfinityUsers />}
+
+        {activePage === "wallboard" && (
+          <Wallboard
+            isRunning={isRunning}
+            pps={pps}
+            totalRequests={totalPackets}
+            hits={0}
+            targetDomain={target.replace(/^https?:\/\//, "").split("/")[0]}
+            method={method}
+            duration={duration}
+            elapsed={Math.max(0, duration - timeRemaining)}
+          />
+        )}
 
         {/* ══════════════════════════════════════════════
             NITRO GENERATOR PAGE

@@ -7,6 +7,7 @@ import Overview from "@/pages/overview";
 import IA from "@/pages/ia";
 import Consultas from "@/pages/consultas";
 import Configuracoes from "@/pages/configuracoes";
+import Dossie from "@/pages/dossie";
 
 function NotFound() {
   return (
@@ -30,6 +31,7 @@ function Router() {
               <Route path="/" component={Overview} />
               <Route path="/consultas" component={Consultas} />
               <Route path="/ia" component={IA} />
+              <Route path="/dossie" component={Dossie} />
               <Route path="/configuracoes" component={Configuracoes} />
               <Route component={NotFound} />
             </Switch>

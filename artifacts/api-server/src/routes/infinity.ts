@@ -13,7 +13,8 @@ import {
 const router: IRouter = Router();
 
 const PROVIDER_BASE = "http://149.56.18.68:25584/api/consulta";
-const PROVIDER_KEY = process.env.DARKFLOW_TOKEN ?? process.env.GEASS_API_KEY ?? "GeassZero";
+// GEASS_API_KEY secret holds the provider key; fallback is the known public key
+const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 
 const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
@@ -57,46 +58,108 @@ type Parsed = {
   raw: string;
 };
 
-const SECTION_RE = /([A-ZÁÉÍÓÚÂÊÔÃÕÇa-z_]+):\s*\(\s*(\d+)\s*-\s*Encontrados?\s*\)\s*((?:\s*•[^•]*?)+?)(?=\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇa-z_]+:\s*\(|\s*$)/g;
-const KEY_RE = /([A-ZÁÉÍÓÚÂÊÔÃÕÇ_][A-ZÁÉÍÓÚÂÊÔÃÕÇ_0-9]*(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ_][A-ZÁÉÍÓÚÂÊÔÃÕÇ_0-9]*)*)\s*⎯\s*/g;
+// ⎯ is U+23AF HORIZONTAL LINE EXTENSION — the separator used by this provider
+const SEP = " \u23AF ";
+// Single uppercase word at end of a segment (last resort fallback key)
+const LAST_WORD_RE = /\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$/;
+// Section header: "NAME: ( N - Encontrados)" followed by bullet items
+const SEC_HEADER_RE = /^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Za-z_0-9 ]+):\s*\(\s*\d+\s*-\s*Encontrados?\s*\)/;
+
+// Known multi-word field names used by this provider (expanded as more tipos are tested)
+const KNOWN_MULTIWORD_KEYS = new Set([
+  "NOME MÃE", "NOME PAI", "NOME MAE", "NOME PAI",
+  "MUNICÍPIO DE NASCIMENTO", "MUNICIPIO DE NASCIMENTO",
+  "TIPO SANGÚINEO", "TIPO SANGUINEO",
+  "ESTADO CIVIL", "STATUS NA RECEITA",
+  "HABILITADO PARA DIRIGIR", "HABILITADO_PARA_DIRIGIR",
+  "ANO MODELO", "ANO FABRICACAO", "ANO FABRICAÇÃO",
+  "PROPRIETARIO NOME", "PROPRIETARIO CPF",
+  "MARCA MODELO", "NUMERO CHASSI",
+  "DATA EMISSAO", "DATA NASCIMENTO", "DATA OBITO",
+  "NOME FANTASIA", "RAZAO SOCIAL",
+  "SITUACAO CADASTRAL", "NATUREZA JURIDICA",
+  "CAPITAL SOCIAL", "DATA ABERTURA",
+  "ENDERECO COMPLETO", "LOGRADOURO TIPO",
+  "TITULO ELEITOR", "CLASSE SOCIAL",
+  "RECEBE INSS", "NOME SOCIAL",
+  "RACA COR", "TIPO LOGRADOURO",
+  "DATA EMISSAO RG", "ORGAO EMISSOR",
+  "PAIS NASCIMENTO", "PAIS RESIDENCIA",
+  "SITUACAO ESPECIAL", "DATA SITUACAO",
+]);
+
+// All-caps single token (no digits, no spaces) — standalone key pattern
+const PURE_KEY_RE = /^[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_]+$/;
+
+/** Extract the trailing key from the END of a segment.
+ *  Handles empty-value fields (consecutive separators) and known multi-word keys. */
+function extractTrailingKey(seg: string): { value: string; key: string } {
+  const trimmed = seg.trim();
+
+  // Empty-value case: the entire segment IS a key (no value)
+  // 1. Known multi-word key exactly matching the full segment
+  if (KNOWN_MULTIWORD_KEYS.has(trimmed)) return { value: "", key: trimmed };
+  // 2. Single pure-caps word with no digits (e.g. "RG", "CPF", "SCORE")
+  if (PURE_KEY_RE.test(trimmed)) return { value: "", key: trimmed };
+
+  // Try known multi-word keys at the END of the segment (value before, key after)
+  for (const n of [3, 2]) {
+    const re = new RegExp(
+      `^(.*?)\\s+((?:[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*\\s+){${n - 1}}[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$`
+    );
+    const m = re.exec(trimmed);
+    if (m && KNOWN_MULTIWORD_KEYS.has(m[2].trim())) {
+      return { value: m[1].trim(), key: m[2].trim() };
+    }
+  }
+  // Fallback: last single uppercase word
+  const lm = LAST_WORD_RE.exec(trimmed);
+  if (lm) return { value: trimmed.slice(0, lm.index).trim(), key: lm[1].trim() };
+  return { value: trimmed, key: "" };
+}
 
 function parseProviderText(raw: string): Parsed {
   const result: Parsed = { fields: [], sections: [], raw };
-  let work = raw;
+  if (!raw || !raw.includes("\u23AF")) return result;
 
-  // Extract sections like "EMAILS: ( 5 - Encontrados) • a • b • c"
-  let m: RegExpExecArray | null;
-  const sectionMatches: Array<{ start: number; end: number; section: ParsedSection }> = [];
-  SECTION_RE.lastIndex = 0;
-  while ((m = SECTION_RE.exec(raw)) !== null) {
-    const items = m[3]
-      .split("•")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    sectionMatches.push({
-      start: m.index,
-      end: m.index + m[0].length,
-      section: { name: m[1].trim(), items },
-    });
-  }
-  result.sections = sectionMatches.map((s) => s.section);
+  const parts = raw.split(SEP);
+  // parts[0] = "RESULTADO ... FIRST_KEY"
+  // parts[i>0] = "VALUE [NEXT_KEY]"
 
-  // Remove section ranges from work string (descending)
-  for (const s of [...sectionMatches].reverse()) {
-    work = work.slice(0, s.start) + " " + work.slice(s.end);
-  }
+  // First key: last word(s) of parts[0]
+  const firstExtract = extractTrailingKey(parts[0]);
+  let currentKey = firstExtract.key || parts[0].trim();
 
-  // Now extract KEY ⎯ value pairs
-  const keyHits: Array<{ key: string; idx: number; end: number }> = [];
-  KEY_RE.lastIndex = 0;
-  while ((m = KEY_RE.exec(work)) !== null) {
-    keyHits.push({ key: m[1].trim(), idx: m.index, end: m.index + m[0].length });
-  }
-  for (let i = 0; i < keyHits.length; i++) {
-    const hit = keyHits[i];
-    const next = keyHits[i + 1];
-    const value = work.slice(hit.end, next ? next.idx : work.length).trim().replace(/\s+/g, " ");
-    if (value) result.fields.push({ key: hit.key, value });
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+
+    // Detect section list: "SECTIONNAME: ( N - Encontrados) • item • item ..."
+    if (part.includes("•")) {
+      const secMatch = SEC_HEADER_RE.exec(part.trim());
+      if (secMatch) {
+        const bulletIdx = part.indexOf("•");
+        const itemsRaw = part.slice(bulletIdx);
+        const items = itemsRaw.split("•").map((s) => s.trim()).filter(Boolean);
+        result.sections.push({ name: secMatch[1].trim().toUpperCase(), items });
+        // Find trailing key after the last bullet
+        const lastItem = items[items.length - 1] ?? "";
+        const lm = LAST_WORD_RE.exec(lastItem);
+        currentKey = lm ? lm[1].trim() : "";
+        continue;
+      }
+    }
+
+    // Last part has no next key
+    if (i === parts.length - 1) {
+      const value = part.trim().replace(/\s+/g, " ");
+      if (currentKey && value) result.fields.push({ key: currentKey, value });
+      break;
+    }
+
+    const { value, key: nextKey } = extractTrailingKey(part);
+    const cleanValue = value.replace(/\s+/g, " ");
+    if (currentKey && cleanValue) result.fields.push({ key: currentKey, value: cleanValue });
+    currentKey = nextKey;
   }
 
   return result;

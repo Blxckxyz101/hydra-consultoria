@@ -93,7 +93,7 @@ type Historico = Array<{ id: number; tipo: string; query: string; username: stri
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState<unknown>(null);
+  const [result, setResult] = useState<{ success: boolean; error?: string | null; data?: unknown } | null>(null);
   const [pending, setPending] = useState(false);
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("Pessoa");
   const queryClient = useQueryClient();
@@ -131,13 +131,9 @@ export default function Consultas() {
         body: JSON.stringify({ dados: query.trim() }),
       });
       const data = await r.json();
-      setResult(data);
+      setResult(data as { success: boolean; error?: string | null; data?: unknown });
     } catch (err) {
-      setResult({
-        success: false,
-        error: err instanceof Error ? err.message : "Falha na requisição",
-        data: { fields: [], sections: [], raw: "" },
-      });
+      setResult({ success: false, error: err instanceof Error ? err.message : "Falha na requisição", data: { fields: [], sections: [], raw: "" } });
     } finally {
       setPending(false);
       queryClient.invalidateQueries({ queryKey: historyKey });
@@ -268,6 +264,7 @@ export default function Consultas() {
           {!pending && result && (
             <ResultViewer
               tipo={tab}
+              query={query}
               result={result as { success: boolean; error?: string | null; data?: unknown }}
             />
           )}

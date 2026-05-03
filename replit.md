@@ -80,4 +80,28 @@ The project is structured as a pnpm workspace monorepo.
 - **ViewDNS.info**: Used for historical IP lookup.
 - **iFood, Rappi, PicPay, MercadoLivre, Shopee, TikTok, Nubank, ZeDelivery, Amazon**: Services for OTP code blasting.
 - **WhatsApp**: Target for abuse reporting functionality.
-```
+- **Geass API** (`http://149.56.18.68:25584/api/consulta/<TIPO>`): OSINT provider with 24 tipos (cpf, nome, placa, chassi, telefone, pix, nis, cns, mae, pai, parentes, cep, frota, cnpj, fucionarios, score, email, rg, ip, titulo, endereco, irpf, obito, cheque). Key: `GeassZero` (env: `GEASS_API_KEY`).
+
+## Infinity Search (artifacts/infinity-search)
+
+- Sky/cyan branding, pt-BR UI, glass card design
+- 24 OSINT consulta tipos organized in category pills: Pessoa / Veículo / Empresa / Saúde / Outros
+- Generic backend proxy at `/api/infinity/consultas/:tipo` — parses the U+23AF-delimited provider text into structured fields + sections
+- Parser: split-based on ` ⎯ ` (U+23AF), supports multi-word known keys (NOME MÃE, NOME PAI, MUNICÍPIO DE NASCIMENTO, ESTADO CIVIL, STATUS NA RECEITA, TITULO ELEITOR, CLASSE SOCIAL, etc.), detects bullet-list sections
+- API key fix: uses `GEASS_API_KEY ?? "GeassZero"` (NOT DARKFLOW_TOKEN — that var holds a different credential)
+- Pages: Login, Overview, Consultas (24 tipos), Dossiê (forensic evidence, localStorage), Configurações
+- ResultViewer: headline cards, fields grid, section lists, raw toggle, export .txt, copy all, SaveToDossieButton
+- Dossiê: localStorage-backed, multi-dossie, per-evidence notes, search, export .txt
+
+## Lelouch Britannia Panel (artifacts/mikubeam-panel)
+
+- Wallboard tab: Grafana-style metrics (attack stats), Infinity API `/api/infinity/overview` auto-refresh 15s
+- Geass Voice Mode: speechSynthesis pt-BR, 12s interval, dramatic Code Geass lines
+- Admin: admin/admin123
+
+## Key env vars / secrets
+
+- `GEASS_API_KEY` — Geass OSINT provider key (default: "GeassZero")
+- `DARKFLOW_TOKEN` — different credential, do NOT use for Geass API
+- `SKYNETCHAT_COOKIE` — SkyNetChat pool auth
+- `WEBSHARE_PROXY_PASS` — residential proxy password
