@@ -12,8 +12,6 @@
  *
  * Credentials: usuario=ESLI / senha=10203040
  */
-import { ProxyAgent, fetch as undiciFetch } from "undici";
-import { proxyCache } from "../routes/proxies.js";
 import { logger } from "../lib/logger.js";
 
 const SISREG_BASE = "https://sisregiii.saude.gov.br";
@@ -23,21 +21,10 @@ const ACCOUNT = { usuario: "ESLI", senha: "10203040" };
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+// Direct connection — tried first; SISREG blocks many external IPs
+// but may be reachable depending on current network policy
 type FetchFn = (url: string, opts: RequestInit) => Promise<Response>;
-
-function pickProxy(): ProxyAgent | null {
-  const pool = proxyCache.filter((p) => p.username && p.password);
-  if (!pool.length) return null;
-  const p = pool[Math.floor(Math.random() * pool.length)];
-  const uri = `http://${encodeURIComponent(p.username!)}:${encodeURIComponent(p.password!)}@${p.host}:${p.port}`;
-  return new ProxyAgent({ uri, connectTimeout: 20_000 });
-}
-
-function buildFetch(): FetchFn {
-  const agent = pickProxy();
-  if (!agent) return (u, o) => fetch(u, o);
-  return (u, o) => undiciFetch(u, { ...o, dispatcher: agent } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
-}
+const buildFetch = (): FetchFn => fetch;
 
 function mergeCookies(headers: Headers, into: Map<string, string>): void {
   const raw: string[] =

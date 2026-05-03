@@ -8,8 +8,6 @@
  * Maintains a session cache with round-robin account rotation.
  */
 import { createHash } from "node:crypto";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
-import { proxyCache } from "../routes/proxies.js";
 import { logger } from "../lib/logger.js";
 
 const SIPNI_BASE = "https://sipni.datasus.gov.br/si-pni-web";
@@ -46,21 +44,9 @@ function cookieStr(jar: Map<string, string>): string {
   return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
 }
 
-function pickProxy(): ProxyAgent | null {
-  const pool = proxyCache.filter((p) => p.username && p.password);
-  if (!pool.length) return null;
-  const p = pool[Math.floor(Math.random() * pool.length)];
-  const uri = `http://${encodeURIComponent(p.username!)}:${encodeURIComponent(p.password!)}@${p.host}:${p.port}`;
-  return new ProxyAgent({ uri, connectTimeout: 15_000 });
-}
-
+// Direct connection — SIPNI (datasus.gov.br) is accessible from Replit IPs without proxy
 type FetchFn = (url: string, opts: RequestInit) => Promise<Response>;
-
-function buildFetch(): FetchFn {
-  const agent = pickProxy();
-  if (!agent) return (u, o) => fetch(u, o);
-  return (u, o) => undiciFetch(u, { ...o, dispatcher: agent } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
-}
+const buildFetch = (): FetchFn => fetch;
 
 interface SipniSession {
   cookies: Map<string, string>;
@@ -80,56 +66,87 @@ async function getSession(): Promise<SipniSession | null> {
   _accountRR++;
   const account = ACCOUNTS[accIdx];
   const fetchFn = buildFetch();
+  const loginUrl = `${SIPNI_BASE}/faces/inicio.jsf`;
 
   try {
-    const loginResp = await fetchFn(`${SIPNI_BASE}/faces/inicio.jsf`, {
-      headers: { "User-Agent": UA, Accept: "text/html" },
+    // Step 1: GET login page to extract ViewState + cookies
+    const pageResp = await fetchFn(loginUrl, {
+      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" },
     });
-    const loginHtml = await loginResp.text();
-    const viewState = extractViewState(loginHtml);
+    const pageHtml = await pageResp.text();
+    const viewState = extractViewState(pageHtml);
     if (!viewState) {
       logger.warn("[SIPNI] Could not extract ViewState from login page");
       return null;
     }
 
     const jar = new Map<string, string>();
-    mergeSetCookies(loginResp.headers, jar);
+    mergeSetCookies(pageResp.headers, jar);
 
-    // Find form id (typically j_idt23) and submit button name
-    const formIdMatch = loginHtml.match(/<form id="([^"]+)"[^>]+action="\/si-pni-web\/faces\/inicio\.jsf"/);
-    const formId = formIdMatch?.[1] ?? "j_idt23";
-    const btnMatch = loginHtml.match(/name="([^"]+)"[^>]*class="[^"]*ui-button[^"]*"[^>]*type="submit"/);
-    const btnName = btnMatch?.[1] ?? `${formId}:j_idt35`;
+    // Detect form ID and button name from the live HTML
+    const formIdMatch = pageHtml.match(/<form id="([^"]+)"[^>]+action="\/si-pni-web\/faces\/inicio\.jsf"/);
+    const formId = formIdMatch?.[1] ?? "j_idt26";
+    const btnMatch = pageHtml.match(/name="([^"]+)"[^>]*type="submit"/);
+    const btnName = btnMatch?.[1] ?? `${formId}:j_idt38`;
 
-    const body = new URLSearchParams({
+    // Step 2: POST login as PrimeFaces AJAX (the button uses onclick=PrimeFaces.ab)
+    // The server responds with XML <partial-response> — success = no <redirect> or <error> in the response
+    const ajaxBody = new URLSearchParams({
+      "javax.faces.partial.ajax": "true",
+      "javax.faces.source": btnName,
+      "javax.faces.partial.event": "click",
+      "javax.faces.partial.execute": btnName,
+      "javax.faces.partial.render": "@all",
       [formId]: formId,
       "javax.faces.ViewState": viewState,
       [`${formId}:usuario`]: account.user,
       [`${formId}:senha`]: sha512hex(account.pass),
-      [btnName]: btnName,
     });
 
-    const authResp = await fetchFn(`${SIPNI_BASE}/faces/inicio.jsf`, {
+    const authResp = await fetchFn(loginUrl, {
       method: "POST",
       headers: {
         "User-Agent": UA,
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Faces-Request": "partial/ajax",
+        "X-Requested-With": "XMLHttpRequest",
         Cookie: cookieStr(jar),
-        Referer: `${SIPNI_BASE}/faces/inicio.jsf`,
+        Referer: loginUrl,
         Origin: "https://sipni.datasus.gov.br",
       },
-      body: body.toString(),
+      body: ajaxBody.toString(),
     });
 
     mergeSetCookies(authResp.headers, jar);
-    const authHtml = await authResp.text();
+    const authXml = await authResp.text();
 
-    const loggedIn =
-      !authHtml.includes("Informe o usuário") &&
-      (authHtml.includes("listarPaciente") || authHtml.includes("Notificac") || authHtml.includes("menu") || jar.has("JSESSIONID"));
+    // AJAX success: server returns <partial-response> with updated ViewState (no <error> or "Informe o usuário")
+    const ajaxFailed =
+      authXml.includes("Informe o usuário") ||
+      authXml.includes("inválido") ||
+      authXml.includes("<error>") ||
+      (!authXml.includes("<partial-response>") && authXml.length > 0);
 
-    if (!loggedIn) {
-      logger.warn("[SIPNI] Login failed for account %s", account.user);
+    if (ajaxFailed) {
+      logger.warn("[SIPNI] AJAX login failed for account %s — response: %s", account.user, authXml.slice(0, 200));
+      return null;
+    }
+
+    // Step 3: Navigate to main page (GET) to confirm session and get list-page ViewState
+    const homeResp = await fetchFn(`${SIPNI_BASE}/faces/publico/menuHome.jsf`, {
+      headers: {
+        "User-Agent": UA,
+        Accept: "text/html,application/xhtml+xml",
+        Cookie: cookieStr(jar),
+        Referer: loginUrl,
+      },
+    });
+    mergeSetCookies(homeResp.headers, jar);
+
+    // A valid session will have at least one session cookie (BIGip or JSESSIONID)
+    const hasSession = jar.size > 0;
+    if (!hasSession) {
+      logger.warn("[SIPNI] No session cookies after login for %s", account.user);
       return null;
     }
 
@@ -140,7 +157,7 @@ async function getSession(): Promise<SipniSession | null> {
     };
     _sessions.push(session);
     if (_sessions.length > 4) _sessions.splice(0, 1);
-    logger.info("[SIPNI] Logged in as %s", account.user);
+    logger.info("[SIPNI] Logged in as %s (cookies: %d)", account.user, jar.size);
     return session;
   } catch (err) {
     logger.error({ err }, "[SIPNI] Session creation error");
