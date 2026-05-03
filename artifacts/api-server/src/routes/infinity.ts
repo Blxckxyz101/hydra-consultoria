@@ -659,10 +659,32 @@ router.get("/me", requireAuth, async (req, res) => {
   res.json(serializeUser(u));
 });
 
+// ─── helpers ───────────────────────────────────────────────────────────────
+async function getUsersWithStats() {
+  const rows = await db.select().from(infinityUsersTable).orderBy(desc(infinityUsersTable.createdAt));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000);
+  const stats = await db
+    .select({
+      username: infinityConsultasTable.username,
+      total:    sql<number>`count(*)::int`,
+      hoje:     sql<number>`count(*) filter (where ${infinityConsultasTable.createdAt} >= ${today})::int`,
+      semana:   sql<number>`count(*) filter (where ${infinityConsultasTable.createdAt} >= ${weekAgo})::int`,
+    })
+    .from(infinityConsultasTable)
+    .groupBy(infinityConsultasTable.username);
+  const statsMap = new Map(stats.map(s => [s.username, s]));
+  return rows.map(row => ({
+    ...serializeUser(row),
+    totalConsultas:   statsMap.get(row.username)?.total   ?? 0,
+    consultasHoje:    statsMap.get(row.username)?.hoje    ?? 0,
+    consultasSemana:  statsMap.get(row.username)?.semana  ?? 0,
+  }));
+}
+
 // ─── users (admin) ─────────────────────────────────────────────────────────
 router.get("/users", requireAdmin, async (_req, res) => {
-  const rows = await db.select().from(infinityUsersTable).orderBy(desc(infinityUsersTable.createdAt));
-  res.json(rows.map(serializeUser));
+  res.json(await getUsersWithStats());
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
@@ -709,12 +731,13 @@ router.delete("/users/:username", requireAdmin, async (req, res) => {
 
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays, expiresAt, queryDailyLimit } = req.body ?? {};
+  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password } = req.body ?? {};
 
-  // Build update object flexibly
   const updateData: Partial<{
     accountExpiresAt: Date | null;
     queryDailyLimit: number | null;
+    role: string;
+    passwordHash: string;
   }> = {};
 
   if (action === "revoke") {
@@ -733,6 +756,14 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
     updateData.queryDailyLimit = queryDailyLimit === null || queryDailyLimit === "" || Number(queryDailyLimit) <= 0
       ? null
       : Number(queryDailyLimit);
+  }
+
+  if (role && ["admin", "vip", "user"].includes(String(role))) {
+    updateData.role = String(role);
+  }
+
+  if (password && String(password).length >= 6) {
+    updateData.passwordHash = await bcrypt.hash(String(password), 10);
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -1306,8 +1337,7 @@ router.get("/panel/verify", (req, res) => {
 });
 
 router.get("/panel/users", requirePanelToken, async (_req, res) => {
-  const rows = await db.select().from(infinityUsersTable).orderBy(desc(infinityUsersTable.createdAt));
-  res.json(rows.map(serializeUser));
+  res.json(await getUsersWithStats());
 });
 
 router.post("/panel/users", requirePanelToken, async (req, res) => {
@@ -1343,9 +1373,14 @@ router.delete("/panel/users/:username", requirePanelToken, async (req, res) => {
 });
 
 router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
-  const { action, expiresInDays, queryDailyLimit } = req.body ?? {};
+  const { action, expiresInDays, queryDailyLimit, role, password } = req.body ?? {};
 
-  const updateData: Partial<{ accountExpiresAt: Date | null; queryDailyLimit: number | null }> = {};
+  const updateData: Partial<{
+    accountExpiresAt: Date | null;
+    queryDailyLimit: number | null;
+    role: string;
+    passwordHash: string;
+  }> = {};
 
   if (action === "revoke") {
     updateData.accountExpiresAt = new Date(Date.now() - 1000);
@@ -1361,6 +1396,14 @@ router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
     updateData.queryDailyLimit = queryDailyLimit === null || queryDailyLimit === "" || Number(queryDailyLimit) <= 0
       ? null
       : Number(queryDailyLimit);
+  }
+
+  if (role && ["admin", "vip", "user"].includes(String(role))) {
+    updateData.role = String(role);
+  }
+
+  if (password && String(password).length >= 6) {
+    updateData.passwordHash = await bcrypt.hash(String(password), 10);
   }
 
   if (Object.keys(updateData).length === 0) {
