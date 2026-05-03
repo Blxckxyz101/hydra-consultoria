@@ -1,21 +1,21 @@
-import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
+import { useInfinityMe, getInfinityMeQueryKey, setAuthTokenGetter } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
-import { setAuthTokenGetter } from "@workspace/api-client-react";
+import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
+import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
-// Setup the custom fetcher token getter
 setAuthTokenGetter(() => localStorage.getItem("infinity_token"));
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [, setLocation] = useLocation();
-  const token = localStorage.getItem("infinity_token");
+  const token = typeof window !== "undefined" ? localStorage.getItem("infinity_token") : null;
 
   const { data: user, isLoading, error } = useInfinityMe({
     query: {
       queryKey: getInfinityMeQueryKey(),
       retry: false,
       enabled: !!token,
-    }
+    },
   });
 
   useEffect(() => {
@@ -29,15 +29,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (!token || isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen w-full flex items-center justify-center relative">
+        <AnimatedBackground />
+        <InfinityLoader label="Verificando sessão" />
       </div>
     );
   }
 
-  if (error || !user) {
-    return null; // Will redirect in useEffect
-  }
+  if (error || !user) return null;
 
   return <>{children}</>;
 }

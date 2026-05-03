@@ -9,45 +9,18 @@ import {
   getInfinityListConsultasQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Search, AlertTriangle, CheckCircle2, History, FileText } from "lucide-react";
+import { Search, AlertTriangle, CheckCircle2, History, FileText, IdCard, Building2, Phone, Syringe } from "lucide-react";
+import { ResultViewer } from "@/components/consultas/ResultViewer";
+import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
 type Tipo = "cpf" | "cnpj" | "telefone" | "sipni";
 
-const TABS: { id: Tipo; label: string; placeholder: string; mask: string }[] = [
-  { id: "cpf", label: "CPF", placeholder: "00000000000", mask: "11 dígitos" },
-  { id: "cnpj", label: "CNPJ", placeholder: "00000000000000", mask: "14 dígitos" },
-  { id: "telefone", label: "Telefone", placeholder: "5511999999999", mask: "DDI + DDD + número" },
-  { id: "sipni", label: "SIPNI", placeholder: "00000000000", mask: "CPF — vacinas" },
+const TABS: { id: Tipo; label: string; placeholder: string; mask: string; icon: any }[] = [
+  { id: "cpf", label: "CPF", placeholder: "00000000000", mask: "11 dígitos", icon: IdCard },
+  { id: "cnpj", label: "CNPJ", placeholder: "00000000000000", mask: "14 dígitos", icon: Building2 },
+  { id: "telefone", label: "Telefone", placeholder: "5511999999999", mask: "DDI + DDD + número", icon: Phone },
+  { id: "sipni", label: "SIPNI", placeholder: "00000000000", mask: "CPF — vacinas", icon: Syringe },
 ];
-
-function ResultViewer({ result }: { result: any }) {
-  if (!result) return null;
-  const { success, error, data } = result;
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="glass-panel rounded-xl p-6 mt-4"
-    >
-      <div className="flex items-center gap-2 mb-4">
-        {success ? (
-          <CheckCircle2 className="w-5 h-5 text-primary" />
-        ) : (
-          <AlertTriangle className="w-5 h-5 text-destructive" />
-        )}
-        <span className="text-xs uppercase tracking-widest text-muted-foreground">
-          {success ? "Resultado da consulta" : "Falha na consulta"}
-        </span>
-      </div>
-      {!success && typeof error === "string" && error && (
-        <p className="text-sm text-destructive mb-4">{error}</p>
-      )}
-      <pre className="text-xs font-mono bg-black/40 border border-white/5 rounded-lg p-4 overflow-x-auto max-h-96 overflow-y-auto text-foreground/80">
-        {JSON.stringify(data ?? {}, null, 2)}
-      </pre>
-    </motion.div>
-  );
-}
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
@@ -85,76 +58,117 @@ export default function Consultas() {
     }
   };
 
+  const activeTab = TABS.find((t) => t.id === tab)!;
+  const ActiveIcon = activeTab.icon;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold tracking-widest neon-text uppercase">Consultas</h1>
-        <p className="text-xs uppercase tracking-widest text-muted-foreground mt-2">
-          Workspace operacional — consultas em fontes abertas
+        <motion.h1
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-3xl font-bold tracking-[0.25em] neon-text uppercase"
+        >
+          Consultas
+        </motion.h1>
+        <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
+          Workspace operacional — fontes abertas
         </p>
       </div>
 
-      <div className="glass-panel rounded-xl p-2 inline-flex gap-1">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => { setTab(t.id); setQuery(""); setResult(null); }}
-            className={`px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-              tab === t.id
-                ? "bg-primary/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(45,212,191,0.2)]"
-                : "text-muted-foreground hover:text-foreground hover:bg-white/5 border border-transparent"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-2 inline-flex gap-1">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => { setTab(t.id); setQuery(""); setResult(null); }}
+              className={`relative px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-[0.25em] transition-all flex items-center gap-2 ${
+                isActive
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {isActive && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute inset-0 bg-primary/15 border border-primary/30 rounded-xl shadow-[0_0_20px_-4px_rgba(56,189,248,0.6)]"
+                />
+              )}
+              <Icon className="w-3.5 h-3.5 relative z-10" />
+              <span className="relative z-10">{t.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <motion.div
         key={tab}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-panel rounded-xl p-6"
+        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
       >
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div>
-            <label className="text-xs uppercase tracking-widest text-muted-foreground">
-              Alvo da consulta — {TABS.find(t => t.id === tab)?.mask}
-            </label>
-            <div className="flex gap-2 mt-2">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-primary/70">
+            <ActiveIcon className="w-3.5 h-3.5" />
+            {activeTab.label} — {activeTab.mask}
+          </div>
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value.replace(/\D/g, ""))}
-                placeholder={TABS.find(t => t.id === tab)?.placeholder}
-                className="flex-1 bg-black/40 border border-white/10 rounded-lg px-4 py-3 font-mono focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all"
+                placeholder={activeTab.placeholder}
+                className="w-full bg-black/40 border border-white/10 rounded-xl pl-12 pr-4 py-4 font-mono tracking-wider text-lg focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
               />
-              <button
-                type="submit"
-                disabled={!query.trim() || isPending}
-                className="bg-primary text-primary-foreground font-bold uppercase tracking-widest px-6 py-3 rounded-lg hover:bg-primary/90 transition-all disabled:opacity-50 flex items-center gap-2"
-              >
-                <Search className="w-4 h-4" />
-                {isPending ? "Consultando..." : "Consultar"}
-              </button>
             </div>
+            <button
+              type="submit"
+              disabled={!query.trim() || isPending}
+              className="bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs px-8 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isPending ? "Consultando" : "Consultar"}
+            </button>
           </div>
         </form>
 
-        <AnimatePresence>
-          {result && <ResultViewer result={result} />}
+        <AnimatePresence mode="wait">
+          {isPending && (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="py-12 flex items-center justify-center"
+            >
+              <InfinityLoader size={72} label="Consultando fontes" />
+            </motion.div>
+          )}
+          {!isPending && result && (
+            <motion.div key="result" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <ResultViewer tipo={tab} result={result} />
+            </motion.div>
+          )}
         </AnimatePresence>
       </motion.div>
 
-      <div className="glass-panel rounded-xl p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <History className="w-4 h-4 text-primary" />
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            Histórico Recente
-          </h2>
+      <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-primary" />
+            <h2 className="text-xs font-semibold uppercase tracking-[0.4em] text-muted-foreground">
+              Histórico Recente
+            </h2>
+          </div>
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            {history?.length ?? 0} registro(s)
+          </span>
         </div>
         {!history || history.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground text-sm flex flex-col items-center gap-2">
-            <FileText className="w-8 h-8 opacity-30" />
+          <div className="text-center py-12 text-muted-foreground text-sm flex flex-col items-center gap-3">
+            <FileText className="w-10 h-10 opacity-20" />
             Nenhuma consulta registrada ainda.
           </div>
         ) : (
@@ -164,15 +178,15 @@ export default function Consultas() {
                 key={item.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.03 }}
-                className="bg-black/30 border border-white/5 rounded-lg p-3 flex items-center justify-between hover:border-primary/30 transition-colors"
+                transition={{ delay: Math.min(i * 0.03, 0.4) }}
+                className="bg-black/30 border border-white/5 rounded-xl p-4 flex items-center justify-between hover:border-primary/30 hover:bg-black/40 transition-all"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-xs font-bold uppercase text-primary bg-primary/10 px-2 py-1 rounded shrink-0">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary bg-primary/10 border border-primary/20 px-2.5 py-1 rounded-md shrink-0">
                     {item.tipo}
                   </span>
                   <span className="font-mono text-sm truncate">{item.query}</span>
-                  <span className="text-xs text-muted-foreground truncate">— {item.username}</span>
+                  <span className="text-xs text-muted-foreground truncate hidden md:inline">— {item.username}</span>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-xs text-muted-foreground">
@@ -188,6 +202,11 @@ export default function Consultas() {
             ))}
           </div>
         )}
+
+        <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
+          <span>Made by blxckxyz</span>
+          <span className="text-primary/60">Infinity Search</span>
+        </div>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useInfinityLogin } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion } from "framer-motion";
+import { LogIn, KeyRound, UserRound, ShieldAlert } from "lucide-react";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -21,64 +22,116 @@ export default function Login() {
       localStorage.setItem("infinity_token", data.token);
       setLocation("/");
     } catch (err: any) {
-      setError(err.message || "Credenciais inválidas");
+      setError(err?.data?.error || err.message || "Credenciais inválidas");
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center relative overflow-hidden">
+    <div className="min-h-screen w-full flex items-center justify-center relative overflow-hidden p-4">
       <AnimatedBackground />
-      
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md p-8 glass-panel rounded-2xl relative z-10"
+
+      <motion.div
+        initial={{ opacity: 0, y: 24, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+        className="w-full max-w-md relative z-10"
       >
-        <div className="flex flex-col items-center mb-8">
-          <img src={logoUrl} alt="Infinity Search" className="w-20 h-20 mb-4" />
-          <h1 className="text-2xl font-bold tracking-widest text-primary neon-text uppercase">Infinity Search</h1>
-          <p className="text-muted-foreground text-sm uppercase tracking-widest mt-2">Acesso Restrito</p>
-        </div>
+        <div className="rounded-3xl border border-white/10 bg-black/30 backdrop-blur-2xl shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7),0_0_60px_-20px_rgba(56,189,248,0.4)] overflow-hidden">
+          {/* Top accent line */}
+          <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {error && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm">
-              {error}
+          <div className="px-10 pt-10 pb-8">
+            <div className="flex flex-col items-center mb-8">
+              <motion.div
+                initial={{ scale: 0.5, opacity: 0, rotate: -10 }}
+                animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                transition={{ delay: 0.15, type: "spring", stiffness: 180, damping: 14 }}
+                className="relative mb-4"
+              >
+                <div className="absolute inset-0 rounded-full bg-primary/30 blur-2xl scale-110" />
+                <img
+                  src={logoUrl}
+                  alt="Infinity Search"
+                  className="relative w-24 h-24 object-contain drop-shadow-[0_0_20px_rgba(56,189,248,0.6)]"
+                />
+              </motion.div>
+              <motion.h1
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+                className="text-2xl font-bold tracking-[0.3em] text-foreground neon-text"
+              >
+                INFINITY SEARCH
+              </motion.h1>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.35 }}
+                className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-3"
+              >
+                <ShieldAlert className="w-3 h-3" />
+                Acesso Restrito
+              </motion.div>
             </div>
-          )}
-          
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-widest text-muted-foreground">Operador</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder:text-muted-foreground/50"
-              placeholder="admin"
-              required
-            />
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2"
+                >
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  {error}
+                </motion.div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                  <UserRound className="w-3 h-3" /> Usuário
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
+                  placeholder="Digite seu usuário"
+                  required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                  <KeyRound className="w-3 h-3" /> Senha
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
+                  placeholder="Digite sua senha"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loginMutation.isPending}
+                className="w-full relative group bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-4 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
+              >
+                <LogIn className="w-4 h-4" />
+                {loginMutation.isPending ? "Autenticando..." : "Iniciar Sessão"}
+              </button>
+            </form>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-widest text-muted-foreground">Senha</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder:text-muted-foreground/50"
-              placeholder="admin"
-              required
-            />
+          <div className="px-10 py-4 border-t border-white/5 bg-black/20 flex items-center justify-between text-[10px] uppercase tracking-[0.35em] text-muted-foreground">
+            <span>Made by blxckxyz</span>
+            <span className="text-primary/60">v1.0</span>
           </div>
-
-          <button
-            type="submit"
-            disabled={loginMutation.isPending}
-            className="w-full bg-primary text-primary-foreground font-bold uppercase tracking-widest py-3 rounded-lg hover:bg-primary/90 transition-all disabled:opacity-50"
-          >
-            {loginMutation.isPending ? "Autenticando..." : "Iniciar Sessão"}
-          </button>
-        </form>
+        </div>
       </motion.div>
     </div>
   );

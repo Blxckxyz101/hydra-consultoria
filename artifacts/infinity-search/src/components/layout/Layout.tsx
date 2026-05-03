@@ -1,23 +1,21 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, Settings, LogOut } from "lucide-react";
-import { useInfinityMe, useInfinityLogout } from "@workspace/api-client-react";
+import { Activity, Search, Bot, Settings, LogOut, ChevronRight } from "lucide-react";
+import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
-import { AnimatedBackground } from "../ui/AnimatedBackground";
+import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
+import { motion } from "framer-motion";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
-  const { data: user } = useInfinityMe({ query: { queryKey: ["infinityMe"] } });
+  const { data: user } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
   const logout = useInfinityLogout();
 
   const handleLogout = async () => {
     try {
       await logout.mutateAsync({});
-    } catch (e) {
-      // ignore
-    } finally {
-      localStorage.removeItem("infinity_token");
-      setLocation("/login");
-    }
+    } catch {}
+    localStorage.removeItem("infinity_token");
+    setLocation("/login");
   };
 
   const navItems = [
@@ -28,60 +26,97 @@ export function Layout({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <div className="min-h-screen w-full flex text-foreground overflow-hidden">
+    <div className="min-h-screen w-full flex text-foreground overflow-hidden relative">
       <AnimatedBackground />
-      
-      {/* Sidebar */}
-      <aside className="w-64 glass-panel border-r border-white/5 flex flex-col z-10 shrink-0">
-        <div className="p-6 flex items-center gap-3">
-          <img src={logoUrl} alt="Infinity Search" className="w-8 h-8 object-contain" />
-          <span className="font-bold tracking-widest text-lg neon-text">INFINITY</span>
+
+      <aside className="w-72 flex flex-col z-10 shrink-0 border-r border-white/5 bg-black/30 backdrop-blur-2xl">
+        <div className="px-6 pt-6 pb-8 flex items-center gap-3 border-b border-white/5">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-xl bg-primary/30 blur-xl scale-110" />
+            <img
+              src={logoUrl}
+              alt="Infinity Search"
+              className="relative w-11 h-11 object-contain drop-shadow-[0_0_12px_rgba(56,189,248,0.6)]"
+            />
+          </div>
+          <div className="flex flex-col">
+            <span className="font-bold tracking-[0.25em] text-base text-foreground">INFINITY</span>
+            <span className="text-[9px] uppercase tracking-[0.4em] text-primary/70">SEARCH</span>
+          </div>
         </div>
 
-        <nav className="flex-1 px-4 py-4 space-y-2">
-          {navItems.map((item) => {
+        <nav className="flex-1 px-4 py-6 space-y-1">
+          {navItems.map((item, i) => {
             const isActive = location === item.href;
             const Icon = item.icon;
-            
             return (
-              <Link 
-                key={item.href} 
-                href={item.href}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive 
-                    ? "bg-primary/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(45,212,191,0.2)]" 
-                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
-                }`}
+              <motion.div
+                key={item.href}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
               >
-                <Icon className="w-5 h-5" />
-                <span className="font-medium">{item.label}</span>
-              </Link>
+                <Link
+                  href={item.href}
+                  className={`group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 relative overflow-hidden ${
+                    isActive
+                      ? "bg-primary/15 text-primary border border-primary/30 shadow-[0_0_25px_-5px_rgba(56,189,248,0.4)]"
+                      : "text-muted-foreground hover:bg-white/5 hover:text-foreground border border-transparent"
+                  }`}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activePill"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-primary rounded-r-full shadow-[0_0_12px_rgba(56,189,248,0.8)]"
+                    />
+                  )}
+                  <Icon className={`w-4 h-4 ${isActive ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.8)]" : ""}`} />
+                  <span className="font-medium text-sm flex-1">{item.label}</span>
+                  {isActive && <ChevronRight className="w-3 h-3" />}
+                </Link>
+              </motion.div>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-white/5">
-          <div className="px-4 py-3 rounded-lg bg-black/20 flex flex-col gap-1 mb-4 border border-white/5">
-            <span className="text-xs text-muted-foreground uppercase tracking-wider">Operador</span>
-            <span className="font-semibold text-sm truncate">{user?.username}</span>
-            <span className="text-[10px] text-primary/70 uppercase tracking-widest">{user?.role}</span>
+        <div className="p-4 border-t border-white/5 space-y-3">
+          <div className="px-4 py-3 rounded-xl bg-black/40 border border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-sm">
+                {user?.username?.[0]?.toUpperCase() ?? "?"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-sm truncate">{user?.username}</div>
+                <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">{user?.role}</div>
+              </div>
+            </div>
           </div>
-          
-          <button 
+
+          <button
             onClick={handleLogout}
-            className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors text-left font-medium"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors text-left text-sm font-medium border border-transparent hover:border-destructive/30"
           >
-            <LogOut className="w-5 h-5" />
+            <LogOut className="w-4 h-4" />
             <span>Desconectar</span>
           </button>
+
+          <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">
+            <span>by blxckxyz</span>
+            <span>v1.0</span>
+          </div>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 h-screen overflow-y-auto z-10 p-8">
-        <div className="max-w-6xl mx-auto">
+      <main className="flex-1 h-screen overflow-y-auto z-10">
+        <motion.div
+          key={location}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          className="max-w-7xl mx-auto p-8"
+        >
           {children}
-        </div>
+        </motion.div>
       </main>
     </div>
   );

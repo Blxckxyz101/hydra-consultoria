@@ -2,6 +2,7 @@ import { useInfinityOverview, getInfinityOverviewQueryKey } from "@workspace/api
 import { motion } from "framer-motion";
 import { Activity, Users, Search, Clock, AlertTriangle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
 export default function Overview() {
   const { data, isLoading, error } = useInfinityOverview({
@@ -9,11 +10,19 @@ export default function Overview() {
   });
 
   if (isLoading) {
-    return <div className="animate-pulse flex space-x-4">Carregando dados...</div>;
+    return (
+      <div className="py-24 flex items-center justify-center">
+        <InfinityLoader label="Sincronizando comando" />
+      </div>
+    );
   }
 
   if (error || !data) {
-    return <div className="text-destructive">Erro ao carregar dados.</div>;
+    return (
+      <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-destructive flex items-center gap-2">
+        <AlertTriangle className="w-5 h-5" /> Erro ao carregar dados.
+      </div>
+    );
   }
 
   const statCards = [
