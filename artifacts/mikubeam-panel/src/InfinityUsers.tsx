@@ -13,10 +13,224 @@ type InfUser = {
 
 type Toast = { id: number; type: "ok" | "err"; text: string } | null;
 
-const headers = () => ({
+const hdrs = () => ({
   "Content-Type": "application/json",
   "X-Panel-Secret": PANEL_SECRET,
 });
+
+const STYLES = `
+.iu-wrap {
+  padding: 16px;
+  color: #e6d8ff;
+  font-family: Inter, system-ui, sans-serif;
+}
+.iu-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.iu-panel {
+  background: rgba(20,12,35,0.7);
+  border: 1px solid rgba(155,89,182,0.25);
+  border-radius: 14px;
+  padding: 24px;
+  backdrop-filter: blur(12px);
+}
+.iu-input {
+  width: 100%;
+  padding: 14px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(155,89,182,0.35);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 16px;
+  outline: none;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.iu-label {
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(230,216,255,0.6);
+  margin-bottom: 6px;
+  display: block;
+}
+.iu-btn-primary {
+  width: 100%;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #9b59b6 0%, #6d2db5 100%);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 0 24px rgba(155,89,182,0.35);
+  min-height: 50px;
+  -webkit-tap-highlight-color: transparent;
+}
+.iu-role-row {
+  display: flex;
+  gap: 8px;
+}
+.iu-role-btn {
+  flex: 1;
+  padding: 12px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-weight: 600;
+  transition: all 0.15s;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+.iu-expiry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.iu-expiry-btn {
+  padding: 12px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+  transition: all 0.15s;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+}
+.iu-user-card {
+  padding: 14px 16px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(155,89,182,0.15);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.iu-user-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.iu-action-btn {
+  padding: 10px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  font-weight: 600;
+  min-height: 40px;
+  -webkit-tap-highlight-color: transparent;
+}
+.iu-toast {
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  left: 16px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  z-index: 10000;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  text-align: center;
+}
+.iu-section-header {
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: #cba8ff;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.iu-refresh-btn {
+  padding: 8px 12px;
+  background: rgba(155,89,182,0.15);
+  border: 1px solid rgba(155,89,182,0.3);
+  color: #cba8ff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  min-height: 36px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 700px) {
+  .iu-wrap {
+    padding: 12px 12px 32px 12px;
+  }
+  .iu-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .iu-panel {
+    padding: 16px;
+    border-radius: 12px;
+  }
+  .iu-input {
+    font-size: 16px;
+    padding: 14px 12px;
+  }
+  .iu-expiry-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .iu-expiry-btn {
+    font-size: 11px;
+    padding: 13px 4px;
+    min-height: 48px;
+  }
+  .iu-role-btn {
+    font-size: 10px;
+    padding: 13px 2px;
+    min-height: 48px;
+  }
+  .iu-btn-primary {
+    min-height: 54px;
+    font-size: 14px;
+  }
+  .iu-user-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .iu-user-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .iu-action-btn {
+    flex: 1;
+    text-align: center;
+    min-height: 44px;
+    font-size: 12px;
+  }
+  .iu-toast {
+    top: 16px;
+    right: 12px;
+    left: 12px;
+  }
+  .iu-section-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+`;
 
 export function InfinityUsers() {
   const [users, setUsers] = useState<InfUser[]>([]);
@@ -38,7 +252,7 @@ export function InfinityUsers() {
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API}/users`, { headers: headers() });
+      const r = await fetch(`${API}/users`, { headers: hdrs() });
       const data = await r.json();
       if (!r.ok) { showToast("err", data?.error ?? "Falha ao carregar"); return; }
       setUsers(Array.isArray(data) ? data : []);
@@ -58,17 +272,14 @@ export function InfinityUsers() {
     try {
       const r = await fetch(`${API}/users`, {
         method: "POST",
-        headers: headers(),
+        headers: hdrs(),
         body: JSON.stringify({ username: newUser.trim(), password: newPass, role: newRole, expiresInDays: newExpiry }),
       });
       const data = await r.json();
       if (!r.ok) { showToast("err", data?.error ?? "Falha ao criar"); }
       else {
-        showToast("ok", `Usuário "${newUser.trim()}" criado com sucesso!`);
-        setNewUser("");
-        setNewPass("");
-        setNewRole("vip");
-        setNewExpiry(30);
+        showToast("ok", `✅ "${newUser.trim()}" criado!`);
+        setNewUser(""); setNewPass(""); setNewRole("vip"); setNewExpiry(30);
         fetchUsers();
       }
     } catch { showToast("err", "Erro de conexão"); }
@@ -76,21 +287,19 @@ export function InfinityUsers() {
   };
 
   const handleDelete = async (username: string) => {
-    if (!confirm(`Deletar o usuário "${username}"? Ação irreversível.`)) return;
+    if (!confirm(`Deletar "${username}"? Ação irreversível.`)) return;
     try {
-      const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, {
-        method: "DELETE", headers: headers(),
-      });
+      const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, { method: "DELETE", headers: hdrs() });
       if (r.status === 204 || r.ok) { showToast("ok", `"${username}" removido`); fetchUsers(); }
-      else { const d = await r.json().catch(() => ({})); showToast("err", d?.error ?? "Falha ao deletar"); }
+      else { const d = await r.json().catch(() => ({})); showToast("err", d?.error ?? "Falha"); }
     } catch { showToast("err", "Erro de conexão"); }
   };
 
   const handleRevoke = async (username: string, isRevoked: boolean) => {
-    const action = isRevoked ? "restore" : "revoke";
     try {
       const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, {
-        method: "PATCH", headers: headers(), body: JSON.stringify({ action }),
+        method: "PATCH", headers: hdrs(),
+        body: JSON.stringify({ action: isRevoked ? "restore" : "revoke" }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { showToast("err", d?.error ?? "Falha"); return; }
@@ -99,37 +308,7 @@ export function InfinityUsers() {
     } catch { showToast("err", "Erro de conexão"); }
   };
 
-  const filtered = users.filter(u =>
-    u.username.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const panel: React.CSSProperties = {
-    background: "rgba(20, 12, 35, 0.7)",
-    border: "1px solid rgba(155, 89, 182, 0.25)",
-    borderRadius: 14,
-    padding: 24,
-    backdropFilter: "blur(12px)",
-  };
-  const inp: React.CSSProperties = {
-    width: "100%", padding: "12px 14px",
-    background: "rgba(0,0,0,0.4)",
-    border: "1px solid rgba(155,89,182,0.35)",
-    borderRadius: 10, color: "#fff", fontSize: 14, outline: "none",
-    boxSizing: "border-box",
-  };
-  const lbl: React.CSSProperties = {
-    fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
-    color: "rgba(230,216,255,0.6)", marginBottom: 6, display: "block",
-  };
-  const primaryBtn: React.CSSProperties = {
-    width: "100%", padding: "13px 18px",
-    background: "linear-gradient(135deg, #9b59b6 0%, #6d2db5 100%)",
-    color: "#fff", border: "none", borderRadius: 10,
-    fontWeight: 700, letterSpacing: 1.4, fontSize: 12,
-    textTransform: "uppercase", cursor: "pointer",
-    boxShadow: "0 0 24px rgba(155,89,182,0.35)",
-    transition: "opacity 0.15s",
-  };
+  const filtered = users.filter(u => u.username.toLowerCase().includes(search.toLowerCase()));
 
   const roleConfig = {
     vip:   { label: "⭐ VIP",   active: "rgba(56,189,248,0.25)",  border: "rgba(56,189,248,0.7)",  color: "#7dd3fc" },
@@ -138,248 +317,233 @@ export function InfinityUsers() {
   };
 
   const expiryOpts = [
-    { label: "7 dias",    value: 7 },
-    { label: "15 dias",   value: 15 },
-    { label: "30 dias",   value: 30 },
-    { label: "60 dias",   value: 60 },
-    { label: "90 dias",   value: 90 },
-    { label: "∞ Sem limite", value: 0 },
+    { label: "7 dias",  value: 7 },
+    { label: "15 dias", value: 15 },
+    { label: "30 dias", value: 30 },
+    { label: "60 dias", value: 60 },
+    { label: "90 dias", value: 90 },
+    { label: "∞ Livre", value: 0 },
   ] as const;
 
   const expiryBadge = (u: InfUser) => {
     if (u.role === "admin") return null;
     if (!u.accountExpiresAt) return { text: "∞ Sem expiração", bg: "rgba(56,189,248,0.1)", border: "rgba(56,189,248,0.3)", color: "#7dd3fc" };
     const diff = new Date(u.accountExpiresAt).getTime() - Date.now();
-    if (diff <= 0) return { text: `⛔ Expirado em ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`, bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.4)", color: "#fca5a5" };
+    if (diff <= 0) return { text: `⛔ Expirado ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`, bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.4)", color: "#fca5a5" };
     if (diff < 3 * 86_400_000) return { text: `⚠ ${Math.floor(diff / 86_400_000)}d restantes`, bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.4)", color: "#fcd34d" };
     return { text: `⏳ ${Math.floor(diff / 86_400_000)}d — ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`, bg: "rgba(52,211,153,0.1)", border: "rgba(52,211,153,0.3)", color: "#6ee7b7" };
   };
 
   return (
-    <div style={{ padding: 24, color: "#e6d8ff", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <>
+      <style>{STYLES}</style>
 
       {toast && (
-        <div style={{
-          position: "fixed", top: 80, right: 24,
-          padding: "12px 18px",
+        <div className="iu-toast" style={{
           background: toast.type === "ok" ? "rgba(46,204,113,0.15)" : "rgba(231,76,60,0.15)",
           border: `1px solid ${toast.type === "ok" ? "rgba(46,204,113,0.5)" : "rgba(231,76,60,0.5)"}`,
-          borderRadius: 10,
           color: toast.type === "ok" ? "#7ee2a8" : "#ff8c8c",
-          fontSize: 13, zIndex: 10000, backdropFilter: "blur(10px)",
-          boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
         }}>
           {toast.text}
         </div>
       )}
 
-      <div style={{ marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 22, letterSpacing: 4, textTransform: "uppercase" }}>
-          Infinity Users
-        </h2>
-        <p style={{ margin: "4px 0 0", color: "rgba(230,216,255,0.5)", fontSize: 12, letterSpacing: 1.5 }}>
-          Gerencie os acessos ao Infinity Search
-        </p>
-      </div>
+      <div className="iu-wrap">
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ margin: 0, fontSize: 20, letterSpacing: 4, textTransform: "uppercase" }}>
+            Infinity Users
+          </h2>
+          <p style={{ margin: "4px 0 0", color: "rgba(230,216,255,0.5)", fontSize: 12, letterSpacing: 1.5 }}>
+            Gerencie os acessos ao Infinity Search
+          </p>
+        </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) 1fr", gap: 24, alignItems: "start" }}>
+        <div className="iu-grid">
 
-        {/* ── Criar usuário ── */}
-        <form onSubmit={handleCreate} style={{ ...panel, display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ fontSize: 11, letterSpacing: 4, textTransform: "uppercase", color: "#cba8ff" }}>
-            Criar Novo Usuário
-          </div>
+          {/* ── Criar usuário ── */}
+          <form onSubmit={handleCreate} className="iu-panel" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ fontSize: 11, letterSpacing: 4, textTransform: "uppercase", color: "#cba8ff" }}>
+              Criar Novo Usuário
+            </div>
 
-          <div>
-            <label style={lbl}>Usuário</label>
-            <input
-              style={inp} value={newUser}
-              onChange={e => setNewUser(e.target.value)}
-              placeholder="ex.: operador01" required autoComplete="off"
-            />
-          </div>
+            <div>
+              <label className="iu-label">Usuário</label>
+              <input
+                className="iu-input" value={newUser}
+                onChange={e => setNewUser(e.target.value)}
+                placeholder="ex.: operador01" required
+                autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              />
+            </div>
 
-          <div>
-            <label style={lbl}>Senha</label>
-            <input
-              style={inp} type="password" value={newPass}
-              onChange={e => setNewPass(e.target.value)}
-              placeholder="senha forte" required autoComplete="new-password"
-            />
-          </div>
+            <div>
+              <label className="iu-label">Senha</label>
+              <input
+                className="iu-input" type="password" value={newPass}
+                onChange={e => setNewPass(e.target.value)}
+                placeholder="senha forte" required autoComplete="new-password"
+              />
+            </div>
 
-          <div>
-            <label style={lbl}>Cargo</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {(["vip", "admin", "user"] as const).map(r => {
-                const cfg = roleConfig[r];
-                return (
-                  <button key={r} type="button" onClick={() => setNewRole(r)} style={{
-                    flex: 1, padding: "10px 4px",
-                    background: newRole === r ? cfg.active : "rgba(0,0,0,0.3)",
-                    border: `1px solid ${newRole === r ? cfg.border : "rgba(155,89,182,0.2)"}`,
-                    color: newRole === r ? cfg.color : "rgba(230,216,255,0.5)",
-                    borderRadius: 8, cursor: "pointer",
-                    fontSize: 11, letterSpacing: 1.5,
-                    textTransform: "uppercase", fontWeight: 600, transition: "all 0.15s",
-                  }}>
-                    {cfg.label}
+            <div>
+              <label className="iu-label">Cargo</label>
+              <div className="iu-role-row">
+                {(["vip", "admin", "user"] as const).map(r => {
+                  const cfg = roleConfig[r];
+                  return (
+                    <button key={r} type="button" className="iu-role-btn"
+                      onClick={() => setNewRole(r)}
+                      style={{
+                        background: newRole === r ? cfg.active : "rgba(0,0,0,0.3)",
+                        border: `1px solid ${newRole === r ? cfg.border : "rgba(155,89,182,0.2)"}`,
+                        color: newRole === r ? cfg.color : "rgba(230,216,255,0.5)",
+                      }}
+                    >
+                      {cfg.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="iu-label">Expiração</label>
+              <div className="iu-expiry-grid">
+                {expiryOpts.map(opt => (
+                  <button key={opt.value} type="button" className="iu-expiry-btn"
+                    onClick={() => setNewExpiry(opt.value)}
+                    style={{
+                      background: newExpiry === opt.value ? "rgba(155,89,182,0.25)" : "rgba(0,0,0,0.3)",
+                      border: `1px solid ${newExpiry === opt.value ? "rgba(155,89,182,0.7)" : "rgba(155,89,182,0.2)"}`,
+                      color: newExpiry === opt.value ? "#fff" : "rgba(230,216,255,0.55)",
+                    }}
+                  >
+                    {opt.label}
                   </button>
+                ))}
+              </div>
+            </div>
+
+            <button type="submit" className="iu-btn-primary" disabled={creating}
+              style={{ opacity: creating ? 0.5 : 1 }}
+            >
+              {creating ? "Criando..." : "✦ Criar Usuário"}
+            </button>
+          </form>
+
+          {/* ── Lista de usuários ── */}
+          <div className="iu-panel">
+            <div className="iu-section-header">
+              <span>Usuários Cadastrados</span>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ color: "rgba(230,216,255,0.4)", fontSize: 10 }}>
+                  {loading ? "carregando..." : `${filtered.length}/${users.length}`}
+                </span>
+                <button className="iu-refresh-btn" onClick={fetchUsers}>↻ Atualizar</button>
+              </div>
+            </div>
+
+            <input
+              className="iu-input"
+              style={{ marginBottom: 14 }}
+              placeholder="Buscar usuário..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              autoCapitalize="none" autoCorrect="off" spellCheck={false}
+            />
+
+            {filtered.length === 0 && !loading && (
+              <div style={{ textAlign: "center", padding: 32, color: "rgba(230,216,255,0.35)", fontSize: 13 }}>
+                {search ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filtered.map(u => {
+                const isRevoked = !!u.accountExpiresAt && new Date(u.accountExpiresAt).getTime() <= Date.now();
+                const badge = expiryBadge(u);
+                const rc = roleConfig[u.role] ?? roleConfig.user;
+                return (
+                  <div key={u.username} className="iu-user-card">
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                      <div style={{
+                        width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+                        background: u.role === "admin"
+                          ? "linear-gradient(135deg, #d4af37, #6d2db5)"
+                          : u.role === "vip"
+                          ? "linear-gradient(135deg, #38bdf8, #6d2db5)"
+                          : "linear-gradient(135deg, #9b59b6, #6d2db5)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontWeight: 800, color: "#fff", fontSize: 16,
+                      }}>
+                        {u.username[0]?.toUpperCase()}
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 3 }}>
+                          {u.username}
+                        </div>
+                        <div style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: rc.color }}>
+                          {rc.label} · {new Date(u.createdAt).toLocaleDateString("pt-BR")}
+                        </div>
+                        {u.lastLoginAt && (
+                          <div style={{ fontSize: 10, color: "rgba(230,216,255,0.4)", marginTop: 1 }}>
+                            último login {new Date(u.lastLoginAt).toLocaleString("pt-BR")}
+                          </div>
+                        )}
+                        {badge && (
+                          <div style={{
+                            marginTop: 6, fontSize: 10, letterSpacing: 1.5,
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            padding: "3px 10px", borderRadius: 20,
+                            background: badge.bg, border: `1px solid ${badge.border}`, color: badge.color,
+                          }}>
+                            {badge.text}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="iu-user-actions">
+                      {u.role !== "admin" && (
+                        <button className="iu-action-btn" onClick={() => handleRevoke(u.username, isRevoked)}
+                          style={{
+                            background: isRevoked ? "rgba(52,211,153,0.12)" : "rgba(245,158,11,0.12)",
+                            border: `1px solid ${isRevoked ? "rgba(52,211,153,0.4)" : "rgba(245,158,11,0.4)"}`,
+                            color: isRevoked ? "#6ee7b7" : "#fcd34d",
+                          }}
+                        >
+                          {isRevoked ? "Reativar" : "Revogar"}
+                        </button>
+                      )}
+                      <button className="iu-action-btn" onClick={() => handleDelete(u.username)}
+                        style={{
+                          background: "rgba(231,76,60,0.12)",
+                          border: "1px solid rgba(231,76,60,0.4)",
+                          color: "#ff8c8c",
+                        }}
+                      >
+                        Deletar
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
-          </div>
 
-          <div>
-            <label style={lbl}>Expiração</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-              {expiryOpts.map(opt => (
-                <button key={opt.value} type="button" onClick={() => setNewExpiry(opt.value)} style={{
-                  padding: "9px 4px",
-                  background: newExpiry === opt.value ? "rgba(155,89,182,0.25)" : "rgba(0,0,0,0.3)",
-                  border: `1px solid ${newExpiry === opt.value ? "rgba(155,89,182,0.7)" : "rgba(155,89,182,0.2)"}`,
-                  color: newExpiry === opt.value ? "#fff" : "rgba(230,216,255,0.55)",
-                  borderRadius: 8, cursor: "pointer",
-                  fontSize: 10, letterSpacing: 1, textTransform: "uppercase", fontWeight: 600,
-                  transition: "all 0.15s",
-                }}>
-                  {opt.label}
-                </button>
-              ))}
+            <div style={{
+              marginTop: 18, paddingTop: 14,
+              borderTop: "1px solid rgba(155,89,182,0.15)",
+              display: "flex", justifyContent: "space-between",
+              fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
+              color: "rgba(230,216,255,0.35)",
+            }}>
+              <span>Lelouch · Infinity bridge</span>
+              <span>by blxckxyz</span>
             </div>
           </div>
 
-          <button type="submit" disabled={creating} style={{ ...primaryBtn, opacity: creating ? 0.5 : 1 }}>
-            {creating ? "Criando..." : "✦ Criar Usuário"}
-          </button>
-        </form>
-
-        {/* ── Lista de usuários ── */}
-        <div style={panel}>
-          <div style={{
-            fontSize: 11, letterSpacing: 4, textTransform: "uppercase",
-            color: "#cba8ff", marginBottom: 14,
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
-            <span>Usuários Cadastrados</span>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <span style={{ color: "rgba(230,216,255,0.4)" }}>
-                {loading ? "carregando..." : `${filtered.length}/${users.length}`}
-              </span>
-              <button onClick={fetchUsers} style={{
-                padding: "5px 10px",
-                background: "rgba(155,89,182,0.15)",
-                border: "1px solid rgba(155,89,182,0.3)",
-                color: "#cba8ff", borderRadius: 6, cursor: "pointer",
-                fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase",
-              }}>
-                ↻ Atualizar
-              </button>
-            </div>
-          </div>
-
-          <input
-            style={{ ...inp, marginBottom: 14 }}
-            placeholder="Buscar usuário..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-
-          {filtered.length === 0 && !loading && (
-            <div style={{ textAlign: "center", padding: 32, color: "rgba(230,216,255,0.35)", fontSize: 13 }}>
-              {search ? "Nenhum usuário encontrado." : "Nenhum usuário cadastrado."}
-            </div>
-          )}
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map(u => {
-              const isRevoked = !!u.accountExpiresAt && new Date(u.accountExpiresAt).getTime() <= Date.now();
-              const badge = expiryBadge(u);
-              const rc = roleConfig[u.role] ?? roleConfig.user;
-              return (
-                <div key={u.username} style={{
-                  padding: "12px 16px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid rgba(155,89,182,0.15)",
-                  borderRadius: 10, display: "flex",
-                  alignItems: "center", justifyContent: "space-between",
-                  gap: 12, flexWrap: "wrap",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
-                    <div style={{
-                      width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
-                      background: u.role === "admin"
-                        ? "linear-gradient(135deg, #d4af37, #6d2db5)"
-                        : u.role === "vip"
-                        ? "linear-gradient(135deg, #38bdf8, #6d2db5)"
-                        : "linear-gradient(135deg, #9b59b6, #6d2db5)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontWeight: 800, color: "#fff", fontSize: 15,
-                    }}>
-                      {u.username[0]?.toUpperCase()}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>
-                        {u.username}
-                      </div>
-                      <div style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: rc.color }}>
-                        {rc.label} · {new Date(u.createdAt).toLocaleDateString("pt-BR")}
-                        {u.lastLoginAt && ` · login ${new Date(u.lastLoginAt).toLocaleString("pt-BR")}`}
-                      </div>
-                      {badge && (
-                        <div style={{
-                          marginTop: 5, fontSize: 10, letterSpacing: 1.5,
-                          display: "inline-flex", alignItems: "center", gap: 5,
-                          padding: "2px 8px", borderRadius: 20,
-                          background: badge.bg, border: `1px solid ${badge.border}`, color: badge.color,
-                        }}>
-                          {badge.text}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    {u.role !== "admin" && (
-                      <button onClick={() => handleRevoke(u.username, isRevoked)} style={{
-                        padding: "7px 12px",
-                        background: isRevoked ? "rgba(52,211,153,0.12)" : "rgba(245,158,11,0.12)",
-                        border: `1px solid ${isRevoked ? "rgba(52,211,153,0.4)" : "rgba(245,158,11,0.4)"}`,
-                        color: isRevoked ? "#6ee7b7" : "#fcd34d",
-                        borderRadius: 7, cursor: "pointer",
-                        fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600,
-                      }}>
-                        {isRevoked ? "Reativar" : "Revogar"}
-                      </button>
-                    )}
-                    <button onClick={() => handleDelete(u.username)} style={{
-                      padding: "7px 12px",
-                      background: "rgba(231,76,60,0.12)",
-                      border: "1px solid rgba(231,76,60,0.4)",
-                      color: "#ff8c8c",
-                      borderRadius: 7, cursor: "pointer",
-                      fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600,
-                    }}>
-                      Deletar
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div style={{
-            marginTop: 18, paddingTop: 14,
-            borderTop: "1px solid rgba(155,89,182,0.15)",
-            display: "flex", justifyContent: "space-between",
-            fontSize: 10, letterSpacing: 3, textTransform: "uppercase",
-            color: "rgba(230,216,255,0.35)",
-          }}>
-            <span>Lelouch · Infinity bridge</span>
-            <span>by blxckxyz</span>
-          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
