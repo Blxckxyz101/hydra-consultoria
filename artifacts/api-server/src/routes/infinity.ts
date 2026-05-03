@@ -9,7 +9,8 @@ import {
   requireAuth,
   requireAdmin,
 } from "../lib/infinity-auth.js";
-import { loginLimiter, consultaLimiter } from "../middlewares/rateLimit.js";
+import { loginLimiter, consultaLimiter, panelAuthLimiter } from "../middlewares/rateLimit.js";
+import crypto from "node:crypto";
 
 const router: IRouter = Router();
 
@@ -824,24 +825,73 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   }
 });
 
-// ─── Panel secret routes (no JWT needed) ───────────────────────────────────
-const PANEL_SECRET = process.env.PANEL_SECRET ?? "";
+// ─── Panel PIN session auth ─────────────────────────────────────────────────
+// The PIN is stored only in the PANEL_PIN env var (server-side only, never sent to browser).
+// The frontend exchanges the PIN for a short-lived in-memory session token.
+// This means VITE_PANEL_SECRET is removed completely — nothing sensitive in the JS bundle.
 
-function requirePanelSecret(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) {
-  const header = req.headers["x-panel-secret"];
-  if (!PANEL_SECRET || header !== PANEL_SECRET) {
-    res.status(403).json({ error: "Acesso negado." });
+const PANEL_PIN = process.env.PANEL_PIN ?? "";
+const PANEL_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+const panelSessions = new Map<string, { expiresAt: number }>();
+
+function cleanPanelSessions(): void {
+  const now = Date.now();
+  for (const [token, s] of panelSessions.entries()) {
+    if (s.expiresAt < now) panelSessions.delete(token);
+  }
+}
+
+function requirePanelToken(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction,
+): void {
+  const header = String(req.headers["x-panel-token"] ?? "");
+  if (!header) { res.status(403).json({ error: "Acesso negado." }); return; }
+  const session = panelSessions.get(header);
+  if (!session || session.expiresAt < Date.now()) {
+    panelSessions.delete(header);
+    res.status(403).json({ error: "Sessão expirada. Autentique novamente.", expired: true });
     return;
   }
   next();
 }
 
-router.get("/panel/users", requirePanelSecret, async (_req, res) => {
+// POST /api/infinity/panel/auth  — exchange PIN for a session token
+router.post("/panel/auth", panelAuthLimiter, (req, res) => {
+  if (!PANEL_PIN) {
+    res.status(503).json({ error: "PIN do painel não configurado no servidor." });
+    return;
+  }
+  const { pin } = req.body ?? {};
+  if (!pin || String(pin) !== PANEL_PIN) {
+    res.status(403).json({ error: "PIN incorreto." });
+    return;
+  }
+  cleanPanelSessions();
+  const token = crypto.randomBytes(32).toString("hex");
+  panelSessions.set(token, { expiresAt: Date.now() + PANEL_SESSION_TTL_MS });
+  res.json({ token, expiresIn: PANEL_SESSION_TTL_MS / 1000 });
+});
+
+// GET /api/infinity/panel/verify — check if a panel session token is still valid
+router.get("/panel/verify", (req, res) => {
+  const header = String(req.headers["x-panel-token"] ?? "");
+  const session = panelSessions.get(header);
+  if (!session || session.expiresAt < Date.now()) {
+    res.status(403).json({ valid: false });
+    return;
+  }
+  res.json({ valid: true, expiresAt: new Date(session.expiresAt).toISOString() });
+});
+
+router.get("/panel/users", requirePanelToken, async (_req, res) => {
   const rows = await db.select().from(infinityUsersTable).orderBy(desc(infinityUsersTable.createdAt));
   res.json(rows.map(serializeUser));
 });
 
-router.post("/panel/users", requirePanelSecret, async (req, res) => {
+router.post("/panel/users", requirePanelToken, async (req, res) => {
   const { username, password, role, expiresInDays } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
@@ -865,12 +915,12 @@ router.post("/panel/users", requirePanelSecret, async (req, res) => {
   }
 });
 
-router.delete("/panel/users/:username", requirePanelSecret, async (req, res) => {
+router.delete("/panel/users/:username", requirePanelToken, async (req, res) => {
   await db.delete(infinityUsersTable).where(eq(infinityUsersTable.username, String(req.params.username)));
   res.status(204).end();
 });
 
-router.patch("/panel/users/:username", requirePanelSecret, async (req, res) => {
+router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
   const { action, expiresInDays } = req.body ?? {};
   let accountExpiresAt: Date | null;
   if (action === "revoke") {

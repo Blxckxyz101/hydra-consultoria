@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 
-const PANEL_SECRET = import.meta.env.VITE_PANEL_SECRET ?? "";
 const API = "/api/infinity/panel";
+const SESSION_KEY = "lelouch_panel_token";
 
 type InfUser = {
   username: string;
@@ -13,9 +13,21 @@ type InfUser = {
 
 type Toast = { id: number; type: "ok" | "err"; text: string } | null;
 
+function getToken(): string {
+  return sessionStorage.getItem(SESSION_KEY) ?? "";
+}
+
+function saveToken(token: string): void {
+  sessionStorage.setItem(SESSION_KEY, token);
+}
+
+function clearToken(): void {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
 const hdrs = () => ({
   "Content-Type": "application/json",
-  "X-Panel-Secret": PANEL_SECRET,
+  "X-Panel-Token": getToken(),
 });
 
 const STYLES = `
@@ -171,6 +183,26 @@ const STYLES = `
   min-height: 36px;
   -webkit-tap-highlight-color: transparent;
 }
+.iu-pin-screen {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+.iu-pin-box {
+  width: 100%;
+  max-width: 320px;
+  background: rgba(20,12,35,0.8);
+  border: 1px solid rgba(155,89,182,0.3);
+  border-radius: 18px;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  backdrop-filter: blur(16px);
+}
 
 @media (max-width: 700px) {
   .iu-wrap {
@@ -232,7 +264,93 @@ const STYLES = `
 }
 `;
 
+function PinScreen({ onAuth }: { onAuth: (token: string) => void }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pin.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const r = await fetch(`${API}/auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin.trim() }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        setError(data?.error ?? "PIN incorreto.");
+        setPin("");
+      } else {
+        saveToken(data.token);
+        onAuth(data.token);
+      }
+    } catch {
+      setError("Sem conexão com o servidor.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="iu-pin-screen">
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 36, marginBottom: 8 }}>🔐</div>
+        <div style={{ fontSize: 13, letterSpacing: 4, textTransform: "uppercase", color: "#cba8ff" }}>
+          Lelouch Painel
+        </div>
+        <div style={{ fontSize: 11, color: "rgba(230,216,255,0.4)", marginTop: 4, letterSpacing: 1.5 }}>
+          Acesso restrito — insira o PIN
+        </div>
+      </div>
+
+      <form className="iu-pin-box" onSubmit={handleSubmit}>
+        <div>
+          <label className="iu-label">PIN de acesso</label>
+          <input
+            className="iu-input"
+            type="password"
+            value={pin}
+            onChange={e => setPin(e.target.value)}
+            placeholder="••••••"
+            autoComplete="current-password"
+            autoFocus
+            required
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            padding: "10px 14px",
+            background: "rgba(231,76,60,0.12)",
+            border: "1px solid rgba(231,76,60,0.4)",
+            borderRadius: 8,
+            color: "#ff8c8c",
+            fontSize: 13,
+            textAlign: "center",
+          }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          className="iu-btn-primary"
+          disabled={loading}
+          style={{ opacity: loading ? 0.6 : 1 }}
+        >
+          {loading ? "Verificando..." : "Entrar"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export function InfinityUsers() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
   const [users, setUsers] = useState<InfUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [newUser, setNewUser] = useState("");
@@ -249,10 +367,28 @@ export function InfinityUsers() {
     setTimeout(() => setToast((t) => (t?.id === id ? null : t)), 3500);
   };
 
+  const handleExpired = useCallback(() => {
+    clearToken();
+    setAuthed(false);
+    showToast("err", "Sessão expirada. Faça login novamente.");
+  }, []);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) { setAuthed(false); return; }
+    fetch(`${API}/verify`, { headers: { "X-Panel-Token": token } })
+      .then(r => {
+        if (r.ok) setAuthed(true);
+        else { clearToken(); setAuthed(false); }
+      })
+      .catch(() => { clearToken(); setAuthed(false); });
+  }, []);
+
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch(`${API}/users`, { headers: hdrs() });
+      if (r.status === 403) { handleExpired(); return; }
       const data = await r.json();
       if (!r.ok) { showToast("err", data?.error ?? "Falha ao carregar"); return; }
       setUsers(Array.isArray(data) ? data : []);
@@ -261,9 +397,11 @@ export function InfinityUsers() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleExpired]);
 
-  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => {
+    if (authed) fetchUsers();
+  }, [authed, fetchUsers]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -275,6 +413,7 @@ export function InfinityUsers() {
         headers: hdrs(),
         body: JSON.stringify({ username: newUser.trim(), password: newPass, role: newRole, expiresInDays: newExpiry }),
       });
+      if (r.status === 403) { handleExpired(); return; }
       const data = await r.json();
       if (!r.ok) { showToast("err", data?.error ?? "Falha ao criar"); }
       else {
@@ -290,6 +429,7 @@ export function InfinityUsers() {
     if (!confirm(`Deletar "${username}"? Ação irreversível.`)) return;
     try {
       const r = await fetch(`${API}/users/${encodeURIComponent(username)}`, { method: "DELETE", headers: hdrs() });
+      if (r.status === 403) { handleExpired(); return; }
       if (r.status === 204 || r.ok) { showToast("ok", `"${username}" removido`); fetchUsers(); }
       else { const d = await r.json().catch(() => ({})); showToast("err", d?.error ?? "Falha"); }
     } catch { showToast("err", "Erro de conexão"); }
@@ -301,6 +441,7 @@ export function InfinityUsers() {
         method: "PATCH", headers: hdrs(),
         body: JSON.stringify({ action: isRevoked ? "restore" : "revoke" }),
       });
+      if (r.status === 403) { handleExpired(); return; }
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { showToast("err", d?.error ?? "Falha"); return; }
       showToast("ok", isRevoked ? `"${username}" reativado` : `"${username}" revogado`);
@@ -334,6 +475,23 @@ export function InfinityUsers() {
     return { text: `⏳ ${Math.floor(diff / 86_400_000)}d — ${new Date(u.accountExpiresAt).toLocaleDateString("pt-BR")}`, bg: "rgba(52,211,153,0.1)", border: "rgba(52,211,153,0.3)", color: "#6ee7b7" };
   };
 
+  if (authed === null) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "40vh", color: "rgba(230,216,255,0.4)", fontFamily: "Inter, sans-serif", letterSpacing: 2, fontSize: 12 }}>
+        Verificando sessão...
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return (
+      <>
+        <style>{STYLES}</style>
+        <PinScreen onAuth={() => setAuthed(true)} />
+      </>
+    );
+  }
+
   return (
     <>
       <style>{STYLES}</style>
@@ -349,13 +507,32 @@ export function InfinityUsers() {
       )}
 
       <div className="iu-wrap">
-        <div style={{ marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 20, letterSpacing: 4, textTransform: "uppercase" }}>
-            Infinity Users
-          </h2>
-          <p style={{ margin: "4px 0 0", color: "rgba(230,216,255,0.5)", fontSize: 12, letterSpacing: 1.5 }}>
-            Gerencie os acessos ao Infinity Search
-          </p>
+        <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 20, letterSpacing: 4, textTransform: "uppercase" }}>
+              Infinity Users
+            </h2>
+            <p style={{ margin: "4px 0 0", color: "rgba(230,216,255,0.5)", fontSize: 12, letterSpacing: 1.5 }}>
+              Gerencie os acessos ao Infinity Search
+            </p>
+          </div>
+          <button
+            onClick={() => { clearToken(); setAuthed(false); setUsers([]); }}
+            style={{
+              padding: "8px 14px",
+              background: "rgba(231,76,60,0.1)",
+              border: "1px solid rgba(231,76,60,0.3)",
+              color: "#ff8c8c",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontSize: 11,
+              letterSpacing: 1.5,
+              textTransform: "uppercase",
+              minHeight: 36,
+            }}
+          >
+            Sair
+          </button>
         </div>
 
         <div className="iu-grid">
