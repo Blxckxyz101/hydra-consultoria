@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
@@ -11,14 +11,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: user } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
   const logout = useInfinityLogout();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(() =>
+    localStorage.getItem("infinity_profile_photo")
+  );
 
   useEffect(() => {
     setMobileOpen(false);
   }, [location]);
 
+  useEffect(() => {
+    const handler = () => setProfilePhoto(localStorage.getItem("infinity_profile_photo"));
+    window.addEventListener("infinity-profile-updated", handler);
+    return () => window.removeEventListener("infinity-profile-updated", handler);
+  }, []);
+
   const handleLogout = async () => {
     try {
-      await logout.mutateAsync({});
+      await logout.mutateAsync();
     } catch {}
     localStorage.removeItem("infinity_token");
     setLocation("/login");
@@ -29,6 +38,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/consultas", label: "Consultas", icon: Search },
     { href: "/ia", label: "Assistente IA", icon: Bot },
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
+    { href: "/perfil", label: "Perfil", icon: UserCircle },
   ];
 
   const SidebarBody = (
@@ -85,8 +95,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="p-4 border-t border-white/5 space-y-3">
         <div className="px-4 py-3 rounded-xl bg-black/40 border border-white/5">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-sm">
-              {user?.username?.[0]?.toUpperCase() ?? "?"}
+            <div className="w-9 h-9 rounded-full overflow-hidden bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-sm shrink-0">
+              {profilePhoto ? (
+                <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
+              ) : (
+                user?.username?.[0]?.toUpperCase() ?? "?"
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold text-sm truncate">{user?.username}</div>
@@ -102,6 +116,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <LogOut className="w-4 h-4" />
           <span>Desconectar</span>
         </button>
+
+        <a
+          href="https://t.me/Blxckxyz"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
+        >
+          <MessageCircle className="w-4 h-4" />
+          <span>Suporte</span>
+          <span className="ml-auto text-[9px] text-muted-foreground/50">@Blxckxyz</span>
+        </a>
 
         <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">
           <span>by blxckxyz</span>

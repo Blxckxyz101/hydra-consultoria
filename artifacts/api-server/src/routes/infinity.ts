@@ -496,42 +496,41 @@ async function streamGroq(
   messages: unknown[],
   res: import("express").Response
 ): Promise<void> {
-  const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages }),
-  });
-  if (!upstream.ok || !upstream.body) {
-    const text = await upstream.text().catch(() => "");
-    res.write(`data: ${JSON.stringify({ error: `Groq HTTP ${upstream.status}`, detail: text.slice(0, 200) })}\n\n`);
-    res.end();
-    return;
-  }
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parts = buf.split("\n\n");
-    buf = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.trim();
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (data === "[DONE]") {
-        res.write(`data: [DONE]\n\n`);
-        res.end();
-        return;
-      }
-      try {
-        const j = JSON.parse(data);
-        const delta = j.choices?.[0]?.delta?.content ?? "";
-        if (delta) res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-      } catch {
-          /* ignore */
+  try {
+    const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages }),
+    });
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "");
+      res.write(`data: ${JSON.stringify({ error: `Groq HTTP ${upstream.status}`, detail: text.slice(0, 200) })}\n\n`);
+      res.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") {
+          res.write(`data: [DONE]\n\n`);
+          res.end();
+          return;
         }
+        try {
+          const j = JSON.parse(data);
+          const delta = j.choices?.[0]?.delta?.content ?? "";
+          if (delta) res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+        } catch { /* ignore */ }
       }
     }
     res.write(`data: [DONE]\n\n`);
@@ -541,6 +540,98 @@ async function streamGroq(
     res.write(`data: ${JSON.stringify({ error: err })}\n\n`);
     res.end();
   }
+}
+
+router.post("/ai/chat", requireAuth, async (req, res) => {
+  const messages = req.body?.messages;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: "messages obrigatório" });
+    return;
+  }
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    res.status(500).json({ error: "GROQ_API_KEY não configurada" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const systemPrompt =
+    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. Quando o usuário pedir para consultar/buscar um CPF, CNPJ, telefone, placa ou qualquer dado, use a ferramenta consultar_infinity para executar a consulta real e depois interprete os resultados. Nunca invente dados. Suas respostas serão lidas em voz alta — seja conciso e use frases naturais.";
+
+  const cleanMessages = messages.filter(
+    (m: { role?: string; content?: string }) => m && typeof m.content === "string"
+  );
+
+  type AnyMsg = Record<string, unknown>;
+  let finalMessages: AnyMsg[] = [
+    { role: "system", content: systemPrompt },
+    ...cleanMessages,
+  ];
+
+  // ── Phase 1: detect tool-call intent (non-streaming) ──────────────────────
+  try {
+    const phase1Resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        stream: false,
+        messages: finalMessages,
+        tools: [CONSULTA_TOOL],
+        tool_choice: "auto",
+        max_tokens: 200,
+      }),
+    });
+
+    if (phase1Resp.ok) {
+      type ToolCall = { id: string; function: { name: string; arguments: string } };
+      type Phase1Choice = { finish_reason: string; message: { content: string | null; tool_calls?: ToolCall[] } };
+      const phase1Data = await phase1Resp.json() as { choices?: Phase1Choice[] };
+      const choice = phase1Data.choices?.[0];
+
+      if (choice?.finish_reason === "tool_calls" && choice.message.tool_calls?.length) {
+        const toolCall = choice.message.tool_calls[0];
+        let args: { tipo?: string; dados?: string } = {};
+        try { args = JSON.parse(toolCall.function.arguments); } catch {}
+        const tipo = String(args.tipo ?? "");
+        const dados = String(args.dados ?? "");
+
+        if (tipo && dados) {
+          res.write(`data: ${JSON.stringify({ delta: `🔍 Consultando **${tipo.toUpperCase()}**: \`${dados}\`...\n\n` })}\n\n`);
+
+          const consultResult = await callProvider(tipo, dados, new AbortController().signal);
+          let toolContent = "";
+          if (consultResult.ok && consultResult.parsed) {
+            const p = consultResult.parsed;
+            const lines: string[] = [];
+            p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+            p.sections.forEach((s) => {
+              lines.push(`\n${s.name} (${s.items.length} registros):`);
+              s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
+            });
+            toolContent = lines.join("\n") || p.raw.slice(0, 800);
+          } else {
+            toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
+          }
+
+          finalMessages = [
+            { role: "system", content: systemPrompt },
+            ...cleanMessages,
+            { role: "assistant", content: null, tool_calls: [toolCall] },
+            { role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: toolContent },
+          ];
+        }
+      }
+    }
+  } catch { /* phase 1 failed — fall through to normal streaming */ }
+
+  // ── Phase 2: stream final response ────────────────────────────────────────
+  await streamGroq(apiKey, finalMessages, res);
 });
 
 export default router;

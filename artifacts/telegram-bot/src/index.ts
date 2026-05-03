@@ -2,6 +2,7 @@ import { Telegraf, Markup, type Context } from "telegraf";
 import { message } from "telegraf/filters";
 import { BOT_TOKEN, API_BASE, CHECKER_TARGETS, MINIAPP_URL } from "./config.js";
 import { enqueueRequest, getRateLimitRemaining, type QueuePosition } from "./sky-queue.js";
+import { startInfinityBot } from "./infinity-bot.js";
 
 if (!BOT_TOKEN) {
   console.error("❌ TELEGRAM_BOT_TOKEN não configurado.");
@@ -2304,6 +2305,9 @@ bot.command("osint", async ctx => {
     { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) },
   );
 });
+
+// ── Start Infinity Search consultation bot ────────────────────────────────────
+startInfinityBot();
 
 // ── Launch ────────────────────────────────────────────────────────────────────
 bot.launch(() => {
