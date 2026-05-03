@@ -6,71 +6,49 @@ const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL = "https://t.me/Blxckxyz";
 const AUTHOR = "blxckxyz";
+const LINE = "═".repeat(40);
+const LINE2 = "─".repeat(40);
 
-// ── Categories & tipos ────────────────────────────────────────────────────────
-const CATEGORIES = [
-  {
-    id: "pessoa", label: "👤 Pessoa",
-    tipos: [
-      { id: "cpf", label: "📋 CPF" },
-      { id: "nome", label: "🔤 Nome" },
-      { id: "mae", label: "👩 Mãe" },
-      { id: "pai", label: "👨 Pai" },
-      { id: "parentes", label: "👨‍👩‍👧 Parentes" },
-      { id: "rg", label: "🪪 RG" },
-      { id: "cns", label: "🏥 CNS" },
-      { id: "nis", label: "💰 NIS" },
-    ],
-  },
-  {
-    id: "veiculo", label: "🚗 Veículo",
-    tipos: [
-      { id: "placa", label: "🔖 Placa" },
-      { id: "chassi", label: "🔩 Chassi" },
-      { id: "renavam", label: "📄 Renavam" },
-      { id: "motor", label: "⚙️ Motor" },
-      { id: "frota", label: "🚛 Frota" },
-      { id: "cnh", label: "🪪 CNH" },
-    ],
-  },
-  {
-    id: "empresa", label: "🏢 Empresa",
-    tipos: [
-      { id: "cnpj", label: "🏭 CNPJ" },
-      { id: "fucionarios", label: "👷 Funcionários" },
-      { id: "socios", label: "🤝 Sócios" },
-      { id: "empregos", label: "💼 Empregos" },
-    ],
-  },
-  {
-    id: "contato", label: "📱 Contato",
-    tipos: [
-      { id: "telefone", label: "📞 Telefone" },
-      { id: "email", label: "📧 E-mail" },
-      { id: "pix", label: "💳 PIX" },
-    ],
-  },
-  {
-    id: "outros", label: "📋 Outros",
-    tipos: [
-      { id: "cep", label: "📍 CEP" },
-      { id: "obito", label: "🕊️ Óbito" },
-      { id: "vacinas", label: "💉 Vacinas" },
-    ],
-  },
+// ── All tipos (flat list) ─────────────────────────────────────────────────────
+const TIPOS = [
+  { id: "cpf",         label: "🪪 CPF",           prompt: "CPF (11 dígitos, só números)" },
+  { id: "nome",        label: "👤 Nome",           prompt: "nome completo da pessoa" },
+  { id: "telefone",    label: "📞 Telefone",       prompt: "telefone com DDD (ex: 11999887766)" },
+  { id: "email",       label: "📧 E-mail",         prompt: "endereço de e-mail" },
+  { id: "placa",       label: "🚗 Placa",          prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "cnpj",        label: "🏭 CNPJ",           prompt: "CNPJ (14 dígitos, só números)" },
+  { id: "cep",         label: "📍 CEP",            prompt: "CEP (8 dígitos, só números)" },
+  { id: "pix",         label: "💳 PIX",            prompt: "chave PIX (CPF, e-mail, telefone ou aleatória)" },
+  { id: "rg",          label: "🪪 RG",             prompt: "número do RG" },
+  { id: "mae",         label: "👩 Mãe",            prompt: "CPF ou nome da mãe" },
+  { id: "pai",         label: "👨 Pai",            prompt: "CPF ou nome do pai" },
+  { id: "parentes",    label: "👨‍👩‍👧 Parentes",    prompt: "CPF da pessoa" },
+  { id: "chassi",      label: "🔩 Chassi",         prompt: "número do chassi" },
+  { id: "renavam",     label: "📄 Renavam",        prompt: "número do Renavam" },
+  { id: "cnh",         label: "🪪 CNH",            prompt: "número da CNH ou CPF" },
+  { id: "socios",      label: "🤝 Sócios",         prompt: "CNPJ da empresa" },
+  { id: "fucionarios", label: "👷 Funcionários",   prompt: "CNPJ da empresa" },
+  { id: "empregos",    label: "💼 Empregos",       prompt: "CPF da pessoa" },
+  { id: "cns",         label: "🏥 CNS",            prompt: "número do Cartão Nacional de Saúde" },
+  { id: "nis",         label: "💰 NIS/PIS",        prompt: "número do NIS ou PIS" },
+  { id: "obito",       label: "🕊️ Óbito",         prompt: "CPF da pessoa" },
+  { id: "vacinas",     label: "💉 Vacinas",        prompt: "CPF da pessoa" },
 ] as const;
 
-type CatId = (typeof CATEGORIES)[number]["id"];
+type TipoId = (typeof TIPOS)[number]["id"];
 
+// ── Session ───────────────────────────────────────────────────────────────────
 interface BotSession {
   state: "idle" | "awaiting_query";
   tipo?: string;
 }
-
 const sessions = new Map<number, BotSession>();
 function getSession(userId: number): BotSession {
   if (!sessions.has(userId)) sessions.set(userId, { state: "idle" });
   return sessions.get(userId)!;
+}
+function resetSession(userId: number) {
+  sessions.set(userId, { state: "idle" });
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -78,18 +56,15 @@ function parseGeassResult(raw: string): { fields: [string, string][]; sections: 
   const fields: [string, string][] = [];
   const sections: { name: string; items: string[] }[] = [];
 
-  // BASE N format (e.g. telefone)
   if (/\bBASE\s+\d+\b/i.test(raw)) {
     const segs = raw.split(/\s*BASE\s+\d+\s*/i).filter((s) => s.includes(":"));
     const items: string[] = [];
     for (const seg of segs) {
       const pairs: string[] = [];
-      const re =
-        /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+      const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(seg)) !== null) {
-        const k = m[1].trim();
-        const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
+        const k = m[1].trim(); const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
         if (k && v) pairs.push(`${k}: ${v}`);
       }
       if (pairs.length > 0) items.push(pairs.join(" | "));
@@ -98,14 +73,12 @@ function parseGeassResult(raw: string): { fields: [string, string][]; sections: 
     return { fields, sections };
   }
 
-  // ⎯ format
   const SEP = " \u23AF ";
   if (raw.includes("\u23AF")) {
     const parts = raw.split(SEP);
     let currentKey = parts[0].match(/\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,})$/)?.[1] ?? "";
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
-      // Bullet sections
       if (part.includes("•")) {
         const secMatch = /^([A-Za-záéíóúÁÉÍÓÚ_0-9 ]+):\s*\(\s*\d+\s*-\s*Encontrados?\s*\)/i.exec(part.trim());
         if (secMatch) {
@@ -116,22 +89,14 @@ function parseGeassResult(raw: string): { fields: [string, string][]; sections: 
           continue;
         }
       }
-      if (i === parts.length - 1) {
-        if (currentKey && part.trim()) fields.push([currentKey, part.trim()]);
-        break;
-      }
+      if (i === parts.length - 1) { if (currentKey && part.trim()) fields.push([currentKey, part.trim()]); break; }
       const nk = part.match(/^(.*?)\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,})*)$/);
-      if (nk) {
-        if (currentKey && nk[1].trim()) fields.push([currentKey, nk[1].trim()]);
-        currentKey = nk[2].trim();
-      }
+      if (nk) { if (currentKey && nk[1].trim()) fields.push([currentKey, nk[1].trim()]); currentKey = nk[2].trim(); }
     }
     return { fields, sections };
   }
 
-  // Colon format
-  const re =
-    /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+  const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw)) !== null) {
     fields.push([m[1].trim(), m[2].trim().replace(/`/g, "").replace(/\s+/g, " ")]);
@@ -139,107 +104,147 @@ function parseGeassResult(raw: string): { fields: [string, string][]; sections: 
   return { fields, sections };
 }
 
-// ── Text formatter ────────────────────────────────────────────────────────────
-function formatResultTxt(
-  tipo: string,
-  dados: string,
-  parsed: { fields: [string, string][]; sections: { name: string; items: string[] }[] },
-  raw: string
-): string {
-  const D = "═".repeat(44);
-  const T = "─".repeat(44);
+// ── .txt formatter ────────────────────────────────────────────────────────────
+function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string, string][]; sections: { name: string; items: string[] }[] }, raw: string): string {
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const lines: string[] = [];
-
-  lines.push(D);
-  lines.push(`       ∞  INFINITY SEARCH  ∞`);
-  lines.push(D);
+  lines.push(LINE); lines.push(`       ∞  INFINITY SEARCH  ∞`); lines.push(LINE);
   lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
   lines.push(`  Dado      : ${dados}`);
   lines.push(`  Data      : ${now}`);
-  lines.push(D);
-  lines.push("");
-
+  lines.push(LINE); lines.push("");
   if (parsed.fields.length > 0) {
-    lines.push("DADOS ENCONTRADOS");
-    lines.push(T);
+    lines.push("DADOS ENCONTRADOS"); lines.push(LINE2);
     const maxKey = Math.min(22, Math.max(...parsed.fields.map(([k]) => k.length)));
-    for (const [k, v] of parsed.fields) {
-      lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
-    }
+    for (const [k, v] of parsed.fields) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
     lines.push("");
   }
-
   for (const sec of parsed.sections) {
     lines.push(`${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`);
-    lines.push(T);
-    sec.items.forEach((item, idx) => {
-      lines.push(`  ${String(idx + 1).padStart(3)}.  ${item}`);
-    });
+    lines.push(LINE2);
+    sec.items.forEach((item, idx) => lines.push(`  ${String(idx + 1).padStart(3)}.  ${item}`));
     lines.push("");
   }
-
   if (parsed.fields.length === 0 && parsed.sections.length === 0 && raw) {
-    lines.push("RESPOSTA BRUTA");
-    lines.push(T);
-    lines.push(raw.slice(0, 3000));
-    lines.push("");
+    lines.push("RESPOSTA BRUTA"); lines.push(LINE2); lines.push(raw.slice(0, 3000)); lines.push("");
   }
-
-  lines.push(D);
+  lines.push(LINE);
   lines.push(`  Made by ${AUTHOR} | Infinity Search`);
   lines.push(`  Suporte : ${SUPPORT_URL}`);
-  lines.push(D);
+  lines.push(LINE);
   return lines.join("\n");
 }
 
-// ── Keyboard builders ─────────────────────────────────────────────────────────
+// ── Keyboards ─────────────────────────────────────────────────────────────────
 function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
-    ...CATEGORIES.map((cat) => [Markup.button.callback(cat.label, `cat:${cat.id}`)]),
-    [Markup.button.url("💬 Suporte", SUPPORT_URL)],
+    [Markup.button.callback("🔍  Nova Consulta", "consultar")],
+    [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
   ]);
 }
 
-function buildCatKeyboard(cat: (typeof CATEGORIES)[number]) {
-  const tipoRows: ReturnType<typeof Markup.button.callback>[][] = [];
-  const arr = [...cat.tipos];
+function buildTiposKeyboard() {
+  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  const arr = [...TIPOS];
   for (let i = 0; i < arr.length; i += 2) {
-    tipoRows.push([
+    rows.push([
       Markup.button.callback(arr[i].label, `tipo:${arr[i].id}`),
       ...(arr[i + 1] ? [Markup.button.callback(arr[i + 1].label, `tipo:${arr[i + 1].id}`)] : []),
     ]);
   }
-  tipoRows.push([Markup.button.callback("◀️ Voltar", "home"), Markup.button.url("💬 Suporte", SUPPORT_URL)] as any);
-  return Markup.inlineKeyboard(tipoRows);
+  rows.push([Markup.button.callback("↩ Cancelar", "home")]);
+  return Markup.inlineKeyboard(rows);
 }
 
-const TIPO_PROMPTS: Record<string, string> = {
-  cpf: "CPF (somente números, 11 dígitos)",
-  nome: "nome completo da pessoa",
-  telefone: "número de telefone com DDD",
-  placa: "placa do veículo (ex: ABC1D23)",
-  cnpj: "CNPJ (somente números, 14 dígitos)",
-  cep: "CEP (somente números, 8 dígitos)",
-  email: "endereço de e-mail",
-  rg: "número do RG",
-  pix: "chave PIX (CPF, e-mail, telefone ou chave aleatória)",
-  chassi: "número do chassi",
-  renavam: "número do Renavam",
-  motor: "número do motor",
-  frota: "placa ou CNPJ da frota",
-  nis: "número do NIS/PIS",
-  cns: "número do CNS (Cartão Nacional de Saúde)",
-  mae: "CPF ou nome da mãe",
-  pai: "CPF ou nome do pai",
-  parentes: "CPF da pessoa",
-  cnh: "número da CNH ou CPF",
-  obito: "CPF da pessoa",
-  vacinas: "CPF da pessoa",
-  socios: "CNPJ da empresa",
-  fucionarios: "CNPJ da empresa",
-  empregos: "CPF da pessoa",
-};
+function resultKeyboard(chatId: number, msgId: number) {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("🔍 Nova Consulta", "consultar"), Markup.button.callback("🗑 Apagar", `del:${chatId}:${msgId}`)],
+    [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+  ]);
+}
+
+// ── Core query executor ───────────────────────────────────────────────────────
+async function executeQuery(
+  ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
+  tipo: string,
+  dados: string,
+  loadMsgId: number,
+) {
+  const chatId = ctx.chat.id;
+  try {
+    const url = `${GEASS_API_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(GEASS_API_KEY)}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(28000) });
+
+    if (!resp.ok) {
+      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+        `❌ <b>Erro ${resp.status}</b>\n\nFalha ao consultar o provedor. Tente novamente.`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
+      return;
+    }
+
+    const json = await resp.json() as { status?: string; resposta?: string };
+
+    if (!json.resposta || json.status === "erro" || json.resposta.trim() === "") {
+      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+        `⚠️ <b>Sem resultado</b>\n\n<code>${tipo.toUpperCase()}</code>: <code>${dados}</code>\n\nNenhum dado encontrado para este valor.`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
+      return;
+    }
+
+    const raw = json.resposta;
+    const parsed = parseGeassResult(raw);
+    const totalRegistros = parsed.sections.reduce((a, s) => a + s.items.length, 0);
+    const txtContent = formatResultTxt(tipo, dados, parsed, raw);
+
+    // Build inline summary (HTML)
+    const summaryParts: string[] = [
+      `✅ <b>Resultado encontrado</b>`,
+      ``,
+      `<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>`,
+      `<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,
+    ];
+    if (parsed.fields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${parsed.fields.length}`);
+    if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
+
+    // Show top fields preview
+    const preview = parsed.fields.slice(0, 6);
+    if (preview.length > 0) {
+      summaryParts.push(``, `<b>Prévia:</b>`);
+      for (const [k, v] of preview) {
+        summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
+      }
+    } else if (parsed.sections.length > 0 && parsed.sections[0].items.length > 0) {
+      summaryParts.push(``, `<b>Prévia (${parsed.sections[0].name}):</b>`);
+      parsed.sections[0].items.slice(0, 3).forEach(item => summaryParts.push(`  • ${item.slice(0, 80)}`));
+    }
+
+    // Delete the loading message, send .txt with summary as caption
+    await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+
+    const filename = `infinity-${tipo}-${Date.now()}.txt`;
+    const sentDoc = await ctx.telegram.sendDocument(chatId,
+      { source: Buffer.from(txtContent, "utf-8"), filename },
+      {
+        caption: summaryParts.join("\n").slice(0, 1024),
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("🔍 Nova Consulta", "consultar")],
+        ]),
+      }
+    );
+
+    // Edit the document message to add delete button with its own msg id
+    const kb = resultKeyboard(chatId, sentDoc.message_id);
+    await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+      `❌ <b>Erro ao consultar:</b>\n<code>${msg.slice(0, 200)}</code>`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
+    ).catch(() => {});
+  }
+}
 
 // ── Bot factory ───────────────────────────────────────────────────────────────
 export function startInfinityBot(): void {
@@ -250,220 +255,224 @@ export function startInfinityBot(): void {
 
   const bot = new Telegraf(INFINITY_BOT_TOKEN);
 
-  const HOME_TEXT =
-    `🌐 *INFINITY SEARCH*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `Olá, operador! Bem-vindo ao *Infinity Search Bot*.\n` +
-    `Realize consultas OSINT em tempo real.\n\n` +
-    `Selecione uma categoria para começar:`;
-
-  // Register commands in Telegram menu
+  // ── Register commands ──────────────────────────────────────────────────────
   void bot.telegram.setMyCommands([
-    { command: "start",     description: "🌐 Menu principal de consultas OSINT" },
-    { command: "consultar", description: "🔍 Iniciar nova consulta OSINT" },
-    { command: "ajuda",     description: "❓ Lista de tipos de consulta disponíveis" },
+    { command: "start",     description: "🌐 Menu principal" },
+    { command: "consultar", description: "🔍 Nova consulta OSINT" },
+    { command: "cpf",       description: "🪪 Consultar CPF" },
+    { command: "nome",      description: "👤 Consultar por Nome" },
+    { command: "telefone",  description: "📞 Consultar Telefone" },
+    { command: "email",     description: "📧 Consultar E-mail" },
+    { command: "placa",     description: "🚗 Consultar Placa" },
+    { command: "cnpj",      description: "🏭 Consultar CNPJ" },
+    { command: "cep",       description: "📍 Consultar CEP" },
+    { command: "pix",       description: "💳 Consultar chave PIX" },
+    { command: "rg",        description: "🪪 Consultar RG" },
+    { command: "ajuda",     description: "❓ Lista de tipos disponíveis" },
   ]).catch(() => {});
 
-  // /start
+  const HOME_TEXT =
+    `🌐 <b>INFINITY SEARCH</b>\n` +
+    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n` +
+    `Plataforma OSINT em tempo real.\n` +
+    `Consultas via base GeassZero.\n\n` +
+    `Use <b>🔍 Nova Consulta</b> ou um comando rápido:\n` +
+    `<code>/cpf</code> · <code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code> · <code>/email</code>`;
+
+  const TIPO_MENU_TEXT =
+    `🔍 <b>SELECIONE O TIPO</b>\n` +
+    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n` +
+    `Escolha o tipo de dado para consultar:`;
+
+  // ── /start ────────────────────────────────────────────────────────────────
   bot.command("start", async (ctx) => {
-    getSession(ctx.from.id).state = "idle";
-    await ctx.reply(HOME_TEXT, { parse_mode: "Markdown", ...buildHomeKeyboard() });
+    resetSession(ctx.from.id);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
   });
 
-  // /consultar alias
+  // ── /consultar ───────────────────────────────────────────────────────────
   bot.command("consultar", async (ctx) => {
-    getSession(ctx.from.id).state = "idle";
-    await ctx.reply(HOME_TEXT, { parse_mode: "Markdown", ...buildHomeKeyboard() });
+    resetSession(ctx.from.id);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard());
   });
 
-  // /ajuda
+  // ── Direct tipo commands ──────────────────────────────────────────────────
+  const DIRECT_COMMANDS: { cmd: string; tipoId: TipoId }[] = [
+    { cmd: "cpf",      tipoId: "cpf" },
+    { cmd: "nome",     tipoId: "nome" },
+    { cmd: "telefone", tipoId: "telefone" },
+    { cmd: "email",    tipoId: "email" },
+    { cmd: "placa",    tipoId: "placa" },
+    { cmd: "cnpj",     tipoId: "cnpj" },
+    { cmd: "cep",      tipoId: "cep" },
+    { cmd: "pix",      tipoId: "pix" },
+    { cmd: "rg",       tipoId: "rg" },
+  ];
+
+  for (const { cmd, tipoId } of DIRECT_COMMANDS) {
+    bot.command(cmd, async (ctx) => {
+      const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
+      const tipo = TIPOS.find((t) => t.id === tipoId)!;
+      try { await ctx.deleteMessage(); } catch {}
+
+      if (args) {
+        // Inline: /cpf 12345678901 → execute directly
+        resetSession(ctx.from.id);
+        const loadMsg = await ctx.replyWithHTML(
+          `⏳ <b>Consultando ${tipo.label}...</b>\n<code>${args}</code>`
+        );
+        await executeQuery(ctx, tipoId, args, loadMsg.message_id);
+      } else {
+        // No args → set awaiting_query
+        const session = getSession(ctx.from.id);
+        session.state = "awaiting_query";
+        session.tipo = tipoId;
+        await ctx.replyWithHTML(
+          `${tipo.label}\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\nEnvie o <b>${tipo.prompt}</b>:`,
+          Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home_new")]]),
+        );
+      }
+    });
+  }
+
+  // ── /ajuda ────────────────────────────────────────────────────────────────
   bot.command("ajuda", async (ctx) => {
-    const lines: string[] = [
-      `🌐 *INFINITY SEARCH — AJUDA*`,
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML([
+      `❓ <b>INFINITY SEARCH — AJUDA</b>`,
+      `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
       ``,
-      `*Como usar:*`,
-      `Use /start e selecione uma categoria, ou envie /consultar.`,
+      `<b>Comandos rápidos (com ou sem dado):</b>`,
+      `<code>/cpf 12345678901</code>`,
+      `<code>/telefone 11999887766</code>`,
+      `<code>/placa ABC1D23</code>`,
+      `<code>/cnpj 12345678000195</code>`,
+      `<code>/email addr@mail.com</code>`,
+      `<code>/cep 01310100</code>`,
+      `<code>/pix chave-pix</code>`,
+      `<code>/rg 123456789</code>`,
+      `<code>/nome João Silva</code>`,
       ``,
-      `*👤 Pessoa:*`,
-      `CPF · Nome · Mãe · Pai · Parentes · RG · CNS · NIS`,
+      `<b>Menu interativo:</b>`,
+      `/consultar — abre o seletor com todos os tipos`,
       ``,
-      `*🚗 Veículo:*`,
-      `Placa · Chassi · Renavam · Motor · Frota · CNH`,
+      `<b>Todos os tipos disponíveis:</b>`,
+      `👤 Pessoa · 🚗 Veículo · 🏢 Empresa`,
+      `📱 Contato · 📋 Outros (saúde, óbito, vacinas)`,
       ``,
-      `*🏢 Empresa:*`,
-      `CNPJ · Funcionários · Sócios · Empregos`,
-      ``,
-      `*📱 Contato:*`,
-      `Telefone · E-mail · PIX`,
-      ``,
-      `*📋 Outros:*`,
-      `CEP · Óbito · Vacinas`,
-      ``,
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-      `_Resultados entregues em arquivo .txt_`,
-      `_Suporte: ${SUPPORT_URL}_`,
-    ];
-    await ctx.reply(lines.join("\n"), {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("🌐 Iniciar Consulta", "home_new")],
+      `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
+      `<i>Resultados entregues em arquivo .txt formatado</i>`,
+    ].join("\n"),
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🔍 Consultar Agora", "consultar")],
         [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
       ]),
-    });
-  });
-
-  // Category selection
-  bot.action(/^cat:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    const catId = ctx.match[1] as CatId;
-    const cat = CATEGORIES.find((c) => c.id === catId);
-    if (!cat) return;
-    getSession(ctx.from.id).state = "idle";
-    await ctx.editMessageText(
-      `${cat.label}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nSelecione o tipo de consulta:`,
-      { parse_mode: "Markdown", ...buildCatKeyboard(cat) }
     );
   });
 
-  // Tipo selection
+  // ── Callback: home ────────────────────────────────────────────────────────
+  bot.action("home", async (ctx) => {
+    await ctx.answerCbQuery();
+    resetSession(ctx.from.id);
+    await ctx.editMessageText(HOME_TEXT, { parse_mode: "HTML", ...buildHomeKeyboard() });
+  });
+
+  bot.action("home_new", async (ctx) => {
+    await ctx.answerCbQuery();
+    resetSession(ctx.from.id);
+    await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
+  });
+
+  // ── Callback: consultar (open tipo list) ──────────────────────────────────
+  bot.action("consultar", async (ctx) => {
+    await ctx.answerCbQuery();
+    resetSession(ctx.from.id);
+    try {
+      await ctx.editMessageText(TIPO_MENU_TEXT, { parse_mode: "HTML", ...buildTiposKeyboard() });
+    } catch {
+      await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard());
+    }
+  });
+
+  // ── Callback: show ajuda ──────────────────────────────────────────────────
+  bot.action("show_ajuda", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.replyWithHTML([
+      `❓ <b>Comandos rápidos:</b>`,
+      `<code>/cpf</code> · <code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code>`,
+      `<code>/email</code> · <code>/cep</code> · <code>/pix</code> · <code>/rg</code> · <code>/nome</code>`,
+      ``,
+      `Envie o comando + dado direto: <code>/cpf 12345678901</code>`,
+    ].join("\n"),
+      Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]]),
+    );
+  });
+
+  // ── Callback: tipo selection ───────────────────────────────────────────────
   bot.action(/^tipo:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
     const tipoId = ctx.match[1];
+    const tipo = TIPOS.find((t) => t.id === tipoId);
+    if (!tipo) return;
     const session = getSession(ctx.from.id);
     session.state = "awaiting_query";
     session.tipo = tipoId;
-    const prompt = TIPO_PROMPTS[tipoId] ?? "o dado para consultar";
     await ctx.editMessageText(
-      `🔍 *Consulta: ${tipoId.toUpperCase()}*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nEnvie o ${prompt}:`,
-      {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home")]]),
-      }
+      `${tipo.label}\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\nEnvie o <b>${tipo.prompt}</b>:`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home")]]) }
     );
   });
 
-  // Home button (edit)
-  bot.action("home", async (ctx) => {
-    await ctx.answerCbQuery();
-    getSession(ctx.from.id).state = "idle";
-    await ctx.editMessageText(HOME_TEXT, { parse_mode: "Markdown", ...buildHomeKeyboard() });
+  // ── Callback: delete message ───────────────────────────────────────────────
+  bot.action(/^del:(-?\d+):(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery("Mensagem apagada");
+    const chatId = parseInt(ctx.match[1]);
+    const msgId = parseInt(ctx.match[2]);
+    await ctx.telegram.deleteMessage(chatId, msgId).catch(() => {});
   });
 
-  // New message home
-  bot.action("home_new", async (ctx) => {
-    await ctx.answerCbQuery();
-    getSession(ctx.from.id).state = "idle";
-    await ctx.reply(HOME_TEXT, { parse_mode: "Markdown", ...buildHomeKeyboard() });
-  });
-
-  // Handle text (query input)
+  // ── Text handler ──────────────────────────────────────────────────────────
   bot.on(message("text"), async (ctx) => {
+    // Ignore commands (handled above)
+    if (ctx.message.text.startsWith("/")) return;
+
     const session = getSession(ctx.from.id);
+
     if (session.state !== "awaiting_query" || !session.tipo) {
-      await ctx.reply(
-        "Use /start para iniciar uma consulta.",
-        Markup.inlineKeyboard([[Markup.button.callback("🏠 Menu", "home_new")]])
-      );
+      // Not in a query flow — show home
+      await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
       return;
     }
 
     const dados = ctx.message.text.trim();
     const tipo = session.tipo;
-    session.state = "idle";
+    // Reset BEFORE async so no re-entry
+    resetSession(ctx.from.id);
 
-    const loadMsg = await ctx.reply(
-      `⏳ *Consultando ${tipo.toUpperCase()}...*\n\`${dados}\``,
-      { parse_mode: "Markdown" }
+    // Delete user's message
+    try { await ctx.deleteMessage(); } catch {}
+
+    const tipoObj = TIPOS.find((t) => t.id === tipo);
+    const loadMsg = await ctx.replyWithHTML(
+      `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
     );
 
-    try {
-      const url = `${GEASS_API_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(GEASS_API_KEY)}`;
-      const resp = await fetch(url, { signal: AbortSignal.timeout(25000) });
-
-      if (!resp.ok) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, loadMsg.message_id, undefined,
-          `❌ Erro HTTP ${resp.status} ao consultar o provedor.`,
-          Markup.inlineKeyboard([[Markup.button.callback("🔄 Nova Consulta", "home_new"), Markup.button.url("💬 Suporte", SUPPORT_URL)]])
-        );
-        return;
-      }
-
-      const json = await resp.json() as { status?: string; resposta?: string };
-
-      if (!json.resposta || json.status === "erro" || json.resposta.trim() === "") {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, loadMsg.message_id, undefined,
-          `⚠️ *Sem resultado*\n\nNenhum dado encontrado para:\nTipo: \`${tipo.toUpperCase()}\`\nDado: \`${dados}\``,
-          {
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([[Markup.button.callback("🔄 Nova Consulta", "home_new"), Markup.button.url("💬 Suporte", SUPPORT_URL)]]),
-          }
-        );
-        return;
-      }
-
-      const raw = json.resposta;
-      const parsed = parseGeassResult(raw);
-      const totalRegistros = parsed.sections.reduce((a, s) => a + s.items.length, 0);
-      const txtContent = formatResultTxt(tipo, dados, parsed, raw);
-
-      const summaryLines = [
-        `✅ *Resultado encontrado!*`,
-        ``,
-        `📌 Tipo   : \`${tipo.toUpperCase()}\``,
-        `🔎 Dado   : \`${dados}\``,
-      ];
-      if (parsed.fields.length > 0) summaryLines.push(`📊 Campos  : ${parsed.fields.length}`);
-      if (totalRegistros > 0) summaryLines.push(`📋 Registros: ${totalRegistros}`);
-
-      await ctx.telegram.editMessageText(
-        ctx.chat.id, loadMsg.message_id, undefined,
-        summaryLines.join("\n"),
-        {
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard([[Markup.button.callback("🔄 Nova Consulta", "home_new"), Markup.button.url("💬 Suporte", SUPPORT_URL)]]),
-        }
-      );
-
-      // Send .txt file
-      const filename = `infinity-${tipo}-${Date.now()}.txt`;
-      await ctx.replyWithDocument(
-        { source: Buffer.from(txtContent, "utf-8"), filename },
-        {
-          caption: `📄 *${tipo.toUpperCase()}* · Made by ${AUTHOR} | Infinity Search`,
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard([[Markup.button.callback("🔄 Nova Consulta", "home_new"), Markup.button.url("💬 Suporte", SUPPORT_URL)]]),
-        }
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Erro desconhecido";
-      await ctx.telegram
-        .editMessageText(
-          ctx.chat.id, loadMsg.message_id, undefined,
-          `❌ *Erro:* ${msg.slice(0, 200)}`,
-          {
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([[Markup.button.callback("🔄 Nova Consulta", "home_new")]]),
-          }
-        )
-        .catch(() => {});
-    }
+    await executeQuery(ctx, tipo, dados, loadMsg.message_id);
   });
 
-  bot
-    .launch(() => {
-      console.log("🌐 Infinity Search Bot iniciado com sucesso!");
-    })
-    .catch((err: unknown) => {
-      const msg = String((err as Error)?.message ?? err);
-      if (msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other")) {
-        console.warn("⚠️  InfinityBot: outra instância já está ativa.");
-      } else {
-        console.error("[InfinityBot] Erro ao iniciar:", err);
-      }
-    });
+  // ── Launch ────────────────────────────────────────────────────────────────
+  bot.launch(() => {
+    console.log("🌐 Infinity Search Bot iniciado com sucesso!");
+  }).catch((err: unknown) => {
+    const msg = String((err as Error)?.message ?? err);
+    if (msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other")) {
+      console.warn("⚠️  InfinityBot: outra instância já está ativa.");
+    } else {
+      console.error("[InfinityBot] Erro ao iniciar:", err);
+    }
+  });
 
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));

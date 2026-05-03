@@ -500,7 +500,7 @@ export default function IA() {
             animate={{ opacity: 1, x: 0, width: 260 }}
             exit={{ opacity: 0, x: -20, width: 0 }}
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className="shrink-0 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
+            className="shrink-0 flex flex-col rounded-2xl border border-white/[0.07] bg-black/20 backdrop-blur-2xl overflow-hidden"
             style={{ width: 260 }}
           >
             <div className="px-4 pt-4 pb-3 border-b border-white/5">
@@ -565,7 +565,7 @@ export default function IA() {
       </AnimatePresence>
 
       {/* ── Main chat ── */}
-      <div className="flex-1 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden min-w-0">
+      <div className="flex-1 flex flex-col rounded-2xl border border-white/[0.07] bg-black/15 backdrop-blur-2xl overflow-hidden min-w-0">
 
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-black/20 to-transparent shrink-0">
@@ -582,7 +582,7 @@ export default function IA() {
               <img src={robotUrl} alt="IA" className="relative w-9 h-9 rounded-xl object-cover" />
             </div>
             <div>
-              <div className="font-bold tracking-widest text-sm">INFINITY AI</div>
+              <div className="font-bold tracking-widest text-sm">INFINITY SEARCH IA</div>
               <div className="text-[9px] uppercase tracking-[0.4em] text-primary/70 flex items-center gap-1.5">
                 <motion.span
                   className="w-1.5 h-1.5 rounded-full bg-primary inline-block"
@@ -627,7 +627,7 @@ export default function IA() {
                   <img src={robotUrl} alt="AI" className="w-28 h-28 object-contain mx-auto drop-shadow-[0_0_40px_rgba(56,189,248,0.5)]" />
                 </motion.div>
                 <div className="mt-5 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/70">
-                  <Sparkles size={11} /> Assistente Operacional
+                  <Sparkles size={11} /> Infinity Search IA
                 </div>
                 <h2 className="mt-2 text-xl font-bold uppercase tracking-[0.2em]">Como posso ajudar?</h2>
                 <p className="mt-2 text-xs text-muted-foreground max-w-xs mx-auto">
@@ -641,7 +641,7 @@ export default function IA() {
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => { setInput(s.text); inputRef.current?.focus(); }}
-                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/4 border border-white/8 hover:bg-white/8 hover:border-sky-500/30 transition-all text-left group"
+                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] hover:bg-white/[0.06] hover:border-sky-500/25 transition-all text-left group backdrop-blur-sm"
                   >
                     <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0 group-hover:bg-sky-500/20 transition-colors">
                       <s.icon size={14} className="text-sky-400" />
@@ -677,8 +677,8 @@ export default function IA() {
               <div className={`group relative max-w-[75%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
                 <div className={`px-4 py-3 rounded-2xl ${
                   msg.role === "user"
-                    ? "bg-gradient-to-br from-sky-500/90 to-cyan-500/80 text-black rounded-tr-sm shadow-[0_4px_24px_rgba(56,189,248,0.25)] text-sm font-medium"
-                    : "bg-white/5 border border-white/10 backdrop-blur-sm rounded-tl-sm shadow-[0_4px_24px_rgba(0,0,0,0.3)]"
+                    ? "bg-gradient-to-br from-sky-500/70 to-cyan-500/60 text-white rounded-tr-sm shadow-[0_4px_20px_rgba(56,189,248,0.18)] text-sm font-medium backdrop-blur-sm border border-sky-400/30"
+                    : "bg-white/[0.03] border border-white/[0.07] backdrop-blur-sm rounded-tl-sm shadow-[0_4px_20px_rgba(0,0,0,0.2)]"
                 }`}>
                   {msg.role === "user"
                     ? <p className="text-sm leading-relaxed">{msg.content}</p>
@@ -755,9 +755,8 @@ export default function IA() {
               <Send size={18} />
             </motion.button>
           </form>
-          <div className="mt-2 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/40">
-            <span>made by blxckxyz</span>
-            <span>llama-3.3-70b · groq</span>
+          <div className="mt-2 flex items-center justify-center text-[9px] uppercase tracking-[0.35em] text-muted-foreground/30">
+            <span>Infinity Search IA · Consultas OSINT em linguagem natural</span>
           </div>
         </div>
       </div>

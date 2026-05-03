@@ -1,6 +1,7 @@
 import { Switch, Route } from "wouter";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { Layout } from "@/components/layout/Layout";
+import { TermsGuard } from "@/components/ui/TermsGuard";
 
 import Login from "@/pages/login";
 import Overview from "@/pages/overview";
@@ -26,6 +27,7 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       <Route>
+        <TermsGuard>
         <AuthGuard>
           <Layout>
             <Switch>
@@ -39,6 +41,7 @@ function Router() {
             </Switch>
           </Layout>
         </AuthGuard>
+        </TermsGuard>
       </Route>
     </Switch>
   );
