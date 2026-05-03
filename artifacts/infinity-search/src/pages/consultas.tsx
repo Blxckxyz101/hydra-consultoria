@@ -91,7 +91,8 @@ export default function Consultas() {
       if (!r.ok) return [];
       return r.json();
     },
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
+    staleTime: 20_000,
   });
 
   const activeTab = useMemo(() => TABS.find((t) => t.id === tab)!, [tab]);

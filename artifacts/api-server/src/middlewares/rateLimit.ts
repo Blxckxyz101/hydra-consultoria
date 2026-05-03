@@ -1,7 +1,9 @@
 /**
  * RATE LIMITING MIDDLEWARE
  *
- * General: 300 req/min per IP
+ * General: 1500 req/min per IP
+ * Login:   10 attempts per 15 min per IP (brute-force protection)
+ * Consulta: 30 req/min per IP
  * Attacks: 20 req/min per IP (stricter — prevents attack spam)
  * Proxies refresh: 5 req/min (expensive operation)
  *
@@ -29,6 +31,25 @@ export const generalLimiter = rateLimit({
     req.path === "/api/events"  ||
     req.path.startsWith("/api/checker/") ||
     req.path.startsWith("/api/attacks/stream"),
+});
+
+export const loginLimiter = rateLimit({
+  windowMs:           15 * 60_000,
+  max:                10,
+  standardHeaders:    true,
+  legacyHeaders:      false,
+  keyGenerator:       ip,
+  skipSuccessfulRequests: true,
+  message:            { error: "Muitas tentativas de login. Aguarde 15 minutos." },
+});
+
+export const consultaLimiter = rateLimit({
+  windowMs:        60_000,
+  max:             30,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    ip,
+  message:         { error: "Muitas consultas por minuto. Aguarde um momento." },
 });
 
 export const attackLimiter = rateLimit({

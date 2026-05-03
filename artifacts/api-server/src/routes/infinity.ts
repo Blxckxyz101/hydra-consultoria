@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import { db, infinityUsersTable, infinityConsultasTable } from "@workspace/db";
-import { eq, desc, sql, gte } from "drizzle-orm";
+import { eq, desc, sql, gte, and } from "drizzle-orm";
 import {
   createSession,
   deleteSession,
@@ -9,6 +9,7 @@ import {
   requireAuth,
   requireAdmin,
 } from "../lib/infinity-auth.js";
+import { loginLimiter, consultaLimiter } from "../middlewares/rateLimit.js";
 
 const router: IRouter = Router();
 
@@ -16,6 +17,45 @@ const PROVIDER_BASE = "http://149.56.18.68:25584/api/consulta";
 const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 
 const DAILY_RATE_LIMIT = 350;
+const PER_USER_DAILY_LIMIT = 100;
+
+let _globalDailyCache: { date: string; count: number } = { date: "", count: 0 };
+
+async function getGlobalDailyCount(): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  if (_globalDailyCache.date === today) return _globalDailyCache.count;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(gte(infinityConsultasTable.createdAt, todayStart));
+  const count = row?.c ?? 0;
+  _globalDailyCache = { date: today, count };
+  return count;
+}
+
+const _userDailyCache = new Map<string, { date: string; count: number }>();
+
+async function getUserDailyCount(username: string): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const cached = _userDailyCache.get(username);
+  if (cached?.date === today) return cached.count;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(and(eq(infinityConsultasTable.username, username), gte(infinityConsultasTable.createdAt, todayStart)));
+  const count = row?.c ?? 0;
+  _userDailyCache.set(username, { date: today, count });
+  return count;
+}
+
+function bumpCaches(username: string): void {
+  const today = new Date().toISOString().slice(0, 10);
+  _globalDailyCache = { date: today, count: _globalDailyCache.count + 1 };
+  const u = _userDailyCache.get(username);
+  if (u?.date === today) _userDailyCache.set(username, { date: today, count: u.count + 1 });
+}
 
 const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
@@ -213,7 +253,7 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
 }
 
 // ─── auth ──────────────────────────────────────────────────────────────────
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     res.status(400).json({ error: "username e password obrigatórios" });
@@ -474,7 +514,7 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
 });
 
 // ─── consultas universal ───────────────────────────────────────────────────
-router.post("/consultas/:tipo", requireAuth, async (req, res) => {
+router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) => {
   const tipo = String(req.params.tipo).toLowerCase();
   if (!SUPPORTED_TIPOS.has(tipo)) {
     res.status(404).json({ error: `Tipo de consulta "${tipo}" não suportado` });
