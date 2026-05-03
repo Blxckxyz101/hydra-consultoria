@@ -1,22 +1,185 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Bot, User, Mic, MicOff, Sparkles, Trash2 } from "lucide-react";
+import {
+  Send, Bot, User, Mic, MicOff, Sparkles, Trash2, Plus,
+  MessageSquare, Clock, ChevronRight, Copy, Check, Search,
+  Zap, X,
+} from "lucide-react";
 import robotUrl from "@/assets/robot.png";
 import { VoiceOrb } from "@/components/ui/VoiceOrb";
-import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
-type Message = { role: "user" | "assistant"; content: string };
+// ─── Types ───────────────────────────────────────────────────────────────────
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+};
 
+type ChatSession = {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const LS_SESSIONS = "infinity_chat_sessions";
+const MAX_SESSIONS = 30;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function newSession(): ChatSession {
+  return { id: crypto.randomUUID(), title: "Nova conversa", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+}
+
+function loadSessions(): ChatSession[] {
+  try { return JSON.parse(localStorage.getItem(LS_SESSIONS) ?? "[]"); } catch { return []; }
+}
+
+function saveSessions(sessions: ChatSession[]) {
+  localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
+}
+
+function titleFromMsg(text: string) {
+  return text.replace(/\*\*|`|#|>/g, "").slice(0, 42).trim() || "Nova conversa";
+}
+
+function relativeTime(ts: number) {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "agora";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m atrás`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h atrás`;
+  return `${Math.floor(diff / 86_400_000)}d atrás`;
+}
+
+// ─── Markdown renderer (simple) ───────────────────────────────────────────────
+function renderMarkdown(text: string) {
+  const lines = text.split("\n");
+  const result: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // code block
+    if (line.startsWith("```")) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      result.push(
+        <div key={i} className="my-2 rounded-xl overflow-hidden border border-white/10">
+          {lang && <div className="px-3 py-1 bg-white/5 text-[9px] uppercase tracking-widest text-primary/60 font-mono">{lang}</div>}
+          <pre className="bg-black/50 px-4 py-3 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap">
+            {codeLines.join("\n")}
+          </pre>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // heading
+    if (line.startsWith("### ")) {
+      result.push(<p key={i} className="font-bold text-primary text-sm mt-3 mb-1">{inlineRender(line.slice(4))}</p>);
+    } else if (line.startsWith("## ")) {
+      result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
+    } else if (line.startsWith("# ")) {
+      result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
+    } else if (line.startsWith("- ") || line.startsWith("• ")) {
+      result.push(
+        <div key={i} className="flex gap-2 items-start my-0.5">
+          <span className="text-primary/60 mt-0.5 shrink-0">·</span>
+          <span>{inlineRender(line.slice(2))}</span>
+        </div>
+      );
+    } else if (line === "") {
+      result.push(<div key={i} className="h-2" />);
+    } else {
+      result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
+    }
+    i++;
+  }
+
+  return <div className="text-sm space-y-0.5">{result}</div>;
+}
+
+function inlineRender(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**"))
+      return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`"))
+      return <code key={i} className="bg-white/10 px-1.5 py-0.5 rounded text-emerald-300 font-mono text-xs">{part.slice(1, -1)}</code>;
+    return part;
+  });
+}
+
+// ─── ThinkingDots ─────────────────────────────────────────────────────────────
+function ThinkingDots() {
+  return (
+    <div className="flex items-center gap-1 px-1 py-1">
+      {[0, 1, 2].map((i) => (
+        <motion.div
+          key={i}
+          className="w-2.5 h-2.5 rounded-full bg-gradient-to-br from-sky-400 to-cyan-300"
+          animate={{ y: [0, -7, 0], opacity: [0.4, 1, 0.4], scale: [0.9, 1.1, 0.9] }}
+          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── CopyButton ───────────────────────────────────────────────────────────────
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button
+      onClick={copy}
+      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-white"
+    >
+      {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+// ─── Suggested prompts ────────────────────────────────────────────────────────
+const SUGGESTIONS = [
+  { icon: Search, label: "Consultar CPF", text: "Consulte o CPF 11144477735" },
+  { icon: Zap, label: "Consultar telefone", text: "Consulte o telefone 62999173029" },
+  { icon: Bot, label: "O que você pode fazer?", text: "O que você consegue consultar e pesquisar?" },
+  { icon: Sparkles, label: "Dossier completo", text: "Faça um dossiê completo sobre o CPF 11144477735" },
+];
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function IA() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
+  const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
+  const [currentId, setCurrentId] = useState<string>(() => {
+    const s = loadSessions();
+    return s.length ? s[0].id : newSession().id;
+  });
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  const [input, setInput] = useState("");
   const [voiceMode, setVoiceMode] = useState(false);
   const [listening, setListening] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [intensity, setIntensity] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historySearch, setHistorySearch] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -27,59 +190,88 @@ export default function IA() {
   useEffect(() => { continuousRef.current = continuous; }, [continuous]);
   useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
 
-  const speakAndContinue = (text: string) => {
-    if (!("speechSynthesis" in window) || !text) return;
-    try {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text.replace(/\*\*|`|#|>/g, ""));
-      u.lang = "pt-BR";
-      u.rate = 1.05;
-      u.pitch = 1.0;
-      const voices = window.speechSynthesis.getVoices();
-      const ptVoice = voices.find((v) => v.lang.startsWith("pt"));
-      if (ptVoice) u.voice = ptVoice;
-      setSpeaking(true);
-      u.onend = () => {
-        setSpeaking(false);
-        if (continuousRef.current && voiceModeRef.current) {
-          setTimeout(() => startVoice(), 350);
-        }
-      };
-      u.onerror = () => setSpeaking(false);
-      window.speechSynthesis.speak(u);
-    } catch {
-      setSpeaking(false);
-    }
+  // Ensure currentId has a session
+  useEffect(() => {
+    setSessions((prev) => {
+      if (prev.find((s) => s.id === currentId)) return prev;
+      const fresh = newSession();
+      setCurrentId(fresh.id);
+      return [fresh, ...prev];
+    });
+  }, [currentId]);
+
+  const currentSession = sessions.find((s) => s.id === currentId) ?? sessions[0];
+  const messages = currentSession?.messages ?? [];
+
+  const updateSession = useCallback((id: string, updater: (s: ChatSession) => ChatSession) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => s.id === id ? updater(s) : s);
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+
+  const createNew = () => {
+    const s = newSession();
+    setSessions((prev) => { const next = [s, ...prev]; saveSessions(next); return next; });
+    setCurrentId(s.id);
+    setSidebarOpen(false);
   };
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming]);
+  const deleteSession = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      saveSessions(next);
+      if (id === currentId) {
+        if (next.length) setCurrentId(next[0].id);
+        else { const fresh = newSession(); setCurrentId(fresh.id); return [fresh]; }
+      }
+      return next;
+    });
+  };
 
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isThinking]);
+
+  // ─── Send ──────────────────────────────────────────────────────────────────
   const sendMessage = async (text: string) => {
     const userMsg = text.trim();
-    if (!userMsg) return;
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+    if (!userMsg || isStreaming) return;
+    const ts = Date.now();
+    const userEntry: Message = { role: "user", content: userMsg, ts };
+
+    // Update session with user message + set title on first message
+    updateSession(currentId, (s) => ({
+      ...s,
+      title: s.messages.length === 0 ? titleFromMsg(userMsg) : s.title,
+      messages: [...s.messages, userEntry],
+      updatedAt: ts,
+    }));
+
+    setIsThinking(true);
     setIsStreaming(true);
-    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
     let finalReply = "";
+    const assistantTs = Date.now();
+
+    // Insert empty assistant placeholder
+    updateSession(currentId, (s) => ({
+      ...s,
+      messages: [...s.messages, { role: "assistant", content: "", ts: assistantTs }],
+    }));
 
     try {
       const token = localStorage.getItem("infinity_token");
+      const historyMessages = [...messages, userEntry].map(({ role, content }) => ({ role, content }));
       const res = await fetch("/api/infinity/ai/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          messages: [...messages, { role: "user", content: userMsg }],
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ messages: historyMessages }),
       });
       if (!res.ok) throw new Error("Falha na comunicação");
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let firstChunk = true;
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
@@ -95,14 +287,13 @@ export default function IA() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.delta) {
+                if (firstChunk) { setIsThinking(false); firstChunk = false; }
                 finalReply += parsed.delta;
-                setMessages((prev) => {
-                  const next = [...prev];
-                  const last = next[next.length - 1];
-                  if (last && last.role === "assistant") {
-                    last.content += parsed.delta;
-                  }
-                  return next;
+                updateSession(currentId, (s) => {
+                  const msgs = [...s.messages];
+                  const last = msgs[msgs.length - 1];
+                  if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: last.content + parsed.delta };
+                  return { ...s, messages: msgs, updatedAt: Date.now() };
                 });
               }
             } catch {}
@@ -110,19 +301,17 @@ export default function IA() {
         }
       }
     } catch {
-      setMessages((prev) => {
-        const next = [...prev];
-        const last = next[next.length - 1];
-        if (last && last.role === "assistant") {
-          last.content = "Erro ao processar resposta da IA.";
-        }
-        return next;
+      setIsThinking(false);
+      updateSession(currentId, (s) => {
+        const msgs = [...s.messages];
+        const last = msgs[msgs.length - 1];
+        if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: "Erro ao processar resposta da IA." };
+        return { ...s, messages: msgs };
       });
     } finally {
+      setIsThinking(false);
       setIsStreaming(false);
-      if (voiceModeRef.current && finalReply) {
-        speakAndContinue(finalReply);
-      }
+      if (voiceModeRef.current && finalReply) speakAndContinue(finalReply);
     }
   };
 
@@ -134,87 +323,82 @@ export default function IA() {
     await sendMessage(t);
   };
 
-  const stopVoice = () => {
-    setListening(false);
-    setIntensity(0);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    audioCtxRef.current?.close().catch(() => {});
-    audioCtxRef.current = null;
-    analyserRef.current = null;
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); }
+  };
+
+  // ─── Voice ─────────────────────────────────────────────────────────────────
+  const speakAndContinue = (text: string) => {
+    if (!("speechSynthesis" in window) || !text) return;
     try {
-      recognitionRef.current?.stop();
-    } catch {}
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text.replace(/\*\*|`|#|>/g, ""));
+      u.lang = "pt-BR"; u.rate = 1.05; u.pitch = 1.0;
+      const voices = window.speechSynthesis.getVoices();
+      const ptVoice = voices.find((v) => v.lang.startsWith("pt"));
+      if (ptVoice) u.voice = ptVoice;
+      setSpeaking(true);
+      u.onend = () => { setSpeaking(false); if (continuousRef.current && voiceModeRef.current) setTimeout(() => startVoice(), 350); };
+      u.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(u);
+    } catch { setSpeaking(false); }
+  };
+
+  const stopVoice = () => {
+    setListening(false); setIntensity(0);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null;
+    audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
+    analyserRef.current = null;
+    try { recognitionRef.current?.stop(); } catch {}
   };
 
   const startVoice = async () => {
-    if (listening) {
-      stopVoice();
-      return;
-    }
+    if (listening) { stopVoice(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
-      const ctx = new Ctx();
-      audioCtxRef.current = ctx;
+      const ctx = new Ctx(); audioCtxRef.current = ctx;
       const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyserRef.current = analyser;
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 256; analyserRef.current = analyser;
       src.connect(analyser);
-
       const data = new Uint8Array(analyser.frequencyBinCount);
       const tick = () => {
         analyser.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i];
-        const avg = sum / data.length / 255;
-        setIntensity(Math.min(1, avg * 2.4));
+        let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i];
+        setIntensity(Math.min(1, (sum / data.length / 255) * 2.4));
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
-
-      const SR =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SR) {
-        const rec = new SR();
-        rec.lang = "pt-BR";
-        rec.interimResults = false;
-        rec.continuous = false;
-        rec.onresult = (e: any) => {
-          const text = e.results?.[0]?.[0]?.transcript || "";
-          if (text) {
-            stopVoice();
-            sendMessage(text);
-          }
-        };
+        const rec = new SR(); rec.lang = "pt-BR"; rec.interimResults = false; rec.continuous = false;
+        rec.onresult = (e: any) => { const text = e.results?.[0]?.[0]?.transcript || ""; if (text) { stopVoice(); sendMessage(text); } };
         rec.onerror = () => stopVoice();
-        rec.onend = () => {
-          if (listening) stopVoice();
-        };
-        recognitionRef.current = rec;
-        rec.start();
+        rec.onend = () => { if (listening) stopVoice(); };
+        recognitionRef.current = rec; rec.start();
       }
       setListening(true);
-    } catch {
-      stopVoice();
-    }
+    } catch { stopVoice(); }
   };
 
   useEffect(() => () => stopVoice(), []);
 
+  // ─── Filtered sessions ─────────────────────────────────────────────────────
+  const filteredSessions = sessions.filter((s) =>
+    !historySearch || s.title.toLowerCase().includes(historySearch.toLowerCase())
+  );
+
+  // ─── Voice mode ────────────────────────────────────────────────────────────
   if (voiceMode) {
     return (
       <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center gap-8 sm:gap-10 relative py-8">
         <button
           onClick={() => { stopVoice(); setVoiceMode(false); }}
-          className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors"
+          className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
         >
-          Voltar ao chat
+          <X size={12} /> Voltar ao chat
         </button>
 
         <div className="text-center">
@@ -233,182 +417,319 @@ export default function IA() {
 
         <div className="flex items-center gap-4">
           <button
-            onClick={() => {
-              const next = !continuous;
-              setContinuous(next);
-              if (next && !listening && !speaking && !isStreaming) startVoice();
-            }}
-            className={`px-4 py-3 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${
-              continuous
-                ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.3)]"
-                : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"
-            }`}
+            onClick={() => { const next = !continuous; setContinuous(next); if (next && !listening && !speaking && !isStreaming) startVoice(); }}
+            className={`px-4 py-3 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${continuous ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-200 shadow-[0_0_20px_rgba(52,211,153,0.3)]" : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"}`}
           >
             {continuous ? "Modo contínuo ON" : "Ativar contínuo"}
           </button>
           <button
-            onClick={startVoice}
-            disabled={speaking || isStreaming}
-            className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${
-              listening
-                ? "bg-destructive/20 border border-destructive/50 shadow-[0_0_30px_rgba(239,68,68,0.4)]"
-                : "bg-primary/15 border border-primary/40 shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:scale-110"
-            } disabled:opacity-50`}
+            onClick={startVoice} disabled={speaking || isStreaming}
+            className={`group relative w-20 h-20 rounded-full flex items-center justify-center transition-all ${listening ? "bg-destructive/20 border border-destructive/50 shadow-[0_0_30px_rgba(239,68,68,0.4)]" : "bg-primary/15 border border-primary/40 shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:scale-110"} disabled:opacity-50`}
           >
-            {listening ? (
-              <MicOff className="w-7 h-7 text-destructive" />
-            ) : (
-              <Mic className="w-7 h-7 text-primary" />
-            )}
+            {listening ? <MicOff className="w-7 h-7 text-destructive" /> : <Mic className="w-7 h-7 text-primary" />}
           </button>
           {speaking && (
-            <button
-              onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }}
-              className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-foreground"
-            >
+            <button onClick={() => { window.speechSynthesis.cancel(); setSpeaking(false); }} className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] uppercase tracking-[0.3em] font-semibold text-muted-foreground hover:text-foreground">
               Pular fala
             </button>
           )}
         </div>
-
-        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground text-center px-4">
-          {continuous
-            ? "Diga algo · A IA responde · Volta a te ouvir automaticamente"
-            : "Toque para falar uma vez"}
-        </div>
-        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60">
-          Made by blxckxyz · Infinity Search
-        </div>
+        <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60">Made by blxckxyz · Infinity Search</div>
       </div>
     );
   }
 
+  // ─── Chat mode ─────────────────────────────────────────────────────────────
   return (
-    <div className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden relative">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-black/20">
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="absolute inset-0 rounded-xl bg-primary/30 blur-lg" />
-            <img src={robotUrl} alt="IA" className="relative w-10 h-10 rounded-lg" />
-          </div>
-          <div>
-            <div className="font-bold tracking-widest text-sm">INFINITY AI</div>
-            <div className="text-[9px] uppercase tracking-[0.4em] text-primary/70 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> Online
+    <div className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] flex gap-3 overflow-hidden">
+
+      {/* ── Sidebar ── */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.aside
+            key="sidebar"
+            initial={{ opacity: 0, x: -20, width: 0 }}
+            animate={{ opacity: 1, x: 0, width: 260 }}
+            exit={{ opacity: 0, x: -20, width: 0 }}
+            transition={{ type: "spring", stiffness: 320, damping: 32 }}
+            className="shrink-0 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
+            style={{ width: 260 }}
+          >
+            {/* Sidebar header */}
+            <div className="px-4 pt-4 pb-3 border-b border-white/5">
+              <button
+                onClick={createNew}
+                className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-r from-sky-500/20 to-cyan-400/10 border border-sky-500/30 hover:border-sky-500/60 hover:from-sky-500/30 transition-all text-sm font-medium text-sky-300 group"
+              >
+                <Plus size={15} className="group-hover:rotate-90 transition-transform" />
+                Nova conversa
+              </button>
             </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {messages.length > 0 && (
+
+            {/* Search */}
+            <div className="px-4 py-2.5 border-b border-white/5">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/8">
+                <Search size={12} className="text-muted-foreground shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Buscar..."
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                />
+              </div>
+            </div>
+
+            {/* Sessions list */}
+            <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
+              {filteredSessions.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-24 gap-2 text-muted-foreground/50">
+                  <MessageSquare size={18} />
+                  <span className="text-[10px] uppercase tracking-widest">Sem conversas</span>
+                </div>
+              )}
+              {filteredSessions.map((s) => (
+                <motion.button
+                  key={s.id}
+                  layout
+                  onClick={() => { setCurrentId(s.id); setSidebarOpen(true); }}
+                  className={`group w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all ${s.id === currentId ? "bg-sky-500/15 border border-sky-500/30 text-white" : "hover:bg-white/5 border border-transparent text-muted-foreground hover:text-white"}`}
+                >
+                  <MessageSquare size={13} className={`mt-0.5 shrink-0 ${s.id === currentId ? "text-sky-400" : ""}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium truncate">{s.title}</div>
+                    <div className="text-[9px] text-muted-foreground/50 flex items-center gap-1 mt-0.5">
+                      <Clock size={8} /> {relativeTime(s.updatedAt)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => deleteSession(s.id, e)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-destructive/20 hover:text-destructive text-muted-foreground/50 shrink-0"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Sidebar footer */}
+            <div className="px-4 py-3 border-t border-white/5 text-[9px] uppercase tracking-widest text-muted-foreground/40 text-center">
+              {sessions.length} conversa{sessions.length !== 1 ? "s" : ""}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* ── Main chat ── */}
+      <div className="flex-1 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden min-w-0">
+
+        {/* Header */}
+        <div className="px-5 py-3.5 border-b border-white/5 flex items-center justify-between bg-gradient-to-r from-black/20 to-transparent shrink-0">
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setMessages([])}
-              className="text-xs text-muted-foreground hover:text-destructive transition-colors flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-destructive/10"
-              title="Limpar conversa"
+              onClick={() => setSidebarOpen((v) => !v)}
+              className="p-2 rounded-xl hover:bg-white/5 transition-colors text-muted-foreground hover:text-white"
+              title="Histórico"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <MessageSquare size={16} />
             </button>
+            <div className="relative">
+              <div className="absolute inset-0 rounded-xl bg-primary/30 blur-lg" />
+              <img src={robotUrl} alt="IA" className="relative w-9 h-9 rounded-xl object-cover" />
+            </div>
+            <div>
+              <div className="font-bold tracking-widest text-sm">INFINITY AI</div>
+              <div className="text-[9px] uppercase tracking-[0.4em] text-primary/70 flex items-center gap-1.5">
+                <motion.span
+                  className="w-1.5 h-1.5 rounded-full bg-primary inline-block"
+                  animate={{ opacity: [1, 0.3, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
+                {isThinking ? "Pensando..." : isStreaming ? "Respondendo..." : "Online"}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {messages.length > 0 && (
+              <button
+                onClick={() => updateSession(currentId, (s) => ({ ...s, messages: [] }))}
+                className="p-2 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                title="Limpar conversa"
+              >
+                <Trash2 size={15} />
+              </button>
+            )}
+            <button
+              onClick={() => setVoiceMode(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-primary/30 text-primary hover:bg-primary/10 transition-colors text-xs uppercase tracking-widest"
+            >
+              <Mic size={13} /> Voz
+            </button>
+          </div>
+        </div>
+
+        {/* Messages area */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4 relative">
+
+          {/* Empty state */}
+          {messages.length === 0 && !isThinking && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex flex-col items-center justify-center h-full gap-8 pb-10"
+            >
+              <div className="text-center">
+                <motion.div
+                  animate={{ y: [0, -8, 0] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                >
+                  <img src={robotUrl} alt="AI" className="w-28 h-28 object-contain mx-auto drop-shadow-[0_0_40px_rgba(56,189,248,0.5)]" />
+                </motion.div>
+                <div className="mt-5 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/70">
+                  <Sparkles size={11} /> Assistente Operacional
+                </div>
+                <h2 className="mt-2 text-xl font-bold uppercase tracking-[0.2em]">Como posso ajudar?</h2>
+                <p className="mt-2 text-xs text-muted-foreground max-w-xs mx-auto">
+                  Consultas OSINT, análises, pesquisas — tudo via linguagem natural.
+                </p>
+              </div>
+
+              {/* Suggestions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+                {SUGGESTIONS.map((s) => (
+                  <motion.button
+                    key={s.label}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => { setInput(s.text); inputRef.current?.focus(); }}
+                    className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/4 border border-white/8 hover:bg-white/8 hover:border-sky-500/30 transition-all text-left group"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0 group-hover:bg-sky-500/20 transition-colors">
+                      <s.icon size={14} className="text-sky-400" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium">{s.label}</div>
+                      <div className="text-[10px] text-muted-foreground/60 mt-0.5 truncate max-w-[160px]">{s.text}</div>
+                    </div>
+                    <ChevronRight size={13} className="ml-auto text-muted-foreground/30 group-hover:text-sky-400 transition-colors shrink-0" />
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
           )}
-          <button
-            onClick={() => setVoiceMode(true)}
-            className="text-xs uppercase tracking-widest text-primary hover:bg-primary/10 transition-colors flex items-center gap-1.5 px-3 py-2 rounded-lg border border-primary/30"
-          >
-            <Mic className="w-3.5 h-3.5" />
-            Voz
-          </button>
-        </div>
-      </div>
 
-      {/* Empty state */}
-      {messages.length === 0 && (
-        <div className="absolute inset-0 top-20 flex flex-col items-center justify-center pointer-events-none">
-          <motion.img
-            initial={{ opacity: 0, scale: 0.8, y: 20 }}
-            animate={{ opacity: 0.5, scale: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            src={robotUrl}
-            alt="Robot"
-            className="w-56 h-56 object-contain drop-shadow-[0_0_40px_rgba(56,189,248,0.5)]"
-          />
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="text-center mt-6"
-          >
-            <div className="flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/70 mb-2">
-              <Sparkles className="w-3 h-3" /> Assistente Operacional
-            </div>
-            <h2 className="text-xl font-bold uppercase tracking-[0.2em]">Como posso ajudar?</h2>
-            <p className="text-xs text-muted-foreground mt-3 max-w-sm">
-              Pergunte sobre consultas, estratégias de pesquisa ou peça análises sobre dados coletados.
-            </p>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-5 z-10">
-        {messages.map((msg, idx) => (
-          <motion.div
-            key={idx}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
-          >
-            <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                msg.role === "user"
-                  ? "bg-gradient-to-br from-sky-500 to-cyan-400 text-black"
-                  : "bg-black/40 border border-white/10"
-              }`}
+          {/* Messages */}
+          {messages.map((msg, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
-              {msg.role === "user" ? (
-                <User size={16} />
-              ) : (
-                <img src={robotUrl} className="w-7 h-7 rounded-md" alt="AI" />
-              )}
-            </div>
-            <div
-              className={`max-w-[78%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+              {/* Avatar */}
+              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
                 msg.role === "user"
-                  ? "bg-gradient-to-br from-sky-500/90 to-cyan-400/90 text-black rounded-tr-sm"
-                  : "bg-black/40 border border-white/10 rounded-tl-sm whitespace-pre-wrap"
-              }`}
-            >
-              {msg.content || (
-                isStreaming && idx === messages.length - 1 ? (
-                  <InfinityLoader size={28} label="" />
-                ) : null
-              )}
-            </div>
-          </motion.div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+                  ? "bg-gradient-to-br from-sky-500 to-cyan-400 text-black shadow-[0_0_16px_rgba(56,189,248,0.4)]"
+                  : "bg-black/50 border border-white/10"
+              }`}>
+                {msg.role === "user" ? <User size={14} /> : <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />}
+              </div>
 
-      {/* Composer */}
-      <div className="p-4 bg-black/40 border-t border-white/5 z-10">
-        <form onSubmit={handleSubmit} className="flex gap-2 items-center">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={isStreaming}
-            placeholder="Digite sua requisição..."
-            className="flex-1 bg-black/50 border border-white/10 rounded-xl px-4 py-3.5 focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all"
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isStreaming}
-            className="bg-gradient-to-r from-sky-500 to-cyan-400 text-black w-12 h-12 rounded-xl hover:shadow-[0_0_25px_rgba(56,189,248,0.6)] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center"
-          >
-            <Send size={18} />
-          </button>
-        </form>
-        <div className="mt-2 flex items-center justify-between text-[9px] uppercase tracking-[0.4em] text-muted-foreground/60">
-          <span>Made by blxckxyz</span>
-          <span>llama-3.3-70b · groq</span>
+              {/* Bubble */}
+              <div className={`group relative max-w-[75%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col`}>
+                <div className={`px-4 py-3 rounded-2xl ${
+                  msg.role === "user"
+                    ? "bg-gradient-to-br from-sky-500/90 to-cyan-500/80 text-black rounded-tr-sm shadow-[0_4px_24px_rgba(56,189,248,0.25)] text-sm font-medium"
+                    : "bg-white/5 border border-white/10 backdrop-blur-sm rounded-tl-sm shadow-[0_4px_24px_rgba(0,0,0,0.3)]"
+                }`}>
+                  {msg.role === "user"
+                    ? <p className="text-sm leading-relaxed">{msg.content}</p>
+                    : (msg.content
+                        ? renderMarkdown(msg.content)
+                        : isStreaming && idx === messages.length - 1
+                          ? <ThinkingDots />
+                          : null
+                      )
+                  }
+                </div>
+                {/* Timestamp + copy */}
+                <div className={`flex items-center gap-1 mt-1 px-1 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                  <span className="text-[9px] text-muted-foreground/40">
+                    {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  {msg.role === "assistant" && msg.content && <CopyButton text={msg.content} />}
+                </div>
+              </div>
+            </motion.div>
+          ))}
+
+          {/* Thinking state (before first delta) */}
+          <AnimatePresence>
+            {isThinking && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="flex gap-3"
+              >
+                <div className="w-8 h-8 rounded-xl bg-black/50 border border-white/10 flex items-center justify-center shrink-0">
+                  <img src={robotUrl} className="w-6 h-6 rounded-md" alt="AI" />
+                </div>
+                <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 backdrop-blur-sm flex items-center gap-3">
+                  <ThinkingDots />
+                  <motion.span
+                    className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60"
+                    animate={{ opacity: [0.4, 1, 0.4] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                  >
+                    Pensando...
+                  </motion.span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Composer */}
+        <div className="p-4 border-t border-white/5 bg-black/20 shrink-0">
+          <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+            <div className="flex-1 relative">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
+                onKeyDown={handleKeyDown}
+                disabled={isStreaming}
+                placeholder="Digite sua requisição... (Enter para enviar)"
+                rows={1}
+                className="w-full bg-white/5 border border-white/10 focus:border-sky-500/50 focus:ring-2 focus:ring-sky-500/15 rounded-2xl px-4 py-3.5 pr-12 text-sm outline-none transition-all resize-none placeholder:text-muted-foreground/40 disabled:opacity-50"
+                style={{ minHeight: 52, maxHeight: 120 }}
+              />
+              <button
+                type="button"
+                onClick={startVoice}
+                className={`absolute right-3 bottom-3 p-1.5 rounded-lg transition-all ${listening ? "text-destructive bg-destructive/15" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+              >
+                {listening ? <MicOff size={15} /> : <Mic size={15} />}
+              </button>
+            </div>
+            <motion.button
+              type="submit"
+              disabled={!input.trim() || isStreaming}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="w-13 h-13 w-[52px] h-[52px] rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-400 text-black flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.3)] hover:shadow-[0_0_32px_rgba(56,189,248,0.6)] disabled:opacity-40 disabled:cursor-not-allowed transition-shadow shrink-0"
+            >
+              <Send size={18} />
+            </motion.button>
+          </form>
+          <div className="mt-2 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/40">
+            <span>made by blxckxyz</span>
+            <span>llama-3.3-70b · groq</span>
+          </div>
         </div>
       </div>
     </div>
