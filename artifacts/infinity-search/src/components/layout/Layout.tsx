@@ -125,16 +125,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <span>Desconectar</span>
         </button>
 
-        <a
-          href="https://t.me/Blxckxyz"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
-        >
-          <MessageCircle className="w-4 h-4" />
-          <span>Suporte</span>
-          <span className="ml-auto text-[9px] text-muted-foreground/50">@Blxckxyz</span>
-        </a>
+        <div className="space-y-1">
+          <a
+            href="https://t.me/Blxckxyz"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
+          >
+            <MessageCircle className="w-4 h-4" />
+            <span>Suporte</span>
+            <span className="ml-auto text-[9px] text-muted-foreground/50">@Blxckxyz</span>
+          </a>
+          <a
+            href="https://t.me/xxmathexx"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
+          >
+            <MessageCircle className="w-4 h-4" />
+            <span>Suporte</span>
+            <span className="ml-auto text-[9px] text-muted-foreground/50">@xxmathexx</span>
+          </a>
+        </div>
 
         <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">
           <span>by blxckxyz</span>

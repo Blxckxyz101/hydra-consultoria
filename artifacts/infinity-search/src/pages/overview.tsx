@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useInfinityOverview, useInfinityMe, getInfinityOverviewQueryKey, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, ArrowUpRight, Zap } from "lucide-react";
@@ -54,6 +55,8 @@ export default function Overview() {
     query: { queryKey: getInfinityOverviewQueryKey() },
   });
   const { data: me } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
+  const [profilePhoto] = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
+  const [profileBanner] = useState<string | null>(() => localStorage.getItem("infinity_profile_banner"));
 
   if (isLoading) {
     return (
@@ -93,27 +96,55 @@ export default function Overview() {
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-sky-500/15 via-cyan-400/5 to-violet-500/10 p-6 sm:p-10 backdrop-blur-2xl"
+        className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-sky-500/15 via-cyan-400/5 to-violet-500/10 backdrop-blur-2xl"
       >
-        <motion.div
-          aria-hidden
-          className="absolute -top-20 -right-20 w-72 h-72 rounded-full bg-sky-400/20 blur-3xl"
-          animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] }}
-          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-        />
-        <motion.div
-          aria-hidden
-          className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-violet-400/15 blur-3xl"
-          animate={{ scale: [1.1, 1, 1.1], opacity: [0.4, 0.7, 0.4] }}
-          transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-        />
+        {/* Banner */}
+        <div className="relative h-32 sm:h-40 w-full overflow-hidden rounded-t-3xl">
+          {profileBanner ? (
+            <img src={profileBanner} alt="banner" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-r from-sky-600/40 via-cyan-500/30 to-violet-600/40" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60" />
+          <motion.div
+            aria-hidden
+            className="absolute -top-10 -right-10 w-56 h-56 rounded-full bg-sky-400/25 blur-3xl"
+            animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] }}
+            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+          />
+          <motion.div
+            aria-hidden
+            className="absolute -bottom-10 -left-10 w-56 h-56 rounded-full bg-violet-400/20 blur-3xl"
+            animate={{ scale: [1.1, 1, 1.1], opacity: [0.4, 0.7, 0.4] }}
+            transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </div>
 
+        {/* Avatar row */}
+        <div className="relative px-6 sm:px-10 -mt-10 mb-2 flex items-end gap-4">
+          <div className="relative shrink-0">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-[#06091a] overflow-hidden bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-2xl shadow-[0_0_30px_rgba(56,189,248,0.4)]">
+              {profilePhoto ? (
+                <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" />
+              ) : (
+                <span>{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
+              )}
+            </div>
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] shadow" title="Online" />
+          </div>
+          <div className="pb-2 min-w-0">
+            <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.username ?? "operador"}</div>
+            <div className="text-[10px] uppercase tracking-[0.35em] text-primary/70">{me?.role ?? "user"}</div>
+          </div>
+        </div>
+
+        <div className="px-6 sm:px-10 pb-6 sm:pb-10 pt-2">
         <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.5em] text-primary/80 mb-3">
               <Sparkles className="w-3 h-3" /> Centro de Comando
             </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">
               {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.username ?? "operador"}</span>
             </h1>
             <p className="mt-2 text-sm sm:text-base text-muted-foreground max-w-xl">
@@ -168,6 +199,7 @@ export default function Overview() {
               </ResponsiveContainer>
             </div>
           </div>
+        </div>
         </div>
       </motion.div>
 

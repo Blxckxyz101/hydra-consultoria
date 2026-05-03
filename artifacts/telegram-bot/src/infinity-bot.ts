@@ -334,13 +334,23 @@ export function startInfinityBot(): void {
     { command: "ajuda",     description: "❓ Lista de tipos disponíveis" },
   ]).catch(() => {});
 
-  const HOME_TEXT =
-    `🌐 <b>INFINITY SEARCH</b>\n` +
-    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n` +
-    `Plataforma OSINT em tempo real.\n` +
-    `Consultas via base GeassZero.\n\n` +
-    `Use <b>🔍 Nova Consulta</b> ou um comando rápido:\n` +
-    `<code>/cpf</code> · <code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code> · <code>/email</code>`;
+  function buildHomeText(from: { username?: string; first_name?: string; id: number }): string {
+    const name = from.username ? `@${from.username}` : (from.first_name || "usuário");
+    const admin = isAdmin(from.id, from.username);
+    const cargo = admin ? "admin" : "membro";
+    return (
+      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+      `┃\n` +
+      `┃ • OLÁ, <b>${name}</b>!\n` +
+      `┠────────────────────────────\n` +
+      `┃ • CARGO: <code>${cargo}</code>\n` +
+      `┃ • STATUS: ✅ ativo\n` +
+      `┃ • PLANO: <code>free</code>\n` +
+      `┠────────────────────────────\n` +
+      `┃  SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+      `╰────────────────────────────╯`
+    );
+  }
 
   const TIPO_MENU_TEXT =
     `🔍 <b>SELECIONE O TIPO</b>\n` +
@@ -460,7 +470,7 @@ export function startInfinityBot(): void {
   bot.command("start", async (ctx) => {
     resetSession(ctx.from.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
+    await ctx.replyWithHTML(buildHomeText(ctx.from), buildHomeKeyboard());
   });
 
   // ── /consultar ───────────────────────────────────────────────────────────
@@ -546,13 +556,13 @@ export function startInfinityBot(): void {
   bot.action("home", async (ctx) => {
     await ctx.answerCbQuery();
     resetSession(ctx.from.id);
-    await ctx.editMessageText(HOME_TEXT, { parse_mode: "HTML", ...buildHomeKeyboard() });
+    await ctx.editMessageText(buildHomeText(ctx.from), { parse_mode: "HTML", ...buildHomeKeyboard() });
   });
 
   bot.action("home_new", async (ctx) => {
     await ctx.answerCbQuery();
     resetSession(ctx.from.id);
-    await ctx.replyWithHTML(HOME_TEXT, buildHomeKeyboard());
+    await ctx.replyWithHTML(buildHomeText(ctx.from), buildHomeKeyboard());
   });
 
   // ── Callback: consultar (open tipo list) ──────────────────────────────────
