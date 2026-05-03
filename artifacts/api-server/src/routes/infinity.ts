@@ -674,4 +674,63 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   await streamGroq(apiKey, finalMessages, res);
 });
 
+// ─── External scraper routes ───────────────────────────────────────────────
+// POST /api/infinity/external/:source — SIPNI or SISREG query
+// Auth: infinity user JWT (same as consultas) OR X-Internal-Key: infinity-bot
+const INTERNAL_KEY = "infinity-bot";
+
+function requireAuthOrInternal(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction): void {
+  const internalKey = req.headers["x-internal-key"];
+  if (internalKey === INTERNAL_KEY) { next(); return; }
+  requireAuth(req, res, next);
+}
+
+router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
+  const source = req.params.source as "sipni" | "sisreg";
+  if (source !== "sipni" && source !== "sisreg") {
+    res.status(400).json({ success: false, error: "Fonte inválida. Use 'sipni' ou 'sisreg'." });
+    return;
+  }
+
+  const { tipo, dados } = req.body as { tipo?: string; dados?: string };
+  if (!tipo || !dados) {
+    res.status(400).json({ success: false, error: "Parâmetros 'tipo' e 'dados' são obrigatórios." });
+    return;
+  }
+
+  const dadosStr = String(dados).trim();
+  if (!dadosStr) {
+    res.status(400).json({ success: false, error: "Dados não podem estar vazios." });
+    return;
+  }
+
+  try {
+    let result: { success: boolean; data?: string; error?: string };
+
+    if (source === "sipni") {
+      const { sipniSearch } = await import("../scrapers/sipni.js");
+      const tipoSipni = (["cpf", "nome", "cns"].includes(tipo) ? tipo : "cpf") as "cpf" | "nome" | "cns";
+      result = await sipniSearch(tipoSipni, dadosStr);
+    } else {
+      const { sisregSearch } = await import("../scrapers/sisreg.js");
+      const tipoSisreg = (["cpf", "nome"].includes(tipo) ? tipo : "cpf") as "cpf" | "nome";
+      result = await sisregSearch(tipoSisreg, dadosStr);
+    }
+
+    const username = (req as unknown as { user?: { username?: string } }).user?.username ?? "bot";
+    await logConsulta({
+      tipo: `${source}:${tipo}`,
+      query: dadosStr,
+      username,
+      success: result.success,
+      result: { source, data: result.data?.slice(0, 2000) },
+    });
+
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "External scraper error");
+    res.status(500).json({ success: false, error: "Erro interno ao consultar fonte externa." });
+  }
+});
+
 export default router;

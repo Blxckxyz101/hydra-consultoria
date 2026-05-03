@@ -90,12 +90,19 @@ const CATEGORY_GRADIENT: Record<string, string> = {
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; createdAt: string }>;
 
+// Tipos that support external base selection in the panel
+const PANEL_EXTERNAL_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
+
+type ExternalBase = "sipni" | "sisreg";
+
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ success: boolean; error?: string | null; data?: unknown } | null>(null);
   const [pending, setPending] = useState(false);
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("Pessoa");
+  const [showBaseSelector, setShowBaseSelector] = useState(false);
+  const [pendingQuery, setPendingQuery] = useState<{ tipo: Tipo; dados: string } | null>(null);
   const queryClient = useQueryClient();
 
   const historyKey = ["infinity-history", 20] as const;
@@ -118,20 +125,40 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
+
+    if (PANEL_EXTERNAL_TIPOS.has(tab)) {
+      setPendingQuery({ tipo: tab, dados: query.trim() });
+      setShowBaseSelector(true);
+      return;
+    }
+
+    await executeQuery(tab, query.trim(), null);
+  };
+
+  const executeQuery = async (tipo: Tipo, dados: string, base: ExternalBase | null) => {
     setResult(null);
     setPending(true);
+    setShowBaseSelector(false);
+    setPendingQuery(null);
     try {
       const token = localStorage.getItem("infinity_token");
-      const r = await fetch(`/api/infinity/consultas/${tab}`, {
+      const endpoint = base
+        ? `/api/infinity/external/${base}`
+        : `/api/infinity/consultas/${tipo}`;
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ dados: query.trim() }),
+        body: JSON.stringify({ tipo, dados }),
       });
-      const data = await r.json();
-      setResult(data as { success: boolean; error?: string | null; data?: unknown });
+      const data = await r.json() as { success: boolean; error?: string | null; data?: unknown };
+      if (base && data.success && typeof data.data === "string") {
+        setResult({ success: true, data: { fields: [], sections: [], raw: data.data } });
+      } else {
+        setResult(data);
+      }
     } catch (err) {
       setResult({ success: false, error: err instanceof Error ? err.message : "Falha na requisição", data: { fields: [], sections: [], raw: "" } });
     } finally {
@@ -250,6 +277,61 @@ export default function Consultas() {
         </form>
 
         <AnimatePresence mode="wait">
+          {/* Base selector — shown for CPF/Nome/CNS/Vacinas */}
+          {showBaseSelector && pendingQuery && !pending && (
+            <motion.div
+              key="base-selector"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5"
+            >
+              <p className="text-[10px] uppercase tracking-[0.4em] text-primary/70 mb-3">
+                Selecione a base de dados
+              </p>
+              <p className="text-xs text-muted-foreground mb-4">
+                <span className="font-mono text-foreground">{pendingQuery.dados}</span>
+                {" "}— escolha onde consultar:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {(pendingQuery.tipo === "cpf" || pendingQuery.tipo === "nome") && (
+                  <button
+                    onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sisreg")}
+                    className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-black/30 hover:border-sky-400/50 hover:bg-sky-400/5 transition-all group"
+                  >
+                    <span className="text-2xl">🏥</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground group-hover:text-sky-300 transition-colors">SISREG-III</span>
+                    <span className="text-[9px] text-muted-foreground/60 text-center">Regulação em Saúde</span>
+                  </button>
+                )}
+                {(["cpf", "cns", "nome", "vacinas"] as Tipo[]).includes(pendingQuery.tipo) && (
+                  <button
+                    onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sipni")}
+                    className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-black/30 hover:border-emerald-400/50 hover:bg-emerald-400/5 transition-all group"
+                  >
+                    <span className="text-2xl">💉</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground group-hover:text-emerald-300 transition-colors">SI-PNI</span>
+                    <span className="text-[9px] text-muted-foreground/60 text-center">Vacinação Nacional</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, null)}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl border border-white/10 bg-black/30 hover:border-primary/50 hover:bg-primary/5 transition-all group"
+                >
+                  <span className="text-2xl">∞</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground group-hover:text-primary transition-colors">Infinity</span>
+                  <span className="text-[9px] text-muted-foreground/60 text-center">Geass OSINT</span>
+                </button>
+              </div>
+              <button
+                onClick={() => { setShowBaseSelector(false); setPendingQuery(null); }}
+                className="mt-3 text-[10px] uppercase tracking-widest text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              >
+                ✕ Cancelar
+              </button>
+            </motion.div>
+          )}
+
           {pending && (
             <motion.div
               key="loading"
@@ -261,7 +343,7 @@ export default function Consultas() {
               <InfinityLoader size={72} label="Consultando fontes" />
             </motion.div>
           )}
-          {!pending && result && (
+          {!pending && !showBaseSelector && result && (
             <ResultViewer
               tipo={tab}
               query={query}

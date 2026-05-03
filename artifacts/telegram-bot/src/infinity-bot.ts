@@ -138,8 +138,9 @@ function buildQueryPrompt(tipoId: string): string {
 
 // ── Session ───────────────────────────────────────────────────────────────────
 interface BotSession {
-  state: "idle" | "awaiting_query";
+  state: "idle" | "awaiting_query" | "awaiting_base";
   tipo?: string;
+  dados?: string;
 }
 const sessions = new Map<number, BotSession>();
 function getSession(userId: number): BotSession {
@@ -148,6 +149,94 @@ function getSession(userId: number): BotSession {
 }
 function resetSession(userId: number) {
   sessions.set(userId, { state: "idle" });
+}
+
+// Tipos that support external base selection
+const EXTERNAL_BASES_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
+
+// Internal API base (API server runs on port 8080 in the same container)
+const INTERNAL_API_BASE = "http://localhost:8080";
+const INTERNAL_KEY = "infinity-bot";
+
+function buildBaseKeyboard(tipo: string) {
+  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  if (["cpf", "nome"].includes(tipo)) {
+    rows.push([Markup.button.callback("🏥 SISREG-III", "base:sisreg")]);
+  }
+  if (["cpf", "cns", "nome", "vacinas"].includes(tipo)) {
+    rows.push([Markup.button.callback("💉 SI-PNI", "base:sipni")]);
+  }
+  rows.push([Markup.button.callback("∞ Infinity Search", "base:infinity")]);
+  rows.push([Markup.button.callback("❌ Cancelar", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+async function executeExternalQuery(
+  ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
+  source: "sisreg" | "sipni",
+  tipo: string,
+  dados: string,
+  loadMsgId: number,
+) {
+  const chatId = ctx.chat.id;
+  const sourceLabel = source === "sisreg" ? "🏥 SISREG-III" : "💉 SI-PNI";
+  try {
+    const r = await fetch(`${INTERNAL_API_BASE}/api/infinity/external/${source}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": INTERNAL_KEY,
+      },
+      body: JSON.stringify({ tipo, dados }),
+      signal: AbortSignal.timeout(35_000),
+    });
+
+    const json = await r.json() as { success: boolean; data?: string; error?: string };
+
+    if (!json.success || !json.data) {
+      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+        `⚠️ <b>Sem resultado no ${sourceLabel}</b>\n\n` +
+        `<code>${json.error ?? "Nenhum dado encontrado para este valor."}</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
+      return;
+    }
+
+    const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const txtContent =
+      `${"═".repeat(40)}\n` +
+      `       ∞  INFINITY SEARCH  ∞\n` +
+      `${"═".repeat(40)}\n` +
+      `  Fonte    : ${sourceLabel}\n` +
+      `  Consulta : ${tipo.toUpperCase()}\n` +
+      `  Dado     : ${dados}\n` +
+      `  Data     : ${now}\n` +
+      `${"═".repeat(40)}\n\n` +
+      json.data + "\n\n" +
+      `${"═".repeat(40)}\n` +
+      `  Made by ${AUTHOR} | Infinity Search\n` +
+      `  Suporte : ${SUPPORT_URL}\n` +
+      `${"═".repeat(40)}\n`;
+
+    await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+
+    const filename = `${source}-${tipo}-${Date.now()}.txt`;
+    const sentDoc = await ctx.telegram.sendDocument(chatId,
+      { source: Buffer.from(txtContent, "utf-8"), filename },
+      {
+        caption: `✅ <b>Resultado ${sourceLabel}</b>\n\n<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>\n<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]),
+      }
+    );
+    const kb = resultKeyboard(chatId, sentDoc.message_id);
+    await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+      `❌ <b>Erro ao consultar ${sourceLabel}:</b>\n<code>${msg.slice(0, 200)}</code>`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
+    ).catch(() => {});
+  }
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -684,7 +773,39 @@ export function startInfinityBot(): void {
     await ctx.telegram.deleteMessage(chatId, msgId).catch(() => {});
   });
 
-  // ── Text handler — only active during awaiting_query flow ────────────────
+  // ── Base selector callback ──────────────────────────────────────────────
+  bot.action(/^base:(sisreg|sipni|infinity)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!ctx.chat) return;
+    const source = ctx.match[1] as "sisreg" | "sipni" | "infinity";
+    const session = getSession(ctx.from.id);
+
+    if (session.state !== "awaiting_base" || !session.tipo || !session.dados) {
+      await ctx.replyWithHTML("❌ Sessão expirada. Use /consultar para uma nova consulta.");
+      return;
+    }
+
+    const { tipo, dados } = session;
+    resetSession(ctx.from.id);
+
+    const sourceLabel =
+      source === "sisreg" ? "🏥 SISREG-III" :
+      source === "sipni"  ? "💉 SI-PNI"     : "∞ Infinity Search";
+
+    const tipoObj = TIPOS.find((t) => t.id === tipo);
+    const loadMsg = await ctx.replyWithHTML(
+      `⏳ <b>Consultando ${sourceLabel} — ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
+    );
+
+    const chatCtx = { telegram: ctx.telegram, chat: { id: ctx.chat.id } };
+    if (source === "infinity") {
+      await executeQuery(chatCtx, tipo, dados, loadMsg.message_id);
+    } else {
+      await executeExternalQuery(chatCtx, source, tipo, dados, loadMsg.message_id);
+    }
+  });
+
+  // ── Text handler — only active during awaiting_query / awaiting_base flow ──
   bot.on(message("text"), async (ctx) => {
     // Ignore commands (handled above)
     if (ctx.message.text.startsWith("/")) return;
@@ -698,16 +819,37 @@ export function startInfinityBot(): void {
 
     const dados = ctx.message.text.trim();
     const tipo = session.tipo;
-    resetSession(ctx.from.id);
 
     try { await ctx.deleteMessage(); } catch {}
 
-    const tipoObj = TIPOS.find((t) => t.id === tipo);
-    const loadMsg = await ctx.replyWithHTML(
-      `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
-    );
+    if (EXTERNAL_BASES_TIPOS.has(tipo)) {
+      // Show base selector — store dados in session
+      session.state = "awaiting_base";
+      session.dados = dados;
 
-    await executeQuery(ctx, tipo, dados, loadMsg.message_id);
+      const tipoObj = TIPOS.find((t) => t.id === tipo);
+      const masked = dados.length > 6
+        ? dados.slice(0, 3) + "*".repeat(Math.max(0, dados.length - 5)) + dados.slice(-2)
+        : dados;
+
+      await ctx.replyWithHTML(
+        `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+        `┃\n` +
+        `┃ • ${tipoObj?.label ?? tipo.toUpperCase()} INFORMADO\n` +
+        `┃ • DADO: <code>${masked}</code>\n` +
+        `┠────────────────────────────\n` +
+        `┃ SELECIONE A BASE DE DADOS 👇🏻\n` +
+        `╰────────────────────────────╯`,
+        buildBaseKeyboard(tipo)
+      );
+    } else {
+      resetSession(ctx.from.id);
+      const tipoObj = TIPOS.find((t) => t.id === tipo);
+      const loadMsg = await ctx.replyWithHTML(
+        `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
+      );
+      await executeQuery(ctx, tipo, dados, loadMsg.message_id);
+    }
   });
 
   // ── Listen for chat_member updates (auto-verify on channel join) ───────────
