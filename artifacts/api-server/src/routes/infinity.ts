@@ -330,6 +330,37 @@ router.delete("/users/:username", requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
+router.patch("/users/:username", requireAdmin, async (req, res) => {
+  const target = String(req.params.username);
+  const { action, expiresInDays } = req.body ?? {};
+
+  let updateData: { accountExpiresAt: Date | null };
+
+  if (action === "revoke") {
+    updateData = { accountExpiresAt: new Date(Date.now() - 1000) };
+  } else if (action === "restore") {
+    updateData = { accountExpiresAt: null };
+  } else if (expiresInDays !== undefined) {
+    updateData = {
+      accountExpiresAt: Number(expiresInDays) > 0
+        ? new Date(Date.now() + Number(expiresInDays) * 86_400_000)
+        : null,
+    };
+  } else {
+    res.status(400).json({ error: "Ação inválida. Use action=revoke, action=restore ou expiresInDays." });
+    return;
+  }
+
+  const [updated] = await db
+    .update(infinityUsersTable)
+    .set(updateData)
+    .where(eq(infinityUsersTable.username, target))
+    .returning();
+
+  if (!updated) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+  res.json(serializeUser(updated));
+});
+
 // ─── overview ──────────────────────────────────────────────────────────────
 router.get("/overview", requireAuth, async (_req, res) => {
   const now = new Date();

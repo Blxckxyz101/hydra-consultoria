@@ -1,31 +1,32 @@
 kind = "web"
-previewPath = "/infinity-search/"
-title = "Infinity Search"
-version = "1.0.0"
-id = "artifacts/infinity-search"
-router = "path"
+  previewPath = "/"
+  title = "Infinity Search"
+  version = "1.0.0"
+  id = "artifacts/infinity-search"
+  router = "path"
 
-[[integratedSkills]]
-name = "react-vite"
-version = "1.0.0"
+  [[integratedSkills]]
+  name = "react-vite"
+  version = "1.0.0"
 
-[[services]]
-name = "web"
-paths = [ "/infinity-search/" ]
-localPort = 22153
+  [[services]]
+  name = "web"
+  paths = [ "/" ]
+  localPort = 22153
 
-[services.development]
-run = "pnpm --filter @workspace/infinity-search run dev"
+  [services.development]
+  run = "pnpm --filter @workspace/infinity-search run dev"
 
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/infinity-search", "run", "build" ]
-publicDir = "artifacts/infinity-search/dist/public"
-serve = "static"
+  [services.production]
+  build = [ "pnpm", "--filter", "@workspace/infinity-search", "run", "build" ]
+  publicDir = "artifacts/infinity-search/dist/public"
+  serve = "static"
 
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
+  [[services.production.rewrites]]
+  from = "/*"
+  to = "/index.html"
 
-[services.env]
-PORT = "22153"
-BASE_PATH = "/infinity-search/"
+  [services.env]
+  PORT = "22153"
+  BASE_PATH = "/"
+  

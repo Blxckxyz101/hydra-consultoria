@@ -150,6 +150,29 @@ export function InfinityUsers() {
     }
   };
 
+  const handleRevoke = async (username: string, currentlyRevoked: boolean) => {
+    if (!token) return;
+    const action = currentlyRevoked ? "restore" : "revoke";
+    const label = currentlyRevoked ? "Reativar" : "Revogar";
+    if (!confirm(`${label} acesso do usuário "${username}"?`)) return;
+    try {
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showToast("err", data?.error || `Falha ao ${label.toLowerCase()}`);
+        return;
+      }
+      showToast("ok", currentlyRevoked ? `Acesso de "${username}" restaurado` : `Acesso de "${username}" revogado`);
+      fetchUsers(token);
+    } catch {
+      showToast("err", "Erro de conexão");
+    }
+  };
+
   const wrap: React.CSSProperties = { padding: 24, color: "#e6d8ff", fontFamily: "Inter, system-ui, sans-serif" };
   const panel: React.CSSProperties = {
     background: "rgba(20, 12, 35, 0.7)",
@@ -481,24 +504,48 @@ export function InfinityUsers() {
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(u.username)}
-                    disabled={isMe}
-                    style={{
-                      padding: "8px 14px",
-                      background: isMe ? "rgba(0,0,0,0.2)" : "rgba(231,76,60,0.12)",
-                      border: `1px solid ${isMe ? "rgba(255,255,255,0.06)" : "rgba(231,76,60,0.4)"}`,
-                      color: isMe ? "rgba(230,216,255,0.3)" : "#ff8c8c",
-                      borderRadius: 8,
-                      cursor: isMe ? "not-allowed" : "pointer",
-                      fontSize: 11,
-                      letterSpacing: 2,
-                      textTransform: "uppercase",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {isMe ? "—" : "Deletar"}
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    {!isMe && (() => {
+                      const isRevoked = !!u.accountExpiresAt && new Date(u.accountExpiresAt).getTime() <= Date.now();
+                      return (
+                        <button
+                          onClick={() => handleRevoke(u.username, isRevoked)}
+                          style={{
+                            padding: "8px 14px",
+                            background: isRevoked ? "rgba(52,211,153,0.12)" : "rgba(245,158,11,0.12)",
+                            border: `1px solid ${isRevoked ? "rgba(52,211,153,0.4)" : "rgba(245,158,11,0.4)"}`,
+                            color: isRevoked ? "#6ee7b7" : "#fcd34d",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontSize: 11,
+                            letterSpacing: 2,
+                            textTransform: "uppercase",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {isRevoked ? "Reativar" : "Revogar"}
+                        </button>
+                      );
+                    })()}
+                    <button
+                      onClick={() => handleDelete(u.username)}
+                      disabled={isMe}
+                      style={{
+                        padding: "8px 14px",
+                        background: isMe ? "rgba(0,0,0,0.2)" : "rgba(231,76,60,0.12)",
+                        border: `1px solid ${isMe ? "rgba(255,255,255,0.06)" : "rgba(231,76,60,0.4)"}`,
+                        color: isMe ? "rgba(230,216,255,0.3)" : "#ff8c8c",
+                        borderRadius: 8,
+                        cursor: isMe ? "not-allowed" : "pointer",
+                        fontSize: 11,
+                        letterSpacing: 2,
+                        textTransform: "uppercase",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {isMe ? "—" : "Deletar"}
+                    </button>
+                  </div>
                 </div>
               );
             })}

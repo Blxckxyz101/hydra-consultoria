@@ -1,31 +1,32 @@
 kind = "web"
-previewPath = "/"
-title = "LelouchBritannia Panel"
-version = "1.0.0"
-id = "artifacts/mikubeam-panel"
-router = "path"
+  previewPath = "/admin/"
+  title = "LelouchBritannia Panel"
+  version = "1.0.0"
+  id = "artifacts/mikubeam-panel"
+  router = "path"
 
-[[integratedSkills]]
-name = "react-vite"
-version = "1.0.0"
+  [[integratedSkills]]
+  name = "react-vite"
+  version = "1.0.0"
 
-[[services]]
-name = "web"
-paths = [ "/" ]
-localPort = 22453
+  [[services]]
+  name = "web"
+  paths = [ "/admin/" ]
+  localPort = 22453
 
-[services.development]
-run = "pnpm --filter @workspace/mikubeam-panel run dev"
+  [services.development]
+  run = "pnpm --filter @workspace/mikubeam-panel run dev"
 
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/mikubeam-panel", "run", "build" ]
-publicDir = "artifacts/mikubeam-panel/dist/public"
-serve = "static"
+  [services.production]
+  build = [ "pnpm", "--filter", "@workspace/mikubeam-panel", "run", "build" ]
+  publicDir = "artifacts/mikubeam-panel/dist/public"
+  serve = "static"
 
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
+  [[services.production.rewrites]]
+  from = "/*"
+  to = "/index.html"
 
-[services.env]
-PORT = "22453"
-BASE_PATH = "/"
+  [services.env]
+  PORT = "22453"
+  BASE_PATH = "/admin/"
+  
