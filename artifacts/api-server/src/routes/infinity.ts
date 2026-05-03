@@ -253,6 +253,195 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
   }
 }
 
+// ─── ViaCEP fallback ────────────────────────────────────────────────────────
+async function callViaCep(cep: string, signal: AbortSignal): Promise<{
+  ok: boolean; parsed?: Parsed; error?: string;
+}> {
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`, { signal });
+    if (!r.ok) return { ok: false, error: `ViaCEP HTTP ${r.status}` };
+    const d = await r.json() as Record<string, string>;
+    if (d.erro) return { ok: false, error: "CEP não encontrado na ViaCEP" };
+    const fields: Parsed["fields"] = [];
+    const add = (k: string, v: string | undefined) => { if (v?.trim()) fields.push({ key: k, value: v.trim() }); };
+    add("CEP",        d.cep);
+    add("Logradouro", d.logradouro);
+    add("Complemento",d.complemento);
+    add("Bairro",     d.bairro);
+    add("Cidade",     d.localidade);
+    add("UF",         d.uf);
+    add("Estado",     d.estado);
+    add("Região",     d.regiao);
+    add("DDD",        d.ddd);
+    add("IBGE",       d.ibge);
+    const parsed: Parsed = { fields, sections: [], raw: `[ViaCEP] CEP: ${d.cep} · ${d.logradouro}, ${d.bairro} - ${d.localidade}/${d.uf}` };
+    return { ok: fields.length > 0, parsed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "erro ViaCEP" };
+  }
+}
+
+// ─── ReceitaWS fallback (CNPJ) ──────────────────────────────────────────────
+interface ReceitaWsResponse {
+  abertura?: string; situacao?: string; tipo?: string; nome?: string; fantasia?: string;
+  porte?: string; natureza_juridica?: string; logradouro?: string; numero?: string;
+  complemento?: string; bairro?: string; municipio?: string; uf?: string; cep?: string;
+  email?: string; telefone?: string; cnpj?: string; data_situacao?: string;
+  capital_social?: string; ultima_atualizacao?: string;
+  atividade_principal?: Array<{ code: string; text: string }>;
+  atividades_secundarias?: Array<{ code: string; text: string }>;
+  qsa?: Array<{ nome: string; qual: string }>;
+}
+
+async function callReceitaWs(cnpj: string, signal: AbortSignal): Promise<{
+  ok: boolean; parsed?: Parsed; error?: string;
+}> {
+  try {
+    const r = await fetch(`https://www.receitaws.com.br/v1/cnpj/${cnpj}`, {
+      signal,
+      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+    });
+    if (!r.ok) return { ok: false, error: `ReceitaWS HTTP ${r.status}` };
+    const d = await r.json() as ReceitaWsResponse & { message?: string };
+    if (d.message) return { ok: false, error: d.message };
+    const fields: Parsed["fields"] = [];
+    const add = (k: string, v: string | undefined) => { if (v?.trim()) fields.push({ key: k, value: v.trim() }); };
+    add("CNPJ",              d.cnpj);
+    add("Razão Social",      d.nome);
+    add("Nome Fantasia",     d.fantasia);
+    add("Situação",          d.situacao);
+    add("Tipo",              d.tipo);
+    add("Abertura",          d.abertura);
+    add("Porte",             d.porte);
+    add("Nat. Jurídica",     d.natureza_juridica);
+    add("Capital Social",    d.capital_social);
+    add("Logradouro",        d.logradouro);
+    add("Número",            d.numero);
+    add("Complemento",       d.complemento);
+    add("Bairro",            d.bairro);
+    add("Município",         d.municipio);
+    add("UF",                d.uf);
+    add("CEP",               d.cep);
+    add("Telefone",          d.telefone);
+    add("E-mail",            d.email);
+    add("Situação desde",    d.data_situacao);
+    add("Última atualização",d.ultima_atualizacao);
+
+    const sections: Parsed["sections"] = [];
+
+    if (d.atividade_principal?.length) {
+      sections.push({
+        name: "ATIVIDADE PRINCIPAL",
+        items: d.atividade_principal.map((a) => `${a.code} · ${a.text}`),
+      });
+    }
+    if (d.atividades_secundarias?.length) {
+      sections.push({
+        name: "ATIVIDADES SECUNDÁRIAS",
+        items: d.atividades_secundarias.map((a) => `${a.code} · ${a.text}`),
+      });
+    }
+    if (d.qsa?.length) {
+      sections.push({
+        name: "QUADRO SOCIETÁRIO (QSA)",
+        items: d.qsa.map((s) => `${s.nome} (${s.qual})`),
+      });
+    }
+
+    const parsed: Parsed = {
+      fields,
+      sections,
+      raw: `[ReceitaWS] CNPJ: ${d.cnpj} · ${d.nome} · ${d.situacao}`,
+    };
+    return { ok: fields.length > 0, parsed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "erro ReceitaWS" };
+  }
+}
+
+// ─── CNPJ.ws fallback ──────────────────────────────────────────────────────
+interface CnpjWsResponse {
+  cnpj_raiz?: string; razao_social?: string; capital_social?: string;
+  natureza_juridica?: { id?: string; descricao?: string };
+  qualificacao_do_responsavel?: { id?: number; descricao?: string };
+  porte?: { id?: string; descricao?: string };
+  entidade_responsavel?: { id?: string; descricao?: string };
+  estabelecimento?: {
+    cnpj?: string; tipo?: string; situacao_cadastral?: string; data_situacao_cadastral?: string;
+    data_inicio_atividade?: string; nome_fantasia?: string;
+    logradouro?: string; numero?: string; complemento?: string;
+    bairro?: string; cep?: string;
+    municipio?: { nome?: string }; estado?: { nome?: string; sigla?: string };
+    email?: string; ddd1?: string; telefone1?: string; ddd2?: string; telefone2?: string;
+    atividade_principal?: { id?: string; descricao?: string };
+  };
+  socios?: Array<{
+    nome?: string; cpf_cnpj_socio?: string;
+    qualificacao_socio?: { descricao?: string };
+    data_entrada_sociedade?: string;
+  }>;
+}
+
+async function callCnpjWs(cnpj: string, signal: AbortSignal): Promise<{
+  ok: boolean; parsed?: Parsed; error?: string;
+}> {
+  try {
+    const r = await fetch(`https://publica.cnpj.ws/v1/cnpj/${cnpj}`, {
+      signal,
+      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+    });
+    if (!r.ok) return { ok: false, error: `CNPJ.ws HTTP ${r.status}` };
+    const d = await r.json() as CnpjWsResponse;
+    const est = d.estabelecimento;
+    const fields: Parsed["fields"] = [];
+    const add = (k: string, v: string | number | undefined | null) => {
+      const s = String(v ?? "").trim(); if (s) fields.push({ key: k, value: s });
+    };
+    add("CNPJ",           est?.cnpj);
+    add("Razão Social",   d.razao_social);
+    add("Nome Fantasia",  est?.nome_fantasia);
+    add("Situação",       est?.situacao_cadastral);
+    add("Tipo",           est?.tipo);
+    add("Início Atividade", est?.data_inicio_atividade);
+    add("Capital Social", d.capital_social);
+    add("Nat. Jurídica",  d.natureza_juridica?.descricao);
+    add("Porte",          d.porte?.descricao);
+    add("Logradouro",     est?.logradouro);
+    add("Número",         est?.numero);
+    add("Complemento",    est?.complemento);
+    add("Bairro",         est?.bairro);
+    add("Município",      est?.municipio?.nome);
+    add("UF",             est?.estado?.sigla);
+    add("Estado",         est?.estado?.nome);
+    add("CEP",            est?.cep);
+    const tel = est?.ddd1 && est?.telefone1 ? `(${est.ddd1}) ${est.telefone1}` : "";
+    add("Telefone",       tel);
+    const tel2 = est?.ddd2 && est?.telefone2 ? `(${est.ddd2}) ${est.telefone2}` : "";
+    add("Telefone 2",     tel2);
+    add("E-mail",         est?.email);
+    add("Atividade Principal", est?.atividade_principal?.descricao);
+
+    const sections: Parsed["sections"] = [];
+    if (d.socios?.length) {
+      sections.push({
+        name: "QUADRO SOCIETÁRIO (QSA)",
+        items: d.socios.map((s) =>
+          `${s.nome ?? "?"} · ${s.qualificacao_socio?.descricao ?? ""} · Entrada: ${s.data_entrada_sociedade ?? "?"}`
+        ),
+      });
+    }
+
+    const parsed: Parsed = {
+      fields,
+      sections,
+      raw: `[CNPJ.ws] CNPJ: ${est?.cnpj ?? cnpj} · ${d.razao_social} · ${est?.situacao_cadastral}`,
+    };
+    return { ok: fields.length > 0, parsed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "erro CNPJ.ws" };
+  }
+}
+
 // ─── auth ──────────────────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
@@ -479,9 +668,12 @@ router.get("/consultas", requireAuth, async (req, res) => {
 // ─── bases status ──────────────────────────────────────────────────────────
 router.get("/bases/status", requireAuth, async (_req, res) => {
   const bases = [
-    { id: "geass", name: "Geass API", description: "Provedor OSINT principal · 24 tipos", url: PROVIDER_BASE.replace("/api/consulta", "/") },
-    { id: "sipni", name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações", url: "https://sipni.datasus.gov.br" },
-    { id: "sisreg", name: "SISREG-III", description: "Sistema de Regulação em Saúde", url: "https://sisregiii.saude.gov.br" },
+    { id: "geass",    name: "Geass API",       description: "Provedor OSINT principal · 24 tipos",           url: PROVIDER_BASE.replace("/api/consulta", "/") },
+    { id: "sipni",    name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações",              url: "https://sipni.datasus.gov.br" },
+    { id: "sisreg",   name: "SISREG-III",       description: "Sistema de Regulação em Saúde",                 url: "https://sisregiii.saude.gov.br" },
+    { id: "viacep",   name: "ViaCEP",           description: "Consulta de endereços por CEP · fallback CEP",  url: "https://viacep.com.br/ws/01001000/json/" },
+    { id: "receitaws",name: "ReceitaWS",         description: "CNPJ via Receita Federal · fallback CNPJ",     url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
+    { id: "cnpjws",   name: "CNPJ.ws",          description: "Consulta pública de CNPJ · fallback secundário",url: "https://publica.cnpj.ws/v1/" },
   ];
 
   const checks = await Promise.allSettled(
@@ -581,7 +773,27 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30_000);
 
-  const provider = await callProvider(tipo, dados, ctrl.signal);
+  let provider = await callProvider(tipo, dados, ctrl.signal);
+
+  // ─── CEP fallback: ViaCEP ─────────────────────────────────────────────────
+  if (!provider.ok && tipo === "cep" && !ctrl.signal.aborted) {
+    const viacep = await callViaCep(dados, ctrl.signal);
+    if (viacep.ok) provider = { ok: true, parsed: viacep.parsed };
+    else provider = { ...provider, error: `Geass: ${provider.error} | ViaCEP: ${viacep.error}` };
+  }
+
+  // ─── CNPJ fallback: ReceitaWS → CNPJ.ws ──────────────────────────────────
+  if (!provider.ok && (tipo === "cnpj" || tipo === "fucionarios" || tipo === "socios") && !ctrl.signal.aborted) {
+    const receita = await callReceitaWs(dados, ctrl.signal);
+    if (receita.ok) {
+      provider = { ok: true, parsed: receita.parsed };
+    } else if (!ctrl.signal.aborted) {
+      const cnpjws = await callCnpjWs(dados, ctrl.signal);
+      if (cnpjws.ok) provider = { ok: true, parsed: cnpjws.parsed };
+      else provider = { ...provider, error: `Geass: ${provider.error} | ReceitaWS: ${receita.error} | CNPJ.ws: ${cnpjws.error}` };
+    }
+  }
+
   clearTimeout(timer);
 
   const success = provider.ok && !!provider.parsed;

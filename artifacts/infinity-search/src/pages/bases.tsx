@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   Activity, RefreshCw, Wifi, WifiOff, Clock, Database,
   Syringe, Building2, Server, AlertTriangle, CheckCircle2,
+  MapPin, FileText, Building,
 } from "lucide-react";
 
 type BaseStatus = {
@@ -15,9 +16,12 @@ type BaseStatus = {
 };
 
 const BASE_META: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string; accent: string }> = {
-  geass: { icon: Database, color: "from-sky-500/20 to-cyan-400/5", accent: "text-sky-300" },
-  sipni: { icon: Syringe, color: "from-violet-500/20 to-fuchsia-400/5", accent: "text-violet-300" },
-  sisreg: { icon: Building2, color: "from-rose-500/20 to-pink-400/5", accent: "text-rose-300" },
+  geass:     { icon: Database,  color: "from-sky-500/20 to-cyan-400/5",      accent: "text-sky-300" },
+  sipni:     { icon: Syringe,   color: "from-violet-500/20 to-fuchsia-400/5", accent: "text-violet-300" },
+  sisreg:    { icon: Building2, color: "from-rose-500/20 to-pink-400/5",      accent: "text-rose-300" },
+  viacep:    { icon: MapPin,    color: "from-emerald-500/20 to-teal-400/5",   accent: "text-emerald-300" },
+  receitaws: { icon: FileText,  color: "from-amber-500/20 to-yellow-400/5",   accent: "text-amber-300" },
+  cnpjws:    { icon: Building,  color: "from-orange-500/20 to-amber-400/5",   accent: "text-orange-300" },
 };
 
 function latencyColor(ms: number, online: boolean): string {
@@ -248,9 +252,11 @@ export default function Bases() {
       >
         <Wifi className="w-4 h-4 text-sky-400 mt-0.5 shrink-0" />
         <div className="text-xs text-muted-foreground/70 leading-relaxed">
-          <span className="text-sky-300 font-semibold">Nota:</span> O SISREG-III está inacessível a partir de IPs do datacenter (Replit/cloud).
-          O acesso requer uma rede residencial brasileira. O SIPNI/DATASUS está operacional mas pode apresentar
-          instabilidade intermitente. A Geass API é a fonte primária recomendada.
+          <span className="text-sky-300 font-semibold">Nota:</span> O SISREG-III está inacessível a partir de IPs do datacenter (Replit/cloud) — requer rede residencial brasileira.
+          O SIPNI/DATASUS pode apresentar instabilidade intermitente. A Geass API é a fonte primária para todos os tipos.{" "}
+          <span className="text-emerald-300 font-semibold">ViaCEP</span> e{" "}
+          <span className="text-amber-300 font-semibold">ReceitaWS</span> /{" "}
+          <span className="text-orange-300 font-semibold">CNPJ.ws</span> atuam como fallback automático quando a Geass falha em consultas de CEP e CNPJ respectivamente.
         </div>
       </motion.div>
 
