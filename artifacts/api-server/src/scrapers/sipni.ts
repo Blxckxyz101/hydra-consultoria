@@ -89,51 +89,70 @@ async function getSession(): Promise<SipniSession | null> {
     const btnMatch = pageHtml.match(/name="([^"]+)"[^>]*type="submit"/);
     const btnName = btnMatch?.[1] ?? `${formId}:j_idt38`;
 
-    // Step 2: POST login as PrimeFaces AJAX (the button uses onclick=PrimeFaces.ab)
-    // The server responds with XML <partial-response> — success = no <redirect> or <error> in the response
-    const ajaxBody = new URLSearchParams({
-      "javax.faces.partial.ajax": "true",
-      "javax.faces.source": btnName,
-      "javax.faces.partial.event": "click",
-      "javax.faces.partial.execute": btnName,
-      "javax.faces.partial.render": "@all",
+    // Extract exact field names from live HTML (fallback to known names)
+    const userFieldMatch = pageHtml.match(/name="([^"]*usuario[^"]*)"[^>]*type="text"/i);
+    const passFieldMatch = pageHtml.match(/name="([^"]*senha[^"]*)"[^>]*type="password"/i);
+    const userField = userFieldMatch?.[1] ?? `${formId}:usuario`;
+    const passField = passFieldMatch?.[1] ?? `${formId}:senha`;
+
+    // Step 2: Regular form POST — exactly what the browser sends when JS is disabled
+    // or when the submit button (type=submit) is clicked without JS interception.
+    // This is more reliable than PrimeFaces AJAX because:
+    //   - AJAX execute=buttonOnly skips binding username/password in JSF model
+    //   - Regular POST always includes all named form fields
+    const postBody = new URLSearchParams({
       [formId]: formId,
       "javax.faces.ViewState": viewState,
-      [`${formId}:usuario`]: account.user,
-      [`${formId}:senha`]: sha512hex(account.pass),
+      [userField]: account.user,
+      [passField]: sha512hex(account.pass),
+      [btnName]: btnName,
     });
 
     const authResp = await fetchFn(loginUrl, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "User-Agent": UA,
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Faces-Request": "partial/ajax",
-        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Cookie: cookieStr(jar),
         Referer: loginUrl,
         Origin: "https://sipni.datasus.gov.br",
       },
-      body: ajaxBody.toString(),
+      body: postBody.toString(),
     });
 
     mergeSetCookies(authResp.headers, jar);
-    const authXml = await authResp.text();
 
-    // AJAX success: server returns <partial-response> with updated ViewState (no <error> or "Informe o usuário")
-    const ajaxFailed =
-      authXml.includes("Informe o usuário") ||
-      authXml.includes("inválido") ||
-      authXml.includes("<error>") ||
-      (!authXml.includes("<partial-response>") && authXml.length > 0);
+    // On successful login: server returns 302 redirect to menuHome or dashboard
+    // On failure: server returns 200 with the login page again
+    const loginOk =
+      authResp.status === 302 ||
+      authResp.status === 303 ||
+      (authResp.headers.get("location") ?? "").includes("menuHome");
 
-    if (ajaxFailed) {
-      logger.warn("[SIPNI] AJAX login failed for account %s — response: %s", account.user, authXml.slice(0, 200));
+    if (!loginOk) {
+      const body = await authResp.text();
+      const hasError =
+        body.includes("Informe o") ||
+        body.includes("nválido") ||
+        body.includes("incorreto");
+      logger.warn(
+        "[SIPNI] Login failed for %s — HTTP %d%s",
+        account.user,
+        authResp.status,
+        hasError ? " (credenciais recusadas)" : " (resposta inesperada)",
+      );
       return null;
     }
 
-    // Step 3: Navigate to main page (GET) to confirm session and get list-page ViewState
-    const homeResp = await fetchFn(`${SIPNI_BASE}/faces/publico/menuHome.jsf`, {
+    // Step 3: Follow the redirect to establish a full session
+    const redirectTarget = authResp.headers.get("location") ?? `${SIPNI_BASE}/faces/publico/menuHome.jsf`;
+    const absRedirect = redirectTarget.startsWith("http")
+      ? redirectTarget
+      : `https://sipni.datasus.gov.br${redirectTarget}`;
+
+    const homeResp = await fetchFn(absRedirect, {
       headers: {
         "User-Agent": UA,
         Accept: "text/html,application/xhtml+xml",
@@ -143,7 +162,6 @@ async function getSession(): Promise<SipniSession | null> {
     });
     mergeSetCookies(homeResp.headers, jar);
 
-    // A valid session will have at least one session cookie (BIGip or JSESSIONID)
     const hasSession = jar.size > 0;
     if (!hasSession) {
       logger.warn("[SIPNI] No session cookies after login for %s", account.user);
