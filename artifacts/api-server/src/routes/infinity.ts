@@ -416,9 +416,11 @@ router.get("/overview", requireAuth, async (req, res) => {
 
 router.get("/consultas", requireAuth, async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50), 200);
+  const username = req.infinityUser!.username;
   const rows = await db
     .select()
     .from(infinityConsultasTable)
+    .where(eq(infinityConsultasTable.username, username))
     .orderBy(desc(infinityConsultasTable.createdAt))
     .limit(limit);
   res.json(
