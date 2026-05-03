@@ -1833,11 +1833,135 @@ bot.command("sendcode", async ctx => {
   } finally { s.waRunning = false; }
 });
 
-// ── /osint — OSINT Lookup via GeassZero + DarkFlow APIs ──────────────────────
+// ── /osint — OSINT Lookup via GeassZero + DarkFlow + SIPNI APIs ──────────────
 const TG_GEASS_BASE   = "http://149.56.18.68:25584/api/consulta";
 const TG_GEASS_KEY    = "GeassZero";
 const TG_DARKFLOW_URL = "https://darkflowapis.space/api.php";
 const TG_DARKFLOW_TOK = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
+
+// ── SIPNI (servicos-cloud.saude.gov.br) ───────────────────────────────────────
+const TG_SIPNI_USER      = "proxy867387611";
+const TG_SIPNI_PASS      = "sipni76040";
+const TG_SIPNI_B64       = Buffer.from(`${TG_SIPNI_USER}:${TG_SIPNI_PASS}`).toString("base64");
+const TG_SIPNI_AUTH_URL  = "https://servicos-cloud.saude.gov.br/pni-bff/v1/autenticacao/tokenAcesso";
+const TG_SIPNI_QUERY_URL = "https://servicos-cloud.saude.gov.br/pni-bff/v1/cidadao/cpf/";
+
+let tgSipniToken: string | null = null;
+let tgSipniTokenExpiry = 0;
+
+async function getTgSipniToken(): Promise<string> {
+  if (tgSipniToken && Date.now() < tgSipniTokenExpiry) return tgSipniToken;
+  const r = await fetch(TG_SIPNI_AUTH_URL, {
+    method:  "POST",
+    headers: {
+      "X-Authorization": `Basic ${TG_SIPNI_B64}`,
+      "accept":          "application/json",
+      "content-length":  "0",
+      "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      "Origin":          "https://si-pni.saude.gov.br",
+      "Referer":         "https://si-pni.saude.gov.br/",
+      "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const j = await r.json() as { accessToken?: string; access_token?: string };
+  const tok = j.accessToken ?? j.access_token ?? "";
+  if (!tok) throw new Error("SIPNI auth falhou — sem token na resposta");
+  tgSipniToken = tok;
+  try {
+    const payload = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString()) as { exp?: number };
+    tgSipniTokenExpiry = payload.exp ? payload.exp * 1000 - 60_000 : Date.now() + 4 * 3600_000;
+  } catch { tgSipniTokenExpiry = Date.now() + 4 * 3600_000; }
+  return tok;
+}
+
+interface TgSipniRecord {
+  nome?: string; dataNascimento?: string; sexo?: string;
+  nomeMae?: string; nomePai?: string; grauQualidade?: string;
+  ativo?: boolean; obito?: boolean; partoGemelar?: boolean; vip?: boolean;
+  racaCor?: { codigo?: string; descricao?: string };
+  telefone?: string;
+  nacionalidade?: { codigo?: string; descricao?: string };
+  endereco?: {
+    cep?: string; logradouro?: string; numero?: string;
+    complemento?: string; bairro?: string;
+    municipio?: { codigo?: string; nome?: string };
+    uf?: { codigo?: string; sigla?: string; nome?: string };
+  };
+}
+
+async function fetchTgSipniData(cpf: string): Promise<TgSipniRecord> {
+  const token = await getTgSipniToken();
+  const r = await fetch(`${TG_SIPNI_QUERY_URL}${cpf.replace(/\D/g, "")}`, {
+    headers: {
+      "Authorization":   `Bearer ${token}`,
+      "Accept":          "application/json, text/plain, */*",
+      "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      "Origin":          "https://si-pni.saude.gov.br",
+      "Referer":         "https://si-pni.saude.gov.br/",
+      "Accept-Language": "pt-BR,pt;q=0.9",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (r.status === 401) {
+    tgSipniToken = null;
+    tgSipniTokenExpiry = 0;
+    return fetchTgSipniData(cpf);
+  }
+  const j = await r.json() as { records?: TgSipniRecord[]; error?: string };
+  if (!j.records || j.records.length === 0) throw new Error(j.error ?? "CPF não encontrado no SIPNI");
+  return j.records[0];
+}
+
+function buildTgSipniText(cpf: string, d: TgSipniRecord): string {
+  const sexoMap: Record<string, string> = { M: "Masculino", F: "Feminino", I: "Ignorado" };
+  const sexo   = d.sexo ? (sexoMap[d.sexo] ?? d.sexo) : null;
+  const ender  = d.endereco;
+  const cidade = ender?.municipio?.nome ?? null;
+  const uf     = ender?.uf?.sigla ?? null;
+
+  const lines: string[] = [
+    `👁 <b>OSINT — 💉 SIPNI</b>`,
+    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
+    `🔎 CPF: <code>${cpf}</code>`,
+    `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
+    ``,
+    `<b>🪪 IDENTIFICAÇÃO</b>`,
+  ];
+  if (d.nome)           lines.push(`├ Nome: <code>${d.nome}</code>`);
+  if (d.dataNascimento) lines.push(`├ Nasc: <code>${d.dataNascimento}</code>`);
+  if (sexo)             lines.push(`├ Sexo: <code>${sexo}</code>`);
+  if (d.racaCor?.descricao) lines.push(`├ Raça/Cor: <code>${d.racaCor.descricao}</code>`);
+  if (d.telefone)       lines.push(`├ Telefone: <code>${d.telefone}</code>`);
+  if (d.nacionalidade?.descricao) lines.push(`└ Nacion.: <code>${d.nacionalidade.descricao}</code>`);
+
+  if (d.nomeMae || d.nomePai) {
+    lines.push(``, `<b>👨‍👩‍👧 FAMÍLIA</b>`);
+    if (d.nomeMae) lines.push(`├ Mãe: <code>${d.nomeMae}</code>`);
+    if (d.nomePai) lines.push(`└ Pai: <code>${d.nomePai}</code>`);
+  }
+
+  if (ender) {
+    lines.push(``, `<b>📍 LOCALIZAÇÃO</b>`);
+    if (ender.logradouro) lines.push(`├ Rua: <code>${ender.logradouro}${ender.numero ? ", " + ender.numero : ""}</code>`);
+    if (ender.complemento?.trim()) lines.push(`├ Compl: <code>${ender.complemento}</code>`);
+    if (ender.bairro) lines.push(`├ Bairro: <code>${ender.bairro}</code>`);
+    if (cidade)       lines.push(`├ Cidade: <code>${cidade}${uf ? " — " + uf : ""}</code>`);
+    if (ender.cep)    lines.push(`└ CEP: <code>${ender.cep}</code>`);
+  }
+
+  const flags: string[] = [];
+  if (d.ativo === true)        flags.push("🟢 Ativo");
+  if (d.ativo === false)       flags.push("🔴 Inativo");
+  if (d.obito === true)        flags.push("💀 Óbito");
+  if (d.partoGemelar === true) flags.push("👬 Gemelar");
+  if (d.vip === true)          flags.push("⭐ VIP");
+  if (d.grauQualidade)         flags.push(`📊 Qualidade ${d.grauQualidade}`);
+  if (flags.length) lines.push(``, `<b>ℹ️ STATUS</b>`, flags.join(" • "));
+
+  lines.push(``, `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`, `<i>servicos-cloud.saude.gov.br  •  Lelouch Britannia</i>`);
+  return lines.join("\n");
+}
 
 const TG_OSINT_META: Record<string, { label: string; emoji: string }> = {
   cpf:      { label: "CPF",           emoji: "🪪" },
@@ -1856,6 +1980,7 @@ const TG_OSINT_META: Record<string, { label: string; emoji: string }> = {
   pai:      { label: "Nome do Pai",   emoji: "👨" },
   obito:    { label: "Óbito",         emoji: "💀" },
   foto:     { label: "Foto CNH BR",   emoji: "📸" },
+  sipni:    { label: "SIPNI (Vacinas)", emoji: "💉" },
 };
 
 const TG_OSINT_KNOWN_FIELDS = [
@@ -2087,6 +2212,28 @@ bot.command("osint", async ctx => {
   const msg = await ctx.replyWithHTML(
     `⏳ <b>Consultando ${meta.emoji} ${meta.label}…</b>\n\n🔎 <code>${dado}</code>\n\n<i>Aguarde, buscando dados…</i>`,
   );
+
+  // ── SIPNI (servicos-cloud.saude.gov.br) ─────────────────────────────────────
+  if (tipo === "sipni") {
+    const cpfNum = dado.replace(/\D/g, "");
+    if (cpfNum.length !== 11) {
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+        `👁 <b>OSINT — 💉 SIPNI</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n❌ CPF inválido — informe 11 dígitos\n\nEx: <code>/osint sipni 12345678901</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+      return;
+    }
+    try {
+      const rec = await fetchTgSipniData(cpfNum);
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+        buildTgSipniText(cpfNum, rec),
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+    } catch (e) {
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined,
+        `👁 <b>OSINT — 💉 SIPNI</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n\n❌ <b>Sem resultado</b>\n└ <code>${String(e).slice(0, 200)}</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]) });
+    }
+    return;
+  }
 
   // ── DarkFlow (foto CNH) ──────────────────────────────────────────────────────
   if (tipo === "foto") {

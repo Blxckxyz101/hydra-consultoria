@@ -766,6 +766,7 @@ const COMMANDS = [
           { name: "👨 Nome do Pai",    value: "pai"      },
           { name: "👩 Nome da Mãe",    value: "mae"      },
           { name: "📸 Foto CNH (BR)",  value: "foto"     },
+          { name: "💉 SIPNI (Vacinas)", value: "sipni"   },
         )
     )
     .addStringOption(opt =>
@@ -6053,11 +6054,148 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
   }
 }
 
-// ── /osint — External OSINT lookup via GeassZero + DarkFlow ──────────────────
+// ── /osint — External OSINT lookup via GeassZero + DarkFlow + SIPNI ──────────
 const GEASS_ZERO_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_ZERO_KEY  = "GeassZero";
 const DARKFLOW_TOKEN  = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
 const DARKFLOW_BASE   = "https://darkflowapis.space/api.php";
+
+// ── SIPNI (servicos-cloud.saude.gov.br) ───────────────────────────────────────
+const SIPNI_USER   = "proxy867387611";
+const SIPNI_PASS   = "sipni76040";
+const SIPNI_B64    = Buffer.from(`${SIPNI_USER}:${SIPNI_PASS}`).toString("base64");
+const SIPNI_AUTH_URL  = "https://servicos-cloud.saude.gov.br/pni-bff/v1/autenticacao/tokenAcesso";
+const SIPNI_QUERY_URL = "https://servicos-cloud.saude.gov.br/pni-bff/v1/cidadao/cpf/";
+
+let sipniToken: string | null = null;
+let sipniTokenExpiry = 0;
+
+async function getSipniToken(): Promise<string> {
+  if (sipniToken && Date.now() < sipniTokenExpiry) return sipniToken;
+  const r = await fetch(SIPNI_AUTH_URL, {
+    method:  "POST",
+    headers: {
+      "X-Authorization":   `Basic ${SIPNI_B64}`,
+      "accept":            "application/json",
+      "content-length":    "0",
+      "User-Agent":        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      "Origin":            "https://si-pni.saude.gov.br",
+      "Referer":           "https://si-pni.saude.gov.br/",
+      "Accept-Language":   "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const j = await r.json() as { accessToken?: string; access_token?: string };
+  const tok = j.accessToken ?? j.access_token ?? "";
+  if (!tok) throw new Error("SIPNI auth falhou — sem token na resposta");
+  sipniToken = tok;
+  // Decode JWT expiry (exp claim) or default to 4h
+  try {
+    const payload = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString()) as { exp?: number };
+    sipniTokenExpiry = payload.exp ? payload.exp * 1000 - 60_000 : Date.now() + 4 * 3600_000;
+  } catch { sipniTokenExpiry = Date.now() + 4 * 3600_000; }
+  return tok;
+}
+
+interface SipniRecord {
+  nome?: string; dataNascimento?: string; sexo?: string;
+  nomeMae?: string; nomePai?: string; grauQualidade?: string;
+  ativo?: boolean; obito?: boolean; partoGemelar?: boolean; vip?: boolean;
+  racaCor?: { codigo?: string; descricao?: string };
+  telefone?: string;
+  nacionalidade?: { codigo?: string; descricao?: string };
+  endereco?: {
+    cep?: string; logradouro?: string; numero?: string;
+    complemento?: string; bairro?: string;
+    municipio?: { codigo?: string; nome?: string };
+    uf?: { codigo?: string; sigla?: string; nome?: string };
+  };
+}
+
+async function fetchSipniData(cpf: string): Promise<SipniRecord> {
+  const token = await getSipniToken();
+  const r = await fetch(`${SIPNI_QUERY_URL}${cpf.replace(/\D/g, "")}`, {
+    headers: {
+      "Authorization":  `Bearer ${token}`,
+      "Accept":         "application/json, text/plain, */*",
+      "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      "Origin":         "https://si-pni.saude.gov.br",
+      "Referer":        "https://si-pni.saude.gov.br/",
+      "Accept-Language": "pt-BR,pt;q=0.9",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (r.status === 401) {
+    // Token expired — force refresh and retry once
+    sipniToken = null;
+    sipniTokenExpiry = 0;
+    return fetchSipniData(cpf);
+  }
+  const j = await r.json() as { records?: SipniRecord[]; error?: string };
+  if (!j.records || j.records.length === 0) throw new Error(j.error ?? "CPF não encontrado no SIPNI");
+  return j.records[0];
+}
+
+function buildSipniEmbed(cpf: string, d: SipniRecord): EmbedBuilder {
+  const sexoMap: Record<string, string> = { M: "Masculino", F: "Feminino", I: "Ignorado" };
+  const sexo    = d.sexo ? (sexoMap[d.sexo] ?? d.sexo) : null;
+  const ender   = d.endereco;
+  const cidade  = ender?.municipio?.nome ?? null;
+  const uf      = ender?.uf?.sigla ?? null;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x22c55e)
+    .setAuthor({ name: "💉  OSINT — SIPNI (SI-PNI CLOUD)", iconURL: "https://media.tenor.com/9JqFEMlhATIAAAAj/hack-matrix.gif" })
+    .setDescription(
+      `> 🔎  CPF  **\`${cpf}\`**  •  SI-PNI Cloud API\n` +
+      `> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+    )
+    .setThumbnail("https://media.tenor.com/wSMJ9UHO3ZYAAAAC/hacker.gif")
+    .setFooter({ text: `${AUTHOR}  •  servicos-cloud.saude.gov.br  •  ${new Date().toLocaleDateString("pt-BR")}` })
+    .setTimestamp();
+
+  // 🪪 Identificação / Dados Pessoais
+  const idLines: string[] = [];
+  if (d.nome)          idLines.push(`├ **NOME**  \`${d.nome}\``);
+  if (d.dataNascimento) idLines.push(`├ **NASCIMENTO**  \`${d.dataNascimento}\``);
+  if (sexo)            idLines.push(`├ **SEXO**  \`${sexo}\``);
+  if (d.racaCor?.descricao) idLines.push(`├ **RAÇA/COR**  \`${d.racaCor.descricao}\``);
+  if (d.telefone)      idLines.push(`├ **TELEFONE**  \`${d.telefone}\``);
+  if (d.nacionalidade?.descricao) idLines.push(`└ **NACIONALIDADE**  \`${d.nacionalidade.descricao}\``);
+  else if (idLines.length) idLines[idLines.length - 1] = idLines[idLines.length - 1].replace("├", "└");
+  if (idLines.length) embed.addFields({ name: "🪪  IDENTIFICAÇÃO", value: idLines.join("\n"), inline: false });
+
+  // 👨‍👩‍👧 Família
+  const famLines: string[] = [];
+  if (d.nomeMae) famLines.push(`├ **MÃE**  \`${d.nomeMae}\``);
+  if (d.nomePai) famLines.push(`└ **PAI**  \`${d.nomePai}\``);
+  else if (famLines.length) famLines[famLines.length - 1] = famLines[famLines.length - 1].replace("├", "└");
+  if (famLines.length) embed.addFields({ name: "👨‍👩‍👧  FAMÍLIA", value: famLines.join("\n"), inline: false });
+
+  // 📍 Endereço
+  if (ender) {
+    const addrLines: string[] = [];
+    if (ender.logradouro) addrLines.push(`├ **RUA**  \`${ender.logradouro}${ender.numero ? ", " + ender.numero : ""}\``);
+    if (ender.complemento && ender.complemento.trim()) addrLines.push(`├ **COMPLEMENTO**  \`${ender.complemento}\``);
+    if (ender.bairro) addrLines.push(`├ **BAIRRO**  \`${ender.bairro}\``);
+    if (cidade)      addrLines.push(`├ **CIDADE**  \`${cidade}${uf ? " — " + uf : ""}\``);
+    if (ender.cep)   addrLines.push(`└ **CEP**  \`${ender.cep}\``);
+    else if (addrLines.length) addrLines[addrLines.length - 1] = addrLines[addrLines.length - 1].replace("├", "└");
+    if (addrLines.length) embed.addFields({ name: "📍  LOCALIZAÇÃO", value: addrLines.join("\n"), inline: false });
+  }
+
+  // ℹ️ Status
+  const flags: string[] = [];
+  if (d.ativo === false)        flags.push("🔴 Inativo");
+  if (d.ativo === true)         flags.push("🟢 Ativo");
+  if (d.obito === true)         flags.push("💀 Óbito");
+  if (d.partoGemelar === true)  flags.push("👬 Parto Gemelar");
+  if (d.vip === true)           flags.push("⭐ VIP");
+  if (d.grauQualidade)          flags.push(`📊 Qualidade: \`${d.grauQualidade}\``);
+  if (flags.length) embed.addFields({ name: "ℹ️  STATUS", value: flags.join("  •  "), inline: false });
+
+  return embed;
+}
 
 const OSINT_META: Record<string, { label: string; emoji: string; color: number }> = {
   cpf:      { label: "CPF",            emoji: "🪪", color: 0x4ade80 },
@@ -6076,6 +6214,7 @@ const OSINT_META: Record<string, { label: string; emoji: string; color: number }
   mae:      { label: "NOME DA MÃE",    emoji: "👩", color: 0xfda4af },
   obito:    { label: "ÓBITO",          emoji: "💀", color: 0x6b7280 },
   foto:     { label: "FOTO CNH BR",    emoji: "📸", color: 0xf472b6 },
+  sipni:    { label: "SIPNI (VACINAS)", emoji: "💉", color: 0x22c55e },
 };
 
 // Known field names sorted by length (longest first) for reliable matching
@@ -6356,6 +6495,24 @@ async function handleOsint(interaction: ChatInputCommandInteraction): Promise<vo
   const tipo = interaction.options.getString("tipo", true);
   const dado = interaction.options.getString("dado", true).trim();
   const meta = OSINT_META[tipo] ?? { label: tipo.toUpperCase(), emoji: "🔍", color: 0x4ade80 };
+
+  // ── SIPNI (servicos-cloud.saude.gov.br) ─────────────────────────────────────
+  if (tipo === "sipni") {
+    const cpfNum = dado.replace(/\D/g, "");
+    if (cpfNum.length !== 11) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("💉 SIPNI — CPF INVÁLIDO", "Forneça um CPF válido com 11 dígitos.\n\nEx: `/osint tipo:sipni dado:12345678901`")] });
+      return;
+    }
+    let rec: SipniRecord;
+    try {
+      rec = await fetchSipniData(cpfNum);
+    } catch (e) {
+      await interaction.editReply({ embeds: [buildErrorEmbed("💉 SIPNI — SEM RESULTADO", `${String(e).slice(0, 200)}`)] });
+      return;
+    }
+    await interaction.editReply({ embeds: [buildSipniEmbed(cpfNum, rec)] });
+    return;
+  }
 
   // ── DarkFlow (Foto CNH BR) ──────────────────────────────────────────────────
   if (tipo === "foto") {

@@ -19,12 +19,16 @@ const ip = (req: import("express").Request) => {
 
 export const generalLimiter = rateLimit({
   windowMs:        60_000,
-  max:             300,
+  max:             1500,
   standardHeaders: true,
   legacyHeaders:   false,
   keyGenerator:    ip,
   message:         { error: "Too many requests — by order of Lelouch vi Britannia, slow down." },
-  skip: (req) => req.path === "/api/health" || req.path === "/api/events",
+  skip: (req) =>
+    req.path === "/api/health"  ||
+    req.path === "/api/events"  ||
+    req.path.startsWith("/api/checker/") ||
+    req.path.startsWith("/api/attacks/stream"),
 });
 
 export const attackLimiter = rateLimit({
