@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties }
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InfinityUsers } from "./InfinityUsers";
 import { Wallboard } from "./Wallboard";
+import { PersonalizarPage, CUSTOM_THEMES, getThemeDef, getSymbolFilter, buildThemeStyle, type CustomThemeKey } from "./PersonalizarPage";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -892,6 +893,23 @@ const THEME_TITLES: Record<AppTheme, string> = {
   void:    "Mudar para Lelouch (crimson)",
 };
 
+/* ── TTS — Web Speech API ── */
+function speakText(text: string) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "pt-BR";
+  u.rate = 0.88;
+  u.pitch = 0.75;
+  u.volume = 1;
+  // prefer pt-BR voice if available
+  const voices = window.speechSynthesis.getVoices();
+  const ptVoice = voices.find(v => v.lang.startsWith("pt")) ?? voices.find(v => v.lang.startsWith("en")) ?? null;
+  if (ptVoice) u.voice = ptVoice;
+  window.speechSynthesis.speak(u);
+}
+function stopSpeaking() { window.speechSynthesis?.cancel(); }
+
 function ThemeToggle({ theme, setTheme }: { theme: AppTheme; setTheme: (t: AppTheme) => void }) {
   const [spinning, setSpinning] = useState(false);
 
@@ -1411,8 +1429,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
@@ -1842,6 +1860,14 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     (localStorage.getItem("lb-theme") as AppTheme) || "lelouch"
   );
 
+  /* Custom color theme */
+  const [customThemeKey, setCustomThemeKey] = useState<CustomThemeKey>(() =>
+    (localStorage.getItem("lb-custom-theme") as CustomThemeKey) || "crimson"
+  );
+
+  /* AI speaking state */
+  const [aiSpeaking, setAiSpeaking] = useState(false);
+
   /* Domain success scores */
   const [domainScores, setDomainScores] = useState<Record<string, DomainScore>>(() => {
     try { return JSON.parse(localStorage.getItem("lb-domain-scores") || "{}"); } catch { return {}; }
@@ -2070,6 +2096,16 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
     document.body.classList.toggle("theme-void",   theme === "void");
     localStorage.setItem("lb-theme", theme);
   }, [theme]);
+
+  /* ── Custom color theme — inject CSS variables ── */
+  useEffect(() => {
+    localStorage.setItem("lb-custom-theme", customThemeKey);
+    const td = getThemeDef(customThemeKey);
+    const styleVars = buildThemeStyle(td);
+    let el = document.getElementById("lb-custom-theme-vars") as HTMLStyleElement | null;
+    if (!el) { el = document.createElement("style"); el.id = "lb-custom-theme-vars"; document.head.appendChild(el); }
+    el.textContent = `:root { ${styleVars} }`;
+  }, [customThemeKey]);
 
   /* ── Time remaining countdown ── */
   useEffect(() => {
@@ -3549,6 +3585,19 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
       const sev = d.severity ? String(d.severity).toUpperCase() : "";
       const eff = d.effectiveness != null ? ` · ${d.effectiveness}% effectiveness` : "";
       addLog(`👁 AI Advisor: ${sev}${eff} — boost: ${d.boostVector ?? "—"}`, "success");
+      // TTS — narrate the analysis
+      if (d.analysis) {
+        setAiSpeaking(true);
+        const u = new SpeechSynthesisUtterance(String(d.analysis));
+        u.lang = "pt-BR"; u.rate = 0.88; u.pitch = 0.75;
+        const voices = window.speechSynthesis?.getVoices() ?? [];
+        const ptVoice = voices.find(v => v.lang.startsWith("pt")) ?? voices.find(v => v.lang.startsWith("en")) ?? null;
+        if (ptVoice) u.voice = ptVoice;
+        u.onend = () => setAiSpeaking(false);
+        u.onerror = () => setAiSpeaking(false);
+        window.speechSynthesis?.cancel();
+        window.speechSynthesis?.speak(u);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setAiError(msg);
@@ -3667,9 +3716,9 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             </div>
           )}
           <div className="lb-title-row">
-            <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" />
+            <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }} />
             <h1 className="lb-title">Lelouch Painel</h1>
-            <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true"/>
+            <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }}/>
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
           <ThemeToggle theme={theme} setTheme={setTheme} />
@@ -3805,10 +3854,24 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                 </span>
               )}
             </button>
+            <button
+              className={`lb-page-tab ${activePage === "personalizar" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("personalizar")}
+            >
+              🎨 Personalizar
+            </button>
           </div>
         </header>
 
         {activePage === "infinity" && <InfinityUsers />}
+
+        {activePage === "personalizar" && (
+          <PersonalizarPage
+            currentKey={customThemeKey}
+            onSelect={(key) => setCustomThemeKey(key)}
+            symbolFilter={getSymbolFilter(getThemeDef(customThemeKey))}
+          />
+        )}
 
         {activePage === "wallboard" && (
           <Wallboard
@@ -7437,8 +7500,21 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                       ⚡ APPLY {String(aiData!.boostVector).toUpperCase()}
                     </button>
                   )}
+                  {Boolean(aiData?.analysis) && (
+                    <button
+                      className="lb-advisor-refresh-btn"
+                      title={aiSpeaking ? "Parar narração" : "Narrar análise em voz alta"}
+                      onClick={() => {
+                        if (aiSpeaking) { stopSpeaking(); setAiSpeaking(false); }
+                        else { speakText(String(aiData!.analysis)); setAiSpeaking(true); }
+                      }}
+                      style={{ background: aiSpeaking ? "rgba(231,76,60,0.15)" : "rgba(52,211,153,0.1)", borderColor: aiSpeaking ? "rgba(231,76,60,0.5)" : "rgba(52,211,153,0.4)", color: aiSpeaking ? "#ff8c8c" : "#6ee7b7" }}
+                    >
+                      {aiSpeaking ? "⏹ PARAR" : "🔊 FALAR"}
+                    </button>
+                  )}
                   <button className="lb-advisor-refresh-btn" onClick={handleAiAdvisor}>↺ REFRESH</button>
-                  <button className="lb-advisor-close-btn" onClick={() => setShowAiModal(false)}>CLOSE</button>
+                  <button className="lb-advisor-close-btn" onClick={() => { stopSpeaking(); setAiSpeaking(false); setShowAiModal(false); }}>CLOSE</button>
                 </div>
               )}
             </div>
