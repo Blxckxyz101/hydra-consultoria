@@ -7,15 +7,19 @@ import {
   MapPin, Car, Users, Briefcase, Mail, Cog, Skull, ScrollText,
   Wallet, Cpu, Network, Syringe, Database, Activity, ShieldCheck,
   ChevronRight, X, RotateCcw, Eye, Camera,
+  BarChart2, Receipt, Gift, AlertOctagon, Landmark,
+  FileSearch, Scale, Home, Star, Award,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
 type Tipo =
-  | "nome" | "cpf" | "pix" | "nis" | "cns" | "placa" | "chassi" | "telefone"
+  | "nome" | "cpf" | "cpfbasico" | "pix" | "nis" | "cns" | "placa" | "chassi" | "telefone"
   | "mae" | "pai" | "parentes" | "cep" | "frota" | "cnpj" | "fucionarios"
-  | "socios" | "empregos" | "cnh" | "renavam" | "obito" | "rg" | "email"
-  | "motor" | "vacinas" | "foto";
+  | "socios" | "empregos" | "cnh" | "cnhfull" | "renavam" | "obito" | "rg" | "email"
+  | "motor" | "vacinas" | "foto"
+  | "titulo" | "score" | "irpf" | "beneficios" | "mandado"
+  | "dividas" | "bens" | "processos" | "spc" | "iptu" | "certidoes";
 
 type TabDef = {
   id: Tipo;
@@ -28,32 +32,53 @@ type TabDef = {
   sanitize?: (s: string) => string;
 };
 
+const cpf11 = (s: string) => s.replace(/\D/g, "").slice(0, 11);
+const cnpj14 = (s: string) => s.replace(/\D/g, "").slice(0, 14);
+
 const TABS: TabDef[] = [
-  { id: "cpf", label: "CPF", category: "Pessoa", placeholder: "00000000000", hint: "11 dígitos", inputMode: "numeric", icon: IdCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "nome", label: "Nome", category: "Pessoa", placeholder: "Nome completo", hint: "texto livre", icon: User, sanitize: (s) => s.slice(0, 80) },
-  { id: "rg", label: "RG", category: "Pessoa", placeholder: "RG ou identidade", hint: "texto/numérico", icon: ScrollText },
-  { id: "mae", label: "Mãe", category: "Pessoa", placeholder: "CPF do filho(a)", hint: "11 dígitos — busca pela mãe", inputMode: "numeric", icon: Heart, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "pai", label: "Pai", category: "Pessoa", placeholder: "CPF do filho(a)", hint: "11 dígitos — busca pelo pai", inputMode: "numeric", icon: Heart, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "parentes", label: "Parentes", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos — rede familiar", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "obito", label: "Óbito", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos", inputMode: "numeric", icon: Skull, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "telefone", label: "Telefone", category: "Outros", placeholder: "5511999999999", hint: "DDI + DDD + número", inputMode: "numeric", icon: Phone, sanitize: (s) => s.replace(/\D/g, "").slice(0, 13) },
-  { id: "email", label: "Email", category: "Outros", placeholder: "exemplo@dominio.com", hint: "texto livre", icon: Mail },
-  { id: "pix", label: "PIX", category: "Outros", placeholder: "Chave PIX", hint: "CPF/email/telefone/aleatória", icon: Wallet },
-  { id: "cep", label: "CEP", category: "Outros", placeholder: "00000000", hint: "8 dígitos", inputMode: "numeric", icon: MapPin, sanitize: (s) => s.replace(/\D/g, "").slice(0, 8) },
-  { id: "nis", label: "NIS", category: "Saúde", placeholder: "NIS/PIS", hint: "11 dígitos", inputMode: "numeric", icon: CreditCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "cns", label: "CNS", category: "Saúde", placeholder: "Cartão SUS", hint: "15 dígitos", inputMode: "numeric", icon: Heart, sanitize: (s) => s.replace(/\D/g, "").slice(0, 15) },
-  { id: "vacinas", label: "Vacinas", category: "Saúde", placeholder: "CPF", hint: "11 dígitos", inputMode: "numeric", icon: Syringe, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "placa", label: "Placa", category: "Veículo", placeholder: "ABC1234", hint: "Mercosul ou antiga", icon: Car, sanitize: (s) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 8) },
-  { id: "chassi", label: "Chassi", category: "Veículo", placeholder: "9BWZZZ...", hint: "VIN 17 caracteres", icon: Cog, sanitize: (s) => s.toUpperCase().slice(0, 17) },
-  { id: "renavam", label: "Renavam", category: "Veículo", placeholder: "00000000000", hint: "11 dígitos", inputMode: "numeric", icon: ScrollText, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "motor", label: "Motor", category: "Veículo", placeholder: "Nº do motor", hint: "alfanumérico", icon: Cpu },
-  { id: "cnh", label: "CNH", category: "Veículo", placeholder: "CPF do condutor", hint: "11 dígitos", inputMode: "numeric", icon: IdCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "foto", label: "Foto CNH", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos — foto biométrica da CNH", inputMode: "numeric", icon: Camera, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
-  { id: "frota", label: "Frota", category: "Veículo", placeholder: "CPF/CNPJ", hint: "frota do titular", icon: Network, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
-  { id: "cnpj", label: "CNPJ", category: "Empresa", placeholder: "00000000000000", hint: "14 dígitos", inputMode: "numeric", icon: Building2, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
-  { id: "socios", label: "Sócios", category: "Empresa", placeholder: "CNPJ", hint: "14 dígitos", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
-  { id: "fucionarios", label: "Funcionários", category: "Empresa", placeholder: "CNPJ", hint: "14 dígitos", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
-  { id: "empregos", label: "Empregos", category: "Empresa", placeholder: "CPF", hint: "histórico do CPF", inputMode: "numeric", icon: Briefcase, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
+  // ── Pessoa ───────────────────────────────────────────────────────────────
+  { id: "cpf",       label: "CPF",        category: "Pessoa",  placeholder: "00000000000",      hint: "11 dígitos",                    inputMode: "numeric", icon: IdCard,       sanitize: cpf11 },
+  { id: "cpfbasico", label: "CPF Básico", category: "Pessoa",  placeholder: "00000000000",      hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: FileText,     sanitize: cpf11 },
+  { id: "nome",      label: "Nome",       category: "Pessoa",  placeholder: "Nome completo",    hint: "texto livre",                   icon: User,           sanitize: (s) => s.slice(0, 80) },
+  { id: "rg",        label: "RG",         category: "Pessoa",  placeholder: "RG ou identidade", hint: "texto/numérico",                icon: ScrollText },
+  { id: "mae",       label: "Mãe",        category: "Pessoa",  placeholder: "CPF do filho(a)",  hint: "11 dígitos — busca pela mãe",   inputMode: "numeric", icon: Heart,        sanitize: cpf11 },
+  { id: "pai",       label: "Pai",        category: "Pessoa",  placeholder: "CPF do filho(a)",  hint: "11 dígitos — busca pelo pai",   inputMode: "numeric", icon: Heart,        sanitize: cpf11 },
+  { id: "parentes",  label: "Parentes",   category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos — rede familiar",    inputMode: "numeric", icon: Users,        sanitize: cpf11 },
+  { id: "obito",     label: "Óbito",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos",                    inputMode: "numeric", icon: Skull,        sanitize: cpf11 },
+  { id: "foto",      label: "Foto CNH",   category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: Camera,       sanitize: cpf11 },
+  { id: "titulo",    label: "Título",     category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · título de eleitor · Skylers", inputMode: "numeric", icon: Award, sanitize: cpf11 },
+  { id: "score",     label: "Score",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · score de crédito · Skylers",  inputMode: "numeric", icon: BarChart2, sanitize: cpf11 },
+  { id: "irpf",      label: "IRPF",       category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · declaração IR · Skylers",     inputMode: "numeric", icon: Receipt,   sanitize: cpf11 },
+  { id: "beneficios",label: "Benefícios", category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · Bolsa Família/BPC · Skylers", inputMode: "numeric", icon: Gift,      sanitize: cpf11 },
+  { id: "mandado",   label: "Mandado",    category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · mandado de prisão · Skylers", inputMode: "numeric", icon: AlertOctagon, sanitize: cpf11 },
+  { id: "dividas",   label: "Dívidas",    category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · BACEN/FGTS · Skylers",        inputMode: "numeric", icon: Landmark,  sanitize: cpf11 },
+  { id: "processos", label: "Processos",  category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · processos judiciais · Skylers",inputMode: "numeric", icon: Scale,     sanitize: cpf11 },
+  { id: "certidoes", label: "Certidões",  category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: FileSearch,   sanitize: cpf11 },
+  { id: "spc",       label: "SPC",        category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · dados de crédito · Skylers",  inputMode: "numeric", icon: CreditCard, sanitize: cpf11 },
+  { id: "bens",      label: "Bens",       category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · patrimônio · Skylers",         inputMode: "numeric", icon: Star,      sanitize: cpf11 },
+  // ── Veículo ──────────────────────────────────────────────────────────────
+  { id: "placa",     label: "Placa",      category: "Veículo", placeholder: "ABC1234",          hint: "Mercosul ou antiga",            icon: Car,            sanitize: (s) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 8) },
+  { id: "chassi",    label: "Chassi",     category: "Veículo", placeholder: "9BWZZZ...",        hint: "VIN 17 caracteres",             icon: Cog,            sanitize: (s) => s.toUpperCase().slice(0, 17) },
+  { id: "renavam",   label: "Renavam",    category: "Veículo", placeholder: "00000000000",      hint: "11 dígitos",                    inputMode: "numeric", icon: ScrollText,   sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
+  { id: "motor",     label: "Motor",      category: "Veículo", placeholder: "Nº do motor",      hint: "alfanumérico",                  icon: Cpu },
+  { id: "cnh",       label: "CNH",        category: "Veículo", placeholder: "CPF do condutor",  hint: "11 dígitos",                    inputMode: "numeric", icon: IdCard,       sanitize: cpf11 },
+  { id: "cnhfull",   label: "CNH Full",   category: "Veículo", placeholder: "CPF do condutor",  hint: "11 dígitos · dados completos CNH · Skylers", inputMode: "numeric", icon: ShieldCheck, sanitize: cpf11 },
+  { id: "frota",     label: "Frota",      category: "Veículo", placeholder: "CPF/CNPJ",         hint: "frota do titular",              icon: Network,        sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
+  // ── Empresa ──────────────────────────────────────────────────────────────
+  { id: "cnpj",      label: "CNPJ",       category: "Empresa", placeholder: "00000000000000",   hint: "14 dígitos",                    inputMode: "numeric", icon: Building2,    sanitize: cnpj14 },
+  { id: "socios",    label: "Sócios",     category: "Empresa", placeholder: "CNPJ",             hint: "14 dígitos",                    inputMode: "numeric", icon: Users,        sanitize: cnpj14 },
+  { id: "fucionarios",label: "Funcionários",category: "Empresa",placeholder: "CNPJ",            hint: "14 dígitos",                    inputMode: "numeric", icon: Users,        sanitize: cnpj14 },
+  { id: "empregos",  label: "Empregos",   category: "Empresa", placeholder: "CPF",              hint: "histórico do CPF",              inputMode: "numeric", icon: Briefcase,    sanitize: cpf11 },
+  // ── Saúde ────────────────────────────────────────────────────────────────
+  { id: "nis",       label: "NIS",        category: "Saúde",   placeholder: "NIS/PIS",          hint: "11 dígitos",                    inputMode: "numeric", icon: CreditCard,   sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
+  { id: "cns",       label: "CNS",        category: "Saúde",   placeholder: "Cartão SUS",       hint: "15 dígitos",                    inputMode: "numeric", icon: Heart,        sanitize: (s) => s.replace(/\D/g, "").slice(0, 15) },
+  { id: "vacinas",   label: "Vacinas",    category: "Saúde",   placeholder: "CPF",              hint: "11 dígitos",                    inputMode: "numeric", icon: Syringe,      sanitize: cpf11 },
+  // ── Outros ───────────────────────────────────────────────────────────────
+  { id: "telefone",  label: "Telefone",   category: "Outros",  placeholder: "5511999999999",    hint: "DDI + DDD + número",            inputMode: "numeric", icon: Phone,        sanitize: (s) => s.replace(/\D/g, "").slice(0, 13) },
+  { id: "email",     label: "Email",      category: "Outros",  placeholder: "exemplo@dominio.com", hint: "texto livre",               icon: Mail },
+  { id: "pix",       label: "PIX",        category: "Outros",  placeholder: "Chave PIX",        hint: "CPF/email/telefone/aleatória",  icon: Wallet },
+  { id: "cep",       label: "CEP",        category: "Outros",  placeholder: "00000000",         hint: "8 dígitos",                     inputMode: "numeric", icon: MapPin,       sanitize: (s) => s.replace(/\D/g, "").slice(0, 8) },
+  { id: "iptu",      label: "IPTU",       category: "Outros",  placeholder: "CPF",              hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: Home,         sanitize: cpf11 },
 ];
 
 const CATEGORIES = ["Pessoa", "Veículo", "Empresa", "Saúde", "Outros"] as const;
@@ -68,12 +93,17 @@ const CATEGORY_GRADIENT: Record<string, string> = {
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; result: unknown | null; createdAt: string }>;
 
+// Tipos disponíveis em ambas as bases (Infinity/Geass e Skylers) → mostra seletor
 const PANEL_EXTERNAL_TIPOS = new Set([
   "cpf", "nome", "rg", "mae", "pai", "parentes", "obito", "nis", "cns", "vacinas",
   "telefone", "email", "pix", "cep", "placa", "chassi", "renavam", "motor", "cnh",
   "frota", "cnpj", "fucionarios", "socios", "empregos",
 ]);
-// "foto" não entra no seletor de base — sempre vai direto para DarkFlow
+// Tipos exclusivos do Skylers → vai direto sem seletor
+const SKYLERS_ONLY_TIPOS = new Set([
+  "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
+  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto",
+]);
 type ExternalBase = "skylers";
 
 export default function Consultas() {
@@ -107,6 +137,11 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
+    if (SKYLERS_ONLY_TIPOS.has(tab)) {
+      // Goes directly to Skylers — no base selector needed
+      await executeQuery(tab, query.trim(), "skylers");
+      return;
+    }
     if (PANEL_EXTERNAL_TIPOS.has(tab)) {
       setPendingQuery({ tipo: tab, dados: query.trim() });
       setShowBaseSelector(true);
@@ -184,7 +219,7 @@ export default function Consultas() {
             Consultas
           </motion.h1>
           <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-            25 módulos · Geass + Skylers API + DarkFlow conectados
+            39 módulos · Geass + Skylers API (80+ endpoints) conectados
           </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
@@ -422,7 +457,7 @@ export default function Consultas() {
                   ) : (
                     <AlertTriangle className="w-4 h-4 text-amber-300" />
                   )}
-                  {item.result && item.success && (
+                  {!!item.result && item.success && (
                     <button
                       onClick={() => loadSavedResult(item)}
                       title="Ver resultado salvo"

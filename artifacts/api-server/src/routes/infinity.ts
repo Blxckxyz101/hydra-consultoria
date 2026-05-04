@@ -49,8 +49,9 @@ const THEME_HSL: Record<string, string> = {
 };
 
 const TIPO_TO_SKYLERS: Record<string, string> = {
+  // ── tipos comuns (Geass + Skylers) ──────────────────────────────────────
   cpf: "iseek-cpf",
-  nome: "iseek-dados---nomeabreviadofriltros",
+  nome: "iseek-dados---nomeabreviadofiltros",
   rg: "iseek-dados---rg",
   mae: "iseek-dados---mae",
   pai: "iseek-dados---pai",
@@ -73,6 +74,21 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   fucionarios: "iseek-dados---func",
   socios: "iseek-dados---cnpj",
   empregos: "iseek-dados---rais",
+  // ── tipos exclusivos Skylers ─────────────────────────────────────────────
+  cpfbasico: "iseek-cpfbasico",
+  titulo: "iseek-dados---titulo",
+  score: "iseek-dados---score",
+  irpf: "iseek-dados---irpf",
+  beneficios: "iseek-dados---beneficios",
+  mandado: "iseek-dados---mandado",
+  dividas: "iseek-dados---dividas",
+  bens: "iseek-dados---bens",
+  processos: "iseek-dados---processos",
+  spc: "cpf-spc",
+  iptu: "iseek-dados---iptu",
+  certidoes: "iseek-dados---certidoes",
+  cnhfull: "cnh-full",
+  foto: "iseek-fotos---fotocnh",
 };
 
 const DAILY_RATE_LIMIT = 350;
@@ -120,7 +136,7 @@ const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
   "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
   "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
-  "motor", "vacinas", "foto",
+  "motor", "vacinas",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
@@ -742,6 +758,18 @@ function parseSkylers(data: unknown): Parsed {
     }
   }
 
+  // ── Detect photo URLs in fields → promote to FOTO_URL ────────────────────
+  const photoUrlRe = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
+  const existingFoto = result.fields.find((f) => f.key === "FOTO_URL");
+  if (!existingFoto) {
+    for (const f of result.fields) {
+      if (photoUrlRe.test(f.value.trim())) {
+        result.fields.push({ key: "FOTO_URL", value: f.value.trim() });
+        break;
+      }
+    }
+  }
+
   return result;
 }
 
@@ -792,29 +820,6 @@ async function callSkylers(
   }
 }
 
-// ─── DarkFlow (foto CNH) ────────────────────────────────────────────────────
-const DARKFLOW_URL = "https://darkflowapis.space/api.php";
-const DARKFLOW_TOK = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
-
-async function callFoto(cpf: string, signal: AbortSignal): Promise<{
-  ok: boolean; photoUrl?: string; error?: string;
-}> {
-  try {
-    const cpfNum = cpf.replace(/\D/g, "");
-    const r = await fetch(
-      `${DARKFLOW_URL}?token=${DARKFLOW_TOK}&modulo=foto_br&consulta=${encodeURIComponent(cpfNum)}`,
-      { signal },
-    );
-    if (!r.ok) return { ok: false, error: `DarkFlow HTTP ${r.status}` };
-    const j = await r.json() as { url?: string; base64?: string; error?: string; status?: number };
-    if (j.error || j.status === 500 || !j.url) {
-      return { ok: false, error: j.error ?? "Foto não encontrada" };
-    }
-    return { ok: true, photoUrl: j.url };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "erro de rede" };
-  }
-}
 
 // ─── auth ──────────────────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res) => {
@@ -1102,9 +1107,8 @@ router.get("/consultas", requireAuth, async (req, res) => {
 // ─── bases status ──────────────────────────────────────────────────────────
 router.get("/bases/status", requireAuth, async (_req, res) => {
   const bases = [
-    { id: "geass",    name: "Geass API",       description: "Provedor OSINT principal · 24 tipos",           url: PROVIDER_BASE.replace("/api/consulta", "/") },
-    { id: "skylers",  name: "Skylers API",     description: "Provedor OSINT avançado · 90+ módulos",         url: `${SKYLERS_BASE}/token/info?token=${SKYLERS_TOKEN}` },
-    { id: "darkflow", name: "DarkFlow",           description: "Foto CNH · consulta biométrica por CPF",      url: "https://darkflowapis.space" },
+    { id: "geass",    name: "Geass API",    description: "Provedor OSINT principal · 24 tipos",                url: PROVIDER_BASE.replace("/api/consulta", "/") },
+    { id: "skylers",  name: "Skylers API",  description: "Provedor OSINT avançado · 80+ módulos + Foto CNH",   url: `${SKYLERS_BASE}/token/info?token=${SKYLERS_TOKEN}` },
     { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
     { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
     { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
@@ -1240,39 +1244,6 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     return;
   }
 
-  // ─── Foto CNH (DarkFlow) ─────────────────────────────────────────────────
-  if (tipo === "foto") {
-    const cpfNum = onlyDigits(dadosRaw);
-    if (cpfNum.length !== 11) {
-      res.status(400).json({ error: "CPF inválido (11 dígitos)" });
-      return;
-    }
-    const fotoCtrl = new AbortController();
-    const fotoTimer = setTimeout(() => fotoCtrl.abort(), 15_000);
-    const fotoResult = await callFoto(cpfNum, fotoCtrl.signal);
-    clearTimeout(fotoTimer);
-    const fotoFields: Parsed["fields"] = [{ key: "CPF", value: cpfNum }];
-    if (fotoResult.ok && fotoResult.photoUrl) {
-      fotoFields.push({ key: "FOTO_URL", value: fotoResult.photoUrl });
-      fotoFields.push({ key: "Fonte", value: "DarkFlow · Biometria CNH" });
-    }
-    const fotoParsed: Parsed = {
-      fields: fotoFields,
-      sections: [],
-      raw: fotoResult.ok ? `Foto CNH encontrada: ${fotoResult.photoUrl}` : `Foto não encontrada: ${fotoResult.error ?? "CPF sem foto cadastrada"}`,
-    };
-    await logConsulta({ tipo: "foto", query: cpfNum, username, success: fotoResult.ok, result: fotoParsed });
-    bumpCaches(username);
-    res.json({
-      success: fotoResult.ok,
-      tipo: "foto",
-      query: cpfNum,
-      data: fotoParsed,
-      error: fotoResult.ok ? null : (fotoResult.error ?? "Foto não encontrada para este CPF"),
-    });
-    return;
-  }
-
   // Light validation per tipo
   let dados = dadosRaw;
   if (["cpf", "nis", "cns", "mae", "pai", "parentes", "obito", "vacinas"].includes(tipo)) {
@@ -1354,25 +1325,36 @@ const CONSULTA_TOOL = {
   function: {
     name: "consultar_infinity",
     description:
-      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, foto de CNH, etc. O tipo 'foto' busca a foto CNH da pessoa pelo CPF.",
+      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, foto CNH, score, benefícios, dívidas, IRPF, título de eleitor, processos, etc.",
     parameters: {
       type: "object",
       properties: {
         tipo: {
           type: "string",
           enum: [
-            "cpf", "nome", "placa", "chassi", "telefone", "pix", "nis", "cns",
-            "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
-            "socios", "empregos", "cnh", "renavam", "obito", "rg", "email", "motor", "vacinas",
+            "cpf", "cpfbasico", "nome", "rg", "mae", "pai", "parentes", "obito",
+            "placa", "chassi", "telefone", "pix", "nis", "cns",
+            "cep", "frota", "cnpj", "fucionarios", "socios", "empregos",
+            "cnh", "cnhfull", "renavam", "motor", "vacinas", "email",
+            "titulo", "score", "irpf", "beneficios", "mandado",
+            "dividas", "bens", "processos", "spc", "iptu", "certidoes",
             "foto",
           ],
-          description: "Tipo de consulta OSINT. Use 'foto' para buscar foto da CNH pelo CPF.",
+          description:
+            "Tipo de consulta OSINT. " +
+            "Use 'foto' para foto da CNH pelo CPF (Skylers). " +
+            "Use 'score' para score de crédito. " +
+            "Use 'irpf' para declaração de imposto de renda. " +
+            "Use 'beneficios' para Bolsa Família/BPC. " +
+            "Use 'dividas' para dívidas BACEN/FGTS. " +
+            "Use 'titulo' para título de eleitor. " +
+            "Tipos exclusivos Skylers: titulo, score, irpf, beneficios, mandado, dividas, bens, processos, spc, iptu, certidoes, cnhfull, foto, cpfbasico.",
         },
-        dados: { type: "string", description: "O dado a ser consultado (CPF, placa, nome, etc.)" },
+        dados: { type: "string", description: "O dado a ser consultado (CPF, placa, nome, CNPJ, etc.)" },
         base: {
           type: "string",
           enum: ["geass", "skylers"],
-          description: "Base de dados opcional. Use 'skylers' para usar a Skylers API (90+ módulos). Padrão: geass.",
+          description: "Base de dados. Para tipos exclusivos Skylers, a base é definida automaticamente. Para tipos comuns, use 'skylers' para consultar na Skylers API.",
         },
       },
       required: ["tipo", "dados"],
@@ -1451,10 +1433,10 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
 
   const systemPrompt =
     "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. " +
-    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, foto de CNH, etc.). " +
+    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, foto de CNH, score, benefícios, dívidas, etc.). " +
     "NÃO use a ferramenta em resposta a: agradecimentos, saudações, perguntas sobre resultados anteriores, confirmações ou qualquer mensagem que não contenha um pedido claro de nova consulta. " +
     "Nunca repita consultas de mensagens anteriores. Nunca invente dados. " +
-    "IMPORTANTE: quando uma foto CNH for encontrada, coloque a URL da imagem EXATAMENTE em uma linha separada, sozinha, sem nenhum outro texto na mesma linha. " +
+    "IMPORTANTE: quando uma foto CNH for encontrada (campo FOTO_URL ou URL de imagem), coloque a URL da imagem EXATAMENTE em uma linha separada, sozinha, sem nenhum outro texto na mesma linha. " +
     "Exemplo correto de resposta com foto:\nEncontrei a foto CNH:\n\nhttps://url-da-foto.jpg\n\nCPF consultado: 12345678901. " +
     "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
 
@@ -1496,20 +1478,13 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         const dados = String(args.dados ?? "");
 
         if (tipo && dados) {
-          const base = String((args as { base?: string }).base ?? "geass");
+          const SKYLERS_ONLY_AI = new Set(["titulo", "score", "irpf", "beneficios", "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "cpfbasico"]);
+          const rawBase = String((args as { base?: string }).base ?? "geass");
+          const base = SKYLERS_ONLY_AI.has(tipo) ? "skylers" : rawBase;
           res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
           let toolContent = "";
 
-          if (tipo === "foto") {
-            // Photo CNH lookup via DarkFlow
-            const fotoResult = await callFoto(dados, new AbortController().signal);
-            if (fotoResult.ok && fotoResult.photoUrl) {
-              // URL isolada na última linha para renderMarkdown detectar como imagem
-              toolContent = `Foto CNH encontrada para o CPF ${dados}.\n\n${fotoResult.photoUrl}`;
-            } else {
-              toolContent = `Foto CNH não encontrada para o CPF ${dados}: ${fotoResult.error ?? "CPF sem foto cadastrada na CNH"}`;
-            }
-          } else if (base === "skylers") {
+          if (base === "skylers") {
             const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
             if (modulo) {
               const sk = await callSkylers(modulo, dados, new AbortController().signal);
