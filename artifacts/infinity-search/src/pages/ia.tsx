@@ -43,7 +43,7 @@ function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-const IMAGE_URL_RE = /https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?/i;
+const IMAGE_URL_RE = /(?:https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?|(?:https?:)?\/\/[^\s]+\/api\/infinity\/foto\/[a-f0-9]{24}|\/api\/infinity\/foto\/[a-f0-9]{24})/i;
 
 function renderMarkdown(text: string) {
   const lines = text.split("\n");

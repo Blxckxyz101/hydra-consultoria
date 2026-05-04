@@ -20,6 +20,18 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
 
+// ─── Temp foto store (base64 → URL) ─────────────────────────────────────────
+interface FotoEntry { dataUri: string; expires: number; }
+const fotoStore = new Map<string, FotoEntry>();
+const FOTO_TTL_MS = 10 * 60 * 1000; // 10 minutes
+function storeFoto(dataUri: string): string {
+  const id = crypto.randomBytes(12).toString("hex");
+  fotoStore.set(id, { dataUri, expires: Date.now() + FOTO_TTL_MS });
+  // Clean expired entries
+  for (const [k, v] of fotoStore) { if (v.expires < Date.now()) fotoStore.delete(k); }
+  return id;
+}
+
 // ─── Notifications store ─────────────────────────────────────────────────────
 interface Notification {
   id: string;
@@ -51,7 +63,7 @@ const THEME_HSL: Record<string, string> = {
 const TIPO_TO_SKYLERS: Record<string, string> = {
   // ── tipos comuns (Geass + Skylers) ──────────────────────────────────────
   cpf: "iseek-cpf",
-  nome: "iseek-dados---nomeabreviadofiltros",
+  nome: "iseek-dados---nomeabreviadofriltros",
   rg: "iseek-dados---rg",
   mae: "iseek-dados---mae",
   pai: "iseek-dados---pai",
@@ -1632,8 +1644,9 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
     "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, foto de CNH, score, benefícios, dívidas, etc.). " +
     "NÃO use a ferramenta em resposta a: agradecimentos, saudações, perguntas sobre resultados anteriores, confirmações ou qualquer mensagem que não contenha um pedido claro de nova consulta. " +
     "Nunca repita consultas de mensagens anteriores. Nunca invente dados. " +
-    "IMPORTANTE: quando uma foto CNH for encontrada (campo FOTO_URL ou URL de imagem), coloque a URL da imagem EXATAMENTE em uma linha separada, sozinha, sem nenhum outro texto na mesma linha. " +
-    "Exemplo correto de resposta com foto:\nEncontrei a foto CNH:\n\nhttps://url-da-foto.jpg\n\nCPF consultado: 12345678901. " +
+    "CRÍTICO — quando o resultado da consulta contiver FOTO_URL, coloque o valor EXATAMENTE em uma linha separada, sem nenhum outro texto nessa linha. Assim o painel renderiza a imagem automaticamente. " +
+    "Exemplo correto:\nEncontrei a foto biométrica:\n\n/api/infinity/foto/abc123\n\nDados encontrados: CPF ...\n\n" +
+    "Se FOTO_URL começar com /api/infinity/foto/, copie-a EXATAMENTE como está. Se for https://, copie também exatamente. NUNCA omita nem modifique a URL da foto. " +
     "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
 
   const cleanMessages = messages.filter(
@@ -1656,7 +1669,7 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         messages: finalMessages,
         tools: [CONSULTA_TOOL],
         tool_choice: "auto",
-        max_tokens: 200,
+        max_tokens: 400,
       }),
     });
 
@@ -1685,7 +1698,8 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
             p.fields.forEach((f) => {
               if (f.key === "FOTO_URL") {
                 if (f.value.startsWith("data:image")) {
-                  lines.push("FOTO_URL: [FOTO BIOMÉTRICA ENCONTRADA — informe ao usuário que uma foto foi encontrada e está disponível no painel]");
+                  const fotoId = storeFoto(f.value);
+                  lines.push(`FOTO_URL: /api/infinity/foto/${fotoId}`);
                 } else {
                   lines.push(`FOTO_URL: ${f.value}`);
                 }
@@ -1736,6 +1750,23 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   } catch { /* phase 1 failed — fall through to normal streaming */ }
 
   await streamGroq(apiKey, finalMessages, res);
+});
+
+// ─── Temp foto serve endpoint ─────────────────────────────────────────────────
+router.get("/foto/:id", (req, res) => {
+  const entry = fotoStore.get(req.params.id);
+  if (!entry || entry.expires < Date.now()) {
+    res.status(404).send("Foto não encontrada ou expirada");
+    return;
+  }
+  // dataUri is like: data:image/jpeg;base64,/9j/...
+  const match = entry.dataUri.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+  if (!match) { res.status(500).send("Formato inválido"); return; }
+  const [, mime, b64] = match;
+  const buf = Buffer.from(b64, "base64");
+  res.setHeader("Content-Type", mime!);
+  res.setHeader("Cache-Control", "no-store");
+  res.end(buf);
 });
 
 // ─── External scraper routes ───────────────────────────────────────────────

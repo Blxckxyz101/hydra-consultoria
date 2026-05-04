@@ -123,7 +123,7 @@ const MODULES: SkylersModule[] = [
 
   // ── ESPECIAIS ─────────────────────────────────────────────────────────────
   { key: "cnh-full", label: "CNH Full", category: "Especiais", input: "cpf", hint: "CPF do condutor", placeholder: "00000000000", icon: IdCard },
-
+  { key: "credilink", label: "CPF CrediLink", category: "Especiais", input: "cpf", hint: "CPF — crédito e score", placeholder: "00000000000", icon: BarChart3 },
   { key: "cpf-spc", label: "CPF SPC", category: "Especiais", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: BarChart3 },
   { key: "iseek-dados---catcpf", label: "Catálogo CPF", category: "Especiais", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: FileText },
   { key: "iseek-dados---catnumero", label: "Catálogo Número", category: "Especiais", input: "tel", hint: "número de telefone", placeholder: "11999999999", icon: Phone },
