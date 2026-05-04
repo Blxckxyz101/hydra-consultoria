@@ -94,6 +94,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   funcionarios: "iseek-dados---func",
   socios: "iseek-dados---cnpj",
   empregos: "iseek-dados---rais",
+  rais:     "iseek-dados---rais",
   fotodetran: "iseek-dados---fotodetran",
   crlvto: "iseek-dados---crlvto",
   crlvmt: "iseek-dados---crlvmt",

@@ -168,7 +168,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/favoritos", label: "Favoritos", icon: Star },
     { href: "/bases", label: "Monitor de Bases", icon: Server },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
-    { href: "/skylers", label: "Skylers API", icon: Database },
     { href: "/configuracoes", label: "Configurações", icon: Settings },
     { href: "/personalizar", label: "Personalizar", icon: Palette },
   ];
