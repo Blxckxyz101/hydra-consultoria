@@ -115,7 +115,7 @@ const TIPOS = [
   { id: "fotosp",       label: "📸 Foto SP",          prompt: "CPF da pessoa (11 dígitos)" },
   { id: "fotorj",       label: "📸 Foto RJ",          prompt: "CPF da pessoa (11 dígitos)" },
   { id: "fotoms",       label: "📸 Foto MS",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotonc",       label: "📸 Foto NC",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotonc",       label: "📸 Foto Nacional",    prompt: "CPF da pessoa (11 dígitos)" },
   { id: "fotoes",       label: "📸 Foto ES",          prompt: "CPF da pessoa (11 dígitos)" },
   { id: "fototo",       label: "📸 Foto TO",          prompt: "CPF da pessoa (11 dígitos)" },
   { id: "fotoro",       label: "📸 Foto RO",          prompt: "CPF da pessoa (11 dígitos)" },
@@ -192,7 +192,7 @@ const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
   fotosp:        { title: "FOTO SP  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   fotorj:        { title: "FOTO RJ  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   fotoms:        { title: "FOTO MS  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotonc:        { title: "FOTO NC  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotonc:        { title: "FOTO NACIONAL  ·  SKYLERS",    lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   fotoes:        { title: "FOTO ES  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   fototo:        { title: "FOTO TO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   fotoro:        { title: "FOTO RO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
@@ -711,8 +711,9 @@ async function executeSkylersBotQuery(
       lines.push("");
     }
     if (fotoField) {
-      lines.push("FOTO CNH"); lines.push(LINE2);
-      lines.push(`  URL: ${fotoField[1]}`);
+      const isBase64 = fotoField[1].startsWith("data:image");
+      lines.push("FOTO"); lines.push(LINE2);
+      lines.push(isBase64 ? "  [imagem base64 — enviada como foto acima]" : `  URL: ${fotoField[1]}`);
       lines.push("");
     }
     for (const sec of sections) {
@@ -739,7 +740,7 @@ async function executeSkylersBotQuery(
     ];
     if (displayFields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${displayFields.length}`);
     if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
-    if (fotoField) summaryParts.push(`<code>◈</code> <b>Foto CNH:</b> disponível no arquivo`);
+    if (fotoField) summaryParts.push(`<code>◈</code> <b>Foto:</b> enviada como imagem`);
 
     const preview = displayFields.slice(0, 5);
     if (preview.length > 0) {
@@ -751,6 +752,31 @@ async function executeSkylersBotQuery(
     }
 
     await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+
+    // ── Send photo (base64 or URL) before the document ──────────────────────
+    if (fotoField) {
+      const fotoVal = fotoField[1];
+      try {
+        if (fotoVal.startsWith("data:image")) {
+          // Base64 data URI → extract raw bytes and send as BufferedPhoto
+          const b64 = fotoVal.replace(/^data:image\/\w+;base64,/, "");
+          const buf = Buffer.from(b64, "base64");
+          await ctx.telegram.sendPhoto(chatId,
+            { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
+            { caption: `📸 <b>Foto encontrada</b> · Módulo: <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
+          );
+        } else if (/^https?:\/\//i.test(fotoVal)) {
+          // Regular URL
+          await ctx.telegram.sendPhoto(chatId, fotoVal,
+            { caption: `📸 <b>Foto encontrada</b> · Módulo: <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
+          ).catch(async () => {
+            // If URL send fails, just note it in summary (already handled)
+          });
+        }
+      } catch {
+        // Non-fatal — photo send failed, txt still goes out
+      }
+    }
 
     const filename = `skylers-${tipo}-${Date.now()}.txt`;
     const sentDoc = await ctx.telegram.sendDocument(chatId,

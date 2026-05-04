@@ -90,7 +90,7 @@ const MODULES: SkylersModule[] = [
   { key: "iseek-fotos---fotosp", label: "Foto SP", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotorj", label: "Foto RJ", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotoms", label: "Foto MS", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
-  { key: "iseek-fotos---fotonc", label: "Foto NC", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
+  { key: "iseek-fotos---fotonc", label: "Foto Nacional", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotoes", label: "Foto ES", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fototo", label: "Foto TO", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotoro", label: "Foto RO", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },

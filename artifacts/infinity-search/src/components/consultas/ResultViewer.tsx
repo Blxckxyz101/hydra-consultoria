@@ -271,7 +271,14 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       `Data: ${new Date().toLocaleString("pt-BR")}`,
       ``,
     ];
-    parsed.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+    parsed.fields.forEach((f) => {
+      // Skip raw base64 data — it's huge and unreadable in plain text
+      if (f.key === "FOTO_URL" && f.value.startsWith("data:image")) {
+        lines.push(`${f.key}: [imagem base64 — use a opção Baixar Foto]`);
+      } else {
+        lines.push(`${f.key}: ${f.value}`);
+      }
+    });
     parsed.sections.forEach((s) => {
       lines.push("");
       lines.push(`━ ${s.name} (${s.items.length}) ━`);
@@ -294,7 +301,10 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
 
   const downloadPdf = () => {
     const date = new Date().toLocaleString("pt-BR");
-    const fieldsHtml = parsed.fields.map(f => `
+    const fotoForPdf = parsed.fields.find((f) => f.key === "FOTO_URL");
+    const fieldsHtml = parsed.fields
+      .filter((f) => f.key !== "FOTO_URL")
+      .map(f => `
       <tr>
         <td class="key">${f.key}</td>
         <td class="val">${f.value || "—"}</td>
@@ -346,6 +356,14 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     </div>
   </div>
 
+  ${fotoForPdf ? `
+  <div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;padding:12px;border:1px solid #e0f2f8;border-radius:8px;background:#f4fbfd;">
+    <img src="${fotoForPdf.value}" alt="Foto Biométrica" style="width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid #0891b2;" onerror="this.style.display='none'" />
+    <div>
+      <div style="font-weight:700;color:#0e7490;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Foto Biométrica</div>
+      <div style="color:#555;font-size:11px;">Encontrada na base de dados</div>
+    </div>
+  </div>` : ""}
   ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}
   ${sectionsHtml}
 
@@ -425,7 +443,7 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
         </div>
       </div>
 
-      {/* Foto CNH card */}
+      {/* Foto card */}
       {photoUrl && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -436,7 +454,7 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
             <div className="absolute inset-0 rounded-xl bg-cyan-400/20 blur-xl" />
             <img
               src={photoUrl}
-              alt="Foto CNH"
+              alt="Foto Biométrica"
               className="relative w-32 h-40 object-cover rounded-xl border-2 border-cyan-400/40 shadow-[0_0_30px_rgba(34,211,238,0.3)]"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
@@ -444,19 +462,31 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
           <div className="flex flex-col gap-2 text-center sm:text-left">
             <div className="flex items-center gap-2 justify-center sm:justify-start">
               <Camera className="w-4 h-4 text-cyan-400" />
-              <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-cyan-300">Foto CNH · DarkFlow</span>
+              <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-cyan-300">Foto Biométrica · Skylers</span>
             </div>
-            <p className="text-sm text-muted-foreground leading-relaxed">Foto biométrica encontrada na base de dados da CNH.</p>
+            <p className="text-sm text-muted-foreground leading-relaxed">Foto biométrica encontrada na base de dados.</p>
             <div className="flex gap-2 justify-center sm:justify-start flex-wrap">
-              <CopyButton text={photoUrl} label="Copiar URL" />
-              <a
-                href={photoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
-              >
-                <Eye className="w-3 h-3" /> Abrir original
-              </a>
+              {photoUrl.startsWith("data:image") ? (
+                <a
+                  href={photoUrl}
+                  download={`foto-biometrica-${tipo}-${Date.now()}.jpg`}
+                  className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
+                >
+                  <Download className="w-3 h-3" /> Baixar Foto
+                </a>
+              ) : (
+                <>
+                  <CopyButton text={photoUrl} label="Copiar URL" />
+                  <a
+                    href={photoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
+                  >
+                    <Eye className="w-3 h-3" /> Abrir original
+                  </a>
+                </>
+              )}
             </div>
           </div>
         </motion.div>

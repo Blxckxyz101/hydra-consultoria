@@ -57,7 +57,7 @@ const TABS: TabDef[] = [
   { id: "fotosp",       label: "Foto SP",       category: "Fotos", placeholder: "CPF", hint: "São Paulo · Skylers",                         inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
   { id: "fotorj",       label: "Foto RJ",       category: "Fotos", placeholder: "CPF", hint: "Rio de Janeiro · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
   { id: "fotoms",       label: "Foto MS",       category: "Fotos", placeholder: "CPF", hint: "Mato Grosso do Sul · Skylers",                inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
-  { id: "fotonc",       label: "Foto NC",       category: "Fotos", placeholder: "CPF", hint: "Santa Catarina · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotonc",       label: "Foto Nacional", category: "Fotos", placeholder: "CPF", hint: "Nacional · Skylers",                          inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
   { id: "fotoes",       label: "Foto ES",       category: "Fotos", placeholder: "CPF", hint: "Espírito Santo · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
   { id: "fototo",       label: "Foto TO",       category: "Fotos", placeholder: "CPF", hint: "Tocantins · Skylers",                         inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
   { id: "fotoro",       label: "Foto RO",       category: "Fotos", placeholder: "CPF", hint: "Rondônia · Skylers",                          inputMode: "numeric", icon: Camera,      sanitize: cpf11 },

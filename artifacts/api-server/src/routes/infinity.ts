@@ -820,6 +820,28 @@ function parseSkylers(data: unknown): Parsed {
     }
   }
 
+  // ── Detect base64 image data in any field → promote to FOTO_URL ──────────
+  // Keys that commonly carry base64 photo data from Skylers foto modules
+  const BASE64_PHOTO_KEYS = /^(foto|imagem|image|photo|pic|thumb|face|base64|fotografia|retrato)/i;
+  // A valid base64 string: only base64 chars, long enough to be an image (>500 chars)
+  const BASE64_RE = /^[A-Za-z0-9+/\r\n]{500,}={0,2}$/;
+
+  if (!result.fields.some((f) => f.key === "FOTO_URL")) {
+    let base64FieldKey: string | null = null;
+    for (const f of result.fields) {
+      const clean = f.value.replace(/[\r\n\s]/g, "");
+      if (BASE64_PHOTO_KEYS.test(f.key.trim()) && BASE64_RE.test(clean)) {
+        base64FieldKey = f.key;
+        result.fields.push({ key: "FOTO_URL", value: `data:image/jpeg;base64,${clean}` });
+        break;
+      }
+    }
+    // Remove the raw base64 field from display (it's huge and unreadable)
+    if (base64FieldKey) {
+      result.fields = result.fields.filter((f) => f.key !== base64FieldKey);
+    }
+  }
+
   // ── Detect photo URLs in any field → promote to FOTO_URL ──────────────────
   if (!result.fields.some((f) => f.key === "FOTO_URL")) {
     for (const f of result.fields) {
