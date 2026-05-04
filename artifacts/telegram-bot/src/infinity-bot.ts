@@ -106,13 +106,14 @@ const TIPOS = [
   { id: "iptu",        label: "🏠 IPTU",            prompt: "CPF (11 dígitos)" },
   { id: "certidoes",   label: "📜 Certidões",       prompt: "CPF (11 dígitos)" },
   { id: "cnhfull",     label: "🛡️ CNH Full",        prompt: "CPF do condutor (11 dígitos)" },
+  { id: "biometria",   label: "🫆 Biometria",        prompt: "CPF da pessoa (11 dígitos)" },
 ] as const;
 
 type TipoId = (typeof TIPOS)[number]["id"];
 
 // Tipos que vão direto para Skylers (sem seletor de base)
 const SKYLERS_ONLY_TIPOS = new Set<string>([
-  "cpfbasico", "foto", "titulo", "score", "irpf", "beneficios",
+  "cpfbasico", "foto", "biometria", "titulo", "score", "irpf", "beneficios",
   "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull",
 ]);
 
@@ -155,6 +156,7 @@ const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
   iptu:        { title: "IPTU  ·  SKYLERS",           lines: ["DIGITE O CPF DO PROPRIETÁRIO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   certidoes:   { title: "CERTIDÕES  ·  SKYLERS",      lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   cnhfull:     { title: "CNH COMPLETO  ·  SKYLERS",   lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  biometria:   { title: "BIOMETRIA  ·  SKYLERS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
 };
 
 function buildQueryPrompt(tipoId: string): string {
@@ -195,7 +197,107 @@ const EXTERNAL_BASES_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
 const INTERNAL_API_BASE = "http://localhost:8080";
 const INTERNAL_KEY = "infinity-bot";
 
-function buildBaseKeyboard(tipo: string) {
+// ── Tier system ────────────────────────────────────────────────────────────────
+const FREE_DAILY_LIMIT = 10;
+
+// Tipos que o free pode usar em grupos
+const FREE_TIPOS = new Set([
+  "cpf", "nome", "telefone", "email", "placa", "cnpj", "cep", "pix", "rg",
+]);
+
+// Usuários BLACK (admin-managed, in-memory)
+const PAID_USERS = new Set<number>();
+
+// Rastreador de consultas diárias: "userId:DD/MM/YYYY" → count
+const freeQueryTracker = new Map<string, number>();
+
+function isPaid(userId: number, username?: string): boolean {
+  return isAdmin(userId, username) || PAID_USERS.has(userId);
+}
+
+function getFreeKey(userId: number): string {
+  return `${userId}:${new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}`;
+}
+
+function getFreeUsed(userId: number): number {
+  return freeQueryTracker.get(getFreeKey(userId)) ?? 0;
+}
+
+function trackFreeQuery(userId: number): void {
+  const k = getFreeKey(userId);
+  freeQueryTracker.set(k, (freeQueryTracker.get(k) ?? 0) + 1);
+}
+
+function buildUpgradeKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("💎 CONTRATAR PLANO BLACK", SUPPORT_URL)],
+    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
+    [Markup.button.callback("↩ Voltar ao Menu", "home")],
+  ]);
+}
+
+function buildUpgradeTipoMsg(label: string): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ 💎 MÓDULO EXCLUSIVO — BLACK\n` +
+    `┠────────────────────────────\n` +
+    `┃ • MÓDULO: <b>${label}</b>\n` +
+    `┃ • STATUS: 🔒 Requer plano BLACK\n` +
+    `┠────────────────────────────\n` +
+    `┃ ✅ PLANO BLACK INCLUI:\n` +
+    `┃  + Todos os módulos disponíveis\n` +
+    `┃  + Foto CNH, Biometria, Score...\n` +
+    `┃  + Sem limite de consultas\n` +
+    `┃  + Acesso via chat privado\n` +
+    `┃  + Painel web completo\n` +
+    `┠────────────────────────────\n` +
+    `┃ 👇 CLIQUE ABAIXO PARA CONTRATAR\n` +
+    `╰────────────────────────────╯`
+  );
+}
+
+function buildUpgradeLimitMsg(used: number): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ ⚠️ LIMITE DIÁRIO ATINGIDO\n` +
+    `┠────────────────────────────\n` +
+    `┃ • USADAS: <b>${used}/${FREE_DAILY_LIMIT}</b> consultas hoje\n` +
+    `┃ • RENOVA: meia-noite (horário BRT)\n` +
+    `┠────────────────────────────\n` +
+    `┃ Com o plano <b>BLACK</b>:\n` +
+    `┃  + Consultas ilimitadas\n` +
+    `┃  + Todos os módulos\n` +
+    `┃  + Acesso pelo chat privado\n` +
+    `┠────────────────────────────\n` +
+    `┃ 👇 UPGRADE AGORA\n` +
+    `╰────────────────────────────╯`
+  );
+}
+
+function buildUpgradeDMMsg(): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ 🔒 ACESSO PRIVADO — PLANO BLACK\n` +
+    `┠────────────────────────────\n` +
+    `┃ O chat privado é exclusivo para\n` +
+    `┃ assinantes do plano <b>BLACK</b>.\n` +
+    `┠────────────────────────────\n` +
+    `┃ ✅ PLANO BLACK INCLUI:\n` +
+    `┃  + Acesso total — todos os módulos\n` +
+    `┃  + Foto CNH · Biometria · Score\n` +
+    `┃  + IRPF · Mandado · SPC · Bens\n` +
+    `┃  + Consultas ilimitadas\n` +
+    `┃  + Painel web completo\n` +
+    `┠────────────────────────────\n` +
+    `┃ 👇 CONTRATE AGORA\n` +
+    `╰────────────────────────────╯`
+  );
+}
+
+function buildBaseKeyboard(tipo: string, freeMode: boolean = false) {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
   if (["cpf", "nome"].includes(tipo)) {
     rows.push([Markup.button.callback("🏥 SISREG-III", "base:sisreg")]);
@@ -204,6 +306,9 @@ function buildBaseKeyboard(tipo: string) {
     rows.push([Markup.button.callback("💉 SI-PNI", "base:sipni")]);
   }
   rows.push([Markup.button.callback("∞ Infinity Search", "base:infinity")]);
+  if (freeMode) {
+    rows.push([Markup.button.url("💎 BLACK — Acesso Completo", SUPPORT_URL)] as any);
+  }
   rows.push([Markup.button.callback("❌ Cancelar", "home")]);
   return Markup.inlineKeyboard(rows);
 }
@@ -376,14 +481,21 @@ function buildSupportKeyboard() {
   ]);
 }
 
-function buildTiposKeyboard() {
+function buildTiposKeyboard(freeMode: boolean = false) {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
   const arr = [...TIPOS];
   for (let i = 0; i < arr.length; i += 2) {
+    const t1 = arr[i];
+    const t2 = arr[i + 1];
+    const lock1 = freeMode && !FREE_TIPOS.has(t1.id);
+    const lock2 = t2 && freeMode && !FREE_TIPOS.has(t2.id);
     rows.push([
-      Markup.button.callback(arr[i].label, `tipo:${arr[i].id}`),
-      ...(arr[i + 1] ? [Markup.button.callback(arr[i + 1].label, `tipo:${arr[i + 1].id}`)] : []),
+      Markup.button.callback(lock1 ? `🔒 ${t1.label}` : t1.label, `tipo:${t1.id}`),
+      ...(t2 ? [Markup.button.callback(lock2 ? `🔒 ${t2.label}` : t2.label, `tipo:${t2.id}`)] : []),
     ]);
+  }
+  if (freeMode) {
+    rows.push([Markup.button.url("💎 Ver Plano BLACK", SUPPORT_URL)] as any);
   }
   rows.push([Markup.button.callback("↩ Cancelar", "home")]);
   return Markup.inlineKeyboard(rows);
@@ -633,19 +745,24 @@ export function startInfinityBot(): void {
   ];
   const ADMIN_COMMANDS = [
     ...USER_COMMANDS,
-    { command: "groupid",    description: "🆔 Ver ID do grupo/chat atual" },
-    { command: "liberar",    description: "✅ Liberar bot neste grupo" },
-    { command: "bloquear",   description: "🔒 Bloquear bot neste grupo" },
-    { command: "channelid",  description: "📡 Capturar ID do canal" },
-    { command: "addadmin",   description: "👑 Adicionar admin por ID" },
-    { command: "status_bot", description: "📊 Status do bot e grupos" },
+    { command: "groupid",     description: "🆔 Ver ID do grupo/chat atual" },
+    { command: "liberar",     description: "✅ Liberar bot neste grupo" },
+    { command: "bloquear",    description: "🔒 Bloquear bot neste grupo" },
+    { command: "channelid",   description: "📡 Capturar ID do canal" },
+    { command: "addadmin",    description: "👑 Adicionar admin por ID" },
+    { command: "status_bot",  description: "📊 Status do bot e grupos" },
+    { command: "addpago",     description: "💎 Adicionar usuário BLACK (ID)" },
+    { command: "removepago",  description: "❌ Remover usuário BLACK (ID)" },
+    { command: "listpagos",   description: "📋 Listar usuários BLACK" },
   ];
   void bot.telegram.setMyCommands(USER_COMMANDS).catch(() => {});
 
   function buildHomeText(from: { username?: string; first_name?: string; id: number }): string {
     const name = from.username ? `@${from.username}` : (from.first_name || "usuário");
     const admin = isAdmin(from.id, from.username);
-    const cargo = admin ? "admin" : "membro";
+    const paid = isPaid(from.id, from.username);
+    const cargo = admin ? "admin" : paid ? "black" : "membro";
+    const plano = admin ? "admin" : paid ? "💎 BLACK" : "🔓 FREE";
     return (
       `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
       `┃\n` +
@@ -653,7 +770,7 @@ export function startInfinityBot(): void {
       `┠────────────────────────────\n` +
       `┃ • CARGO: <code>${cargo}</code>\n` +
       `┃ • STATUS: ✅ ativo\n` +
-      `┃ • PLANO: <code>free</code>\n` +
+      `┃ • PLANO: <code>${plano}</code>\n` +
       `┠────────────────────────────\n` +
       `┃  SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
       `╰────────────────────────────╯`
@@ -799,27 +916,91 @@ export function startInfinityBot(): void {
       `Usuários verificados: <b>${verifiedUsers.size}</b>`,
       `Grupos autorizados: <b>${authorizedGroups.size}</b>`,
       `IDs dos grupos: ${[...authorizedGroups].map(id => `<code>${id}</code>`).join(", ") || "nenhum"}`,
+      `Usuários BLACK: <b>${PAID_USERS.size}</b>`,
     ].join("\n"));
+  });
+
+  // /addpago — adicionar usuário BLACK (admin only)
+  bot.command("addpago", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const args = ctx.message.text.split(" ").slice(1);
+    const uid = Number(args[0]);
+    if (!uid) { await ctx.replyWithHTML("Uso: <code>/addpago 123456789</code>"); return; }
+    PAID_USERS.add(uid);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(
+      `✅ <b>Usuário BLACK adicionado</b>\nID: <code>${uid}</code>\nTotal: <b>${PAID_USERS.size}</b>`
+    );
+  });
+
+  // /removepago — remover usuário BLACK (admin only)
+  bot.command("removepago", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const args = ctx.message.text.split(" ").slice(1);
+    const uid = Number(args[0]);
+    if (!uid) { await ctx.replyWithHTML("Uso: <code>/removepago 123456789</code>"); return; }
+    const existed = PAID_USERS.delete(uid);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(
+      existed
+        ? `🗑 <b>Usuário BLACK removido</b>\nID: <code>${uid}</code>\nTotal: <b>${PAID_USERS.size}</b>`
+        : `⚠️ ID <code>${uid}</code> não estava na lista BLACK.`
+    );
+  });
+
+  // /listpagos — listar todos os usuários BLACK (admin only)
+  bot.command("listpagos", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    const list = [...PAID_USERS];
+    await ctx.replyWithHTML(
+      list.length === 0
+        ? `📋 <b>Usuários BLACK</b>\n\nNenhum usuário cadastrado.`
+        : `📋 <b>Usuários BLACK</b> (${list.length})\n\n` + list.map(id => `• <code>${id}</code>`).join("\n")
+    );
   });
 
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command("start", async (ctx) => {
     resetSession(ctx.from.id);
     try { await ctx.deleteMessage(); } catch {}
-    // For admins, also register extended command list scoped to their chat
-    if (isAdmin(ctx.from.id, ctx.from.username)) {
+    const from = ctx.from;
+    const chat = ctx.chat;
+    const paid = isPaid(from.id, from.username);
+
+    if (isAdmin(from.id, from.username)) {
       void bot.telegram.setMyCommands(ADMIN_COMMANDS, {
-        scope: { type: "chat", chat_id: ctx.from.id },
+        scope: { type: "chat", chat_id: from.id },
       }).catch(() => {});
     }
-    await ctx.replyWithHTML(buildHomeText(ctx.from), buildHomeKeyboard());
+
+    // DM: require BLACK tier
+    if (chat.type === "private" && !paid) {
+      await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
+      return;
+    }
+
+    await ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard());
   });
 
   // ── /consultar ───────────────────────────────────────────────────────────
   bot.command("consultar", async (ctx) => {
     resetSession(ctx.from.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard());
+    const from = ctx.from;
+    const chat = ctx.chat;
+    const paid = isPaid(from.id, from.username);
+
+    // DM: require BLACK tier
+    if (chat.type === "private" && !paid) {
+      await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
+      return;
+    }
+
+    const freeMode = !paid && chat.type !== "private";
+    await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard(freeMode));
   });
 
   // ── Direct tipo commands ──────────────────────────────────────────────────
@@ -996,7 +1177,20 @@ export function startInfinityBot(): void {
     const tipoId = ctx.match[1];
     const tipo = TIPOS.find((t) => t.id === tipoId);
     if (!tipo) return;
-    const session = getSession(ctx.from.id);
+    const from = ctx.from;
+    const chat = ctx.chat;
+    const paid = isPaid(from.id, from.username);
+
+    // In groups: check if tipo is free
+    if (chat?.type !== "private" && !paid && !FREE_TIPOS.has(tipoId)) {
+      await ctx.editMessageText(
+        buildUpgradeTipoMsg(tipo.label),
+        { parse_mode: "HTML", ...buildUpgradeKeyboard() }
+      );
+      return;
+    }
+
+    const session = getSession(from.id);
     session.state = "awaiting_query";
     session.tipo = tipoId;
     await ctx.editMessageText(
@@ -1027,6 +1221,20 @@ export function startInfinityBot(): void {
 
     const { tipo, dados } = session;
     resetSession(ctx.from.id);
+
+    const fromId = ctx.from.id;
+    const paid = isPaid(fromId, ctx.from.username);
+    const freeMode = !paid && ctx.chat.type !== "private";
+
+    // Track free daily limit on base selection
+    if (freeMode) {
+      const used = getFreeUsed(fromId);
+      if (used >= FREE_DAILY_LIMIT) {
+        await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard());
+        return;
+      }
+      trackFreeQuery(fromId);
+    }
 
     const sourceLabel =
       source === "sisreg" ? "🏥 SISREG-III" :
@@ -1062,9 +1270,24 @@ export function startInfinityBot(): void {
 
     try { await ctx.deleteMessage(); } catch {}
 
+    const fromId = ctx.from.id;
+    const chat = ctx.chat;
+    const paid = isPaid(fromId, ctx.from.username);
+    const freeMode = !paid && chat.type !== "private";
+
+    // Free users in groups: check daily limit before executing
+    if (freeMode) {
+      const used = getFreeUsed(fromId);
+      if (used >= FREE_DAILY_LIMIT) {
+        await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard());
+        return;
+      }
+    }
+
     if (SKYLERS_ONLY_TIPOS.has(tipo)) {
       // Skylers-only: go directly to Skylers, no base selector
-      resetSession(ctx.from.id);
+      resetSession(fromId);
+      if (freeMode) trackFreeQuery(fromId);
       const tipoObj = TIPOS.find((t) => t.id === tipo);
       const loadMsg = await ctx.replyWithHTML(
         `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()} via Skylers...</b>\n<code>${dados}</code>`
@@ -1088,10 +1311,11 @@ export function startInfinityBot(): void {
         `┠────────────────────────────\n` +
         `┃ SELECIONE A BASE DE DADOS 👇🏻\n` +
         `╰────────────────────────────╯`,
-        buildBaseKeyboard(tipo)
+        buildBaseKeyboard(tipo, freeMode)
       );
     } else {
-      resetSession(ctx.from.id);
+      resetSession(fromId);
+      if (freeMode) trackFreeQuery(fromId);
       const tipoObj = TIPOS.find((t) => t.id === tipo);
       const loadMsg = await ctx.replyWithHTML(
         `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`

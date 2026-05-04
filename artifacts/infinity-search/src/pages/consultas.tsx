@@ -6,7 +6,7 @@ import {
   IdCard, Building2, Phone, User, CreditCard, Heart,
   MapPin, Car, Users, Briefcase, Mail, Cog, Skull, ScrollText,
   Wallet, Cpu, Network, Syringe, Database, Activity, ShieldCheck,
-  ChevronRight, X, RotateCcw, Eye, Camera,
+  ChevronRight, X, RotateCcw, Eye, Camera, Fingerprint,
   BarChart2, Receipt, Gift, AlertOctagon, Landmark,
   FileSearch, Scale, Home, Star, Award,
 } from "lucide-react";
@@ -17,14 +17,14 @@ type Tipo =
   | "nome" | "cpf" | "cpfbasico" | "pix" | "nis" | "cns" | "placa" | "chassi" | "telefone"
   | "mae" | "pai" | "parentes" | "cep" | "frota" | "cnpj" | "fucionarios"
   | "socios" | "empregos" | "cnh" | "cnhfull" | "renavam" | "obito" | "rg" | "email"
-  | "motor" | "vacinas" | "foto"
+  | "motor" | "vacinas" | "foto" | "biometria"
   | "titulo" | "score" | "irpf" | "beneficios" | "mandado"
   | "dividas" | "bens" | "processos" | "spc" | "iptu" | "certidoes";
 
 type TabDef = {
   id: Tipo;
   label: string;
-  category: "Pessoa" | "Veículo" | "Empresa" | "Saúde" | "Outros";
+  category: "Pessoa" | "Fotos" | "Veículo" | "Empresa" | "Saúde" | "Outros";
   placeholder: string;
   hint: string;
   inputMode?: "numeric" | "text";
@@ -45,7 +45,8 @@ const TABS: TabDef[] = [
   { id: "pai",       label: "Pai",        category: "Pessoa",  placeholder: "CPF do filho(a)",  hint: "11 dígitos — busca pelo pai",   inputMode: "numeric", icon: Heart,        sanitize: cpf11 },
   { id: "parentes",  label: "Parentes",   category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos — rede familiar",    inputMode: "numeric", icon: Users,        sanitize: cpf11 },
   { id: "obito",     label: "Óbito",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos",                    inputMode: "numeric", icon: Skull,        sanitize: cpf11 },
-  { id: "foto",      label: "Foto CNH",   category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: Camera,       sanitize: cpf11 },
+  { id: "foto",      label: "Foto CNH",   category: "Fotos",   placeholder: "CPF",              hint: "11 dígitos · foto da CNH · Skylers",       inputMode: "numeric", icon: Camera,       sanitize: cpf11 },
+  { id: "biometria", label: "Biometria",  category: "Fotos",   placeholder: "CPF",              hint: "11 dígitos · foto nacional/biometria · Skylers", inputMode: "numeric", icon: Fingerprint,  sanitize: cpf11 },
   { id: "titulo",    label: "Título",     category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · título de eleitor · Skylers", inputMode: "numeric", icon: Award, sanitize: cpf11 },
   { id: "score",     label: "Score",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · score de crédito · Skylers",  inputMode: "numeric", icon: BarChart2, sanitize: cpf11 },
   { id: "irpf",      label: "IRPF",       category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · declaração IR · Skylers",     inputMode: "numeric", icon: Receipt,   sanitize: cpf11 },
@@ -81,14 +82,15 @@ const TABS: TabDef[] = [
   { id: "iptu",      label: "IPTU",       category: "Outros",  placeholder: "CPF",              hint: "11 dígitos · Skylers",          inputMode: "numeric", icon: Home,         sanitize: cpf11 },
 ];
 
-const CATEGORIES = ["Pessoa", "Veículo", "Empresa", "Saúde", "Outros"] as const;
+const CATEGORIES = ["Pessoa", "Fotos", "Veículo", "Empresa", "Saúde", "Outros"] as const;
 
 const CATEGORY_GRADIENT: Record<string, string> = {
-  Pessoa: "from-rose-400 to-pink-300",
+  Pessoa:  "from-rose-400 to-pink-300",
+  Fotos:   "from-purple-400 to-indigo-300",
   Veículo: "from-amber-400 to-orange-300",
   Empresa: "from-violet-400 to-fuchsia-300",
-  Saúde: "from-emerald-400 to-teal-300",
-  Outros: "from-sky-400 to-cyan-300",
+  Saúde:   "from-emerald-400 to-teal-300",
+  Outros:  "from-sky-400 to-cyan-300",
 };
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; result: unknown | null; createdAt: string }>;
@@ -102,7 +104,7 @@ const PANEL_EXTERNAL_TIPOS = new Set([
 // Tipos exclusivos do Skylers → vai direto sem seletor
 const SKYLERS_ONLY_TIPOS = new Set([
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
-  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto",
+  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria",
 ]);
 type ExternalBase = "skylers";
 

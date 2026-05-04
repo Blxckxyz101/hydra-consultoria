@@ -89,6 +89,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   certidoes: "iseek-dados---certidoes",
   cnhfull: "cnh-full",
   foto: "iseek-fotos---fotocnh",
+  biometria: "iseek-fotos---biometria",
 };
 
 const DAILY_RATE_LIMIT = 350;
@@ -139,7 +140,7 @@ const SUPPORTED_TIPOS = new Set([
   "motor", "vacinas",
   // Skylers-only (validated separately via /external/skylers)
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
-  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto",
+  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
@@ -1521,7 +1522,7 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         const dados = String(args.dados ?? "");
 
         if (tipo && dados) {
-          const SKYLERS_ONLY_AI = new Set(["titulo", "score", "irpf", "beneficios", "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "cpfbasico"]);
+          const SKYLERS_ONLY_AI = new Set(["titulo", "score", "irpf", "beneficios", "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "cpfbasico"]);
           const rawBase = String((args as { base?: string }).base ?? "geass");
           const base = SKYLERS_ONLY_AI.has(tipo) ? "skylers" : rawBase;
           res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
