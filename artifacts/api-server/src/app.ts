@@ -3,10 +3,14 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import pinoHttp from "pino-http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { apiKeyMiddleware } from "./middlewares/apiKey.js";
 import { generalLimiter } from "./middlewares/rateLimit.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const ALLOWED_ORIGINS = [
   /^https:\/\/geassbeam\.replit\.app$/,
@@ -71,6 +75,13 @@ app.use(express.text({ type: ["text/plain", "text/csv"], limit: "2mb" }));
 
 app.use(generalLimiter);
 app.use(apiKeyMiddleware);
+
+// Serve static assets (logo, banners) publicly — no auth required
+// __dirname in compiled code = artifacts/api-server/dist/ → ../public resolves correctly
+app.use("/api/static", express.static(path.join(__dirname, "../public"), {
+  maxAge: "7d",
+  etag: true,
+}));
 
 app.use("/api", router);
 

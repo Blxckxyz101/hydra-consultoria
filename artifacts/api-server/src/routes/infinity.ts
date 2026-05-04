@@ -89,7 +89,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   certidoes: "iseek-dados---certidoes",
   cnhfull: "cnh-full",
   foto: "iseek-fotos---fotocnh",
-  biometria: "iseek-fotos---biometria",
+  biometria: "iseek-fotos---fotocnh",
   credilink: "credilink",
 };
 

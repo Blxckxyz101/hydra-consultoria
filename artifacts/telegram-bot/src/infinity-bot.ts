@@ -6,7 +6,8 @@ const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL = "https://t.me/Blxckxyz";
 const SUPPORT_URL2 = "https://t.me/xxmathexx";
-const BOT_BANNER_URL = process.env.INFINITY_BOT_BANNER_URL ?? "";
+const BOT_BANNER_URL = process.env.INFINITY_BOT_BANNER_URL
+  ?? (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}/api/static/logo.png` : "");
 const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);

@@ -82,6 +82,9 @@ const MODULES: SkylersModule[] = [
   { key: "vistoria", label: "Vistoria", category: "Veículos", input: "placa", hint: "placa do veículo", placeholder: "ABC1234", icon: ShieldCheck },
 
   // ── FOTOS ────────────────────────────────────────────────────────────────
+  { key: "iseek-fotos---fotocnh", label: "Foto CNH", category: "Fotos", input: "cpf", hint: "CPF do condutor", placeholder: "00000000000", icon: Image },
+  { key: "iseek-fotos---crlvto", label: "CRLV TO (Foto)", category: "Fotos", input: "placa", hint: "placa do veículo", placeholder: "ABC1234", icon: Image },
+  { key: "iseek-fotos---crlvmt", label: "CRLV MT (Foto)", category: "Fotos", input: "placa", hint: "placa do veículo", placeholder: "ABC1234", icon: Image },
   { key: "iseek-fotos---fotoma", label: "Foto MA", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotoce", label: "Foto CE", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotosp", label: "Foto SP", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
@@ -94,7 +97,6 @@ const MODULES: SkylersModule[] = [
   { key: "iseek-fotos---fotomapresos", label: "Foto MA Presos", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotopi", label: "Foto PI", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotopr", label: "Foto PR", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
-  { key: "iseek-fotos---fotocnh", label: "Foto CNH", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotodf", label: "Foto DF", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotoal", label: "Foto AL", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
   { key: "iseek-fotos---fotogo", label: "Foto GO", category: "Fotos", input: "cpf", hint: "CPF", placeholder: "00000000000", icon: Image },
