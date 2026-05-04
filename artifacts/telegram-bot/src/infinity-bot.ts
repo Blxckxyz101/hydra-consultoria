@@ -338,6 +338,10 @@ interface BotSession {
   state: "idle" | "awaiting_query" | "awaiting_base";
   tipo?: string;
   dados?: string;
+  /** ID da mensagem de prompt (DIGITE O CPF...) para poder apagá-la após receber o dado */
+  promptMsgId?: number;
+  /** ID do chat em que o prompt foi enviado (pode diferir em grupos) */
+  promptChatId?: number;
 }
 const sessions = new Map<number, BotSession>();
 function getSession(userId: number): BotSession {
@@ -965,28 +969,40 @@ async function executeSkylersBotQuery(
 
     await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
 
-    // ── Send photo (base64 or URL) before the document ──────────────────────
+    // ── Send photo (base64 data URI or HTTP URL) before the document ─────────
     if (fotoField) {
       const fotoVal = fotoField[1];
       try {
         if (fotoVal.startsWith("data:image")) {
-          // Base64 data URI → extract raw bytes and send as BufferedPhoto
+          // Base64 data URI → extract raw bytes and send as Buffer
           const b64 = fotoVal.replace(/^data:image\/\w+;base64,/, "");
           const buf = Buffer.from(b64, "base64");
-          await ctx.telegram.sendPhoto(chatId,
-            { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
-            { caption: `📸 <b>Foto encontrada</b> · Módulo: <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
-          );
+          if (buf.length > 100) {
+            await ctx.telegram.sendPhoto(chatId,
+              { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
+              { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
+            );
+          }
         } else if (/^https?:\/\//i.test(fotoVal)) {
-          // Regular URL
-          await ctx.telegram.sendPhoto(chatId, fotoVal,
-            { caption: `📸 <b>Foto encontrada</b> · Módulo: <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
-          ).catch(async () => {
-            // If URL send fails, just note it in summary (already handled)
-          });
+          // HTTP URL — try direct send; on failure, download and send as buffer
+          try {
+            await ctx.telegram.sendPhoto(chatId, fotoVal,
+              { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
+            );
+          } catch {
+            // URL send failed — try downloading first
+            const imgRes = await fetch(fotoVal, { signal: AbortSignal.timeout(10_000) });
+            if (imgRes.ok) {
+              const buf = Buffer.from(await imgRes.arrayBuffer());
+              await ctx.telegram.sendPhoto(chatId,
+                { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
+                { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
+              );
+            }
+          }
         }
       } catch {
-        // Non-fatal — photo send failed, txt still goes out
+        // Non-fatal — photo send failed, document with data still goes out
       }
     }
 
@@ -1424,10 +1440,12 @@ export function startInfinityBot(): void {
         const session = getSession(from.id);
         session.state = "awaiting_query";
         session.tipo = tipoId;
-        await ctx.replyWithHTML(
+        const promptMsg = await ctx.replyWithHTML(
           buildQueryPrompt(tipoId),
           Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home_new")]]),
         );
+        session.promptMsgId = promptMsg.message_id;
+        session.promptChatId = promptMsg.chat.id;
       }
     });
   }
@@ -1645,6 +1663,14 @@ export function startInfinityBot(): void {
     const session = getSession(from.id);
     session.state = "awaiting_query";
     session.tipo = tipoId;
+
+    // The prompt replaces the current keyboard message (via editMessageText).
+    // Store the message ID so we can delete it after the user sends their input.
+    const promptChatId = ctx.callbackQuery.message?.chat.id ?? chat?.id;
+    const promptMsgId = ctx.callbackQuery.message?.message_id;
+    session.promptMsgId = promptMsgId;
+    session.promptChatId = promptChatId;
+
     await ctx.editMessageText(
       buildQueryPrompt(tipoId),
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home")]]) }
@@ -1674,6 +1700,9 @@ export function startInfinityBot(): void {
     const { tipo, dados } = session;
     resetSession(ctx.from.id);
 
+    // Delete the base selector message (cleans up the buttons)
+    try { await ctx.deleteMessage(); } catch {}
+
     const fromId = ctx.from.id;
     const paid = isPaid(fromId, ctx.from.username);
     const freeMode = !paid && ctx.chat.type !== "private";
@@ -1693,7 +1722,6 @@ export function startInfinityBot(): void {
       source === "sipni"     ? "💉 SI-PNI"              :
       source === "credilink" ? "💳 CrediLink (Skylers)" : "∞ Infinity Search";
 
-    const tipoObj = TIPOS.find((t) => t.id === tipo);
     const loadMsg = await ctx.replyWithHTML(
       `⏳ <b>Consultando ${sourceLabel}...</b>\n<code>${dados}</code>`
     );
@@ -1724,7 +1752,14 @@ export function startInfinityBot(): void {
     const dados = ctx.message.text.trim();
     const tipo = session.tipo;
 
+    // Delete the user's input message (cleans up the chat)
     try { await ctx.deleteMessage(); } catch {}
+
+    // Delete the prompt message (the "DIGITE O CPF..." message with ❌ Cancelar button)
+    const { promptMsgId, promptChatId } = session;
+    if (promptMsgId && promptChatId) {
+      try { await ctx.telegram.deleteMessage(promptChatId, promptMsgId); } catch {}
+    }
 
     const fromId = ctx.from.id;
     const chat = ctx.chat;

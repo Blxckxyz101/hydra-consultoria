@@ -799,6 +799,22 @@ function humanizeKey(k: string): string {
 }
 
 /**
+ * Normalises a string value into a data URI if it looks like a base64-encoded image.
+ * Handles values that already carry the "data:image/..." prefix.
+ */
+function toDataUri(s: string): string | null {
+  const trimmed = s.replace(/[\r\n\s]/g, "");
+  // Already a complete data URI
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  // Raw base64 (no prefix)
+  if (BASE64_RE.test(trimmed)) return `data:image/jpeg;base64,${trimmed}`;
+  // Prefixed but without the "data:" scheme (e.g. "image/jpeg;base64,...")
+  const noData = trimmed.replace(/^image\/\w+;base64,/i, "");
+  if (noData !== trimmed && BASE64_RE.test(noData)) return `data:image/jpeg;base64,${noData}`;
+  return null;
+}
+
+/**
  * Scans an object for a base64-encoded photo field.
  * First checks keys matching photo-like names, then falls back to scanning
  * any string value that is long and valid base64 (to catch unexpected key names).
@@ -808,18 +824,14 @@ function extractBase64Photo(obj: Record<string, unknown>): { key: string; dataUr
   for (const [k, v] of Object.entries(obj)) {
     if (typeof v !== "string") continue;
     if (!BASE64_PHOTO_KEYS.test(k)) continue;
-    const clean = v.replace(/[\r\n\s]/g, "");
-    if (BASE64_RE.test(clean)) {
-      return { key: k, dataUri: `data:image/jpeg;base64,${clean}` };
-    }
+    const uri = toDataUri(v);
+    if (uri) return { key: k, dataUri: uri };
   }
-  // Fallback: any string value >= 1000 chars that is pure base64
+  // Fallback: any string value >= 500 chars that is pure base64
   for (const [k, v] of Object.entries(obj)) {
-    if (typeof v !== "string" || v.length < 1000) continue;
-    const clean = v.replace(/[\r\n\s]/g, "");
-    if (BASE64_RE.test(clean)) {
-      return { key: k, dataUri: `data:image/jpeg;base64,${clean}` };
-    }
+    if (typeof v !== "string" || v.length < 500) continue;
+    const uri = toDataUri(v);
+    if (uri) return { key: k, dataUri: uri };
   }
   return null;
 }
@@ -994,11 +1006,11 @@ function parseSkylers(data: unknown): Parsed {
     } else {
       const s = String(v).trim();
       if (s && !JUNK_VALUES.has(s)) {
-        // Check if this field itself is a base64 photo
+        // Check if this field itself is a base64 photo (or already a data URI)
         if (!fotoUrl.value && BASE64_PHOTO_KEYS.test(k)) {
-          const clean = s.replace(/[\r\n\s]/g, "");
-          if (BASE64_RE.test(clean)) {
-            fotoUrl.value = `data:image/jpeg;base64,${clean}`;
+          const uri = toDataUri(s);
+          if (uri) {
+            fotoUrl.value = uri;
             continue; // Don't add raw base64 to fields
           }
         }
@@ -1866,9 +1878,15 @@ function requireAuthOrInternal(req: import("express").Request, res: import("expr
 }
 
 router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
-  const source = req.params.source as "skylers";
-  if (source !== "skylers") {
+  const source = req.params.source as "skylers" | "sisreg" | "sipni";
+  if (!["skylers", "sisreg", "sipni"].includes(source)) {
     res.status(400).json({ success: false, error: "Fonte inválida." });
+    return;
+  }
+  // sisreg and sipni are not yet connected — return a clear error
+  if (source === "sisreg" || source === "sipni") {
+    const label = source === "sisreg" ? "SISREG-III" : "SI-PNI";
+    res.json({ success: false, error: `O módulo ${label} está temporariamente indisponível. Tente pela base Infinity.` });
     return;
   }
 
