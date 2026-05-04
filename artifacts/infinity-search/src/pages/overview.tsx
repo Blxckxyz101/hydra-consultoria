@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, ArrowUpRight, Zap, Trophy, Gauge } from "lucide-react";
+import { Activity, Users, Search, Clock, AlertTriangle, TrendingUp, Sparkles, ArrowUpRight, Zap, Trophy, Gauge, Medal } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from "recharts";
 import { Link } from "wouter";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
@@ -87,7 +87,7 @@ function useOverview(days: number) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  useState(() => {
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(false);
@@ -99,36 +99,25 @@ function useOverview(days: number) {
       .then((d) => { if (!cancelled) { setData(d); setLoading(false); } })
       .catch(() => { if (!cancelled) { setError(true); setLoading(false); } });
     return () => { cancelled = true; };
-  });
+  }, [days]);
 
-  const refetch = () => {
-    setLoading(true);
-    const token = localStorage.getItem("infinity_token");
-    fetch(`/api/infinity/overview?days=${days}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false); })
-      .catch(() => { setError(true); setLoading(false); });
-  };
-
-  return { data, loading, error, refetch };
+  return { data, loading, error };
 }
 
 function useMe() {
   const [me, setMe] = useState<MeData | null>(null);
-  useState(() => {
+  useEffect(() => {
     const token = localStorage.getItem("infinity_token");
     fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.json())
       .then(setMe)
       .catch(() => {});
-  });
+  }, []);
   return me;
 }
 
 export default function Overview() {
-  const [period, setPeriod] = useState(84);
+  const [period, setPeriod] = useState(30);
   const { data, loading, error } = useOverview(period);
   const me = useMe();
   const [profilePhoto] = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
@@ -467,7 +456,12 @@ export default function Overview() {
             {data.consultasPorOperador.map((op, i) => {
               const maxCount = data.consultasPorOperador[0].count;
               const pct = maxCount > 0 ? (op.count / maxCount) * 100 : 0;
-              const medals = ["🥇", "🥈", "🥉"];
+              const medalColors = [
+                "bg-amber-400/20 border-amber-400/40 text-amber-300",
+                "bg-slate-400/20 border-slate-400/40 text-slate-300",
+                "bg-orange-700/20 border-orange-700/40 text-orange-600",
+              ];
+              const MedalIcon = i === 0 ? Trophy : Medal;
               return (
                 <motion.div
                   key={op.username}
@@ -476,7 +470,13 @@ export default function Overview() {
                   transition={{ delay: 0.55 + i * 0.04 }}
                   className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all"
                 >
-                  <span className="text-base w-6 text-center shrink-0">{medals[i] ?? `${i + 1}.`}</span>
+                  {i < 3 ? (
+                    <div className={`w-6 h-6 rounded-lg border flex items-center justify-center shrink-0 ${medalColors[i]}`}>
+                      <MedalIcon className="w-3.5 h-3.5" />
+                    </div>
+                  ) : (
+                    <span className="text-xs font-bold text-muted-foreground w-6 text-center shrink-0">{i + 1}</span>
+                  )}
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500/40 to-cyan-400/20 border border-white/10 flex items-center justify-center text-xs font-bold shrink-0">
                     {op.username[0]?.toUpperCase()}
                   </div>

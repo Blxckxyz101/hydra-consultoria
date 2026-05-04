@@ -14,9 +14,9 @@ import { useLocation } from "wouter";
 import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff } from "lucide-react";
 
 const ROLE_CONFIG = {
-  admin: { label: "Admin", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/30", icon: Shield },
-  vip: { label: "VIP", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/30", icon: Crown },
-  user: { label: "VIP", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/30", icon: Crown },
+  admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
+  vip:   { label: "VIP",   color: "text-amber-300",    bg: "bg-amber-400/10 border-amber-400/30",  icon: Crown    },
+  user:  { label: "Membro", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/30", icon: UserIcon },
 };
 
 function getRoleConf(role: string) {
@@ -96,7 +96,7 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
         disabled={saving}
         className="p-1.5 rounded-lg bg-emerald-400/10 border border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/20 transition-colors disabled:opacity-50"
       >
-        {saved ? <Check className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+        {saving ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : saved ? <Check className="w-3 h-3" /> : <Check className="w-3 h-3 opacity-0 w-0" />}
       </button>
       {currentExpiry && (
         <button
