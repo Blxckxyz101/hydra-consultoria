@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
-import { db, infinityUsersTable, infinityConsultasTable } from "@workspace/db";
-import { eq, desc, sql, gte, and } from "drizzle-orm";
+import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable } from "@workspace/db";
+import { eq, desc, sql, gte, and, isNull } from "drizzle-orm";
 import {
   createSession,
   deleteSession,
@@ -1175,11 +1175,28 @@ router.get("/users", requireAdmin, async (_req, res) => {
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
-  const { username, password, role, expiresInDays, expiresAt, queryDailyLimit } = req.body ?? {};
+  const { username, password, role, expiresInDays, expiresAt, queryDailyLimit, pin } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
   }
+
+  // Validate PIN
+  const pinStr = String(pin ?? "").trim();
+  if (!/^\d{4}$/.test(pinStr)) {
+    res.status(400).json({ error: "PIN de 4 dígitos obrigatório" });
+    return;
+  }
+  const pinRow = await db.select().from(infinityPinsTable).where(eq(infinityPinsTable.pin, pinStr)).limit(1);
+  if (pinRow.length === 0) {
+    res.status(400).json({ error: "PIN inválido ou não encontrado" });
+    return;
+  }
+  if (pinRow[0].usedAt !== null) {
+    res.status(400).json({ error: "PIN já utilizado" });
+    return;
+  }
+
   const validRoles = ["admin", "vip", "user"];
   const finalRole = validRoles.includes(role) ? role : "vip";
   const passwordHash = await bcrypt.hash(String(password), 10);
@@ -1200,10 +1217,74 @@ router.post("/users", requireAdmin, async (req, res) => {
       .insert(infinityUsersTable)
       .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt, queryDailyLimit: queryDailyLimitVal })
       .returning();
+
+    // Mark PIN as used
+    await db
+      .update(infinityPinsTable)
+      .set({ usedAt: new Date(), usedBy: String(username) })
+      .where(eq(infinityPinsTable.pin, pinStr));
+
     res.status(201).json(serializeUser(created));
   } catch {
     res.status(400).json({ error: "Usuário já existe ou dados inválidos" });
   }
+});
+
+// ─── pins (admin) ───────────────────────────────────────────────────────────
+router.get("/pins", requireAdmin, async (_req, res) => {
+  const pins = await db
+    .select()
+    .from(infinityPinsTable)
+    .orderBy(desc(infinityPinsTable.createdAt));
+  res.json(pins.map(p => ({
+    pin:       p.pin,
+    createdAt: p.createdAt,
+    createdBy: p.createdBy,
+    usedAt:    p.usedAt,
+    usedBy:    p.usedBy,
+  })));
+});
+
+router.post("/pins", requireAdmin, async (req, res) => {
+  const admin = req.infinityUser!.username;
+  const { pin: customPin } = req.body ?? {};
+
+  let pin: string;
+  if (customPin !== undefined) {
+    pin = String(customPin).trim();
+    if (!/^\d{4}$/.test(pin)) {
+      res.status(400).json({ error: "PIN deve ter exatamente 4 dígitos numéricos" });
+      return;
+    }
+  } else {
+    // Generate random unused PIN
+    pin = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  }
+
+  try {
+    const [created] = await db
+      .insert(infinityPinsTable)
+      .values({ pin, createdBy: admin })
+      .returning();
+    res.status(201).json(created);
+  } catch {
+    res.status(400).json({ error: "PIN já existe" });
+  }
+});
+
+router.delete("/pins/:pin", requireAdmin, async (req, res) => {
+  const pin = String(req.params.pin);
+  const existing = await db.select().from(infinityPinsTable).where(eq(infinityPinsTable.pin, pin)).limit(1);
+  if (existing.length === 0) {
+    res.status(404).json({ error: "PIN não encontrado" });
+    return;
+  }
+  if (existing[0].usedAt !== null) {
+    res.status(400).json({ error: "Não é possível remover um PIN já utilizado" });
+    return;
+  }
+  await db.delete(infinityPinsTable).where(eq(infinityPinsTable.pin, pin));
+  res.status(204).end();
 });
 
 router.delete("/users/:username", requireAdmin, async (req, res) => {

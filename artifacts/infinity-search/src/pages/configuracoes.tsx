@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock } from "lucide-react";
 
 const ROLE_CONFIG = {
   admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
@@ -332,7 +332,61 @@ export default function Configuracoes() {
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "vip">("vip");
   const [expiresAt, setExpiresAt] = useState("");
+  const [newPin, setNewPin] = useState("");
   const [formError, setFormError] = useState("");
+
+  // ── PINs state ─────────────────────────────────────────────────────────────
+  interface PinRow { pin: string; createdAt: string; createdBy: string; usedAt: string | null; usedBy: string | null; }
+  const [pins, setPins] = useState<PinRow[]>([]);
+  const [pinsLoading, setPinsLoading] = useState(false);
+  const [pinCustom, setPinCustom] = useState("");
+  const [pinGenErr, setPinGenErr] = useState("");
+  const [pinGenOk, setPinGenOk] = useState(false);
+
+  const loadPins = useCallback(async () => {
+    if (!isAdmin) return;
+    setPinsLoading(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/pins", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (r.ok) setPins(await r.json());
+    } catch {} finally { setPinsLoading(false); }
+  }, [isAdmin]);
+
+  useEffect(() => { void loadPins(); }, [loadPins]);
+
+  const handleGenPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinGenErr("");
+    setPinGenOk(false);
+    const body = pinCustom.trim() ? { pin: pinCustom.trim() } : {};
+    const token = localStorage.getItem("infinity_token");
+    const r = await fetch("/api/infinity/pins", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({})) as { error?: string };
+      setPinGenErr(j.error ?? "Falha ao criar PIN");
+      return;
+    }
+    setPinCustom("");
+    setPinGenOk(true);
+    setTimeout(() => setPinGenOk(false), 2000);
+    await loadPins();
+  };
+
+  const handleDeletePin = async (pin: string) => {
+    const token = localStorage.getItem("infinity_token");
+    await fetch(`/api/infinity/pins/${encodeURIComponent(pin)}`, {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    await loadPins();
+  };
 
   // ── Notifications state ────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<InfinityNotif[]>([]);
@@ -398,12 +452,17 @@ export default function Configuracoes() {
     e.preventDefault();
     setFormError("");
     if (!newUsername.trim() || !newPassword.trim()) return;
+    if (!/^\d{4}$/.test(newPin)) {
+      setFormError("PIN de 4 dígitos obrigatório");
+      return;
+    }
     try {
       await createUser.mutateAsync({
         data: {
           username: newUsername.trim(),
           password: newPassword,
           role: newRole,
+          pin: newPin,
           ...(expiresAt ? { expiresAt } : {}),
         } as any,
       });
@@ -411,7 +470,9 @@ export default function Configuracoes() {
       setNewPassword("");
       setNewRole("vip");
       setExpiresAt("");
+      setNewPin("");
       queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+      await loadPins();
     } catch (err: any) {
       setFormError(err?.data?.message || err?.message || "Falha ao criar operador");
     }
@@ -660,6 +721,27 @@ export default function Configuracoes() {
                 </button>
               </div>
 
+              {/* PIN obrigatório */}
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground block mb-2 flex items-center gap-1.5">
+                  <Lock className="w-3 h-3" /> PIN de autorização <span className="text-destructive">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={newPin}
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="4 dígitos"
+                  className={`w-full bg-black/40 border rounded-xl px-4 py-3 text-sm font-mono tracking-widest focus:outline-none transition-all ${
+                    newPin.length === 4 ? "border-emerald-400/40 focus:border-emerald-400/60" : "border-white/10 focus:border-primary/50"
+                  }`}
+                />
+                <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                  <Hash className="w-3 h-3" /> Gere um PIN na seção abaixo e use aqui. Cada PIN só funciona uma vez.
+                </p>
+              </div>
+
               {/* Expiry date */}
               <div>
                 <label className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground block mb-2 flex items-center gap-1.5">
@@ -681,7 +763,7 @@ export default function Configuracoes() {
 
               <button
                 type="submit"
-                disabled={createUser.isPending || !newUsername.trim() || !newPassword.trim()}
+                disabled={createUser.isPending || !newUsername.trim() || !newPassword.trim() || newPin.length !== 4}
                 className="w-full bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-3.5 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.4)] transition-all disabled:opacity-50"
               >
                 {createUser.isPending ? "Criando..." : "Criar Operador"}
@@ -691,6 +773,111 @@ export default function Configuracoes() {
                 <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">{formError}</div>
               )}
             </form>
+          </motion.div>
+
+          {/* ── PIN Management ─────────────────────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2">
+                <Hash className="w-4 h-4 text-primary" />
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">PINs de Autorização</h2>
+              </div>
+              <button
+                onClick={() => void loadPins()}
+                disabled={pinsLoading}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors disabled:opacity-40"
+                title="Atualizar lista"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${pinsLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Generate form */}
+            <form onSubmit={handleGenPin} className="flex items-center gap-3 mb-5">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                value={pinCustom}
+                onChange={(e) => setPinCustom(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="PIN personalizado (opcional)"
+                className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm font-mono tracking-widest focus:outline-none focus:border-primary/50 transition-all"
+              />
+              <button
+                type="submit"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-[0.2em] text-black transition-all whitespace-nowrap"
+                style={{ background: "var(--color-primary)" }}
+              >
+                {pinGenOk ? <Check className="w-3.5 h-3.5" /> : <Hash className="w-3.5 h-3.5" />}
+                {pinGenOk ? "Criado!" : pinCustom.length === 4 ? "Criar PIN" : "Gerar Aleatório"}
+              </button>
+            </form>
+            {pinGenErr && (
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3 mb-4">{pinGenErr}</div>
+            )}
+
+            {/* PIN list */}
+            <div className="space-y-2">
+              {pins.length === 0 ? (
+                <div className="rounded-xl border border-white/5 bg-black/20 px-4 py-6 text-center text-xs text-muted-foreground">
+                  Nenhum PIN criado ainda. Gere um acima para liberar a criação de contas.
+                </div>
+              ) : (
+                <AnimatePresence>
+                  {pins.map((p, i) => {
+                    const used = p.usedAt !== null;
+                    return (
+                      <motion.div
+                        key={p.pin}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 8 }}
+                        transition={{ delay: i * 0.03 }}
+                        className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+                          used
+                            ? "bg-white/3 border-white/5 opacity-60"
+                            : "bg-emerald-400/5 border-emerald-400/20"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className={`font-mono font-bold text-lg tracking-[0.4em] ${used ? "text-muted-foreground" : "text-emerald-300"}`}>
+                            {p.pin}
+                          </span>
+                          <div className="min-w-0">
+                            {used ? (
+                              <span className="inline-flex items-center gap-1 text-[9px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-muted-foreground">
+                                <Check className="w-2.5 h-2.5" /> Usado por {p.usedBy}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[9px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-400/10 border border-emerald-400/25 text-emerald-400">
+                                Disponível
+                              </span>
+                            )}
+                            <div className="text-[9px] text-muted-foreground/50 mt-0.5">
+                              Criado por {p.createdBy} • {new Date(p.createdAt).toLocaleString("pt-BR")}
+                            </div>
+                          </div>
+                        </div>
+                        {!used && (
+                          <button
+                            onClick={() => void handleDeletePin(p.pin)}
+                            className="shrink-0 p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/30"
+                            title="Remover PIN"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              )}
+            </div>
           </motion.div>
 
           {/* Operator list */}

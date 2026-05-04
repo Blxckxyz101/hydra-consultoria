@@ -36,8 +36,17 @@ export const infinityConsultasTable = pgTable(
   }),
 );
 
+export const infinityPinsTable = pgTable("infinity_pins", {
+  pin:       text("pin").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: text("created_by").notNull(),
+  usedAt:    timestamp("used_at", { withTimezone: true }),
+  usedBy:    text("used_by"),
+});
+
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);
 export type InsertInfinityUser = z.infer<typeof insertInfinityUserSchema>;
-export type InfinityUserRow = typeof infinityUsersTable.$inferSelect;
+export type InfinityUserRow    = typeof infinityUsersTable.$inferSelect;
 export type InfinitySessionRow = typeof infinitySessionsTable.$inferSelect;
 export type InfinityConsultaRow = typeof infinityConsultasTable.$inferSelect;
+export type InfinityPinRow     = typeof infinityPinsTable.$inferSelect;
