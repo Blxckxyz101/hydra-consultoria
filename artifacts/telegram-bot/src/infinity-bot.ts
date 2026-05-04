@@ -627,10 +627,37 @@ function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string,
   return lines.join("\n");
 }
 
+// ── CPF sub-menu modules ───────────────────────────────────────────────────────
+// All tipos that accept CPF as input — shown in the CPF module selector
+const CPF_MODULE_TIPOS: string[] = [
+  "cpfbasico", "cpf", "empregos", "cnh", "cnhfull", "mae", "pai", "parentes",
+  "obito", "vacinas", "titulo", "score", "score2", "irpf", "beneficios",
+  "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes",
+  "faculdades", "nasc", "matricula", "assessoria", "registro", "catcpf",
+  "cheque", "biometria",
+];
+
+// Fotos sub-menu — all foto/* types (CPF input)
+const FOTOS_TIPOS: string[] = [
+  "foto", "fotonc", "fotodetran", "fotoma", "fotoce", "fotosp", "fotorj",
+  "fotoms", "fotoes", "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr",
+  "fotodf", "fotoal", "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg",
+];
+
+// Main keyboard tipos: skip individual foto/* and state-based CNH (they're in sub-menus)
+const MAIN_TIPOS_SKIP = new Set([
+  "foto", "fotoma", "fotoce", "fotosp", "fotorj", "fotoms", "fotonc", "fotoes",
+  "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr", "fotodf", "fotoal",
+  "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg", "crlvtofoto",
+  "crlvmtfoto", "fotodetran",
+  "cnham", "cnhnc", "cnhrs", "cnhrr",
+]);
+
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍  Nova Consulta", "consultar")],
+    [Markup.button.callback("🪪 CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
     [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.callback("💬 Suporte", "show_suporte")],
   ]);
 }
@@ -644,7 +671,12 @@ function buildSupportKeyboard() {
 
 function buildTiposKeyboard(freeMode: boolean = false) {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
-  const arr = [...TIPOS];
+
+  // CPF mega-menu button at top
+  rows.push([Markup.button.callback("🪪 CPF — Ver módulos", "cpf_menu")]);
+
+  // Filtered tipos: skip foto/* and state CNH (already in sub-menus), skip bare cpf (now in cpf_menu)
+  const arr = [...TIPOS].filter(t => !MAIN_TIPOS_SKIP.has(t.id) && t.id !== "cpf");
   for (let i = 0; i < arr.length; i += 2) {
     const t1 = arr[i];
     const t2 = arr[i + 1];
@@ -655,10 +687,72 @@ function buildTiposKeyboard(freeMode: boolean = false) {
       ...(t2 ? [Markup.button.callback(lock2 ? `🔒 ${t2.label}` : t2.label, `tipo:${t2.id}`)] : []),
     ]);
   }
+
+  // Fotos sub-menu button
+  rows.push([Markup.button.callback("📸 FOTOS — Ver estados", "fotos_menu")]);
+
   if (freeMode) {
     rows.push([Markup.button.url("💎 Ver Plano BLACK", SUPPORT_URL)] as any);
   }
   rows.push([Markup.button.callback("↩ Cancelar", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function buildCpfModuleKeyboard(freeMode: boolean = false) {
+  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+
+  // Build 2-column grid from CPF_MODULE_TIPOS
+  const cpfItems = CPF_MODULE_TIPOS.map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
+  for (let i = 0; i < cpfItems.length; i += 2) {
+    const t1 = cpfItems[i];
+    const t2 = cpfItems[i + 1];
+    const lock1 = freeMode && !FREE_TIPOS.has(t1.id);
+    const lock2 = t2 && freeMode && !FREE_TIPOS.has(t2.id);
+    rows.push([
+      Markup.button.callback(lock1 ? `🔒 ${t1.label}` : t1.label, `tipo:${t1.id}`),
+      ...(t2 ? [Markup.button.callback(lock2 ? `🔒 ${t2.label}` : t2.label, `tipo:${t2.id}`)] : []),
+    ]);
+  }
+  rows.push([Markup.button.callback("📸 FOTOS por Estado", "fotos_menu")]);
+  if (freeMode) {
+    rows.push([Markup.button.url("💎 Ver Plano BLACK", SUPPORT_URL)] as any);
+  }
+  rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function buildFotosKeyboard() {
+  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+
+  const fotoItems = FOTOS_TIPOS.map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
+  for (let i = 0; i < fotoItems.length; i += 2) {
+    const t1 = fotoItems[i];
+    const t2 = fotoItems[i + 1];
+    rows.push([
+      Markup.button.callback(t1.label, `tipo:${t1.id}`),
+      ...(t2 ? [Markup.button.callback(t2.label, `tipo:${t2.id}`)] : []),
+    ]);
+  }
+  // CRLV photos (placa input)
+  const crlvItems = [
+    TIPOS.find(t => t.id === "crlvtofoto"),
+    TIPOS.find(t => t.id === "crlvmtfoto"),
+  ].filter(Boolean) as typeof TIPOS[number][];
+  if (crlvItems.length > 0) {
+    rows.push(crlvItems.map(t => Markup.button.callback(t.label, `tipo:${t.id}`)));
+  }
+  // State CNH
+  const cnhItems = ["cnham", "cnhnc", "cnhrs", "cnhrr"]
+    .map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
+  for (let i = 0; i < cnhItems.length; i += 2) {
+    const t1 = cnhItems[i];
+    const t2 = cnhItems[i + 1];
+    rows.push([
+      Markup.button.callback(t1.label, `tipo:${t1.id}`),
+      ...(t2 ? [Markup.button.callback(t2.label, `tipo:${t2.id}`)] : []),
+    ]);
+  }
+  rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -929,18 +1023,27 @@ export function startInfinityBot(): void {
 
   // ── Register commands ──────────────────────────────────────────────────────
   const USER_COMMANDS = [
-    { command: "start",     description: "🌐 Menu principal" },
-    { command: "consultar", description: "🔍 Nova consulta OSINT" },
-    { command: "cpf",       description: "🪪 Consultar CPF" },
-    { command: "nome",      description: "👤 Consultar por Nome" },
-    { command: "telefone",  description: "📞 Consultar Telefone" },
-    { command: "email",     description: "📧 Consultar E-mail" },
-    { command: "placa",     description: "🚗 Consultar Placa" },
-    { command: "cnpj",      description: "🏭 Consultar CNPJ" },
-    { command: "cep",       description: "📍 Consultar CEP" },
-    { command: "pix",       description: "💳 Consultar chave PIX" },
-    { command: "rg",        description: "🪪 Consultar RG" },
-    { command: "ajuda",     description: "❓ Ajuda e lista de comandos" },
+    { command: "start",      description: "🌐 Menu principal" },
+    { command: "consultar",  description: "🔍 Nova consulta OSINT" },
+    { command: "cpf",        description: "🪪 CPF — ver todos os módulos" },
+    { command: "nome",       description: "👤 Consultar por Nome" },
+    { command: "telefone",   description: "📞 Consultar Telefone" },
+    { command: "email",      description: "📧 Consultar E-mail" },
+    { command: "placa",      description: "🚗 Consultar Placa" },
+    { command: "cnpj",       description: "🏭 Consultar CNPJ" },
+    { command: "cep",        description: "📍 Consultar CEP" },
+    { command: "pix",        description: "💳 Consultar chave PIX" },
+    { command: "rg",         description: "🪪 Consultar RG" },
+    { command: "score",      description: "📊 Score de crédito (CPF)" },
+    { command: "cnh",        description: "🪪 CNH por CPF" },
+    { command: "fotos",      description: "📸 Fotos — ver todos os estados" },
+    { command: "score2",     description: "📊 Score 2 (CPF)" },
+    { command: "beneficios", description: "🎁 Benefícios (CPF)" },
+    { command: "mandado",    description: "⚠️ Mandado de prisão (CPF)" },
+    { command: "bens",       description: "⭐ Bens patrimoniais (CPF)" },
+    { command: "processos",  description: "⚖️ Processos judiciais (CPF)" },
+    { command: "titulo",     description: "🗳️ Título eleitor (CPF)" },
+    { command: "ajuda",      description: "❓ Ajuda e lista de comandos" },
   ];
   const ADMIN_COMMANDS = [
     ...USER_COMMANDS,
@@ -1214,33 +1317,111 @@ export function startInfinityBot(): void {
     await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard(freeMode));
   });
 
-  // ── Direct tipo commands ──────────────────────────────────────────────────
-  const DIRECT_COMMANDS: { cmd: string; tipoId: TipoId }[] = [
-    { cmd: "cpf",      tipoId: "cpf" },
-    { cmd: "nome",     tipoId: "nome" },
-    { cmd: "telefone", tipoId: "telefone" },
-    { cmd: "email",    tipoId: "email" },
-    { cmd: "placa",    tipoId: "placa" },
-    { cmd: "cnpj",     tipoId: "cnpj" },
-    { cmd: "cep",      tipoId: "cep" },
-    { cmd: "pix",      tipoId: "pix" },
-    { cmd: "rg",       tipoId: "rg" },
+  // ── /cpf — opens CPF module selector (or direct query if args provided) ─────
+  bot.command("cpf", async (ctx) => {
+    try { await ctx.deleteMessage(); } catch {}
+    const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
+    const from = ctx.from;
+    const chat = ctx.chat;
+    const paid = isPaid(from.id, from.username);
+
+    if (args) {
+      // /cpf 12345678901 — direct CPF Full query
+      resetSession(from.id);
+      const freeMode = !paid && chat.type !== "private";
+      if (freeMode) {
+        const used = getFreeUsed(from.id);
+        if (used >= FREE_DAILY_LIMIT) { await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard()); return; }
+        trackFreeQuery(from.id);
+      }
+      const loadMsg = await ctx.replyWithHTML(`⏳ <b>Consultando CPF Full...</b>\n<code>${args}</code>`);
+      await executeQuery(ctx, "cpf", args, loadMsg.message_id);
+    } else {
+      // No args — show CPF module selector
+      resetSession(from.id);
+      const freeMode = !paid && chat.type !== "private";
+      const CPF_MENU_TEXT =
+        `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+        `┃\n` +
+        `┃ • MÓDULOS DE CPF\n` +
+        `┃ • SELECIONE O TIPO DE CONSULTA\n` +
+        `┠────────────────────────────\n` +
+        `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+        `╰────────────────────────────╯`;
+      await ctx.replyWithHTML(CPF_MENU_TEXT, buildCpfModuleKeyboard(freeMode));
+    }
+  });
+
+  // ── /fotos — opens fotos sub-menu ─────────────────────────────────────────
+  bot.command("fotos", async (ctx) => {
+    try { await ctx.deleteMessage(); } catch {}
+    resetSession(ctx.from.id);
+    const FOTOS_MENU_TEXT =
+      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+      `┃\n` +
+      `┃ • 📸 FOTOS POR ESTADO\n` +
+      `┃ • SELECIONE O ESTADO DESEJADO\n` +
+      `┠────────────────────────────\n` +
+      `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+      `╰────────────────────────────╯`;
+    await ctx.replyWithHTML(FOTOS_MENU_TEXT, buildFotosKeyboard());
+  });
+
+  // ── Direct tipo commands (non-CPF) ────────────────────────────────────────
+  const DIRECT_COMMANDS: { cmd: string; tipoId: TipoId; executor?: "skylers" }[] = [
+    { cmd: "nome",       tipoId: "nome" },
+    { cmd: "telefone",   tipoId: "telefone" },
+    { cmd: "email",      tipoId: "email" },
+    { cmd: "placa",      tipoId: "placa" },
+    { cmd: "cnpj",       tipoId: "cnpj" },
+    { cmd: "cep",        tipoId: "cep" },
+    { cmd: "pix",        tipoId: "pix" },
+    { cmd: "rg",         tipoId: "rg" },
+    { cmd: "cnh",        tipoId: "cnh" },
+    // Skylers direct commands
+    { cmd: "score",      tipoId: "score",      executor: "skylers" },
+    { cmd: "score2",     tipoId: "score2",     executor: "skylers" },
+    { cmd: "beneficios", tipoId: "beneficios", executor: "skylers" },
+    { cmd: "mandado",    tipoId: "mandado",    executor: "skylers" },
+    { cmd: "bens",       tipoId: "bens",       executor: "skylers" },
+    { cmd: "processos",  tipoId: "processos",  executor: "skylers" },
+    { cmd: "titulo",     tipoId: "titulo",     executor: "skylers" },
   ];
 
-  for (const { cmd, tipoId } of DIRECT_COMMANDS) {
+  for (const { cmd, tipoId, executor } of DIRECT_COMMANDS) {
     bot.command(cmd, async (ctx) => {
       const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
       const tipo = TIPOS.find((t) => t.id === tipoId)!;
       try { await ctx.deleteMessage(); } catch {}
+      const from = ctx.from;
+      const chat = ctx.chat;
+      const paid = isPaid(from.id, from.username);
+
+      // Skylers-only commands require BLACK in DM
+      if (executor === "skylers" && chat.type === "private" && !paid) {
+        await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
+        return;
+      }
 
       if (args) {
-        resetSession(ctx.from.id);
+        resetSession(from.id);
+        const freeMode = !paid && chat.type !== "private";
+        if (freeMode) {
+          const used = getFreeUsed(from.id);
+          if (used >= FREE_DAILY_LIMIT) { await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard()); return; }
+          if (!FREE_TIPOS.has(tipoId)) { await ctx.replyWithHTML(buildUpgradeTipoMsg(tipo.label), buildUpgradeKeyboard()); return; }
+          trackFreeQuery(from.id);
+        }
         const loadMsg = await ctx.replyWithHTML(
           `⏳ <b>Consultando ${tipo.label}...</b>\n<code>${args}</code>`
         );
-        await executeQuery(ctx, tipoId, args, loadMsg.message_id);
+        if (executor === "skylers" || SKYLERS_ONLY_TIPOS.has(tipoId)) {
+          await executeSkylersBotQuery(ctx, tipoId, args, loadMsg.message_id);
+        } else {
+          await executeQuery(ctx, tipoId, args, loadMsg.message_id);
+        }
       } else {
-        const session = getSession(ctx.from.id);
+        const session = getSession(from.id);
         session.state = "awaiting_query";
         session.tipo = tipoId;
         await ctx.replyWithHTML(
@@ -1259,8 +1440,13 @@ export function startInfinityBot(): void {
       `❓ <b>INFINITY SEARCH — AJUDA</b>`,
       `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
       ``,
-      `<b>Comandos rápidos (dado opcional):</b>`,
-      `<code>/cpf 12345678901</code>`,
+      `<b>Menus interativos:</b>`,
+      `<code>/cpf</code> — seletor de módulos CPF (30+ tipos)`,
+      `<code>/fotos</code> — fotos por estado (Skylers)`,
+      `<code>/consultar</code> — todos os módulos disponíveis`,
+      ``,
+      `<b>Comandos de dados básicos:</b>`,
+      `<code>/cpf 12345678901</code> — CPF Full direto`,
       `<code>/telefone 11999887766</code>`,
       `<code>/placa ABC1D23</code>`,
       `<code>/cnpj 12345678000195</code>`,
@@ -1269,14 +1455,18 @@ export function startInfinityBot(): void {
       `<code>/pix chave-pix</code>`,
       `<code>/rg 123456789</code>`,
       `<code>/nome João Silva</code>`,
+      `<code>/cnh 12345678901</code>`,
       ``,
-      `<b>Menu interativo:</b>`,
-      `<code>/consultar</code> — abre seletor com todos os tipos`,
+      `<b>Módulos Skylers (BLACK) — CPF:</b>`,
+      `<code>/score</code> · <code>/score2</code> · <code>/titulo</code>`,
+      `<code>/beneficios</code> · <code>/mandado</code> · <code>/bens</code>`,
+      `<code>/processos</code>`,
       ``,
-      `<b>Bases de dados disponíveis:</b>`,
-      `∞ <b>Infinity</b> — OSINT completo (todos os tipos)`,
-      `🏥 <b>SISREG-III</b> — Regulação em saúde (CPF/Nome)`,
-      `💉 <b>SI-PNI</b> — Vacinação nacional (CPF/CNS/Nome)`,
+      `<b>Bases disponíveis:</b>`,
+      `∞ <b>Infinity</b> — OSINT completo`,
+      `🏥 <b>SISREG-III</b> — Regulação em saúde`,
+      `💉 <b>SI-PNI</b> — Vacinação nacional`,
+      `🔵 <b>Skylers</b> — Módulos exclusivos BLACK`,
       ``,
       `<b>Acesso:</b>`,
       `Membros do canal têm acesso automático.`,
@@ -1293,6 +1483,9 @@ export function startInfinityBot(): void {
       lines.push(`<code>/bloquear</code> — bloquear bot neste grupo`);
       lines.push(`<code>/channelid</code> — capturar ID do canal`);
       lines.push(`<code>/addadmin 123456</code> — promover usuário por ID`);
+      lines.push(`<code>/addpago 123456</code> — adicionar usuário BLACK`);
+      lines.push(`<code>/removepago 123456</code> — remover usuário BLACK`);
+      lines.push(`<code>/listpagos</code> — listar usuários BLACK`);
       lines.push(`<code>/status_bot</code> — status de grupos e usuários`);
     }
 
@@ -1302,8 +1495,9 @@ export function startInfinityBot(): void {
 
     await ctx.replyWithHTML(lines.join("\n"),
       Markup.inlineKeyboard([
+        [Markup.button.callback("🪪 Módulos CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
         [Markup.button.callback("🔍 Consultar Agora", "consultar")],
-        [Markup.button.url("💬 Suporte", SUPPORT_URL), Markup.button.url("💬 Suporte", SUPPORT_URL2)] as any,
+        [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
       ]),
     );
   });
@@ -1349,19 +1543,65 @@ export function startInfinityBot(): void {
     }
   });
 
+  // ── Callback: cpf_menu ────────────────────────────────────────────────────
+  bot.action("cpf_menu", async (ctx) => {
+    await ctx.answerCbQuery();
+    resetSession(ctx.from.id);
+    const from = ctx.from;
+    const chat = ctx.chat;
+    const paid = isPaid(from.id, from.username);
+    const freeMode = !paid && chat?.type !== "private";
+    const CPF_MENU_TEXT =
+      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+      `┃\n` +
+      `┃ • MÓDULOS DE CPF\n` +
+      `┃ • SELECIONE O TIPO DE CONSULTA\n` +
+      `┠────────────────────────────\n` +
+      `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+      `╰────────────────────────────╯`;
+    try {
+      await ctx.editMessageText(CPF_MENU_TEXT, { parse_mode: "HTML", ...buildCpfModuleKeyboard(freeMode) });
+    } catch {
+      await ctx.replyWithHTML(CPF_MENU_TEXT, buildCpfModuleKeyboard(freeMode));
+    }
+  });
+
+  // ── Callback: fotos_menu ──────────────────────────────────────────────────
+  bot.action("fotos_menu", async (ctx) => {
+    await ctx.answerCbQuery();
+    resetSession(ctx.from.id);
+    const FOTOS_MENU_TEXT =
+      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+      `┃\n` +
+      `┃ • 📸 FOTOS POR ESTADO\n` +
+      `┃ • CPF DE QUALQUER ESTADO — SKYLERS\n` +
+      `┠────────────────────────────\n` +
+      `┃ SELECIONE O ESTADO ABAIXO 👇🏻\n` +
+      `╰────────────────────────────╯`;
+    try {
+      await ctx.editMessageText(FOTOS_MENU_TEXT, { parse_mode: "HTML", ...buildFotosKeyboard() });
+    } catch {
+      await ctx.replyWithHTML(FOTOS_MENU_TEXT, buildFotosKeyboard());
+    }
+  });
+
   // ── Callback: show ajuda ──────────────────────────────────────────────────
   bot.action("show_ajuda", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML([
       `❓ <b>Comandos rápidos:</b>`,
-      `<code>/cpf</code> · <code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code>`,
+      `<code>/cpf</code> — seletor de módulos CPF`,
+      `<code>/cpf 12345678901</code> — CPF Full direto`,
+      `<code>/fotos</code> — fotos por estado`,
+      `<code>/score</code> · <code>/beneficios</code> · <code>/mandado</code>`,
+      `<code>/bens</code> · <code>/processos</code> · <code>/titulo</code>`,
+      `<code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code>`,
       `<code>/email</code> · <code>/cep</code> · <code>/pix</code> · <code>/rg</code> · <code>/nome</code>`,
-      ``,
-      `Envie o comando + dado direto: <code>/cpf 12345678901</code>`,
       ``,
       `<b>Acesso:</b> entre no canal para usar o bot.`,
     ].join("\n"),
       Markup.inlineKeyboard([
+        [Markup.button.callback("🪪 Módulos CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
         [Markup.button.callback("🔍 Consultar", "consultar")],
         [Markup.button.url("📢 Canal de Acesso", CHANNEL_INVITE)] as any,
         [Markup.button.url("📣 Canal de Avisos", CHANNEL2_INVITE)] as any,
