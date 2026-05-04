@@ -1439,29 +1439,33 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   }
 
   const username = req.infinityUser!.username;
-  const [globalCount, userCount] = await Promise.all([
-    getGlobalDailyCount(),
-    getUserDailyCount(username),
-  ]);
+  const isAdmin  = req.infinityUser!.role === "admin";
 
-  if (globalCount >= DAILY_RATE_LIMIT) {
-    res.status(429).json({
-      success: false,
-      error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido.`,
-      rateLimited: true,
-    });
-    return;
-  }
+  if (!isAdmin) {
+    const [globalCount, userCount] = await Promise.all([
+      getGlobalDailyCount(),
+      getUserDailyCount(username),
+    ]);
 
-  const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
-  if (userCount >= userLimit) {
-    res.status(429).json({
-      success: false,
-      error: `Limite diário de ${userLimit} consultas atingido. Tente novamente amanhã.`,
-      rateLimited: true,
-      limitInfo: { used: userCount, limit: userLimit },
-    });
-    return;
+    if (globalCount >= DAILY_RATE_LIMIT) {
+      res.status(429).json({
+        success: false,
+        error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido.`,
+        rateLimited: true,
+      });
+      return;
+    }
+
+    const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
+    if (userCount >= userLimit) {
+      res.status(429).json({
+        success: false,
+        error: `Limite diário de ${userLimit} consultas atingido. Tente novamente amanhã.`,
+        rateLimited: true,
+        limitInfo: { used: userCount, limit: userLimit },
+      });
+      return;
+    }
   }
 
   const ctrl = new AbortController();
@@ -1499,27 +1503,30 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   }
 
   const username = req.infinityUser!.username;
+  const isAdmin  = req.infinityUser!.role === "admin";
 
-  // Global + per-user daily rate limits (cached in-memory)
-  const [globalCount, userCount] = await Promise.all([
-    getGlobalDailyCount(),
-    getUserDailyCount(username),
-  ]);
-  if (globalCount >= DAILY_RATE_LIMIT) {
-    res.status(429).json({
-      error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido para toda a plataforma. Tente novamente amanhã.`,
-      rateLimited: true,
-    });
-    return;
-  }
-  const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
-  if (userCount >= userLimit) {
-    res.status(429).json({
-      error: `Seu limite diário de ${userLimit} consultas foi atingido. Tente novamente amanhã.`,
-      rateLimited: true,
-      limitInfo: { used: userCount, limit: userLimit },
-    });
-    return;
+  // Global + per-user daily rate limits — skipped entirely for admins
+  if (!isAdmin) {
+    const [globalCount, userCount] = await Promise.all([
+      getGlobalDailyCount(),
+      getUserDailyCount(username),
+    ]);
+    if (globalCount >= DAILY_RATE_LIMIT) {
+      res.status(429).json({
+        error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido para toda a plataforma. Tente novamente amanhã.`,
+        rateLimited: true,
+      });
+      return;
+    }
+    const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
+    if (userCount >= userLimit) {
+      res.status(429).json({
+        error: `Seu limite diário de ${userLimit} consultas foi atingido. Tente novamente amanhã.`,
+        rateLimited: true,
+        limitInfo: { used: userCount, limit: userLimit },
+      });
+      return;
+    }
   }
 
   // Light validation per tipo
