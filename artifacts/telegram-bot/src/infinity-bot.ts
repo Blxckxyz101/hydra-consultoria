@@ -13,13 +13,16 @@ const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
 
 // ── Access control ────────────────────────────────────────────────────────────
-// Channel users must join to use the bot (private invite channel)
+// Channel 1 — private invite channel (paid/free access channel)
 const CHANNEL_INVITE = "https://t.me/+7sBxmhOFPhJlYzcx";
-// Numeric ID of the channel — set INFINITY_CHANNEL_ID env var
-// (admin can discover it by sending /channelid in the channel after adding the bot)
+// Numeric ID of channel 1 — set INFINITY_CHANNEL_ID env var
 let CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
   ? Number(process.env.INFINITY_CHANNEL_ID)
   : null;
+
+// Channel 2 — public announcements channel (required for all users)
+const CHANNEL2_INVITE = "https://t.me/infinitysearchchannel";
+const CHANNEL2_USERNAME = "@infinitysearchchannel";
 
 // Admin usernames (lowercase, no @)
 const ADMIN_USERNAMES = new Set(["blxckxyz", "xxmathexx"]);
@@ -43,14 +46,28 @@ function isAdmin(userId: number, username?: string): boolean {
 async function checkChannelMembership(
   telegram: Telegraf["telegram"],
   userId: number
-): Promise<boolean> {
-  if (!CHANNEL_ID) return true; // no channel configured → allow all (dev mode)
-  try {
-    const member = await telegram.getChatMember(CHANNEL_ID, userId);
-    return ["member", "administrator", "creator"].includes(member.status);
-  } catch {
-    return false;
+): Promise<{ ok: boolean; missingChannel?: string }> {
+  // Check channel 1 (private invite channel)
+  if (CHANNEL_ID) {
+    try {
+      const member = await telegram.getChatMember(CHANNEL_ID, userId);
+      if (!["member", "administrator", "creator"].includes(member.status)) {
+        return { ok: false, missingChannel: CHANNEL_INVITE };
+      }
+    } catch {
+      return { ok: false, missingChannel: CHANNEL_INVITE };
+    }
   }
+  // Check channel 2 (public announcements channel)
+  try {
+    const member2 = await telegram.getChatMember(CHANNEL2_USERNAME, userId);
+    if (!["member", "administrator", "creator"].includes(member2.status)) {
+      return { ok: false, missingChannel: CHANNEL2_INVITE };
+    }
+  } catch {
+    // If the bot is not in channel 2, skip this check (don't block users)
+  }
+  return { ok: true };
 }
 
 async function isAuthorizedUser(
@@ -63,9 +80,31 @@ async function isAuthorizedUser(
   // Already verified
   if (verifiedUsers.has(userId)) return true;
   // Check channel membership
-  const ok = await checkChannelMembership(telegram, userId);
+  const { ok } = await checkChannelMembership(telegram, userId);
   if (ok) verifiedUsers.add(userId);
   return ok;
+}
+
+async function getUnauthorizedMessage(
+  telegram: Telegraf["telegram"],
+  userId: number
+): Promise<string> {
+  const { missingChannel } = await checkChannelMembership(telegram, userId);
+  const channelLink = missingChannel ?? CHANNEL_INVITE;
+  const isChannel2 = missingChannel === CHANNEL2_INVITE;
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ ❌ ACESSO NEGADO\n` +
+    `┠────────────────────────────\n` +
+    `┃ Para usar o bot, você deve\n` +
+    `┃ participar ${isChannel2 ? "do canal de avisos:" : "do canal de acesso:"}\n` +
+    `┃\n` +
+    `┃ 👉 ${channelLink}\n` +
+    `┃\n` +
+    `┃ Após entrar, clique em /start\n` +
+    `╰────────────────────────────╯`
+  );
 }
 
 // ── All tipos (flat list) ─────────────────────────────────────────────────────
@@ -132,14 +171,46 @@ const TIPOS = [
   { id: "fotomg",       label: "📸 Foto MG",          prompt: "CPF da pessoa (11 dígitos)" },
   { id: "crlvtofoto",   label: "🖼️ CRLV TO (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
   { id: "crlvmtfoto",   label: "🖼️ CRLV MT (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
+  // CNH por estado
+  { id: "cnham",        label: "🪪 CNH AM",            prompt: "CPF do condutor (11 dígitos)" },
+  { id: "cnhnc",        label: "🪪 CNH Nacional",      prompt: "CPF do condutor (11 dígitos)" },
+  { id: "cnhrs",        label: "🪪 CNH RS",            prompt: "CPF do condutor (11 dígitos)" },
+  { id: "cnhrr",        label: "🪪 CNH RR",            prompt: "CPF do condutor (11 dígitos)" },
+  { id: "fotodetran",   label: "📸 Foto Detran",       prompt: "CPF da pessoa (11 dígitos)" },
+  // Jurídico
+  { id: "processo",     label: "⚖️ Processo",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "advogadooab",  label: "👨‍⚖️ Advogado OAB",   prompt: "número OAB" },
+  { id: "advogadooabuf",label: "👨‍⚖️ Advogado OAB/UF", prompt: "número OAB" },
+  { id: "advogadocpf",  label: "👨‍⚖️ Advogado CPF",   prompt: "CPF do advogado (11 dígitos)" },
+  { id: "oab",          label: "📋 OAB",               prompt: "número OAB" },
+  { id: "matricula",    label: "📄 Matrícula",         prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "cheque",       label: "🏦 Cheque",            prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "assessoria",   label: "🏢 Assessoria",        prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "registro",     label: "📝 Registro",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "nasc",         label: "🍼 Nascimento",        prompt: "CPF da pessoa (11 dígitos)" },
+  // Score / crédito
+  { id: "score2",       label: "📊 Score 2",           prompt: "CPF (11 dígitos)" },
+  // Catálogo
+  { id: "catcpf",       label: "📂 Catálogo CPF",      prompt: "CPF (11 dígitos)" },
+  { id: "catnumero",    label: "📂 Catálogo Número",   prompt: "número de telefone" },
+  // Outros
+  { id: "faculdades",   label: "🎓 Faculdades",        prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "placafipe",    label: "🚗 Placa FIPE",        prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "placaserpro",  label: "🚗 Placa Serpro",      prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "vistoria",     label: "🔍 Vistoria",          prompt: "CPF da pessoa ou placa" },
 ] as const;
 
 type TipoId = (typeof TIPOS)[number]["id"];
 
 // Tipos que vão direto para Skylers (sem seletor de base)
 const SKYLERS_ONLY_TIPOS = new Set<string>([
-  "cpfbasico", "foto", "biometria", "titulo", "score", "irpf", "beneficios",
-  "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull",
+  "cpfbasico", "foto", "biometria", "titulo", "score", "score2", "irpf", "beneficios",
+  "mandado", "dividas", "bens", "processos", "processo", "spc", "iptu", "certidoes", "cnhfull",
+  "advogadooab", "advogadooabuf", "advogadocpf", "oab", "matricula", "cheque",
+  "catcpf", "catnumero", "faculdades", "assessoria", "registro", "nasc",
+  "placafipe", "placaserpro", "vistoria",
+  // CNH por estado (Skylers)
+  "cnham", "cnhnc", "cnhrs", "cnhrr", "fotodetran",
   // Fotos por estado
   "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
   "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
@@ -209,6 +280,33 @@ const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
   fotomg:        { title: "FOTO MG  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   crlvtofoto:    { title: "CRLV TO (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
   crlvmtfoto:    { title: "CRLV MT (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  // CNH por estado
+  cnham:         { title: "CNH AM  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cnhnc:         { title: "CNH NACIONAL  ·  SKYLERS",     lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cnhrs:         { title: "CNH RS  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cnhrr:         { title: "CNH RR  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotodetran:    { title: "FOTO DETRAN  ·  SKYLERS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  // Jurídico
+  processo:      { title: "PROCESSO  ·  SKYLERS",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  advogadooab:   { title: "ADVOGADO POR OAB  ·  SKYLERS", lines: ["DIGITE O NÚMERO OAB"] },
+  advogadooabuf: { title: "ADVOGADO OAB/UF  ·  SKYLERS",  lines: ["DIGITE O NÚMERO OAB"] },
+  advogadocpf:   { title: "ADVOGADO POR CPF  ·  SKYLERS", lines: ["DIGITE O CPF DO ADVOGADO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  oab:           { title: "OAB  ·  SKYLERS",              lines: ["DIGITE O NÚMERO OAB"] },
+  matricula:     { title: "MATRÍCULA  ·  SKYLERS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cheque:        { title: "CHEQUE  ·  SKYLERS",           lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  assessoria:    { title: "ASSESSORIA  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  registro:      { title: "REGISTRO  ·  SKYLERS",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  nasc:          { title: "NASCIMENTO  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  // Score / crédito
+  score2:        { title: "SCORE 2  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  // Catálogo
+  catcpf:        { title: "CATÁLOGO CPF  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  catnumero:     { title: "CATÁLOGO NÚMERO  ·  SKYLERS",  lines: ["DIGITE O NÚMERO DE TELEFONE"] },
+  // Outros
+  faculdades:    { title: "FACULDADES  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  placafipe:     { title: "PLACA FIPE  ·  SKYLERS",       lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  placaserpro:   { title: "PLACA SERPRO  ·  SKYLERS",     lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  vistoria:      { title: "VISTORIA  ·  SKYLERS",         lines: ["DIGITE O CPF OU PLACA DO VEÍCULO"] },
 };
 
 function buildQueryPrompt(tipoId: string): string {
@@ -564,13 +662,25 @@ function resultKeyboard(chatId: number, msgId: number) {
 }
 
 // ── Not authorized reply ──────────────────────────────────────────────────────
-async function sendNotAuthorized(ctx: { replyWithHTML: (t: string, extra?: object) => Promise<any> }) {
-  await ctx.replyWithHTML(
-    `🔒 <b>Acesso restrito</b>\n\n` +
-    `Para usar o <b>Infinity Search Bot</b>, você precisa ser membro do canal oficial.\n\n` +
-    `Entre no canal e tente novamente:`,
+async function sendNotAuthorized(ctx: { telegram: Telegraf["telegram"]; from?: { id: number }; replyWithHTML: (t: string, extra?: object) => Promise<any> }) {
+  const userId = ctx.from?.id;
+  const msg = userId ? await getUnauthorizedMessage(ctx.telegram, userId) : (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+    `┃\n` +
+    `┃ ❌ ACESSO NEGADO\n` +
+    `┠────────────────────────────\n` +
+    `┃ Para usar o bot, entre nos canais:\n` +
+    `┃\n` +
+    `┃ 1️⃣ ${CHANNEL_INVITE}\n` +
+    `┃ 2️⃣ ${CHANNEL2_INVITE}\n` +
+    `┃\n` +
+    `┃ Após entrar, clique em /start\n` +
+    `╰────────────────────────────╯`
+  );
+  await ctx.replyWithHTML(msg,
     Markup.inlineKeyboard([
-      [Markup.button.url("📢 Entrar no Canal", CHANNEL_INVITE)],
+      [Markup.button.url("📢 Canal de Acesso", CHANNEL_INVITE)],
+      [Markup.button.url("📣 Canal de Avisos", CHANNEL2_INVITE)] as any,
       [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
     ])
   );
@@ -1245,7 +1355,8 @@ export function startInfinityBot(): void {
     ].join("\n"),
       Markup.inlineKeyboard([
         [Markup.button.callback("🔍 Consultar", "consultar")],
-        [Markup.button.url("📢 Canal", CHANNEL_INVITE)] as any,
+        [Markup.button.url("📢 Canal de Acesso", CHANNEL_INVITE)] as any,
+        [Markup.button.url("📣 Canal de Avisos", CHANNEL2_INVITE)] as any,
       ]),
     );
   });

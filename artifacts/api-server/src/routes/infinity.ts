@@ -55,6 +55,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   rg: "iseek-dados---rg",
   mae: "iseek-dados---mae",
   pai: "iseek-dados---pai",
+  nasc: "iseek-dados---nasc",
   parentes: "iseek-dados---parentes",
   obito: "iseek-dados---obito",
   nis: "iseek-dados---nis",
@@ -64,33 +65,59 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   email: "iseek-dados---email",
   pix: "iseek-dados---pix",
   cep: "iseek-dados---cep",
+  endereco: "iseek-dados---endereco",
   placa: "iseek-dados---placa",
   chassi: "iseek-dados---chassi",
   renavam: "iseek-dados---renavam",
   motor: "iseek-dados---motor",
   cnh: "iseek-dados---cnh",
+  cnham: "iseek-dados---cnham",
+  cnhnc: "iseek-dados---cnhnc",
+  cnhrs: "iseek-dados---cnhrs",
+  cnhrr: "iseek-dados---cnhrr",
   frota: "iseek-dados---veiculos",
+  veiculos: "iseek-dados---veiculos",
   cnpj: "iseek-dados---cnpj",
   fucionarios: "iseek-dados---func",
+  funcionarios: "iseek-dados---func",
   socios: "iseek-dados---cnpj",
   empregos: "iseek-dados---rais",
+  fotodetran: "iseek-dados---fotodetran",
+  crlvto: "iseek-dados---crlvto",
+  crlvmt: "iseek-dados---crlvmt",
   // ── tipos exclusivos Skylers ─────────────────────────────────────────────
   cpfbasico: "iseek-cpfbasico",
   titulo: "iseek-dados---titulo",
   score: "iseek-dados---score",
+  score2: "iseek-dados---score2",
   irpf: "iseek-dados---irpf",
   beneficios: "iseek-dados---beneficios",
   mandado: "iseek-dados---mandado",
   dividas: "iseek-dados---dividas",
   bens: "iseek-dados---bens",
+  processo: "iseek-dados---processo",
   processos: "iseek-dados---processos",
+  advogadooab: "iseek-dados---advogadooab",
+  advogadooabuf: "iseek-dados---advogadooabuf",
+  advogadocpf: "iseek-dados---advogadocpf",
+  oab: "iseek-dados---oab",
+  matricula: "iseek-dados---matricula",
+  cheque: "iseek-dados---cheque",
   spc: "cpf-spc",
   iptu: "iseek-dados---iptu",
   certidoes: "iseek-dados---certidoes",
+  faculdades: "iseek-dados---faculdades",
+  assessoria: "iseek-dados---assessoria",
+  registro: "iseek-dados---registro",
   cnhfull: "cnh-full",
   foto: "iseek-fotos---fotocnh",
   biometria: "iseek-fotos---fotocnh",
   credilink: "credilink",
+  catcpf: "iseek-dados---catcpf",
+  catnumero: "iseek-dados---catnumero",
+  placafipe: "placa-fipe",
+  placaserpro: "placa-serpro",
+  vistoria: "vistoria",
   // Fotos por estado
   fotoma:       "iseek-fotos---fotoma",
   fotoce:       "iseek-fotos---fotoce",
@@ -159,12 +186,17 @@ function bumpCaches(username: string): void {
 
 const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
-  "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
+  "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios", "funcionarios",
   "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
-  "motor", "vacinas",
+  "motor", "vacinas", "nasc", "endereco", "veiculos",
+  "cnham", "cnhnc", "cnhrs", "cnhrr", "fotodetran", "crlvto", "crlvmt",
   // Skylers-only
-  "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
-  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "credilink",
+  "cpfbasico", "titulo", "score", "score2", "irpf", "beneficios", "mandado",
+  "dividas", "bens", "processo", "processos", "spc", "iptu", "certidoes",
+  "cnhfull", "foto", "biometria", "credilink",
+  "advogadooab", "advogadooabuf", "advogadocpf", "oab", "matricula", "cheque",
+  "catcpf", "catnumero", "faculdades", "assessoria", "registro",
+  "placafipe", "placaserpro", "vistoria",
   // Fotos por estado
   "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
   "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
@@ -725,9 +757,9 @@ const JUNK_KEYS_SKYLERS = new Set(["status", "token", "criador", "creditos", "cr
 const PHOTO_URL_RE = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
 
 // Keys that commonly carry base64 photo data from Skylers foto modules
-const BASE64_PHOTO_KEYS = /^(foto|imagem|image|photo|pic|thumb|face|base64|fotografia|retrato)/i;
-// A valid base64 string: only base64 chars, long enough to be an image (>200 chars)
-const BASE64_RE = /^[A-Za-z0-9+/]{200,}={0,2}$/;
+const BASE64_PHOTO_KEYS = /^(foto|imagem|image|photo|pic|thumb|face|base64|fotografia|retrato|biometria|cnh|selfie|rosto|figura)/i;
+// A valid base64 string: only base64 chars, long enough to be an image (>500 chars)
+const BASE64_RE = /^[A-Za-z0-9+/]{500,}={0,2}$/;
 
 function isUseful(v: unknown): boolean {
   if (v === null || v === undefined) return false;
@@ -744,12 +776,22 @@ function humanizeKey(k: string): string {
 
 /**
  * Scans an object for a base64-encoded photo field.
- * Returns the data URI and the key that contained it, or null if none found.
+ * First checks keys matching photo-like names, then falls back to scanning
+ * any string value that is long and valid base64 (to catch unexpected key names).
  */
 function extractBase64Photo(obj: Record<string, unknown>): { key: string; dataUri: string } | null {
+  // Priority pass: keys with photo-like names
   for (const [k, v] of Object.entries(obj)) {
     if (typeof v !== "string") continue;
     if (!BASE64_PHOTO_KEYS.test(k)) continue;
+    const clean = v.replace(/[\r\n\s]/g, "");
+    if (BASE64_RE.test(clean)) {
+      return { key: k, dataUri: `data:image/jpeg;base64,${clean}` };
+    }
+  }
+  // Fallback: any string value >= 1000 chars that is pure base64
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v !== "string" || v.length < 1000) continue;
     const clean = v.replace(/[\r\n\s]/g, "");
     if (BASE64_RE.test(clean)) {
       return { key: k, dataUri: `data:image/jpeg;base64,${clean}` };
@@ -1262,7 +1304,7 @@ router.get("/consultas", requireAuth, async (req, res) => {
 router.get("/bases/status", requireAuth, async (_req, res) => {
   const bases = [
     { id: "geass",    name: "Geass API",    description: "Provedor OSINT principal · 24 tipos",                url: PROVIDER_BASE.replace("/api/consulta", "/") },
-    { id: "skylers",  name: "Skylers API",  description: "Provedor OSINT avançado · 80+ módulos + Foto CNH",   url: `${SKYLERS_BASE}/token/info?token=${SKYLERS_TOKEN}` },
+    { id: "skylers",  name: "Skylers API",  description: "Provedor OSINT avançado · 80+ módulos + Foto CNH",   url: SKYLERS_BASE },
     { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
     { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
     { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
@@ -1638,19 +1680,32 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
           res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
           let toolContent = "";
 
+          function buildToolContent(p: { fields: Array<{key:string;value:string}>; sections: Array<{name:string;items:string[]}>; raw: string }): string {
+            const lines: string[] = [];
+            p.fields.forEach((f) => {
+              if (f.key === "FOTO_URL") {
+                if (f.value.startsWith("data:image")) {
+                  lines.push("FOTO_URL: [FOTO BIOMÉTRICA ENCONTRADA — informe ao usuário que uma foto foi encontrada e está disponível no painel]");
+                } else {
+                  lines.push(`FOTO_URL: ${f.value}`);
+                }
+              } else {
+                lines.push(`${f.key}: ${f.value}`);
+              }
+            });
+            p.sections.forEach((s) => {
+              lines.push(`\n${s.name} (${s.items.length} registros):`);
+              s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
+            });
+            return lines.join("\n") || p.raw.slice(0, 800);
+          }
+
           if (base === "skylers") {
             const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
             if (modulo) {
               const sk = await callSkylers(modulo, dados, new AbortController().signal);
               if (sk.ok && sk.parsed) {
-                const p = sk.parsed;
-                const lines: string[] = [];
-                p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
-                p.sections.forEach((s) => {
-                  lines.push(`\n${s.name} (${s.items.length} registros):`);
-                  s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
-                });
-                toolContent = lines.join("\n") || p.raw.slice(0, 800);
+                toolContent = buildToolContent(sk.parsed);
               } else {
                 toolContent = `Sem resultado Skylers: ${sk.error ?? "dado não encontrado"}`;
               }
@@ -1658,23 +1713,13 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
               toolContent = `Tipo '${tipo}' não suportado pela Skylers API, usando base principal.`;
               const fallback = await callProvider(tipo, dados, new AbortController().signal);
               if (fallback.ok && fallback.parsed) {
-                const p = fallback.parsed;
-                const lines: string[] = [];
-                p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
-                toolContent = lines.join("\n") || p.raw.slice(0, 800);
+                toolContent = buildToolContent(fallback.parsed);
               }
             }
           } else {
             const consultResult = await callProvider(tipo, dados, new AbortController().signal);
             if (consultResult.ok && consultResult.parsed) {
-              const p = consultResult.parsed;
-              const lines: string[] = [];
-              p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
-              p.sections.forEach((s) => {
-                lines.push(`\n${s.name} (${s.items.length} registros):`);
-                s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
-              });
-              toolContent = lines.join("\n") || p.raw.slice(0, 800);
+              toolContent = buildToolContent(consultResult.parsed);
             } else {
               toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
             }
