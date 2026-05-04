@@ -724,6 +724,11 @@ const JUNK_VALUES = new Set(["None", "null", "undefined", "N/A", "n/a", "-", "",
 const JUNK_KEYS_SKYLERS = new Set(["status", "token", "criador", "creditos", "creditos_restantes", "api_info", "mensagem"]);
 const PHOTO_URL_RE = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
 
+// Keys that commonly carry base64 photo data from Skylers foto modules
+const BASE64_PHOTO_KEYS = /^(foto|imagem|image|photo|pic|thumb|face|base64|fotografia|retrato)/i;
+// A valid base64 string: only base64 chars, long enough to be an image (>200 chars)
+const BASE64_RE = /^[A-Za-z0-9+/]{200,}={0,2}$/;
+
 function isUseful(v: unknown): boolean {
   if (v === null || v === undefined) return false;
   const s = String(v).trim();
@@ -737,10 +742,62 @@ function humanizeKey(k: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function flattenObjToItems(obj: Record<string, unknown>): string[] {
+/**
+ * Scans an object for a base64-encoded photo field.
+ * Returns the data URI and the key that contained it, or null if none found.
+ */
+function extractBase64Photo(obj: Record<string, unknown>): { key: string; dataUri: string } | null {
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v !== "string") continue;
+    if (!BASE64_PHOTO_KEYS.test(k)) continue;
+    const clean = v.replace(/[\r\n\s]/g, "");
+    if (BASE64_RE.test(clean)) {
+      return { key: k, dataUri: `data:image/jpeg;base64,${clean}` };
+    }
+  }
+  return null;
+}
+
+/**
+ * Flattens a plain object to displayable "Key: value" strings,
+ * optionally skipping a specific key (used to skip the extracted base64 field).
+ */
+function flattenObjToItems(obj: Record<string, unknown>, skipKey?: string): string[] {
   return Object.entries(obj)
-    .filter(([, sv]) => isUseful(sv) && typeof sv !== "object")
+    .filter(([sk, sv]) => sk !== skipKey && isUseful(sv) && typeof sv !== "object")
     .map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
+}
+
+/**
+ * Processes an array of items into section entries, extracting base64 photos
+ * into `fotoUrl` if found (first occurrence wins).
+ */
+function processArray(
+  arr: unknown[],
+  fotoUrl: { value: string | null },
+): string[] {
+  const items: string[] = [];
+  for (const item of arr) {
+    if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      // Try to extract base64 photo from this object item
+      if (!fotoUrl.value) {
+        const b64 = extractBase64Photo(obj);
+        if (b64) {
+          fotoUrl.value = b64.dataUri;
+          // Flatten the rest of the fields (without the base64 key)
+          const entries = flattenObjToItems(obj, b64.key);
+          if (entries.length > 0) items.push(entries.join(" · "));
+          continue;
+        }
+      }
+      const entries = flattenObjToItems(obj);
+      if (entries.length > 0) items.push(entries.join(" · "));
+    } else if (isUseful(item)) {
+      items.push(String(item));
+    }
+  }
+  return items;
 }
 
 function parseSkylers(data: unknown): Parsed {
@@ -749,16 +806,14 @@ function parseSkylers(data: unknown): Parsed {
 
   if (!data) return result;
 
+  // Shared mutable ref so nested helpers can promote base64 to FOTO_URL
+  const fotoUrl: { value: string | null } = { value: null };
+
   // ── Top-level array ────────────────────────────────────────────────────────
   if (Array.isArray(data)) {
     if (data.length === 0) return result;
-    const items = (data as unknown[]).map((item) => {
-      if (item && typeof item === "object") {
-        const entries = flattenObjToItems(item as Record<string, unknown>);
-        return entries.join(" · ");
-      }
-      return isUseful(item) ? String(item) : "";
-    }).filter(Boolean);
+    const items = processArray(data as unknown[], fotoUrl);
+    if (fotoUrl.value) result.fields.push({ key: "FOTO_URL", value: fotoUrl.value });
     if (items.length > 0) result.sections.push({ name: "RESULTADOS", items });
     return result;
   }
@@ -789,20 +844,34 @@ function parseSkylers(data: unknown): Parsed {
 
     if (Array.isArray(v)) {
       if (v.length === 0) continue;
-      const items = v.map((item) => {
-        if (item && typeof item === "object") {
-          const entries = flattenObjToItems(item as Record<string, unknown>);
-          return entries.join(" · ");
-        }
-        return isUseful(item) ? String(item) : "";
-      }).filter(Boolean);
-      if (items.length > 0) result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+      const secItems = processArray(v as unknown[], fotoUrl);
+      if (secItems.length > 0) {
+        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: secItems });
+      }
 
     } else if (typeof v === "object" && v !== null) {
       const sub = v as Record<string, unknown>;
+      // Check base64 in sub-object first
+      if (!fotoUrl.value) {
+        const b64 = extractBase64Photo(sub);
+        if (b64) {
+          fotoUrl.value = b64.dataUri;
+          // Flatten the rest
+          const subEntries = Object.entries(sub)
+            .filter(([sk, sv]) => sk !== b64.key && isUseful(sv) && typeof sv !== "object");
+          if (subEntries.length <= 3) {
+            for (const [sk, sv] of subEntries) {
+              result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
+            }
+          } else {
+            const items = subEntries.map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
+            result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+          }
+          continue;
+        }
+      }
       const subEntries = Object.entries(sub).filter(([, sv]) => isUseful(sv) && typeof sv !== "object");
       if (subEntries.length === 0) continue;
-      // Small sub-objects (≤3 fields) are merged into main fields for readability
       if (subEntries.length <= 3) {
         for (const [sk, sv] of subEntries) {
           result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
@@ -815,34 +884,25 @@ function parseSkylers(data: unknown): Parsed {
     } else {
       const s = String(v).trim();
       if (s && !JUNK_VALUES.has(s)) {
+        // Check if this field itself is a base64 photo
+        if (!fotoUrl.value && BASE64_PHOTO_KEYS.test(k)) {
+          const clean = s.replace(/[\r\n\s]/g, "");
+          if (BASE64_RE.test(clean)) {
+            fotoUrl.value = `data:image/jpeg;base64,${clean}`;
+            continue; // Don't add raw base64 to fields
+          }
+        }
         result.fields.push({ key: humanizeKey(k), value: s });
       }
     }
   }
 
-  // ── Detect base64 image data in any field → promote to FOTO_URL ──────────
-  // Keys that commonly carry base64 photo data from Skylers foto modules
-  const BASE64_PHOTO_KEYS = /^(foto|imagem|image|photo|pic|thumb|face|base64|fotografia|retrato)/i;
-  // A valid base64 string: only base64 chars, long enough to be an image (>500 chars)
-  const BASE64_RE = /^[A-Za-z0-9+/\r\n]{500,}={0,2}$/;
-
-  if (!result.fields.some((f) => f.key === "FOTO_URL")) {
-    let base64FieldKey: string | null = null;
-    for (const f of result.fields) {
-      const clean = f.value.replace(/[\r\n\s]/g, "");
-      if (BASE64_PHOTO_KEYS.test(f.key.trim()) && BASE64_RE.test(clean)) {
-        base64FieldKey = f.key;
-        result.fields.push({ key: "FOTO_URL", value: `data:image/jpeg;base64,${clean}` });
-        break;
-      }
-    }
-    // Remove the raw base64 field from display (it's huge and unreadable)
-    if (base64FieldKey) {
-      result.fields = result.fields.filter((f) => f.key !== base64FieldKey);
-    }
+  // Promote extracted base64 to FOTO_URL field
+  if (fotoUrl.value && !result.fields.some((f) => f.key === "FOTO_URL")) {
+    result.fields.push({ key: "FOTO_URL", value: fotoUrl.value });
   }
 
-  // ── Detect photo URLs in any field → promote to FOTO_URL ──────────────────
+  // ── Detect photo URLs in fields → promote to FOTO_URL ─────────────────────
   if (!result.fields.some((f) => f.key === "FOTO_URL")) {
     for (const f of result.fields) {
       if (PHOTO_URL_RE.test(f.value.trim())) {
@@ -850,7 +910,7 @@ function parseSkylers(data: unknown): Parsed {
         break;
       }
     }
-    // Also check section items
+    // Also check section items for image URLs
     if (!result.fields.some((f) => f.key === "FOTO_URL")) {
       outer: for (const sec of result.sections) {
         for (const item of sec.items) {
