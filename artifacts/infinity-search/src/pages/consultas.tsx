@@ -19,7 +19,12 @@ type Tipo =
   | "socios" | "empregos" | "cnh" | "cnhfull" | "renavam" | "obito" | "rg" | "email"
   | "motor" | "vacinas" | "foto" | "biometria"
   | "titulo" | "score" | "irpf" | "beneficios" | "mandado"
-  | "dividas" | "bens" | "processos" | "spc" | "iptu" | "certidoes";
+  | "dividas" | "bens" | "processos" | "spc" | "iptu" | "certidoes"
+  // Fotos por estado
+  | "fotoma" | "fotoce" | "fotosp" | "fotorj" | "fotoms" | "fotonc"
+  | "fotoes" | "fototo" | "fotoro" | "fotomapresos" | "fotopi" | "fotopr"
+  | "fotodf" | "fotoal" | "fotogo" | "fotopb" | "fotope" | "fotorn"
+  | "fotoba" | "fotomg" | "crlvtofoto" | "crlvmtfoto";
 
 type TabDef = {
   id: Tipo;
@@ -45,8 +50,30 @@ const TABS: TabDef[] = [
   { id: "pai",       label: "Pai",        category: "Pessoa",  placeholder: "CPF do filho(a)",  hint: "11 dígitos — busca pelo pai",   inputMode: "numeric", icon: Heart,        sanitize: cpf11 },
   { id: "parentes",  label: "Parentes",   category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos — rede familiar",    inputMode: "numeric", icon: Users,        sanitize: cpf11 },
   { id: "obito",     label: "Óbito",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos",                    inputMode: "numeric", icon: Skull,        sanitize: cpf11 },
-  { id: "foto",      label: "Foto CNH",   category: "Fotos",   placeholder: "CPF",              hint: "11 dígitos · foto da CNH · Skylers",       inputMode: "numeric", icon: Camera,       sanitize: cpf11 },
-  { id: "biometria", label: "Biometria",  category: "Fotos",   placeholder: "CPF",              hint: "11 dígitos · foto nacional/biometria · Skylers", inputMode: "numeric", icon: Fingerprint,  sanitize: cpf11 },
+  { id: "foto",         label: "Foto CNH",      category: "Fotos", placeholder: "CPF", hint: "11 dígitos · foto da CNH · Skylers",         inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "biometria",    label: "Biometria",     category: "Fotos", placeholder: "CPF", hint: "11 dígitos · foto biométrica · Skylers",      inputMode: "numeric", icon: Fingerprint,  sanitize: cpf11 },
+  { id: "fotoma",       label: "Foto MA",       category: "Fotos", placeholder: "CPF", hint: "Maranhão · Skylers",                          inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoce",       label: "Foto CE",       category: "Fotos", placeholder: "CPF", hint: "Ceará · Skylers",                             inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotosp",       label: "Foto SP",       category: "Fotos", placeholder: "CPF", hint: "São Paulo · Skylers",                         inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotorj",       label: "Foto RJ",       category: "Fotos", placeholder: "CPF", hint: "Rio de Janeiro · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoms",       label: "Foto MS",       category: "Fotos", placeholder: "CPF", hint: "Mato Grosso do Sul · Skylers",                inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotonc",       label: "Foto NC",       category: "Fotos", placeholder: "CPF", hint: "Santa Catarina · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoes",       label: "Foto ES",       category: "Fotos", placeholder: "CPF", hint: "Espírito Santo · Skylers",                    inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fototo",       label: "Foto TO",       category: "Fotos", placeholder: "CPF", hint: "Tocantins · Skylers",                         inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoro",       label: "Foto RO",       category: "Fotos", placeholder: "CPF", hint: "Rondônia · Skylers",                          inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotomapresos", label: "Foto MA Presos",category: "Fotos", placeholder: "CPF", hint: "Maranhão (presos) · Skylers",                 inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotopi",       label: "Foto PI",       category: "Fotos", placeholder: "CPF", hint: "Piauí · Skylers",                             inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotopr",       label: "Foto PR",       category: "Fotos", placeholder: "CPF", hint: "Paraná · Skylers",                            inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotodf",       label: "Foto DF",       category: "Fotos", placeholder: "CPF", hint: "Distrito Federal · Skylers",                  inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoal",       label: "Foto AL",       category: "Fotos", placeholder: "CPF", hint: "Alagoas · Skylers",                           inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotogo",       label: "Foto GO",       category: "Fotos", placeholder: "CPF", hint: "Goiás · Skylers",                             inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotopb",       label: "Foto PB",       category: "Fotos", placeholder: "CPF", hint: "Paraíba · Skylers",                           inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotope",       label: "Foto PE",       category: "Fotos", placeholder: "CPF", hint: "Pernambuco · Skylers",                        inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotorn",       label: "Foto RN",       category: "Fotos", placeholder: "CPF", hint: "Rio Grande do Norte · Skylers",               inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotoba",       label: "Foto BA",       category: "Fotos", placeholder: "CPF", hint: "Bahia · Skylers",                             inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "fotomg",       label: "Foto MG",       category: "Fotos", placeholder: "CPF", hint: "Minas Gerais · Skylers",                      inputMode: "numeric", icon: Camera,      sanitize: cpf11 },
+  { id: "crlvtofoto",   label: "CRLV TO (Foto)",category: "Fotos", placeholder: "ABC1234", hint: "placa · Tocantins · Skylers",             icon: Camera, sanitize: (s) => s.replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(0,8) },
+  { id: "crlvmtfoto",   label: "CRLV MT (Foto)",category: "Fotos", placeholder: "ABC1234", hint: "placa · Mato Grosso · Skylers",           icon: Camera, sanitize: (s) => s.replace(/[^A-Z0-9]/gi,"").toUpperCase().slice(0,8) },
   { id: "titulo",    label: "Título",     category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · título de eleitor · Skylers", inputMode: "numeric", icon: Award, sanitize: cpf11 },
   { id: "score",     label: "Score",      category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · score de crédito · Skylers",  inputMode: "numeric", icon: BarChart2, sanitize: cpf11 },
   { id: "irpf",      label: "IRPF",       category: "Pessoa",  placeholder: "CPF",              hint: "11 dígitos · declaração IR · Skylers",     inputMode: "numeric", icon: Receipt,   sanitize: cpf11 },
@@ -105,6 +132,10 @@ const PANEL_EXTERNAL_TIPOS = new Set([
 const SKYLERS_ONLY_TIPOS = new Set([
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
   "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria",
+  // Fotos por estado
+  "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
+  "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
+  "fotorn","fotoba","fotomg","crlvtofoto","crlvmtfoto",
 ]);
 type ExternalBase = "skylers" | "credilink";
 // Tipos que também têm base CrediLink (Skylers)

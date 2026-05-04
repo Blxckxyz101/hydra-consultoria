@@ -109,6 +109,29 @@ const TIPOS = [
   { id: "certidoes",   label: "📜 Certidões",       prompt: "CPF (11 dígitos)" },
   { id: "cnhfull",     label: "🛡️ CNH Full",        prompt: "CPF do condutor (11 dígitos)" },
   { id: "biometria",   label: "🫆 Biometria",        prompt: "CPF da pessoa (11 dígitos)" },
+  // Fotos por estado
+  { id: "fotoma",       label: "📸 Foto MA",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoce",       label: "📸 Foto CE",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotosp",       label: "📸 Foto SP",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotorj",       label: "📸 Foto RJ",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoms",       label: "📸 Foto MS",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotonc",       label: "📸 Foto NC",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoes",       label: "📸 Foto ES",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fototo",       label: "📸 Foto TO",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoro",       label: "📸 Foto RO",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotomapresos", label: "📸 Foto MA Presos",   prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotopi",       label: "📸 Foto PI",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotopr",       label: "📸 Foto PR",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotodf",       label: "📸 Foto DF",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoal",       label: "📸 Foto AL",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotogo",       label: "📸 Foto GO",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotopb",       label: "📸 Foto PB",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotope",       label: "📸 Foto PE",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotorn",       label: "📸 Foto RN",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotoba",       label: "📸 Foto BA",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "fotomg",       label: "📸 Foto MG",          prompt: "CPF da pessoa (11 dígitos)" },
+  { id: "crlvtofoto",   label: "🖼️ CRLV TO (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "crlvmtfoto",   label: "🖼️ CRLV MT (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
 ] as const;
 
 type TipoId = (typeof TIPOS)[number]["id"];
@@ -117,6 +140,10 @@ type TipoId = (typeof TIPOS)[number]["id"];
 const SKYLERS_ONLY_TIPOS = new Set<string>([
   "cpfbasico", "foto", "biometria", "titulo", "score", "irpf", "beneficios",
   "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull",
+  // Fotos por estado
+  "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
+  "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
+  "fotorn","fotoba","fotomg","crlvtofoto","crlvmtfoto",
 ]);
 
 // ── Styled query prompts ───────────────────────────────────────────────────────
@@ -157,8 +184,31 @@ const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
   spc:         { title: "SPC  ·  SKYLERS",            lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   iptu:        { title: "IPTU  ·  SKYLERS",           lines: ["DIGITE O CPF DO PROPRIETÁRIO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
   certidoes:   { title: "CERTIDÕES  ·  SKYLERS",      lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cnhfull:     { title: "CNH COMPLETO  ·  SKYLERS",   lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  biometria:   { title: "BIOMETRIA  ·  SKYLERS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cnhfull:       { title: "CNH COMPLETO  ·  SKYLERS",     lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  biometria:     { title: "BIOMETRIA  ·  SKYLERS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  // Fotos por estado
+  fotoma:        { title: "FOTO MA  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoce:        { title: "FOTO CE  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotosp:        { title: "FOTO SP  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotorj:        { title: "FOTO RJ  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoms:        { title: "FOTO MS  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotonc:        { title: "FOTO NC  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoes:        { title: "FOTO ES  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fototo:        { title: "FOTO TO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoro:        { title: "FOTO RO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotomapresos:  { title: "FOTO MA PRESOS  ·  SKYLERS",   lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotopi:        { title: "FOTO PI  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotopr:        { title: "FOTO PR  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotodf:        { title: "FOTO DF  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoal:        { title: "FOTO AL  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotogo:        { title: "FOTO GO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotopb:        { title: "FOTO PB  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotope:        { title: "FOTO PE  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotorn:        { title: "FOTO RN  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotoba:        { title: "FOTO BA  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  fotomg:        { title: "FOTO MG  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  crlvtofoto:    { title: "CRLV TO (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  crlvmtfoto:    { title: "CRLV MT (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
 };
 
 function buildQueryPrompt(tipoId: string): string {

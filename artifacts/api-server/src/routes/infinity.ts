@@ -91,6 +91,29 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   foto: "iseek-fotos---fotocnh",
   biometria: "iseek-fotos---fotocnh",
   credilink: "credilink",
+  // Fotos por estado
+  fotoma:       "iseek-fotos---fotoma",
+  fotoce:       "iseek-fotos---fotoce",
+  fotosp:       "iseek-fotos---fotosp",
+  fotorj:       "iseek-fotos---fotorj",
+  fotoms:       "iseek-fotos---fotoms",
+  fotonc:       "iseek-fotos---fotonc",
+  fotoes:       "iseek-fotos---fotoes",
+  fototo:       "iseek-fotos---fototo",
+  fotoro:       "iseek-fotos---fotoro",
+  fotomapresos: "iseek-fotos---fotomapresos",
+  fotopi:       "iseek-fotos---fotopi",
+  fotopr:       "iseek-fotos---fotopr",
+  fotodf:       "iseek-fotos---fotodf",
+  fotoal:       "iseek-fotos---fotoal",
+  fotogo:       "iseek-fotos---fotogo",
+  fotopb:       "iseek-fotos---fotopb",
+  fotope:       "iseek-fotos---fotope",
+  fotorn:       "iseek-fotos---fotorn",
+  fotoba:       "iseek-fotos---fotoba",
+  fotomg:       "iseek-fotos---fotomg",
+  crlvtofoto:   "iseek-fotos---crlvto",
+  crlvmtfoto:   "iseek-fotos---crlvmt",
 };
 
 const DAILY_RATE_LIMIT = 350;
@@ -139,9 +162,13 @@ const SUPPORTED_TIPOS = new Set([
   "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
   "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
   "motor", "vacinas",
-  // Skylers-only (validated separately via /external/skylers)
+  // Skylers-only
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
   "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "credilink",
+  // Fotos por estado
+  "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
+  "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
+  "fotorn","fotoba","fotomg","crlvtofoto","crlvmtfoto",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
