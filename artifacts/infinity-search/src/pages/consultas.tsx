@@ -327,7 +327,8 @@ export default function Consultas() {
           <motion.h1
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-2xl sm:text-3xl font-bold tracking-[0.25em] uppercase bg-gradient-to-r from-sky-300 to-cyan-200 bg-clip-text text-transparent"
+            className="text-2xl sm:text-3xl font-bold tracking-[0.25em] uppercase bg-clip-text text-transparent"
+            style={{ backgroundImage: "linear-gradient(to right, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
           >
             Consultas
           </motion.h1>
@@ -420,7 +421,10 @@ export default function Consultas() {
             <button
               type="submit"
               disabled={!query.trim() || pending}
-              className="bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs px-6 sm:px-8 py-3.5 sm:py-0 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="text-black font-bold uppercase tracking-[0.3em] text-xs px-6 sm:px-8 py-3.5 sm:py-0 rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              style={{ background: "var(--color-primary)", boxShadow: pending ? "" : "0 0 0 transparent", ["--tw-shadow" as string]: "" }}
+              onMouseEnter={e => { if (!(e.currentTarget as HTMLButtonElement).disabled) (e.currentTarget as HTMLElement).style.boxShadow = "0 0 30px color-mix(in srgb, var(--color-primary) 45%, transparent)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = ""; }}
             >
               {pending ? "Consultando" : "Consultar"}
             </button>
