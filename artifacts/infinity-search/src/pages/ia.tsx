@@ -263,6 +263,31 @@ export default function IA() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.status) { setConsultingStatus(parsed.status); continue; }
+              if (parsed.photo) {
+                // Photo event arrives before AI text stream — display it immediately
+                setConsultingStatus(null);
+                setIsThinking(false);
+                const photoLine = `\n${parsed.photo}\n`;
+                if (!assistantMsgAdded) {
+                  assistantMsgAdded = true;
+                  finalReply = photoLine;
+                  const aTs = Date.now();
+                  updateSession(currentId, (s) => ({
+                    ...s,
+                    messages: [...s.messages, { role: "assistant", content: photoLine, ts: aTs }],
+                    updatedAt: aTs,
+                  }));
+                } else {
+                  finalReply = photoLine + finalReply;
+                  updateSession(currentId, (s) => {
+                    const msgs = [...s.messages];
+                    const last = msgs[msgs.length - 1];
+                    if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: photoLine + last.content };
+                    return { ...s, messages: msgs, updatedAt: Date.now() };
+                  });
+                }
+                continue;
+              }
               if (parsed.delta) {
                 setConsultingStatus(null);
                 finalReply += parsed.delta;

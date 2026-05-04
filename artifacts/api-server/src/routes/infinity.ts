@@ -1555,17 +1555,19 @@ const CONSULTA_TOOL = {
             "cnh", "cnhfull", "renavam", "motor", "vacinas", "email",
             "titulo", "score", "irpf", "beneficios", "mandado",
             "dividas", "bens", "processos", "spc", "iptu", "certidoes",
-            "foto",
+            "foto", "biometria",
           ],
           description:
             "Tipo de consulta OSINT. " +
-            "Use 'foto' para foto da CNH pelo CPF (Skylers). " +
+            "Use 'foto' ou 'biometria' para foto/imagem biométrica de uma pessoa pelo CPF (via Skylers) — sempre que o usuário pedir foto, imagem, rosto, biometria ou qualquer variante. " +
+            "Use 'cpf' para dados gerais de uma pessoa. " +
             "Use 'score' para score de crédito. " +
             "Use 'irpf' para declaração de imposto de renda. " +
             "Use 'beneficios' para Bolsa Família/BPC. " +
             "Use 'dividas' para dívidas BACEN/FGTS. " +
             "Use 'titulo' para título de eleitor. " +
-            "Tipos exclusivos Skylers: titulo, score, irpf, beneficios, mandado, dividas, bens, processos, spc, iptu, certidoes, cnhfull, foto, cpfbasico.",
+            "Use 'mandado' para mandado de prisão. " +
+            "Tipos exclusivos Skylers (base='skylers'): titulo, score, irpf, beneficios, mandado, dividas, bens, processos, spc, iptu, certidoes, cnhfull, foto, biometria, cpfbasico.",
         },
         dados: { type: "string", description: "O dado a ser consultado (CPF, placa, nome, CNPJ, etc.)" },
         base: {
@@ -1650,12 +1652,11 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
 
   const systemPrompt =
     "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. " +
-    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, foto de CNH, score, benefícios, dívidas, etc.). " +
-    "NÃO use a ferramenta em resposta a: agradecimentos, saudações, perguntas sobre resultados anteriores, confirmações ou qualquer mensagem que não contenha um pedido claro de nova consulta. " +
-    "Nunca repita consultas de mensagens anteriores. Nunca invente dados. " +
-    "CRÍTICO — quando o resultado da consulta contiver FOTO_URL, coloque o valor EXATAMENTE em uma linha separada, sem nenhum outro texto nessa linha. Assim o painel renderiza a imagem automaticamente. " +
-    "Exemplo correto:\nEncontrei a foto biométrica:\n\n/api/infinity/foto/abc123\n\nDados encontrados: CPF ...\n\n" +
-    "Se FOTO_URL começar com /api/infinity/foto/, copie-a EXATAMENTE como está. Se for https://, copie também exatamente. NUNCA omita nem modifique a URL da foto. " +
+    "Use a ferramenta consultar_infinity quando o usuário pedir para buscar/consultar/verificar qualquer dado específico (CPF, CNPJ, telefone, placa, nome, foto, score, benefícios, dívidas, IRPF, processos, etc.). " +
+    "Quando o usuário pedir foto, biometria, imagem ou qualquer variante relacionada a imagem de uma pessoa, use tipo='foto' e base='skylers'. " +
+    "NÃO use a ferramenta apenas para agradecimentos, saudações ou perguntas genéricas sem dado para consultar. " +
+    "Nunca invente dados — se não tiver resultado da ferramenta, diga que não foi encontrado. " +
+    "IMPORTANTE: quando o resultado contiver uma foto, ela JÁ É exibida automaticamente no chat pelo painel — você NÃO precisa incluir URLs de foto na sua resposta. Apenas confirme os dados textuais encontrados. " +
     "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
 
   const cleanMessages = messages.filter(
@@ -1701,21 +1702,28 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
           const base = SKYLERS_ONLY_AI.has(tipo) ? "skylers" : rawBase;
           res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
           let toolContent = "";
+          let capturedPhotoUrl: string | undefined;
 
           function buildToolContent(p: { fields: Array<{key:string;value:string}>; sections: Array<{name:string;items:string[]}>; raw: string }): string {
             const lines: string[] = [];
             p.fields.forEach((f) => {
               if (f.key === "FOTO_URL") {
+                // Extract photo URL server-side — will be sent as a dedicated SSE event
+                // so the AI doesn't need to output it at all
                 if (f.value.startsWith("data:image")) {
                   const fotoId = storeFoto(f.value);
-                  lines.push(`FOTO_URL: /api/infinity/foto/${fotoId}`);
-                } else {
-                  lines.push(`FOTO_URL: ${f.value}`);
+                  capturedPhotoUrl = `/api/infinity/foto/${fotoId}`;
+                } else if (f.value) {
+                  capturedPhotoUrl = f.value;
                 }
+                // Do NOT add to lines — AI doesn't need to see/output the URL
               } else {
                 lines.push(`${f.key}: ${f.value}`);
               }
             });
+            if (capturedPhotoUrl) {
+              lines.unshift("[FOTO ENCONTRADA — já exibida automaticamente no chat do usuário]");
+            }
             p.sections.forEach((s) => {
               lines.push(`\n${s.name} (${s.items.length} registros):`);
               s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
@@ -1747,6 +1755,12 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
               toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
             }
           }
+
+          // Send photo as a dedicated SSE event BEFORE the AI response stream
+          if (capturedPhotoUrl) {
+            res.write(`data: ${JSON.stringify({ photo: capturedPhotoUrl })}\n\n`);
+          }
+
           finalMessages = [
             { role: "system", content: systemPrompt },
             ...cleanMessages,
