@@ -1,14 +1,18 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User, Phone, MapPin, Users, Briefcase, IdCard,
   Wallet, BarChart2, FileText, Car, CheckCircle2, XCircle,
   Loader2, MessageCircle, Scale, Building2, Award, Gift,
   AlertTriangle, Receipt, Star, ChevronDown, ChevronUp, Copy, Check,
-  Camera, Fingerprint, Home, GitBranch,
+  Camera, Fingerprint, Home, GitBranch, LayoutList, StretchHorizontal,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+
+// ─── View mode context ────────────────────────────────────────────────────────
+const ViewModeCtx = createContext<"compact" | "expanded">("expanded");
+const useViewMode = () => useContext(ViewModeCtx);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ModuleStatus = "idle" | "loading" | "done" | "error";
@@ -28,7 +32,7 @@ type Employment  = { empresa: string; cnpj: string; cargo: string; admissao: str
 type Relative    = { cpf: string; nome: string; nasc: string; sexo: string; relacao: string; origem: string };
 type RelCat      = "pai" | "mae" | "conjuge" | "filho" | "filha" | "irmao" | "irma" | "outro";
 
-// ─── Modules list ─────────────────────────────────────────────────────────────
+// ─── Modules ──────────────────────────────────────────────────────────────────
 const MODULES = [
   { tipo: "cpf",        label: "CPF",           skylers: false },
   { tipo: "cpfbasico",  label: "CPF Básico",     skylers: true  },
@@ -49,7 +53,7 @@ const MODULES = [
   { tipo: "titulo",     label: "Título Eleitor", skylers: true  },
 ];
 
-// ─── Normalize API fields ─────────────────────────────────────────────────────
+// ─── Normalize fields ─────────────────────────────────────────────────────────
 function normalizeFields(raw: unknown): [string, string][] {
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const first = raw[0];
@@ -59,7 +63,6 @@ function normalizeFields(raw: unknown): [string, string][] {
   return [];
 }
 
-// ─── Field getter ─────────────────────────────────────────────────────────────
 function gf(fields: [string, string][], ...keys: string[]): string {
   for (const key of keys) {
     const ku = key.toUpperCase().replace(/[_\-\s]/g, "");
@@ -72,7 +75,6 @@ function gf(fields: [string, string][], ...keys: string[]): string {
   return "";
 }
 
-// ─── Raw text extractor ───────────────────────────────────────────────────────
 function rxv(raw: string, ...keys: string[]): string {
   for (const key of keys) {
     const pattern = new RegExp(`(?:^|\\n|\\|)\\s*${key}[\\s:·]+([^\\n|·]{2,80})`, "im");
@@ -82,7 +84,6 @@ function rxv(raw: string, ...keys: string[]): string {
   return "";
 }
 
-// ─── Merge helpers ────────────────────────────────────────────────────────────
 function mergeFields(results: (ModuleResult | undefined)[]): [string, string][] {
   return results.flatMap(r => r?.data?.fields ?? []);
 }
@@ -90,7 +91,7 @@ function mergeRaw(results: (ModuleResult | undefined)[]): string {
   return results.map(r => r?.data?.raw ?? "").join("\n");
 }
 
-// ─── Date parsing & duration ──────────────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 function parseDateBR(s: string): Date | null {
   if (!s) return null;
   const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -106,18 +107,14 @@ function calcDuration(start: string, end: string): string {
   const months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
   if (months < 1) return "< 1 mês";
   if (months < 12) return `${months} mes${months > 1 ? "es" : ""}`;
-  const yrs = Math.floor(months / 12);
-  const rem = months % 12;
+  const yrs = Math.floor(months / 12); const rem = months % 12;
   return `${yrs} ano${yrs > 1 ? "s" : ""}${rem > 0 ? ` ${rem}m` : ""}`;
 }
 
 // ─── Relative categorizer ─────────────────────────────────────────────────────
 function categorizeRel(rel: Relative): RelCat {
-  const r = (rel.relacao + " " + rel.nome)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9 ]/gi, " ");
+  const r = (rel.relacao + " " + rel.nome).toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/gi, " ");
   if (/\bpai\b|father|genitor\b/.test(r)) return "pai";
   if (/\bmae\b|mother|genitora\b/.test(r)) return "mae";
   if (/conjuge|esposa|esposo|marido|companheiro|companheira|wife|husband/.test(r)) return "conjuge";
@@ -130,7 +127,7 @@ function categorizeRel(rel: Relative): RelCat {
   return "outro";
 }
 
-// ─── Fetch one module ─────────────────────────────────────────────────────────
+// ─── Fetch module ─────────────────────────────────────────────────────────────
 async function fetchModule(tipo: string, dados: string, skylers: boolean): Promise<ModuleResult> {
   const token = localStorage.getItem("infinity_token");
   try {
@@ -152,9 +149,8 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean): Promi
     } else if (typeof json.data === "string") {
       parsed = { fields: [], sections: [], raw: json.data };
     }
-    if (!json.success && !parsed?.fields.length && !parsed?.sections.length && !parsed?.raw) {
+    if (!json.success && !parsed?.fields.length && !parsed?.sections.length && !parsed?.raw)
       return { status: "error", error: json.error ?? "Sem resultado" };
-    }
     return { status: parsed ? "done" : "error", data: parsed, error: json.success ? undefined : (json.error ?? undefined) };
   } catch (e) {
     return { status: "error", error: e instanceof Error ? e.message : "Erro de rede" };
@@ -180,7 +176,7 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const situacaoCadastral = gf(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
   const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE")                 || rxv(raw,"SANGUE","TIPO SANG");
   const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO")                 || rxv(raw,"TITULO.*ELEITOR");
-  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                       || rxv(raw,"PIS","NIS");
+  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                        || rxv(raw,"PIS","NIS");
   const nis               = gf(f,"NIS","PIS","NUMERONIS")                                   || rxv(raw,"NIS");
   const email             = gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL")                          || rxv(raw,"EMAIL","E-MAIL");
   const addr = buildAddresses(results)[0];
@@ -194,13 +190,11 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
 
 // ─── Build phones ─────────────────────────────────────────────────────────────
 function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
-  const phones: PhoneEntry[] = [];
-  const seen = new Set<string>();
+  const phones: PhoneEntry[] = []; const seen = new Set<string>();
   function add(ddd: string, num: string, prio = "", cls = "", data = "", tipo = "") {
     const key = `${ddd}${num.replace(/\D/g,"")}`;
     if (seen.has(key) || num.replace(/\D/g,"").length < 7) return;
-    seen.add(key);
-    phones.push({ ddd, numero: num.replace(/\D/g,""), prioridade: prio, classificacao: cls, data, tipo });
+    seen.add(key); phones.push({ ddd, numero: num.replace(/\D/g,""), prioridade: prio, classificacao: cls, data, tipo });
   }
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
@@ -220,10 +214,7 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
     for (const [k, v] of mod.data.fields) {
       if (!/TELEFON|CELULAR|FONE|PHONE/i.test(k)) continue;
       const clean = v.replace(/\D/g,"");
-      if (clean.length >= 8) {
-        add(clean.length >= 10 ? clean.slice(0,2) : "", clean.length >= 10 ? clean.slice(2) : clean, "", "", "",
-          /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "");
-      }
+      if (clean.length >= 8) add(clean.length >= 10 ? clean.slice(0,2) : "", clean.length >= 10 ? clean.slice(2) : clean, "", "", "", /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "");
     }
     for (const m of mod.data.raw.matchAll(/\((\d{2})\)\s*(\d{4,5}[-\s]?\d{4})/g)) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
     for (const m of mod.data.raw.matchAll(/\b(\d{2})\s+(\d{4,5}\d{4})\b/g)) {
@@ -235,13 +226,11 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
 
 // ─── Build addresses ──────────────────────────────────────────────────────────
 function buildAddresses(results: Record<string, ModuleResult>): Address[] {
-  const out: Address[] = [];
-  const seen = new Set<string>();
+  const out: Address[] = []; const seen = new Set<string>();
   function addAddr(a: Address) {
     const key = `${a.logradouro}|${a.numero}|${a.cep}`.toLowerCase().trim();
     if (!key || key === "||" || (!a.logradouro && !a.cep)) return;
-    if (seen.has(key)) return;
-    seen.add(key); out.push(a);
+    if (seen.has(key)) return; seen.add(key); out.push(a);
   }
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
@@ -259,20 +248,19 @@ function buildAddresses(results: Record<string, ModuleResult>): Address[] {
         });
       }
     }
-    const f = mod.data.fields;
-    const logradouro = gf(f,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO","LOGRADOUROCOMPLETO");
+    const flds = mod.data.fields;
+    const logradouro = gf(flds,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO","LOGRADOUROCOMPLETO");
     if (logradouro) addAddr({
-      logradouro, numero: gf(f,"NUMERO","NÚMERO","NUM","NUMEROIMOVEL"),
-      complemento: gf(f,"COMPLEMENTO","COMPL","APTO"), bairro: gf(f,"BAIRRO"),
-      cidade: gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"), uf: gf(f,"UF","ESTADO","UFENDERECO"), cep: gf(f,"CEP","CEPENDERECO"),
+      logradouro, numero: gf(flds,"NUMERO","NÚMERO","NUM","NUMEROIMOVEL"),
+      complemento: gf(flds,"COMPLEMENTO","COMPL","APTO"), bairro: gf(flds,"BAIRRO"),
+      cidade: gf(flds,"CIDADE","MUNICIPIO","MUNICÍPIO"), uf: gf(flds,"UF","ESTADO","UFENDERECO"), cep: gf(flds,"CEP","CEPENDERECO"),
     });
     for (const cm of mod.data.raw.matchAll(/CEP[\s:·]+(\d{5}-?\d{3})/gi)) {
       const cep = cm[1]; const idx = cm.index ?? 0;
       const chunk = mod.data.raw.slice(Math.max(0, idx - 400), idx + 200);
-      addAddr({ logradouro: rxv(chunk,"LOGRADOURO","ENDERECO","RUA","AV") || "",
-        numero: rxv(chunk,"NUMERO","N[UÚ]MERO","NUM") || "", complemento: rxv(chunk,"COMPLEMENTO","COMPL","APTO") || "",
-        bairro: rxv(chunk,"BAIRRO") || "", cidade: rxv(chunk,"CIDADE","MUNICIPIO","MUNICÍPIO") || "",
-        uf: chunk.match(/\bUF[\s:·]+([A-Z]{2})\b/i)?.[1] ?? "", cep });
+      addAddr({ logradouro: rxv(chunk,"LOGRADOURO","ENDERECO","RUA","AV") || "", numero: rxv(chunk,"NUMERO","N[UÚ]MERO","NUM") || "",
+        complemento: rxv(chunk,"COMPLEMENTO","COMPL","APTO") || "", bairro: rxv(chunk,"BAIRRO") || "",
+        cidade: rxv(chunk,"CIDADE","MUNICIPIO","MUNICÍPIO") || "", uf: chunk.match(/\bUF[\s:·]+([A-Z]{2})\b/i)?.[1] ?? "", cep });
     }
   }
   return out;
@@ -301,12 +289,10 @@ function buildEmployments(r?: ModuleResult): Employment[] {
 // ─── Build relatives ──────────────────────────────────────────────────────────
 function buildRelatives(res?: ModuleResult): Relative[] {
   if (!res?.data) return [];
-  const relatives: Relative[] = [];
-  const seen = new Set<string>();
+  const relatives: Relative[] = []; const seen = new Set<string>();
   function addRel(r: Partial<Relative>) {
     const key = (r.cpf || r.nome || "").toLowerCase();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
+    if (!key || seen.has(key)) return; seen.add(key);
     relatives.push({ cpf: r.cpf||"", nome: r.nome||"", nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
   }
   function scanRaw(raw: string) {
@@ -436,50 +422,82 @@ function SectionHeader({ icon: Icon, title, count }: { icon: IconProp; title: st
   );
 }
 
-// ─── Collapsible section ──────────────────────────────────────────────────────
-function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = true }:
-  { title: string; icon: IconProp; count?: number; children: React.ReactNode; defaultOpen?: boolean }) {
+// ─── Collapsible Section (glass) ──────────────────────────────────────────────
+function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = true, delay = 0 }:
+  { title: string; icon: IconProp; count?: number; children: React.ReactNode; defaultOpen?: boolean; delay?: number }) {
   const [open, setOpen] = useState(defaultOpen);
+  const compact = useViewMode() === "compact";
+
   return (
-    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-      <button onClick={() => setOpen(v => !v)} className="flex items-center gap-2.5 w-full text-left group mb-3">
-        <Icon className="w-4.5 h-4.5 shrink-0" style={{ color: "var(--color-primary)" }} />
-        <span className="text-lg font-bold text-white flex-1">
-          {title}
-          {count !== undefined && <span className="text-sm font-normal ml-2" style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>({count})</span>}
-        </span>
-        <span className="text-white/30 group-hover:text-white/60 transition-colors">
-          {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </span>
-      </button>
-      <div className="h-px mb-4" style={{ background: "linear-gradient(to right, var(--color-primary), transparent)" }} />
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div key="c" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }}>
-            {children}
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.38, delay, ease: [0.23, 1, 0.32, 1] }}
+    >
+      {/* Glass wrapper */}
+      <div className="relative rounded-2xl overflow-hidden"
+        style={{ background: "rgba(255,255,255,0.025)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.07)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 4px 32px rgba(0,0,0,0.3)" }}>
+        {/* Top shine */}
+        <div className="absolute top-0 left-0 right-0 h-px" style={{ background: "linear-gradient(to right, transparent, rgba(255,255,255,0.12), transparent)" }} />
+
+        <div className={compact ? "px-4 py-3" : "px-5 py-4"}>
+          {/* Header button */}
+          <button onClick={() => setOpen(v => !v)} className="flex items-center gap-2.5 w-full text-left group">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(124,58,237,0.15)", border: "1px solid rgba(124,58,237,0.25)" }}>
+              <Icon className="w-3.5 h-3.5" style={{ color: "var(--color-primary)" }} />
+            </div>
+            <span className={`font-bold text-white flex-1 ${compact ? "text-[13px]" : "text-[15px]"}`}>
+              {title}
+              {count !== undefined && (
+                <span className={`font-normal ml-2 ${compact ? "text-[11px]" : "text-[13px]"}`} style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>({count})</span>
+              )}
+            </span>
+            <motion.span animate={{ rotate: open ? 0 : -90 }} transition={{ duration: 0.2 }} className="text-white/30 group-hover:text-white/60 transition-colors">
+              <ChevronDown className="w-4 h-4" />
+            </motion.span>
+          </button>
+
+          {/* Divider */}
+          <div className="mt-3 mb-0 h-px" style={{ background: "linear-gradient(to right, rgba(124,58,237,0.4), rgba(124,58,237,0.08), transparent)" }} />
+
+          {/* Content */}
+          <AnimatePresence initial={false}>
+            {open && (
+              <motion.div key="c"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                className={compact ? "pt-3" : "pt-4"}>
+                {children}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
     </motion.div>
   );
 }
 
 // ─── Identity Card ────────────────────────────────────────────────────────────
 function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
+  const compact = useViewMode() === "compact";
   const uf = id.orgaoEmissor.match(/\b([A-Z]{2})$/)?.[1] ?? id.orgaoEmissor.match(/[-\/\s]([A-Z]{2})$/)?.[1] ?? "";
   const F = ({ label, value, mono = false, accent }: { label: string; value: string; mono?: boolean; accent?: string }) => (
     <div className="min-w-0">
       <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 font-semibold mb-0.5">{label}</p>
-      <p className={`text-[12.5px] font-bold leading-tight break-words ${mono ? "font-mono" : ""} ${accent ?? "text-white"}`}>
+      <p className={`font-bold leading-tight break-words ${mono ? "font-mono" : ""} ${accent ?? "text-white"} ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
         {value || <span className="text-white/20 font-normal">—</span>}
       </p>
       <div className="h-px bg-white/5 mt-1.5" />
     </div>
   );
   return (
-    <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/60">
-      <div className="relative px-8 py-6 overflow-hidden" style={{ background: "linear-gradient(135deg,#5b21b6 0%,#4338ca 50%,#6d28d9 100%)" }}>
+    <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}>
+      {/* Header banner */}
+      <div className="relative px-8 py-5 overflow-hidden" style={{ background: "linear-gradient(135deg,#5b21b6 0%,#4338ca 50%,#6d28d9 100%)" }}>
         <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: "repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }} />
+        <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at 80% 50%, rgba(255,255,255,0.08) 0%, transparent 70%)" }} />
         <div className="relative z-10 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 mb-1"><span className="text-xl">🇧🇷</span><p className="text-[9px] font-extrabold tracking-[0.24em] text-white/95">REPÚBLICA FEDERATIVA DO BRASIL</p></div>
@@ -492,62 +510,173 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
           </div>
         </div>
       </div>
-      <div className="bg-[#09090f] p-5 sm:p-7">
-        <div className="flex gap-5">
-          <div className="flex-1 space-y-3 min-w-0">
-            <div className="text-center mb-5">
-              <p className="text-[8.5px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
-              <p className="text-[28px] font-black tracking-[0.12em] text-white leading-none">{id.rg || "—"}</p>
+
+      {/* Body */}
+      <div style={{ background: "rgba(9,9,15,0.85)", backdropFilter: "blur(16px)" }} className={compact ? "p-4" : "p-5 sm:p-7"}>
+        {compact ? (
+          /* ── Compact layout ── */
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="col-span-2 sm:col-span-3">
+              <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 mb-0.5">Nome Completo</p>
+              <p className="text-[15px] font-black text-white">{id.nome || "—"}</p>
+              <div className="h-px bg-white/5 mt-1.5" />
             </div>
-            <F label="Nome Completo" value={id.nome} accent="text-white text-[14px]" />
-            <div className="grid grid-cols-2 gap-4"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
-            <div className="grid grid-cols-3 gap-3"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
-            <div className="grid grid-cols-2 gap-4"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
-            <div className="grid grid-cols-2 gap-4"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
-            {(id.tituloEleitor || id.pis) && (
-              <div className="grid grid-cols-2 gap-4">
-                {id.tituloEleitor && <F label="Título de Eleitor" value={id.tituloEleitor} mono />}
-                {id.pis && <F label="PIS / NIS" value={id.pis || id.nis} mono />}
+            <F label="CPF" value={fmtCPF(id.cpf)} mono />
+            <F label="RG" value={id.rg} />
+            <F label="Nascimento" value={id.dataNascimento} />
+            <F label="Mãe" value={id.mae} />
+            {id.pai && <F label="Pai" value={id.pai} />}
+            {id.sexo && <F label="Sexo" value={id.sexo} />}
+          </div>
+        ) : (
+          /* ── Expanded layout ── */
+          <div className="flex gap-5">
+            <div className="flex-1 space-y-3 min-w-0">
+              <div className="text-center mb-5">
+                <p className="text-[8.5px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
+                <p className="text-[28px] font-black tracking-[0.12em] text-white leading-none">{id.rg || "—"}</p>
               </div>
-            )}
-            {id.email && <F label="E-mail" value={id.email} />}
-            {id.enderecoPrincipal && (
-              <div className="flex items-start gap-2 rounded-xl bg-primary/5 border border-primary/15 p-3 mt-1">
-                <Home className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--color-primary)" }} />
-                <div className="min-w-0">
-                  <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 mb-0.5">Endereço Principal</p>
-                  <p className="text-[12px] font-semibold text-white/85 break-words">{id.enderecoPrincipal}</p>
+              <F label="Nome Completo" value={id.nome} accent="text-white text-[14px]" />
+              <div className="grid grid-cols-2 gap-4"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
+              <div className="grid grid-cols-3 gap-3"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
+              <div className="grid grid-cols-2 gap-4"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
+              <div className="grid grid-cols-2 gap-4"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
+              {(id.tituloEleitor || id.pis) && (
+                <div className="grid grid-cols-2 gap-4">
+                  {id.tituloEleitor && <F label="Título de Eleitor" value={id.tituloEleitor} mono />}
+                  {id.pis && <F label="PIS / NIS" value={id.pis || id.nis} mono />}
                 </div>
-              </div>
-            )}
-          </div>
-          <div className="shrink-0 hidden sm:flex flex-col items-center gap-2 mt-1">
-            <div className="w-28 h-36 rounded-xl overflow-hidden border-2 border-white/15 bg-white/5 flex items-center justify-center relative">
-              {photo ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                : <div className="flex flex-col items-center gap-1.5"><Camera className="w-8 h-8 text-white/10" /><p className="text-[8px] text-white/15 text-center leading-tight px-1">Sem foto</p></div>}
-              {photo && <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400/20 border border-emerald-400/40 flex items-center justify-center"><Fingerprint className="w-2.5 h-2.5 text-emerald-300" /></div>}
+              )}
+              {id.email && <F label="E-mail" value={id.email} />}
+              {id.enderecoPrincipal && (
+                <div className="flex items-start gap-2 rounded-xl p-3 mt-1" style={{ background: "rgba(124,58,237,0.07)", border: "1px solid rgba(124,58,237,0.15)" }}>
+                  <Home className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--color-primary)" }} />
+                  <div className="min-w-0">
+                    <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 mb-0.5">Endereço Principal</p>
+                    <p className="text-[12px] font-semibold text-white/85 break-words">{id.enderecoPrincipal}</p>
+                  </div>
+                </div>
+              )}
             </div>
-            <p className="text-[7.5px] uppercase tracking-[0.2em] text-white/20 text-center">Foto do Titular</p>
-            {id.tipoSanguineo && (
-              <div className="mt-1 w-14 h-14 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
-                <p className="text-[8px] text-red-400/60 uppercase tracking-widest">Tipo</p>
-                <p className="text-lg font-black text-red-300">{id.tipoSanguineo}</p>
+            {/* Photo column (expanded only) */}
+            <div className="shrink-0 hidden sm:flex flex-col items-center gap-2 mt-1">
+              <div className="w-28 h-36 rounded-xl overflow-hidden flex items-center justify-center relative" style={{ border: "2px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)" }}>
+                {photo ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  : <div className="flex flex-col items-center gap-1.5"><Camera className="w-8 h-8 text-white/10" /><p className="text-[8px] text-white/15 text-center leading-tight px-1">Sem foto</p></div>}
+                {photo && <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400/20 border border-emerald-400/40 flex items-center justify-center"><Fingerprint className="w-2.5 h-2.5 text-emerald-300" /></div>}
               </div>
-            )}
+              <p className="text-[7.5px] uppercase tracking-[0.2em] text-white/20 text-center">Foto do Titular</p>
+              {id.tipoSanguineo && (
+                <div className="mt-1 w-14 h-14 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
+                  <p className="text-[8px] text-red-400/60 uppercase tracking-widest">Tipo</p>
+                  <p className="text-lg font-black text-red-300">{id.tipoSanguineo}</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
 }
 
+// ─── Hero Photo Banner ────────────────────────────────────────────────────────
+function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Identity; cpf: string }) {
+  const [imgOk, setImgOk] = useState(true);
+  if (!imgOk) return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.97, y: 16 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
+      className="relative overflow-hidden rounded-3xl"
+      style={{ border: "1px solid rgba(6,182,212,0.22)", boxShadow: "0 0 60px rgba(6,182,212,0.08), inset 0 1px 0 rgba(255,255,255,0.06)" }}>
+
+      {/* Background gradient */}
+      <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(6,182,212,0.12) 0%, rgba(9,9,15,0.95) 60%, rgba(9,9,15,1) 100%)" }} />
+      {/* Animated glow */}
+      <motion.div className="absolute -left-20 top-0 bottom-0 w-72 rounded-full blur-3xl"
+        style={{ background: "rgba(6,182,212,0.12)" }}
+        animate={{ opacity: [0.5, 0.8, 0.5] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }} />
+
+      <div className="relative flex items-stretch">
+        {/* Large photo */}
+        <div className="relative shrink-0 w-40 sm:w-52">
+          <img src={photo} alt={identity.nome} className="w-full h-full object-cover"
+            style={{ minHeight: 180 }}
+            onError={() => setImgOk(false)} />
+          {/* Fade to right */}
+          <div className="absolute inset-0" style={{ background: "linear-gradient(to right, transparent 60%, rgba(9,9,15,0.95))" }} />
+          {/* Fingerprint badge */}
+          <div className="absolute bottom-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full"
+            style={{ background: "rgba(6,182,212,0.15)", border: "1px solid rgba(6,182,212,0.35)", backdropFilter: "blur(8px)" }}>
+            <Fingerprint className="w-2.5 h-2.5 text-cyan-400" />
+            <span className="text-[7px] uppercase tracking-widest text-cyan-300 font-bold">Biométrica</span>
+          </div>
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 p-6 sm:p-8 flex flex-col justify-center min-w-0">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-[9px] uppercase tracking-[0.3em] text-cyan-400/70 font-bold">Foto Biométrica Confirmada</span>
+          </div>
+
+          <p className="text-2xl sm:text-3xl font-black text-white leading-tight break-words mb-1">
+            {identity.nome || "Titular"}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-3 mt-2">
+            <span className="font-mono text-sm text-white/40">{fmtCPF(cpf)}</span>
+            {identity.dataNascimento && (
+              <span className="text-xs text-white/30">· Nasc. {identity.dataNascimento}</span>
+            )}
+            {identity.situacaoCadastral && (
+              <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${/REGULAR|ATIVO/i.test(identity.situacaoCadastral) ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-300 border border-amber-500/30"}`}>
+                ◉ {identity.situacaoCadastral}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 mt-5">
+            <a href={photo} download={`foto-${cpf}.jpg`}
+              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold px-3.5 py-2 rounded-xl transition-all"
+              style={{ background: "rgba(6,182,212,0.12)", border: "1px solid rgba(6,182,212,0.3)", color: "rgb(103,232,249)" }}>
+              ↓ Baixar Foto
+            </a>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ─── Phone card ───────────────────────────────────────────────────────────────
 function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
+  const compact = useViewMode() === "compact";
   const formatted = fmtPhone(phone.ddd, phone.numero);
+  if (compact) {
+    return (
+      <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.03 }}
+        className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
+        <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <span className="flex-1 font-mono text-[13px] font-bold text-white">{formatted}</span>
+        {phone.tipo && <span className="text-[9px] text-emerald-400/60 uppercase tracking-wider">{phone.tipo}</span>}
+        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <CopyBtn text={formatted} />
+          <a href={`https://wa.me/55${phone.ddd}${phone.numero}`} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[9px] font-bold transition-colors">
+            <MessageCircle className="w-2.5 h-2.5" /> WA
+          </a>
+        </div>
+      </motion.div>
+    );
+  }
   return (
     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
-      className="group flex items-center gap-3 rounded-xl border border-white/8 bg-black/25 hover:bg-black/40 hover:border-white/15 transition-all p-3">
-      <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+      className="group flex items-center gap-3 rounded-xl transition-all p-3"
+      style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)" }}>
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)" }}>
         <Phone className="w-4 h-4 text-emerald-400" />
       </div>
       <div className="flex-1 min-w-0">
@@ -572,11 +701,26 @@ function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
 
 // ─── Address card ─────────────────────────────────────────────────────────────
 function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
+  const compact = useViewMode() === "compact";
   const full = [addr.logradouro, addr.numero, addr.complemento && addr.complemento !== "Não Informado" ? addr.complemento : "", addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(", ");
+  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(full)}`;
+  if (compact) {
+    return (
+      <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.03 }}
+        className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
+        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black shrink-0" style={{ background: "rgba(245,158,11,0.2)", color: "rgb(252,211,77)", border: "1px solid rgba(245,158,11,0.3)" }}>{idx + 1}</span>
+        <span className="flex-1 text-[12px] text-white/75 truncate">{full || "—"}</span>
+        <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/60 hover:text-amber-300">
+          <MapPin className="w-3.5 h-3.5" />
+        </a>
+      </motion.div>
+    );
+  }
   return (
     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
-      className="group flex items-start gap-3 rounded-xl border border-amber-500/15 bg-amber-500/5 hover:bg-amber-500/8 hover:border-amber-500/25 transition-all p-3">
-      <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[11px] font-black text-amber-300 shrink-0 mt-0.5">{idx + 1}</div>
+      className="group flex items-start gap-3 rounded-xl transition-all p-3"
+      style={{ border: "1px solid rgba(245,158,11,0.14)", background: "rgba(245,158,11,0.04)" }}>
+      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5" style={{ background: "rgba(245,158,11,0.2)", color: "rgb(252,211,77)", border: "1px solid rgba(245,158,11,0.3)" }}>{idx + 1}</div>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-semibold text-white break-words">
           {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.complemento && addr.complemento !== "Não Informado" ? ` — ${addr.complemento}` : ""}
@@ -584,8 +728,9 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
         <p className="text-[12px] text-white/55 mt-0.5">{[addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(" · ")}{addr.cep ? ` · CEP ${addr.cep}` : ""}</p>
         {addr.lat && <p className="text-[9px] text-amber-400/40 mt-0.5">📍 {addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
       </div>
-      <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(full)}`} target="_blank" rel="noopener noreferrer"
-        className="flex items-center gap-1 px-2 py-1 rounded-lg text-amber-300 text-[10px] font-semibold border border-amber-500/25 hover:bg-amber-500/10 transition-colors whitespace-nowrap shrink-0">
+      <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-amber-300 text-[10px] font-semibold hover:bg-amber-500/10 transition-colors whitespace-nowrap shrink-0"
+        style={{ border: "1px solid rgba(245,158,11,0.25)" }}>
         <MapPin className="w-3 h-3" /> Maps
       </a>
     </motion.div>
@@ -594,11 +739,32 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
 
 // ─── Employment Timeline ──────────────────────────────────────────────────────
 function EmploymentTimeline({ employments }: { employments: Employment[] }) {
-  const sorted = [...employments].sort((a, b) => {
-    const da = parseDateBR(a.admissao)?.getTime() ?? 0;
-    const db = parseDateBR(b.admissao)?.getTime() ?? 0;
-    return db - da;
-  });
+  const compact = useViewMode() === "compact";
+  const sorted = [...employments].sort((a, b) => (parseDateBR(b.admissao)?.getTime() ?? 0) - (parseDateBR(a.admissao)?.getTime() ?? 0));
+
+  if (compact) {
+    return (
+      <div className="space-y-1.5">
+        {sorted.map((emp, i) => {
+          const isCurrent = !emp.demissao;
+          const duration = calcDuration(emp.admissao, emp.demissao);
+          return (
+            <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+              className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
+              <div className={`w-2 h-2 rounded-full shrink-0 ${isCurrent ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" : "bg-white/20"}`} />
+              <span className="flex-1 text-[12px] font-semibold text-white truncate">{emp.empresa}</span>
+              {emp.cargo && <span className="text-[10px] text-white/35 hidden sm:block truncate max-w-[120px]">{emp.cargo}</span>}
+              <span className="text-[9px] text-white/30 shrink-0">{emp.admissao || "?"} → {isCurrent ? "Hoje" : emp.demissao}</span>
+              {duration && <span className="text-[8px] text-white/20 shrink-0 hidden sm:block">{duration}</span>}
+              {emp.salario && <span className="text-[11px] font-bold text-emerald-400 shrink-0">{/^R/.test(emp.salario.trim()) ? emp.salario : `R$ ${emp.salario}`}</span>}
+              {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />}
+            </motion.div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="relative pl-8">
       <div className="absolute left-[11px] top-3 bottom-3 w-0.5 rounded-full"
@@ -610,17 +776,14 @@ function EmploymentTimeline({ employments }: { employments: Employment[] }) {
           const initials = emp.empresa.match(/\b\w/g)?.slice(0, 2).join("").toUpperCase() ?? "?";
           return (
             <motion.div key={i} initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.07 }} className="relative">
-              {/* Dot */}
-              <div className={`absolute -left-[21px] top-5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center
-                ${isCurrent ? "border-emerald-400 bg-emerald-900/60 shadow-[0_0_10px_rgba(52,211,153,0.45)]" : "border-primary/50 bg-[#09090f]"}`}>
+              <div className={`absolute -left-[21px] top-5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center ${isCurrent ? "border-emerald-400 bg-emerald-900/60 shadow-[0_0_10px_rgba(52,211,153,0.45)]" : "border-primary/50 bg-[#09090f]"}`}>
                 {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
               </div>
-              <div className={`rounded-2xl border p-4 transition-all hover:border-white/14
-                ${isCurrent ? "border-emerald-500/25 bg-gradient-to-br from-emerald-950/30 to-transparent" : "border-white/8 bg-black/20"}`}>
+              <div className="rounded-2xl border p-4 transition-all"
+                style={{ border: isCurrent ? "1px solid rgba(16,185,129,0.22)" : "1px solid rgba(255,255,255,0.07)", background: isCurrent ? "rgba(6,78,59,0.12)" : "rgba(0,0,0,0.18)" }}>
                 <div className="flex items-start gap-3">
-                  {/* Company avatar */}
-                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-[12px] font-black shrink-0 border
-                    ${isCurrent ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : "bg-primary/10 text-primary/70 border-primary/20"}`}>
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[12px] font-black shrink-0"
+                    style={isCurrent ? { background: "rgba(16,185,129,0.15)", color: "rgb(110,231,183)", border: "1px solid rgba(16,185,129,0.3)" } : { background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.8)", border: "1px solid rgba(124,58,237,0.2)" }}>
                     {initials}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -630,28 +793,24 @@ function EmploymentTimeline({ employments }: { employments: Employment[] }) {
                         {emp.cargo && <p className="text-[11px] text-white/45 mt-0.5">{emp.cargo}</p>}
                       </div>
                       {isCurrent && (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[9px] font-bold uppercase tracking-widest shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest shrink-0"
+                          style={{ border: "1px solid rgba(16,185,129,0.4)", background: "rgba(16,185,129,0.1)", color: "rgb(110,231,183)" }}>
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Atual
                         </span>
                       )}
                     </div>
                     <div className="flex items-center gap-3 mt-2 flex-wrap">
                       <div className="flex items-center gap-1.5 text-[10px] text-white/35">
-                        <span>{emp.admissao || "?"}</span>
-                        <span className="text-white/15">→</span>
+                        <span>{emp.admissao || "?"}</span><span className="text-white/15">→</span>
                         <span className={isCurrent ? "text-emerald-400/70" : ""}>{isCurrent ? "Presente" : emp.demissao}</span>
                       </div>
-                      {duration && (
-                        <span className="text-[9px] px-2 py-0.5 rounded-full border border-white/8 bg-white/4 text-white/30">{duration}</span>
-                      )}
+                      {duration && <span className="text-[9px] px-2 py-0.5 rounded-full text-white/30" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)" }}>{duration}</span>}
                       {emp.cnpj && <span className="text-[9px] font-mono text-white/18">{emp.cnpj}</span>}
                     </div>
                     {emp.salario && (
                       <div className="mt-2 flex items-center gap-2">
                         <span className="text-[8.5px] uppercase tracking-wider text-white/22">Remuneração</span>
-                        <span className="text-[13px] font-bold text-emerald-400">
-                          {/^R/.test(emp.salario.trim()) ? emp.salario : `R$ ${emp.salario}`}
-                        </span>
+                        <span className="text-[13px] font-bold text-emerald-400">{/^R/.test(emp.salario.trim()) ? emp.salario : `R$ ${emp.salario}`}</span>
                       </div>
                     )}
                   </div>
@@ -665,7 +824,7 @@ function EmploymentTimeline({ employments }: { employments: Employment[] }) {
   );
 }
 
-// ─── Person Node (for family tree) ────────────────────────────────────────────
+// ─── Person Node ──────────────────────────────────────────────────────────────
 function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo }: {
   nome?: string; cpf?: string; nasc?: string; photo?: string; loading?: boolean;
   isMain?: boolean; label?: string; sexo?: string;
@@ -673,38 +832,22 @@ function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo }: {
   const emoji = sexo?.toLowerCase() === "f" ? "♀" : sexo?.toLowerCase() === "m" ? "♂" : "";
   return (
     <div className="flex flex-col items-center gap-1.5 min-w-0">
-      {label && (
-        <span className={`text-[8px] uppercase tracking-widest font-bold mb-0.5 ${isMain ? "text-primary" : "text-white/30"}`}>{label}</span>
-      )}
-      <div className={`relative overflow-hidden flex items-center justify-center
-        ${isMain
-          ? "w-[72px] h-[88px] rounded-2xl border-2 border-primary/70 shadow-[0_0_24px_rgba(124,58,237,0.35)] bg-white/5"
-          : "w-[52px] h-[64px] rounded-xl border border-white/15 bg-white/4"}`}>
-        {loading
-          ? <Loader2 className={`animate-spin text-white/20 ${isMain ? "w-6 h-6" : "w-4 h-4"}`} />
-          : photo
-            ? <img src={photo} alt={nome} className="w-full h-full object-cover"
-                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-            : <User className={`text-white/12 ${isMain ? "w-7 h-7" : "w-5 h-5"}`} />
-        }
-        {isMain && (
-          <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-primary/50 flex items-center justify-center">
-            <Star className="w-2 h-2 text-white" fill="white" />
-          </div>
-        )}
-        {photo && (
-          <div className={`absolute bottom-1 right-1 rounded-full bg-emerald-400/25 border border-emerald-400/50 flex items-center justify-center ${isMain ? "w-4 h-4" : "w-3 h-3"}`}>
-            <Fingerprint className={`text-emerald-300 ${isMain ? "w-2 h-2" : "w-1.5 h-1.5"}`} />
-          </div>
-        )}
+      {label && <span className={`text-[8px] uppercase tracking-widest font-bold mb-0.5 ${isMain ? "text-primary" : "text-white/30"}`}>{label}</span>}
+      <div className={`relative overflow-hidden flex items-center justify-center ${isMain ? "w-[72px] h-[88px] rounded-2xl" : "w-[52px] h-[64px] rounded-xl"}`}
+        style={isMain
+          ? { border: "2px solid rgba(124,58,237,0.7)", boxShadow: "0 0 24px rgba(124,58,237,0.35)", background: "rgba(255,255,255,0.05)" }
+          : { border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)" }}>
+        {loading ? <Loader2 className={`animate-spin text-white/20 ${isMain ? "w-6 h-6" : "w-4 h-4"}`} />
+          : photo ? <img src={photo} alt={nome} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+          : <User className={`text-white/12 ${isMain ? "w-7 h-7" : "w-5 h-5"}`} />}
+        {isMain && <div className="absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "rgba(124,58,237,0.5)" }}><Star className="w-2 h-2 text-white" fill="white" /></div>}
+        {photo && <div className={`absolute bottom-1 right-1 rounded-full flex items-center justify-center ${isMain ? "w-4 h-4" : "w-3 h-3"}`} style={{ background: "rgba(52,211,153,0.25)", border: "1px solid rgba(52,211,153,0.5)" }}><Fingerprint className={`text-emerald-300 ${isMain ? "w-2 h-2" : "w-1.5 h-1.5"}`} /></div>}
       </div>
       <div className={`text-center ${isMain ? "max-w-[90px]" : "max-w-[72px]"}`}>
         <p className={`font-bold leading-tight line-clamp-2 ${isMain ? "text-[11px] text-white" : "text-[9px] text-white/70"}`}>
           {nome || "—"} {emoji && <span className="text-white/30">{emoji}</span>}
         </p>
-        {cpf && cpf.length === 11 && (
-          <p className="text-[7px] font-mono text-white/28 mt-0.5 truncate">{fmtCPF(cpf)}</p>
-        )}
+        {cpf && cpf.length === 11 && <p className="text-[7px] font-mono text-white/28 mt-0.5">{fmtCPF(cpf)}</p>}
         {nasc && <p className="text-[7px] text-white/22 mt-0.5">{nasc}</p>}
       </div>
     </div>
@@ -718,10 +861,8 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
 }) {
   const cats: Record<RelCat, Relative[]> = { pai:[], mae:[], conjuge:[], filho:[], filha:[], irmao:[], irma:[], outro:[] };
   for (const r of relatives) cats[categorizeRel(r)].push(r);
-
   const np = (r: Relative) => ({ photo: r.cpf ? photos[r.cpf] : undefined, loading: r.cpf ? loadingPhotos.has(r.cpf) : false });
 
-  // Parents: use relatives or fall back to identity fields (no photo, no CPF)
   type ParentEntry = { nome: string; cpf: string; nasc: string; label: string; rel?: Relative };
   const parents: ParentEntry[] = [];
   if (cats.mae.length > 0) cats.mae.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Mãe", rel: r }));
@@ -733,21 +874,18 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
   const children = [...cats.filho, ...cats.filha];
   const conjuges = cats.conjuge;
   const outros   = cats.outro;
-
-  const hasTree = parents.length > 0 || siblings.length > 0 || children.length > 0 || conjuges.length > 0 || relatives.length > 0;
+  const hasTree  = parents.length > 0 || siblings.length > 0 || children.length > 0 || conjuges.length > 0 || relatives.length > 0;
 
   const Connector = ({ h = 28 }: { h?: number }) => (
     <div className="flex justify-center pointer-events-none select-none">
       <div className="w-0.5 rounded-full" style={{ height: h, background: "linear-gradient(to bottom,rgba(124,58,237,0.3),rgba(255,255,255,0.06))" }} />
     </div>
   );
-  const HConnector = () => (
-    <div className="flex-1 h-0.5 self-center mx-1 rounded-full" style={{ background: "rgba(255,255,255,0.07)" }} />
-  );
+  const HConnector = () => <div className="flex-1 h-0.5 self-center mx-1 rounded-full" style={{ background: "rgba(255,255,255,0.07)" }} />;
 
   if (!hasTree) {
     return (
-      <div className="rounded-2xl border border-white/8 bg-[#09090f] p-8 text-center">
+      <div className="rounded-2xl p-8 text-center" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)" }}>
         <Users className="w-10 h-10 mx-auto mb-3 text-white/10" />
         <p className="text-sm text-white/25">Nenhum parente encontrado.</p>
       </div>
@@ -755,20 +893,15 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#09090f] overflow-x-auto">
+    <div className="rounded-2xl overflow-x-auto" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.15)" }}>
       <div className="min-w-[480px] p-6 sm:p-8">
-
-        {/* ── Generation: Pais ─────────────────────────────────── */}
         {parents.length > 0 && (
           <>
             <div className="flex items-end justify-center gap-10">
               {parents.map((p, i) => (
                 <motion.div key={i} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-                  <PersonNode
-                    nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label}
-                    photo={p.rel ? np(p.rel).photo : undefined}
-                    loading={p.rel ? np(p.rel).loading : false}
-                  />
+                  <PersonNode nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label}
+                    photo={p.rel ? np(p.rel).photo : undefined} loading={p.rel ? np(p.rel).loading : false} />
                 </motion.div>
               ))}
             </div>
@@ -776,25 +909,19 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           </>
         )}
 
-        {/* ── Generation: Titular ─────────────────────────────── */}
         <div className="flex items-center justify-center gap-2">
-
-          {/* Irmãos (esquerda) */}
           {siblings.length > 0 && (
             <div className="flex items-center gap-2">
               <div className="flex gap-4">
                 {siblings.slice(0, 3).map((s, i) => (
                   <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.08 }}>
-                    <PersonNode
-                      nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
-                      label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"}
-                      {...np(s)}
-                    />
+                    <PersonNode nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
+                      label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"} {...np(s)} />
                   </motion.div>
                 ))}
                 {siblings.length > 3 && (
                   <div className="flex flex-col items-center justify-center">
-                    <div className="w-[52px] h-[64px] rounded-xl border border-white/10 bg-white/4 flex items-center justify-center">
+                    <div className="w-[52px] h-[64px] rounded-xl flex items-center justify-center" style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)" }}>
                       <span className="text-[11px] text-white/30 font-bold">+{siblings.length - 3}</span>
                     </div>
                     <p className="text-[8px] text-white/20 mt-1">mais</p>
@@ -805,16 +932,11 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
             </div>
           )}
 
-          {/* Titular */}
           <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }}>
-            <PersonNode
-              nome={identity.nome || "Titular"} cpf={identity.cpf}
-              nasc={identity.dataNascimento} sexo={identity.sexo}
-              photo={mainPhoto ?? undefined} isMain label="★ Titular"
-            />
+            <PersonNode nome={identity.nome || "Titular"} cpf={identity.cpf} nasc={identity.dataNascimento}
+              sexo={identity.sexo} photo={mainPhoto ?? undefined} isMain label="★ Titular" />
           </motion.div>
 
-          {/* Cônjuge */}
           {conjuges.length > 0 && (
             <div className="flex items-center gap-2">
               <HConnector />
@@ -829,25 +951,20 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           )}
         </div>
 
-        {/* ── Generation: Filhos ───────────────────────────────── */}
         {children.length > 0 && (
           <>
             <Connector h={32} />
             <div className="flex items-start justify-center gap-6 flex-wrap">
               {children.map((c, i) => (
                 <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.07 }}>
-                  <PersonNode
-                    nome={c.nome} cpf={c.cpf} nasc={c.nasc} sexo={c.sexo}
-                    label={/filha/i.test(c.relacao) || c.sexo?.toLowerCase() === "f" ? "Filha" : "Filho"}
-                    {...np(c)}
-                  />
+                  <PersonNode nome={c.nome} cpf={c.cpf} nasc={c.nasc} sexo={c.sexo}
+                    label={/filha/i.test(c.relacao) || c.sexo?.toLowerCase() === "f" ? "Filha" : "Filho"} {...np(c)} />
                 </motion.div>
               ))}
             </div>
           </>
         )}
 
-        {/* ── Outros ──────────────────────────────────────────── */}
         {outros.length > 0 && (
           <>
             <div className="h-px bg-white/5 mt-8 mb-6" />
@@ -861,7 +978,6 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
             </div>
           </>
         )}
-
       </div>
     </div>
   );
@@ -878,11 +994,12 @@ export function CpfFullPanel({ cpf }: Props) {
   const [geoAddr, setGeoAddr]   = useState<Address[]>([]);
   const [relPhotos, setRelPhotos]       = useState<Record<string, string>>({});
   const [relPhotosLoading, setRelPhotosLoading] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"compact" | "expanded">("expanded");
 
   const finalResultsRef = useRef<Record<string, ModuleResult>>({});
   const runRef = useRef(0);
 
-  // ── Module fetch ──────────────────────────────────────────────────────────
+  // ── Fetch modules ─────────────────────────────────────────────────────────
   useEffect(() => {
     const clean = cpf.replace(/\D/g,"");
     if (clean.length !== 11) return;
@@ -908,7 +1025,7 @@ export function CpfFullPanel({ cpf }: Props) {
     return () => { runRef.current++; };
   }, [cpf]);
 
-  // ── Geocode — runs once when done ─────────────────────────────────────────
+  // ── Geocode ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!done) return;
     const addrs = buildAddresses(finalResultsRef.current);
@@ -932,7 +1049,7 @@ export function CpfFullPanel({ cpf }: Props) {
     return () => { cancelled = true; };
   }, [done]);
 
-  // ── Relative photos — runs once when done ─────────────────────────────────
+  // ── Relative photos ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!done) return;
     const rels = buildRelatives(finalResultsRef.current["parentes"]);
@@ -949,7 +1066,7 @@ export function CpfFullPanel({ cpf }: Props) {
     );
   }, [done]);
 
-  // ── Derived data ──────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
   const identity    = buildIdentity(mResults);
   const phones      = buildPhones(mResults);
   const addresses   = buildAddresses(mResults);
@@ -966,16 +1083,15 @@ export function CpfFullPanel({ cpf }: Props) {
   const center: [number,number] = geocoded[0] ? [geocoded[0].lat!, geocoded[0].lng!] : [-14.235, -51.925];
   const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
 
-  const hasIdentity = !!(identity.nome || identity.rg);
-  const hasCNH  = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
-  const hasObito = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
-  const hasLegal = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
-  const extras = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
+  const hasIdentity  = !!(identity.nome || identity.rg);
+  const hasCNH       = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
+  const hasObito     = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
+  const hasLegal     = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
+  const hasParentes  = relatives.length > 0 || identity.mae || identity.pai || mResults["parentes"]?.status === "done";
+  const extras       = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)
   );
-
-  const hasParentes = relatives.length > 0 || identity.mae || identity.pai || mResults["parentes"]?.status === "done";
 
   const extraLabels: Record<string, { label: string; icon: IconProp }> = {
     irpf:      { label: "IRPF / Imposto de Renda", icon: Receipt },
@@ -990,305 +1106,291 @@ export function CpfFullPanel({ cpf }: Props) {
   const geocodingInProgress = done && addresses.length > 0 && geoAddr.length === 0;
 
   return (
-    <div className="mt-6 space-y-8">
+    <ViewModeCtx.Provider value={viewMode}>
+      <div className="mt-6 space-y-6">
 
-      {/* ── Progress ──────────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {(running || done) && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-                {running ? "Consultando módulos em paralelo…" : `Concluído — ${doneCount}/${MODULES.length} módulos com dados`}
-              </span>
-              {running && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
-            </div>
-            <div className="h-1.5 bg-white/5 rounded-full mb-4 overflow-hidden">
-              <motion.div className="h-full rounded-full" style={{ background: "var(--color-primary)" }}
-                animate={{ width: `${(doneCount / MODULES.length) * 100}%` }} transition={{ duration: 0.5 }} />
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
-              {MODULES.map(m => {
-                const s = mStates[m.tipo] ?? "idle";
-                return (
-                  <div key={m.tipo} className="flex items-center gap-1 text-[9px] truncate">
-                    {s === "loading" && <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0 text-primary" />}
-                    {s === "done"    && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />}
-                    {s === "error"   && <XCircle className="w-2.5 h-2.5 text-red-400/40 shrink-0" />}
-                    {s === "idle"    && <div className="w-2.5 h-2.5 rounded-full bg-white/8 shrink-0" />}
-                    <span className={s === "done" ? "text-white/65" : s === "error" ? "text-white/20" : "text-white/35"}>{m.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Results ───────────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {done && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="space-y-10">
-
-            {/* Carteira de Identidade */}
-            {hasIdentity && (
-              <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
-                <SectionHeader icon={IdCard} title="Carteira de Identidade" />
-                <IdentityCard id={identity} photo={photo} />
-              </motion.div>
-            )}
-
-            {/* Foto biométrica */}
-            {photo && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
-                className="rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/8 to-transparent p-4 flex items-center gap-5">
-                <div className="relative shrink-0">
-                  <div className="absolute -inset-2 rounded-2xl bg-cyan-400/10 blur-xl" />
-                  <div className="relative w-24 h-32 rounded-xl overflow-hidden border-2 border-cyan-400/35">
-                    <img src={photo} alt="Foto biométrica" className="w-full h-full object-cover"
-                      onError={e => { const el = (e.currentTarget as HTMLImageElement).closest(".relative") as HTMLElement | null; if (el) el.style.display = "none"; }} />
-                  </div>
+        {/* ── Progress tracker ─────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {(running || done) && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="rounded-2xl p-5" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.025)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] uppercase tracking-widest font-bold text-white/30">
+                  {running ? "Consultando módulos em paralelo…" : `Concluído — ${doneCount}/${MODULES.length} módulos com dados`}
+                </span>
+                <div className="flex items-center gap-2">
+                  {running && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
+                  {done && (
+                    <button onClick={() => setViewMode(v => v === "expanded" ? "compact" : "expanded")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all"
+                      style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.55)" }}
+                      title={viewMode === "expanded" ? "Mudar para modo compacto" : "Mudar para modo expandido"}>
+                      {viewMode === "expanded"
+                        ? <><LayoutList className="w-3 h-3" /> Compacto</>
+                        : <><StretchHorizontal className="w-3 h-3" /> Expandido</>}
+                    </button>
+                  )}
                 </div>
-                <div>
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Fingerprint className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-[9px] uppercase tracking-widest font-bold text-cyan-300">Foto Biométrica</span>
-                  </div>
-                  <p className="text-sm text-white font-semibold">{identity.nome || "Titular"}</p>
-                  <p className="text-xs text-white/40 mt-0.5">{fmtCPF(cpf)}</p>
-                  <a href={photo} download={`foto-${cpf}.jpg`}
-                    className="inline-flex items-center gap-1.5 mt-2 text-[10px] uppercase tracking-widest text-cyan-400/70 hover:text-cyan-300 border border-cyan-400/20 hover:border-cyan-400/40 rounded-lg px-2.5 py-1 transition-colors">
-                    ↓ Baixar Foto
-                  </a>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Telefones */}
-            {phones.length > 0 && (
-              <CollapsibleSection icon={Phone} title="Telefones" count={phones.length}>
-                <div className="space-y-2">
-                  {phones.map((p, i) => <PhoneCard key={i} phone={p} idx={i} />)}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* Árvore Genealógica / Parentes */}
-            {hasParentes && (
-              <CollapsibleSection icon={GitBranch} title="Árvore Genealógica" count={relatives.length > 0 ? relatives.length : undefined}>
-                <FamilyTree
-                  relatives={relatives}
-                  photos={relPhotos}
-                  loadingPhotos={relPhotosLoading}
-                  identity={identity}
-                  mainPhoto={photo}
-                />
-                {/* Raw fallback if no structured data but raw exists */}
-                {relatives.length === 0 && !identity.mae && !identity.pai && mResults["parentes"]?.data?.raw && (
-                  <div className="mt-3 rounded-xl border border-white/8 bg-black/20 p-4">
-                    <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">
-                      {mResults["parentes"].data.raw}
-                    </pre>
-                  </div>
-                )}
-              </CollapsibleSection>
-            )}
-
-            {/* Endereços + Mapa */}
-            {addresses.length > 0 && (
-              <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length}>
-                <div className="rounded-2xl border border-white/10 overflow-hidden mb-4">
-                  <div className="relative h-[320px]">
-                    <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4} className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
-                      <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
-                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-                      {geocoded.map((addr, i) => (
-                        <CircleMarker key={i} center={[addr.lat!, addr.lng!]} radius={12} pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
-                          <Tooltip permanent direction="top" offset={[0, -14]}>
-                            <div style={{ background: "rgba(9,9,15,0.92)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: 8, padding: "4px 8px", color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", maxWidth: 220 }}>
-                              <span style={{ color: "#a855f7", marginRight: 5 }}>◉ {i+1}</span>
-                              {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.cidade ? ` — ${addr.cidade}` : ""}
-                            </div>
-                          </Tooltip>
-                          <Popup>
-                            <div className="text-xs space-y-1 min-w-[180px]">
-                              <p className="font-bold text-gray-800">{addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}</p>
-                              {addr.complemento && addr.complemento !== "Não Informado" && <p className="text-gray-500">{addr.complemento}</p>}
-                              {addr.bairro && <p className="text-gray-600">{addr.bairro}</p>}
-                              <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" — ")}</p>
-                              {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
-                              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.cidade,addr.uf].filter(Boolean).join(","))}`}
-                                target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1">
-                                📍 Google Maps
-                              </a>
-                            </div>
-                          </Popup>
-                        </CircleMarker>
-                      ))}
-                    </MapContainer>
-                    <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-[#09090f]/90 backdrop-blur rounded-xl px-3 py-2 border border-white/10 pointer-events-none">
-                      <MapPin className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
-                      <span className="text-[10px] font-semibold text-white">Mapa de Endereços</span>
-                      {geocodingInProgress
-                        ? <><Loader2 className="w-3 h-3 animate-spin text-primary/60" /><span className="text-[9px] text-white/30">Geocodificando…</span></>
-                        : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>}
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {addresses.map((a, i) => <AddressCard key={i} addr={a} idx={i} />)}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* Timeline de Empregos */}
-            {employments.length > 0 && (
-              <CollapsibleSection icon={Briefcase} title="Histórico Profissional" count={employments.length}>
-                <EmploymentTimeline employments={employments} />
-              </CollapsibleSection>
-            )}
-
-            {/* Score de Crédito */}
-            {(score1 || score2Val) && (
-              <CollapsibleSection icon={BarChart2} title="Score de Crédito">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {[
-                    { label: "Score Serasa / Bureau 1", val: score1,    grad: "from-violet-600 to-indigo-600", bgGrad: "from-violet-500/10 to-indigo-500/5", border: "border-violet-500/25" },
-                    { label: "Score Bureau 2",          val: score2Val, grad: "from-sky-600 to-indigo-500",    bgGrad: "from-sky-500/10 to-indigo-500/5",    border: "border-sky-500/25" },
-                  ].filter(s => s.val).map(s => {
-                    const pct = Math.min(100, (parseInt(s.val) / 1000) * 100);
-                    const color = pct > 70 ? "text-emerald-300" : pct > 40 ? "text-amber-300" : "text-red-300";
-                    return (
-                      <div key={s.label} className={`rounded-2xl border ${s.border} bg-gradient-to-br ${s.bgGrad} p-5 flex items-center gap-5`}>
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-black text-white shrink-0 bg-gradient-to-br ${s.grad} shadow-lg`}>{s.val}</div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[9px] uppercase tracking-widest text-white/30 mb-1.5">{s.label}</p>
-                          <div className="h-2 bg-white/8 rounded-full overflow-hidden mb-1">
-                            <div className={`h-full rounded-full bg-gradient-to-r ${s.grad}`} style={{ width: `${pct}%` }} />
-                          </div>
-                          <p className={`text-[11px] font-bold ${color}`}>{s.val} / 1000</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* CNH */}
-            {hasCNH && (
-              <CollapsibleSection icon={Car} title="CNH — Carteira Nacional de Habilitação">
-                <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-5 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {(mResults["cnh"]?.data?.fields ?? []).map(([k, v], i) => (
-                    <div key={i}>
-                      <p className="text-[8.5px] uppercase tracking-[0.2em] text-white/25 mb-0.5">{k}</p>
-                      <p className="text-[13px] font-semibold text-white">{v || "—"}</p>
-                    </div>
-                  ))}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* Processos & Mandados */}
-            {hasLegal && (
-              <CollapsibleSection icon={Scale} title="Processos & Mandados">
-                <div className="space-y-3">
-                  {["processos","mandado"].flatMap(tipo => {
-                    const res = mResults[tipo];
-                    if (!res?.data) return [];
-                    const secs = res.data.sections.length > 0 ? res.data.sections
-                      : (res.data.fields.length > 0 ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }] : []);
-                    return secs.map((sec, si) => (
-                      <div key={`${tipo}-${si}`} className="rounded-2xl border border-rose-500/20 bg-rose-500/5 overflow-hidden">
-                        <div className="px-4 py-2.5 bg-black/20 border-b border-rose-500/10 flex items-center gap-2">
-                          <Scale className="w-3.5 h-3.5 text-rose-400" />
-                          <span className="text-[10px] uppercase tracking-widest text-rose-300 font-bold">{sec.name || tipo.toUpperCase()}</span>
-                          <span className="text-[9px] text-rose-400/30 ml-1">({sec.items.length})</span>
-                        </div>
-                        <div className="divide-y divide-rose-500/8 max-h-64 overflow-y-auto">
-                          {sec.items.map((item, ii) => <div key={ii} className="px-4 py-2.5 text-sm text-white/60 leading-relaxed">{item}</div>)}
-                        </div>
-                      </div>
-                    ));
-                  })}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* Dados Adicionais */}
-            {extras.length > 0 && (
-              <CollapsibleSection icon={FileText} title="Dados Adicionais" defaultOpen={false}>
-                <div className="space-y-4">
-                  {extras.map(key => {
-                    const meta = extraLabels[key]; const res = mResults[key];
-                    if (!meta || !res?.data) return null;
-                    const { label, icon: Icon } = meta;
-                    const { fields, sections, raw } = res.data;
-                    return (
-                      <div key={key} className="rounded-2xl border border-white/10 bg-[#09090f] overflow-hidden">
-                        <div className="px-4 py-3 bg-black/20 border-b border-white/6 flex items-center gap-2">
-                          <Icon className="w-3.5 h-3.5" style={{ color:"var(--color-primary)" }} />
-                          <span className="text-[11px] uppercase tracking-widest font-bold text-white">{label}</span>
-                        </div>
-                        <div className="p-4 space-y-3">
-                          {fields.length > 0 && (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {fields.map(([k, v], i) => <div key={i}><p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p><p className="text-sm font-semibold text-white">{v}</p></div>)}
-                            </div>
-                          )}
-                          {sections.map((sec, si) => (
-                            <div key={si}>
-                              {sec.name && <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">{sec.name}</p>}
-                              <div className="divide-y divide-white/4 rounded-xl border border-white/6 overflow-hidden">
-                                {sec.items.map((item, ii) => <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>)}
-                              </div>
-                            </div>
-                          ))}
-                          {!fields.length && !sections.length && raw && (
-                            <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-48 overflow-y-auto">{raw}</pre>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CollapsibleSection>
-            )}
-
-            {/* Óbito */}
-            {hasObito && (
-              <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-                <div className="rounded-2xl border border-red-500/30 bg-red-950/15 overflow-hidden">
-                  <div className="px-5 py-3 bg-red-950/25 border-b border-red-500/15 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-red-400" />
-                    <span className="text-[11px] uppercase tracking-widest font-bold text-red-300">Registro de Óbito</span>
-                  </div>
-                  <div className="p-5">
-                    <p className="text-xs text-red-400/70 mb-3">Pessoa falecida conforme registros oficiais.</p>
-                    {(mResults["obito"]?.data?.fields ?? []).length > 0
-                      ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                          {(mResults["obito"]?.data?.fields ?? []).map(([k, v], i) => (
-                            <div key={i}><p className="text-[9px] uppercase tracking-[0.2em] text-red-400/40 mb-0.5">{k}</p><p className="text-sm font-semibold text-red-200">{v}</p></div>
-                          ))}
-                        </div>
-                      : <p className="text-sm text-red-300/60 font-mono">{mResults["obito"]?.data?.raw}</p>
-                    }
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Sem dados */}
-            {noData && (
-              <div className="text-center py-20 text-muted-foreground">
-                <Star className="w-14 h-14 mx-auto mb-4 opacity-10" />
-                <p className="text-sm">Nenhum dado encontrado para este CPF.</p>
-                <p className="text-xs text-white/20 mt-1">Verifique se o número está correto.</p>
               </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+              <div className="h-1.5 rounded-full mb-4 overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
+                <motion.div className="h-full rounded-full" style={{ background: "var(--color-primary)" }}
+                  animate={{ width: `${(doneCount / MODULES.length) * 100}%` }} transition={{ duration: 0.5 }} />
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
+                {MODULES.map(m => {
+                  const s = mStates[m.tipo] ?? "idle";
+                  return (
+                    <div key={m.tipo} className="flex items-center gap-1 text-[9px] truncate">
+                      {s === "loading" && <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0 text-primary" />}
+                      {s === "done"    && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />}
+                      {s === "error"   && <XCircle className="w-2.5 h-2.5 text-red-400/40 shrink-0" />}
+                      {s === "idle"    && <div className="w-2.5 h-2.5 rounded-full bg-white/8 shrink-0" />}
+                      <span className={s === "done" ? "text-white/65" : s === "error" ? "text-white/20" : "text-white/35"}>{m.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Results ────────────────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {done && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-4">
+
+              {/* Hero Photo — FIRST, full-width, prominent */}
+              {photo && (
+                <HeroPhotoBanner photo={photo} identity={identity} cpf={cpf} />
+              )}
+
+              {/* Carteira de Identidade */}
+              {hasIdentity && (
+                <motion.div
+                  initial={{ opacity: 0, y: 22 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.42, delay: 0.06, ease: [0.23, 1, 0.32, 1] }}>
+                  <SectionHeader icon={IdCard} title="Carteira de Identidade" />
+                  <IdentityCard id={identity} photo={photo} />
+                </motion.div>
+              )}
+
+              {/* Telefones */}
+              {phones.length > 0 && (
+                <CollapsibleSection icon={Phone} title="Telefones" count={phones.length} delay={0.10}>
+                  <div className={viewMode === "compact" ? "divide-y divide-white/5" : "space-y-2"}>
+                    {phones.map((p, i) => <PhoneCard key={i} phone={p} idx={i} />)}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Árvore Genealógica */}
+              {hasParentes && (
+                <CollapsibleSection icon={GitBranch} title="Árvore Genealógica" count={relatives.length > 0 ? relatives.length : undefined} delay={0.14}>
+                  <FamilyTree relatives={relatives} photos={relPhotos} loadingPhotos={relPhotosLoading} identity={identity} mainPhoto={photo} />
+                  {relatives.length === 0 && !identity.mae && !identity.pai && mResults["parentes"]?.data?.raw && (
+                    <div className="mt-3 rounded-xl p-4" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)" }}>
+                      <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">{mResults["parentes"].data.raw}</pre>
+                    </div>
+                  )}
+                </CollapsibleSection>
+              )}
+
+              {/* Endereços + Mapa */}
+              {addresses.length > 0 && (
+                <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length} delay={0.18}>
+                  <div className="rounded-2xl overflow-hidden mb-4" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="relative h-[300px]">
+                      <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4} className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
+                        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
+                          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+                        {geocoded.map((addr, i) => (
+                          <CircleMarker key={i} center={[addr.lat!, addr.lng!]} radius={12} pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
+                            <Tooltip permanent direction="top" offset={[0, -14]}>
+                              <div style={{ background: "rgba(9,9,15,0.92)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: 8, padding: "4px 8px", color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", maxWidth: 220 }}>
+                                <span style={{ color: "#a855f7", marginRight: 5 }}>◉ {i+1}</span>
+                                {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.cidade ? ` — ${addr.cidade}` : ""}
+                              </div>
+                            </Tooltip>
+                            <Popup>
+                              <div className="text-xs space-y-1 min-w-[180px]">
+                                <p className="font-bold text-gray-800">{addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}</p>
+                                {addr.complemento && addr.complemento !== "Não Informado" && <p className="text-gray-500">{addr.complemento}</p>}
+                                {addr.bairro && <p className="text-gray-600">{addr.bairro}</p>}
+                                <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" — ")}</p>
+                                {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
+                                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.cidade,addr.uf].filter(Boolean).join(","))}`}
+                                  target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1">📍 Google Maps</a>
+                              </div>
+                            </Popup>
+                          </CircleMarker>
+                        ))}
+                      </MapContainer>
+                      <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 pointer-events-none px-3 py-2 rounded-xl" style={{ background: "rgba(9,9,15,0.9)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                        <MapPin className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
+                        <span className="text-[10px] font-semibold text-white">Mapa de Endereços</span>
+                        {geocodingInProgress
+                          ? <><Loader2 className="w-3 h-3 animate-spin text-primary/60" /><span className="text-[9px] text-white/30">Geocodificando…</span></>
+                          : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className={viewMode === "compact" ? "divide-y divide-white/5" : "space-y-2"}>
+                    {addresses.map((a, i) => <AddressCard key={i} addr={a} idx={i} />)}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Histórico Profissional */}
+              {employments.length > 0 && (
+                <CollapsibleSection icon={Briefcase} title="Histórico Profissional" count={employments.length} delay={0.22}>
+                  <EmploymentTimeline employments={employments} />
+                </CollapsibleSection>
+              )}
+
+              {/* Score de Crédito */}
+              {(score1 || score2Val) && (
+                <CollapsibleSection icon={BarChart2} title="Score de Crédito" delay={0.26}>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {[
+                      { label: "Score Serasa / Bureau 1", val: score1,    grad: "from-violet-600 to-indigo-600", bgGrad: "from-violet-500/10 to-indigo-500/5", bdr: "rgba(139,92,246,0.25)" },
+                      { label: "Score Bureau 2",          val: score2Val, grad: "from-sky-600 to-indigo-500",    bgGrad: "from-sky-500/10 to-indigo-500/5",    bdr: "rgba(14,165,233,0.25)" },
+                    ].filter(s => s.val).map(s => {
+                      const pct   = Math.min(100, (parseInt(s.val) / 1000) * 100);
+                      const color = pct > 70 ? "text-emerald-300" : pct > 40 ? "text-amber-300" : "text-red-300";
+                      return (
+                        <div key={s.label} className={`rounded-2xl p-5 flex items-center gap-5 bg-gradient-to-br ${s.bgGrad}`} style={{ border: `1px solid ${s.bdr}` }}>
+                          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-black text-white shrink-0 bg-gradient-to-br ${s.grad} shadow-lg`}>{s.val}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[9px] uppercase tracking-widest text-white/30 mb-1.5">{s.label}</p>
+                            <div className="h-2 rounded-full overflow-hidden mb-1" style={{ background: "rgba(255,255,255,0.08)" }}>
+                              <div className={`h-full rounded-full bg-gradient-to-r ${s.grad}`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <p className={`text-[11px] font-bold ${color}`}>{s.val} / 1000</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* CNH */}
+              {hasCNH && (
+                <CollapsibleSection icon={Car} title="CNH — Carteira Nacional de Habilitação" delay={0.28}>
+                  <div className="rounded-2xl p-5 grid grid-cols-2 sm:grid-cols-3 gap-4" style={{ border: "1px solid rgba(249,115,22,0.2)", background: "rgba(249,115,22,0.05)" }}>
+                    {(mResults["cnh"]?.data?.fields ?? []).map(([k, v], i) => (
+                      <div key={i}><p className="text-[8.5px] uppercase tracking-[0.2em] text-white/25 mb-0.5">{k}</p><p className="text-[13px] font-semibold text-white">{v || "—"}</p></div>
+                    ))}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Processos & Mandados */}
+              {hasLegal && (
+                <CollapsibleSection icon={Scale} title="Processos & Mandados" delay={0.30}>
+                  <div className="space-y-3">
+                    {["processos","mandado"].flatMap(tipo => {
+                      const res = mResults[tipo];
+                      if (!res?.data) return [];
+                      const secs = res.data.sections.length > 0 ? res.data.sections
+                        : (res.data.fields.length > 0 ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }] : []);
+                      return secs.map((sec, si) => (
+                        <div key={`${tipo}-${si}`} className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(244,63,94,0.2)", background: "rgba(244,63,94,0.04)" }}>
+                          <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(244,63,94,0.1)" }}>
+                            <Scale className="w-3.5 h-3.5 text-rose-400" />
+                            <span className="text-[10px] uppercase tracking-widest text-rose-300 font-bold">{sec.name || tipo.toUpperCase()}</span>
+                            <span className="text-[9px] text-rose-400/30 ml-1">({sec.items.length})</span>
+                          </div>
+                          <div className="divide-y max-h-64 overflow-y-auto" style={{ borderColor: "rgba(244,63,94,0.07)" }}>
+                            {sec.items.map((item, ii) => <div key={ii} className="px-4 py-2.5 text-sm text-white/60 leading-relaxed">{item}</div>)}
+                          </div>
+                        </div>
+                      ));
+                    })}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Dados Adicionais */}
+              {extras.length > 0 && (
+                <CollapsibleSection icon={FileText} title="Dados Adicionais" defaultOpen={false} delay={0.32}>
+                  <div className="space-y-4">
+                    {extras.map(key => {
+                      const meta = extraLabels[key]; const res = mResults[key];
+                      if (!meta || !res?.data) return null;
+                      const { label, icon: Icon } = meta;
+                      const { fields, sections, raw } = res.data;
+                      return (
+                        <div key={key} className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(9,9,15,0.6)" }}>
+                          <div className="px-4 py-3 flex items-center gap-2" style={{ background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                            <Icon className="w-3.5 h-3.5" style={{ color:"var(--color-primary)" }} />
+                            <span className="text-[11px] uppercase tracking-widest font-bold text-white">{label}</span>
+                          </div>
+                          <div className="p-4 space-y-3">
+                            {fields.length > 0 && (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                {fields.map(([k, v], i) => <div key={i}><p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p><p className="text-sm font-semibold text-white">{v}</p></div>)}
+                              </div>
+                            )}
+                            {sections.map((sec, si) => (
+                              <div key={si}>
+                                {sec.name && <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">{sec.name}</p>}
+                                <div className="divide-y rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)", borderColor: "rgba(255,255,255,0.04)" }}>
+                                  {sec.items.map((item, ii) => <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>)}
+                                </div>
+                              </div>
+                            ))}
+                            {!fields.length && !sections.length && raw && (
+                              <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-48 overflow-y-auto">{raw}</pre>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              {/* Óbito */}
+              {hasObito && (
+                <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.34 }}>
+                  <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(239,68,68,0.3)", background: "rgba(127,29,29,0.1)" }}>
+                    <div className="px-5 py-3 flex items-center gap-2" style={{ background: "rgba(127,29,29,0.2)", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+                      <AlertTriangle className="w-4 h-4 text-red-400" />
+                      <span className="text-[11px] uppercase tracking-widest font-bold text-red-300">Registro de Óbito</span>
+                    </div>
+                    <div className="p-5">
+                      <p className="text-xs text-red-400/70 mb-3">Pessoa falecida conforme registros oficiais.</p>
+                      {(mResults["obito"]?.data?.fields ?? []).length > 0
+                        ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            {(mResults["obito"]?.data?.fields ?? []).map(([k, v], i) => (
+                              <div key={i}><p className="text-[9px] uppercase tracking-[0.2em] text-red-400/40 mb-0.5">{k}</p><p className="text-sm font-semibold text-red-200">{v}</p></div>
+                            ))}
+                          </div>
+                        : <p className="text-sm text-red-300/60 font-mono">{mResults["obito"]?.data?.raw}</p>
+                      }
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Sem dados */}
+              {noData && (
+                <div className="text-center py-20 text-muted-foreground">
+                  <Star className="w-14 h-14 mx-auto mb-4 opacity-10" />
+                  <p className="text-sm">Nenhum dado encontrado para este CPF.</p>
+                  <p className="text-xs text-white/20 mt-1">Verifique se o número está correto.</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </ViewModeCtx.Provider>
   );
 }
