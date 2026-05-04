@@ -6,7 +6,7 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 // PORT is only needed at runtime (dev/preview). Build mode doesn't need it.
 const port     = Number(process.env.PORT ?? 3000);
-const basePath = process.env.BASE_PATH ?? "/";
+const basePath = process.env.BASE_PATH ?? "/admin/";
 
 export default defineConfig({
   base: basePath,
