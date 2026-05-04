@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, Bot, User, Mic, MicOff, Sparkles, Trash2, Plus,
-  MessageSquare, Clock, ChevronRight, Copy, Check, Search,
-  Zap, X, Volume2, VolumeX, Star, IdCard, Phone, Building2, Car,
+  Send, Mic, MicOff, Sparkles, Trash2, Plus,
+  MessageSquare, Clock, Copy, Check, Search,
+  X, Volume2, VolumeX, Star, IdCard, Phone, Building2, Car,
 } from "lucide-react";
 import robotUrl from "@/assets/robot.png";
 import { VoiceOrb, type OrbState } from "@/components/ui/VoiceOrb";
@@ -30,9 +30,9 @@ function titleFromMsg(text: string) {
 function relativeTime(ts: number) {
   const diff = Date.now() - ts;
   if (diff < 60_000) return "agora";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m atrás`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h atrás`;
-  return `${Math.floor(diff / 86_400_000)}d atrás`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  return `${Math.floor(diff / 86_400_000)}d`;
 }
 
 function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
@@ -59,23 +59,25 @@ function renderMarkdown(text: string) {
       result.push(
         <div key={i} className="my-2 rounded-xl overflow-hidden border border-white/10">
           {lang && <div className="px-3 py-1 bg-white/5 text-[9px] uppercase tracking-widest text-primary/60 font-mono">{lang}</div>}
-          <pre className="bg-black/50 px-4 py-3 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap">{codeLines.join("\n")}</pre>
+          <pre className="bg-black/60 px-4 py-3 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre-wrap">{codeLines.join("\n")}</pre>
         </div>
       );
       i++; continue;
     }
-    // Detect standalone image URLs (photo CNH, etc.)
     const imgMatch = line.match(IMAGE_URL_RE);
     if (imgMatch && line.trim() === imgMatch[0]) {
       result.push(
         <div key={i} className="my-3">
-          <img
-            src={imgMatch[0]}
-            alt="Foto"
-            className="max-w-[260px] w-full rounded-xl border border-white/10 shadow-lg"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-          />
-          <p className="text-[9px] text-muted-foreground/50 mt-1 uppercase tracking-widest">Foto CNH · Skylers</p>
+          <div className="relative inline-block">
+            <img
+              src={imgMatch[0]}
+              alt="Foto"
+              className="max-w-[240px] w-full rounded-2xl border-2 border-white/10 shadow-[0_0_30px_rgba(0,0,0,0.5)]"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+            <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/10 pointer-events-none" />
+          </div>
+          <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-widest">Foto · Skylers</p>
         </div>
       );
       i++; continue;
@@ -84,8 +86,8 @@ function renderMarkdown(text: string) {
     else if (line.startsWith("## ")) result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
     else if (line.startsWith("# "))  result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
     else if (line.startsWith("- ") || line.startsWith("• "))
-      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/60 mt-0.5 shrink-0">·</span><span>{inlineRender(line)}</span></div>);
-    else if (line === "") result.push(<div key={i} className="h-2" />);
+      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/50 mt-0.5 shrink-0 text-[10px]">▸</span><span>{inlineRender(line.replace(/^[-•]\s*/, ""))}</span></div>);
+    else if (line === "") result.push(<div key={i} className="h-1.5" />);
     else result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
     i++;
   }
@@ -96,9 +98,9 @@ function inlineRender(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**"))
-      return <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>;
+      return <strong key={i} className="font-semibold text-white/95">{part.slice(2, -2)}</strong>;
     if (part.startsWith("`") && part.endsWith("`"))
-      return <code key={i} className="bg-white/10 px-1.5 py-0.5 rounded text-emerald-300 font-mono text-xs">{part.slice(1, -1)}</code>;
+      return <code key={i} className="bg-white/10 px-1.5 py-0.5 rounded-md text-emerald-300 font-mono text-[11px]">{part.slice(1, -1)}</code>;
     return part;
   });
 }
@@ -108,25 +110,40 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={() => { navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
-      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-white"
+      className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground/50 hover:text-white transition-all"
+      title="Copiar"
     >
-      {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+      {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
     </button>
   );
 }
 
-// Persistent suggestions — always visible
+function ThinkingDots() {
+  return (
+    <div className="flex items-center gap-1.5 py-0.5">
+      {[0, 1, 2].map((i) => (
+        <motion.div
+          key={i}
+          className="w-2 h-2 rounded-full bg-primary/60"
+          animate={{ scale: [1, 1.4, 1], opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }}
+        />
+      ))}
+    </div>
+  );
+}
+
 const SUGGESTIONS = [
-  { icon: IdCard, label: "Consultar CPF", text: "Consulte o CPF 11144477735", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/15" },
-  { icon: Phone, label: "Consultar telefone", text: "Consulte o telefone 62999173029", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/15" },
-  { icon: Building2, label: "Consultar CNPJ", text: "Consulte o CNPJ 00000000000191", color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/15" },
-  { icon: Car, label: "Consultar Placa", text: "Consulte a placa ABC1234", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/15" },
-  { icon: Star, label: "Dossiê completo", text: "Faça um dossiê completo sobre o CPF 11144477735", color: "text-rose-300", bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/15" },
-  { icon: Bot, label: "O que posso fazer?", text: "O que você consegue consultar e pesquisar?", color: "text-primary", bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
+  { icon: IdCard, label: "Consultar CPF", text: "Consulte o CPF 11144477735", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/18" },
+  { icon: Phone, label: "Consultar telefone", text: "Consulte o telefone 62999173029", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/18" },
+  { icon: Building2, label: "Consultar CNPJ", text: "Consulte o CNPJ 00000000000191", color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/18" },
+  { icon: Car, label: "Consultar Placa", text: "Consulte a placa ABC1234", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/18" },
+  { icon: Star, label: "Dossiê completo", text: "Faça um dossiê completo sobre o CPF 11144477735", color: "text-rose-300", bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/18" },
+  { icon: Sparkles, label: "O que posso fazer?", text: "O que você consegue consultar e pesquisar?", color: "text-primary", bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
 ];
 
 function WaveformBars({ color = "sky" }: { color?: string }) {
-  const cls = color === "violet" ? "bg-violet-400" : "bg-sky-400";
+  const cls = color === "violet" ? "bg-violet-400" : "bg-primary";
   return (
     <div className="flex items-center gap-0.5 h-4">
       {[0, 1, 2, 3, 4].map((i) => (
@@ -264,7 +281,6 @@ export default function IA() {
               const parsed = JSON.parse(data);
               if (parsed.status) { setConsultingStatus(parsed.status); continue; }
               if (parsed.photo) {
-                // Photo event arrives before AI text stream — display it immediately
                 setConsultingStatus(null);
                 setIsThinking(false);
                 const photoLine = `\n${parsed.photo}\n`;
@@ -292,7 +308,6 @@ export default function IA() {
                 setConsultingStatus(null);
                 finalReply += parsed.delta;
                 if (!assistantMsgAdded) {
-                  // First chunk: stop thinking, add assistant message for the first time
                   setIsThinking(false);
                   assistantMsgAdded = true;
                   const aTs = Date.now();
@@ -302,7 +317,6 @@ export default function IA() {
                     updatedAt: aTs,
                   }));
                 } else {
-                  // Subsequent chunks: append to existing assistant message
                   updateSession(currentId, (s) => {
                     const msgs = [...s.messages];
                     const last = msgs[msgs.length - 1];
@@ -347,6 +361,7 @@ export default function IA() {
     e.preventDefault();
     if (!input.trim() || isStreaming) return;
     const t = input.trim(); setInput("");
+    if (inputRef.current) { inputRef.current.style.height = "auto"; }
     await sendMessage(t);
   };
 
@@ -358,7 +373,7 @@ export default function IA() {
     if (!("speechSynthesis" in window) || !text) return;
     try {
       window.speechSynthesis.cancel();
-      const clean = text.replace(/\*\*|`|#|>|🔍/g, "").trim();
+      const clean = text.replace(/\*\*|`|#|>/g, "").trim();
       const u = new SpeechSynthesisUtterance(clean);
       u.lang = "pt-BR"; u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
       const voices = await getVoicesAsync();
@@ -418,16 +433,17 @@ export default function IA() {
 
   const orbState: OrbState = speaking ? "speaking" : isThinking || isStreaming ? "thinking" : listening ? "listening" : "idle";
 
+  /* ── Voice Mode ──────────────────────────────────────────────────────────── */
   if (voiceMode) {
     const stateLabel = speaking ? "Falando…" : isStreaming ? "Processando…" : isThinking ? "Pensando…" : listening ? "Ouvindo você" : continuous ? "Aguardando…" : "Toque para falar";
-    const stateColor = speaking ? "text-violet-300" : isThinking || isStreaming ? "text-amber-300" : listening ? "text-sky-300" : "text-muted-foreground";
+    const stateColor = speaking ? "text-violet-300" : isThinking || isStreaming ? "text-amber-300" : listening ? "text-primary" : "text-muted-foreground";
     return (
       <div className="min-h-[calc(100vh-8rem)] sm:min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center relative py-8 gap-0">
         <button
           onClick={() => { stopVoice(); window.speechSynthesis?.cancel(); setSpeaking(false); setVoiceMode(false); }}
-          className="absolute top-4 right-4 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
+          className="absolute top-4 right-4 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.4em] text-muted-foreground hover:text-primary transition-colors px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 hover:border-primary/30"
         >
-          <X size={12} /> Sair
+          <X size={11} /> Sair do modo voz
         </button>
         <button
           onClick={() => setVoiceMuted((v) => !v)}
@@ -435,12 +451,13 @@ export default function IA() {
         >
           {voiceMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
         </button>
-        <div className="flex flex-col items-center gap-1 mb-6">
+        <div className="flex flex-col items-center gap-1.5 mb-8">
           <div className="text-[10px] uppercase tracking-[0.55em] text-primary/70 flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse inline-block" />
             Modo de Voz
             {continuous && <span className="px-2 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-[9px]">Contínuo</span>}
           </div>
-          <motion.h2 key={stateLabel} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className={`text-2xl font-bold tracking-[0.15em] uppercase ${stateColor}`}>
+          <motion.h2 key={stateLabel} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className={`text-2xl font-bold tracking-[0.1em] ${stateColor}`}>
             {stateLabel}
           </motion.h2>
           {speaking && !voiceMuted && <div className="mt-1"><WaveformBars color="violet" /></div>}
@@ -450,16 +467,16 @@ export default function IA() {
           disabled={speaking || isStreaming || isThinking}
           className="relative disabled:opacity-80 transition-opacity"
         >
-          <VoiceOrb active={listening || speaking || isThinking} intensity={speaking ? 0.65 : intensity} size={340} orbState={orbState} />
+          <VoiceOrb active={listening || speaking || isThinking} intensity={speaking ? 0.65 : intensity} size={320} orbState={orbState} />
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             {!listening && !speaking && !isStreaming && !isThinking && (
-              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="w-14 h-14 rounded-full bg-black/30 backdrop-blur-sm border border-white/20 flex items-center justify-center">
+              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="w-14 h-14 rounded-full bg-black/40 backdrop-blur-sm border border-white/20 flex items-center justify-center">
                 <Mic className="w-6 h-6 text-white/80" />
               </motion.div>
             )}
           </div>
         </button>
-        <div className="flex items-center gap-3 mt-6">
+        <div className="flex items-center gap-3 mt-8">
           <button
             onClick={() => { const next = !continuous; setContinuous(next); if (next && !listening && !speaking && !isStreaming) startVoice(); }}
             className={`px-4 py-2.5 rounded-2xl border text-[10px] uppercase tracking-[0.3em] font-semibold transition-all ${continuous ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300" : "bg-white/5 border-white/10 text-muted-foreground"}`}
@@ -469,15 +486,15 @@ export default function IA() {
           <button
             onClick={startVoice}
             disabled={speaking || isStreaming || isThinking}
-            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 ${listening ? "bg-destructive/20 border-2 border-destructive/60" : "bg-sky-500/15 border-2 border-sky-500/50"}`}
+            className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all disabled:opacity-50 border-2 ${listening ? "bg-destructive/20 border-destructive/60" : "bg-primary/15 border-primary/50"}`}
           >
-            {listening ? <MicOff className="w-6 h-6 text-destructive" /> : <Mic className="w-6 h-6 text-sky-300" />}
+            {listening ? <MicOff className="w-6 h-6 text-destructive" /> : <Mic className="w-6 h-6 text-primary" />}
           </button>
         </div>
         {messages.length > 0 && (
-          <div className="mt-6 max-w-md w-full px-4">
-            <div className="text-xs text-muted-foreground/60 text-center mb-2 uppercase tracking-widest">Última resposta</div>
-            <div className="bg-black/40 border border-white/10 rounded-xl p-3 text-xs text-muted-foreground/80 max-h-24 overflow-y-auto">
+          <div className="mt-8 max-w-sm w-full px-4">
+            <p className="text-[9px] uppercase tracking-widest text-muted-foreground/40 text-center mb-2">Última resposta</p>
+            <div className="bg-black/40 border border-white/8 rounded-2xl px-4 py-3 text-xs text-muted-foreground/70 max-h-24 overflow-y-auto leading-relaxed">
               {messages[messages.length - 1]?.content?.slice(0, 200)}
             </div>
           </div>
@@ -486,55 +503,75 @@ export default function IA() {
     );
   }
 
+  /* ── Main Chat View ──────────────────────────────────────────────────────── */
   return (
-    <div className="flex gap-4 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
-      {/* Sessions sidebar */}
+    <div className="flex gap-3 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
+
+      {/* ── Sessions Sidebar ─────────────────────────────────────────────── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
             key="sidebar"
-            initial={{ opacity: 0, x: -20, width: 0 }}
-            animate={{ opacity: 1, x: 0, width: 260 }}
-            exit={{ opacity: 0, x: -20, width: 0 }}
-            className="shrink-0 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
+            initial={{ opacity: 0, x: -12, width: 0 }}
+            animate={{ opacity: 1, x: 0, width: 252 }}
+            exit={{ opacity: 0, x: -12, width: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 28 }}
+            className="shrink-0 flex flex-col rounded-2xl border border-white/8 bg-black/50 backdrop-blur-2xl overflow-hidden"
           >
-            <div className="p-3 border-b border-white/5 flex items-center justify-between gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
-                <input
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                  placeholder="Buscar..."
-                  className="w-full bg-black/40 border border-white/8 rounded-lg pl-8 pr-3 py-2 text-xs focus:outline-none focus:border-primary/40 transition-colors"
-                />
+            {/* Header */}
+            <div className="px-4 pt-4 pb-3 flex items-center justify-between gap-2 border-b border-white/[0.06]">
+              <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground font-semibold flex items-center gap-1.5">
+                <MessageSquare className="w-3 h-3 text-primary" /> Conversas
               </div>
               <button
                 onClick={createNew}
-                className="w-8 h-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-primary hover:bg-primary/25 transition-colors shrink-0"
+                className="w-7 h-7 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-primary hover:bg-primary/25 hover:border-primary/50 transition-all"
                 title="Nova conversa"
               >
-                <Plus size={14} />
+                <Plus size={13} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+
+            {/* Search */}
+            <div className="px-3 py-2.5 border-b border-white/[0.05]">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/35" />
+                <input
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Buscar conversa..."
+                  className="w-full bg-white/[0.03] border border-white/8 rounded-lg pl-7 pr-3 py-1.5 text-xs focus:outline-none focus:border-primary/35 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
               {filteredSessions.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground/50 text-xs">Nenhuma conversa ainda</div>
+                <div className="text-center py-10 text-muted-foreground/30 text-xs">Nenhuma conversa</div>
               ) : filteredSessions.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => { setCurrentId(s.id); setSidebarOpen(false); }}
-                  className={`group w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all ${s.id === currentId ? "bg-primary/15 border border-primary/30 text-primary" : "hover:bg-white/5 border border-transparent text-muted-foreground hover:text-foreground"}`}
+                  className={`group w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all relative overflow-hidden ${
+                    s.id === currentId
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-white/[0.04] text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <MessageSquare size={12} className="shrink-0" />
+                  {s.id === currentId && (
+                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" />
+                  )}
+                  <MessageSquare size={11} className="shrink-0 opacity-50" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium truncate">{s.title}</div>
-                    <div className="text-[9px] opacity-50 flex items-center gap-1 mt-0.5">
-                      <Clock size={8} /> {relativeTime(s.updatedAt)}
+                    <div className="text-[9px] opacity-35 flex items-center gap-1 mt-0.5">
+                      <Clock size={7} /> {relativeTime(s.updatedAt)} atrás
                     </div>
                   </div>
                   <button
                     onClick={(e) => deleteSession(s.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:text-destructive transition-all"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:text-destructive hover:bg-destructive/10 transition-all shrink-0"
                   >
                     <Trash2 size={10} />
                   </button>
@@ -545,26 +582,36 @@ export default function IA() {
         )}
       </AnimatePresence>
 
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden min-w-0">
+      {/* ── Chat area ──────────────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col rounded-2xl border border-white/8 bg-black/30 backdrop-blur-2xl overflow-hidden min-w-0">
+
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 shrink-0">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-white/[0.06] shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen((v) => !v)}
-              className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              className="w-8 h-8 rounded-xl bg-white/[0.04] border border-white/8 flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 hover:border-primary/25 transition-all"
             >
-              <MessageSquare size={14} />
+              <MessageSquare size={13} />
             </button>
-            <div className="flex items-center gap-2">
-              <img src={robotUrl} alt="" className="w-7 h-7 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]" />
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <div className="w-9 h-9 rounded-[10px] bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[0_0_16px_hsl(var(--primary)/0.2)]">
+                  <img src={robotUrl} alt="" className="w-[22px] h-[22px] object-contain" style={{ filter: "drop-shadow(0 0 5px hsl(var(--primary) / 0.55))" }} />
+                </div>
+                <span className="absolute -bottom-0.5 -right-0.5 flex">
+                  <span className="absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-400 border border-black/80" />
+                </span>
+              </div>
               <div>
-                <div className="text-sm font-semibold">Assistente Infinity</div>
-                <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">IA · Online</div>
+                <div className="text-sm font-bold tracking-tight leading-tight">Infinity IA</div>
+                <div className="text-[9px] uppercase tracking-[0.35em] text-emerald-400/75 mt-0.5">Online · Llama 3.3</div>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => {
                 const next = !soundEnabled;
@@ -572,72 +619,90 @@ export default function IA() {
                 localStorage.setItem("infinity_ia_sound", next ? "1" : "0");
                 if (!next) window.speechSynthesis?.cancel();
               }}
-              title={soundEnabled ? "Desativar narração" : "Ativar narração por voz"}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] uppercase tracking-widest font-semibold transition-colors ${
+              title={soundEnabled ? "Desativar narração" : "Ativar narração"}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] uppercase tracking-widest font-semibold transition-all ${
                 soundEnabled
-                  ? "bg-sky-400/10 border-sky-400/20 text-sky-300 hover:bg-sky-400/15"
-                  : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground"
+                  ? "bg-primary/10 border-primary/25 text-primary hover:bg-primary/15"
+                  : "bg-white/[0.04] border-white/8 text-muted-foreground hover:text-foreground"
               }`}
             >
-              {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
-              {soundEnabled ? "Som" : "Mudo"}
+              {soundEnabled ? <Volume2 size={11} /> : <VolumeX size={11} />}
+              <span className="hidden sm:inline">{soundEnabled ? "Som" : "Mudo"}</span>
             </button>
             <button
-              onClick={() => { setVoiceMode(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-400/10 border border-violet-400/20 text-violet-300 text-[10px] uppercase tracking-widest font-semibold hover:bg-violet-400/15 transition-colors"
+              onClick={() => setVoiceMode(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-400/10 border border-violet-400/20 text-violet-300 text-[10px] uppercase tracking-widest font-semibold hover:bg-violet-400/18 transition-all"
             >
-              <Mic size={12} /> Voz
+              <Mic size={11} /> <span className="hidden sm:inline">Voz</span>
             </button>
             <button
               onClick={createNew}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-muted-foreground text-[10px] uppercase tracking-widest hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/8 text-muted-foreground text-[10px] uppercase tracking-widest hover:text-foreground hover:bg-white/[0.07] transition-all"
             >
-              <Plus size={12} /> Novo
+              <Plus size={11} /> <span className="hidden sm:inline">Novo</span>
             </button>
           </div>
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+
+          {/* Empty state */}
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-6 py-8">
+            <div className="flex flex-col items-center justify-center h-full gap-7 py-6">
               <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
+                initial={{ opacity: 0, scale: 0.85 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="flex flex-col items-center gap-3"
+                transition={{ type: "spring", stiffness: 200, damping: 20 }}
+                className="relative flex items-center justify-center"
               >
-                <div className="relative">
-                  <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                    <img src={robotUrl} alt="" className="w-10 h-10 object-contain" />
-                  </div>
-                  <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] flex items-center justify-center">
-                    <Sparkles size={9} className="text-black" />
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="font-bold tracking-widest text-sm">Infinity IA</div>
-                  <div className="text-[10px] text-muted-foreground mt-1">Como posso ajudar hoje?</div>
+                {[80, 114, 152].map((size, i) => (
+                  <motion.div
+                    key={size}
+                    className="absolute rounded-full border border-primary/20"
+                    style={{ width: size, height: size }}
+                    animate={{ scale: [1, 1.06, 1], opacity: [0.35, 0.07, 0.35] }}
+                    transition={{ duration: 2.5 + i * 0.8, repeat: Infinity, delay: i * 0.7, ease: "easeInOut" }}
+                  />
+                ))}
+                <div className="relative w-[52px] h-[52px] rounded-[14px] bg-primary/10 border border-primary/25 flex items-center justify-center z-10 shadow-[0_0_35px_hsl(var(--primary)/0.25)]">
+                  <img src={robotUrl} alt="" className="w-8 h-8 object-contain" style={{ filter: "drop-shadow(0 0 8px hsl(var(--primary) / 0.5))" }} />
                 </div>
               </motion.div>
 
-              {/* Persistent suggestions */}
-              <div className="w-full max-w-lg">
-                <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground/60 text-center mb-3">Sugestões rápidas</div>
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.12 }}
+                className="text-center"
+              >
+                <div className="font-bold text-lg tracking-tight bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent">Como posso ajudar?</div>
+                <div className="text-[11px] text-muted-foreground/60 mt-1.5 max-w-[270px] mx-auto leading-relaxed">
+                  Consulte CPFs, CNPJs, veículos e muito mais com linguagem natural
+                </div>
+              </motion.div>
+
+              <div className="w-full max-w-md">
+                <p className="text-[9px] uppercase tracking-[0.45em] text-muted-foreground/35 text-center mb-3">Sugestões</p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {SUGGESTIONS.map((s, i) => {
                     const Icon = s.icon;
                     return (
                       <motion.button
                         key={i}
-                        initial={{ opacity: 0, y: 8 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.06 }}
+                        transition={{ delay: 0.18 + i * 0.06, type: "spring", stiffness: 260, damping: 22 }}
+                        whileHover={{ y: -2, transition: { duration: 0.12 } }}
+                        whileTap={{ scale: 0.97 }}
                         onClick={() => sendMessage(s.text)}
                         disabled={isStreaming}
-                        className={`flex flex-col items-start gap-2 p-3 rounded-xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
+                        className={`flex flex-col items-start gap-2.5 p-3.5 rounded-2xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
                       >
-                        <Icon size={14} className={s.color} />
-                        <span className="text-[10px] font-semibold text-foreground/80 leading-tight">{s.label}</span>
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center bg-black/20`}>
+                          <Icon size={14} className={s.color} />
+                        </div>
+                        <span className="text-[10px] font-semibold text-foreground/80 leading-snug">{s.label}</span>
                       </motion.button>
                     );
                   })}
@@ -646,72 +711,94 @@ export default function IA() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <motion.div
-              key={`${msg.ts}-${i}`}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`group flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              {msg.role === "assistant" && (
-                <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0 mt-0.5">
-                  <img src={robotUrl} alt="" className="w-5 h-5 object-contain" />
-                </div>
-              )}
-              <div className={`max-w-[80%] ${msg.role === "user" ? "order-first" : ""}`}>
-                <div className={`relative rounded-2xl px-4 py-3 ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-br from-sky-500/20 to-cyan-400/10 border border-sky-500/20 ml-8"
-                    : "bg-black/40 border border-white/8"
-                }`}>
-                  {msg.content ? renderMarkdown(msg.content) : (
-                    msg.role === "assistant" ? <ThinkingPanel /> : null
-                  )}
-                  <CopyButton text={msg.content} />
-                </div>
-                <div className={`text-[9px] text-muted-foreground/40 mt-1 ${msg.role === "user" ? "text-right" : "text-left"}`}>
-                  {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                </div>
-              </div>
-              {msg.role === "user" && (
-                <div className="w-8 h-8 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
-                  <User size={14} className="text-muted-foreground" />
-                </div>
-              )}
-            </motion.div>
-          ))}
+          {/* Message list */}
+          {messages.map((msg, i) => {
+            const isUser = msg.role === "user";
+            return (
+              <motion.div
+                key={`${msg.ts}-${i}`}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"} items-end`}
+              >
+                {/* Robot avatar (left) */}
+                {!isUser && (
+                  <div className="w-8 h-8 rounded-[10px] bg-primary/8 border border-primary/18 flex items-center justify-center shrink-0 mb-0.5">
+                    <img src={robotUrl} alt="" className="w-[18px] h-[18px] object-contain" style={{ filter: "drop-shadow(0 0 3px hsl(var(--primary) / 0.45))" }} />
+                  </div>
+                )}
 
+                <div className={`group flex flex-col gap-1 max-w-[78%] ${isUser ? "items-end" : "items-start"}`}>
+                  {/* Bubble */}
+                  <div className={`relative px-4 py-3 text-sm leading-relaxed ${
+                    isUser
+                      ? "bg-gradient-to-br from-primary/22 to-primary/8 border border-primary/28 rounded-[18px] rounded-br-[5px]"
+                      : "bg-black/40 border border-white/[0.07] rounded-[18px] rounded-bl-[5px] backdrop-blur-sm"
+                  }`}>
+                    {msg.content
+                      ? renderMarkdown(msg.content)
+                      : (msg.role === "assistant" ? <ThinkingPanel /> : null)
+                    }
+                    {/* Copy button */}
+                    <div className={`absolute ${isUser ? "top-2 left-2" : "top-2 right-2"} opacity-0 group-hover:opacity-100 transition-opacity`}>
+                      <CopyButton text={msg.content} />
+                    </div>
+                  </div>
+                  {/* Timestamp */}
+                  <div className="text-[9px] text-muted-foreground/30 px-1">
+                    {new Date(msg.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+
+                {/* User avatar (right) */}
+                {isUser && (
+                  <div className="w-8 h-8 rounded-[10px] bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0 mb-0.5 text-[11px] font-bold text-primary">
+                    U
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
+
+          {/* Thinking indicator */}
           {isThinking && (
-            <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
-                <img src={robotUrl} alt="" className="w-5 h-5 object-contain" />
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex gap-2.5 items-end">
+              <div className="w-8 h-8 rounded-[10px] bg-primary/8 border border-primary/18 flex items-center justify-center shrink-0">
+                <img src={robotUrl} alt="" className="w-[18px] h-[18px] object-contain" style={{ filter: "drop-shadow(0 0 3px hsl(var(--primary) / 0.45))" }} />
               </div>
-              <div className="bg-black/40 border border-white/8 rounded-2xl px-4 py-3">
-                <ThinkingPanel />
+              <div className="px-5 py-4 bg-black/40 border border-white/[0.07] rounded-[18px] rounded-bl-[5px] backdrop-blur-sm">
+                <ThinkingDots />
               </div>
-            </div>
-          )}
-
-          {consultingStatus && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center gap-2 text-xs text-primary/80 bg-primary/5 border border-primary/15 rounded-xl px-4 py-2.5"
-            >
-              <div className="relative w-1.5 h-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
-              </div>
-              {consultingStatus}
             </motion.div>
           )}
+
+          {/* Consulting status */}
+          <AnimatePresence>
+            {consultingStatus && (
+              <motion.div
+                initial={{ opacity: 0, y: 6, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                className="flex justify-center"
+              >
+                <div className="inline-flex items-center gap-3 text-xs text-primary/85 bg-primary/[0.07] border border-primary/15 rounded-2xl px-5 py-2.5 backdrop-blur-sm shadow-[0_0_20px_hsl(var(--primary)/0.1)]">
+                  <div className="relative w-2 h-2 shrink-0">
+                    <div className="w-2 h-2 rounded-full bg-primary" />
+                    <div className="absolute inset-0 w-2 h-2 rounded-full bg-primary animate-ping opacity-75" />
+                  </div>
+                  <span>{consultingStatus}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div ref={bottomRef} />
         </div>
 
-        {/* Persistent suggestions row — shown even when there are messages */}
+        {/* Quick suggestions (shown when messages exist) */}
         {messages.length > 0 && !isStreaming && (
-          <div className="px-4 pb-2 flex gap-2 overflow-x-auto no-scrollbar">
+          <div className="px-4 pb-2 flex gap-2 overflow-x-auto no-scrollbar shrink-0">
             {SUGGESTIONS.slice(0, 4).map((s, i) => {
               const Icon = s.icon;
               return (
@@ -719,42 +806,73 @@ export default function IA() {
                   key={i}
                   onClick={() => sendMessage(s.text)}
                   disabled={isStreaming}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-semibold uppercase tracking-widest transition-all disabled:opacity-50 ${s.bg} ${s.color}`}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[9px] font-semibold uppercase tracking-widest transition-all disabled:opacity-40 ${s.bg} ${s.color}`}
                 >
-                  <Icon size={11} />
-                  {s.label}
+                  <Icon size={10} /> {s.label}
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* Input */}
-        <div className="p-3 border-t border-white/5 shrink-0">
+        {/* Input area */}
+        <div className="px-4 pb-4 pt-2.5 border-t border-white/[0.05] shrink-0">
           <form onSubmit={handleSubmit} className="flex gap-2 items-end">
-            <div className="flex-1 relative">
+            {/* Textarea container */}
+            <div className="flex-1 relative bg-black/40 border border-white/10 rounded-2xl transition-all focus-within:border-primary/45 focus-within:shadow-[0_0_0_3px_hsl(var(--primary)/0.07)]">
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Digite uma mensagem... (Enter para enviar)"
+                onInput={(e) => {
+                  const t = e.currentTarget;
+                  t.style.height = "auto";
+                  t.style.height = Math.min(t.scrollHeight, 148) + "px";
+                }}
+                placeholder="Mensagem… (Enter para enviar, Shift+Enter para nova linha)"
                 rows={1}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 pr-4 text-sm resize-none focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
-                style={{ maxHeight: "120px" }}
+                disabled={isStreaming}
+                className="w-full bg-transparent px-4 py-3.5 text-sm resize-none focus:outline-none text-foreground placeholder:text-muted-foreground/40 disabled:opacity-60"
+                style={{ maxHeight: "148px" }}
               />
             </div>
+
+            {/* Mic button */}
+            <button
+              type="button"
+              onClick={startVoice}
+              disabled={isStreaming || speaking}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-all shrink-0 disabled:opacity-40 ${
+                listening
+                  ? "bg-destructive/20 border-destructive/50 text-destructive shadow-[0_0_15px_hsl(var(--destructive)/0.3)]"
+                  : "bg-white/[0.04] border-white/10 text-muted-foreground hover:text-violet-300 hover:border-violet-400/30 hover:bg-violet-400/8"
+              }`}
+            >
+              {listening ? <MicOff size={15} /> : <Mic size={15} />}
+            </button>
+
+            {/* Send button */}
             <button
               type="submit"
               disabled={!input.trim() || isStreaming}
-              className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black hover:shadow-[0_0_20px_rgba(56,189,248,0.5)] transition-all disabled:opacity-40 shrink-0"
+              className="w-10 h-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-35 shrink-0"
+              style={{
+                background: "linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.65) 100%)",
+                boxShadow: input.trim() && !isStreaming ? "0 0 22px hsl(var(--primary) / 0.4)" : "none",
+              }}
             >
-              <Send size={16} />
+              {isStreaming ? (
+                <div className="w-3.5 h-3.5 border-2 border-black/70 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Send size={14} className="text-black font-bold" />
+              )}
             </button>
           </form>
-          <div className="text-[9px] text-muted-foreground/40 text-center mt-2 uppercase tracking-widest">
-            Infinity IA · Powered by Llama 3.3 70B
-          </div>
+
+          <p className="text-[9px] text-muted-foreground/25 text-center mt-2 uppercase tracking-[0.35em]">
+            Infinity IA · Llama 3.3 70B · Pode cometer erros
+          </p>
         </div>
       </div>
     </div>

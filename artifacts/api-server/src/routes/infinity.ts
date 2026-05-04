@@ -825,22 +825,48 @@ function extractBase64Photo(obj: Record<string, unknown>): { key: string; dataUr
 }
 
 /**
- * Flattens a plain object to displayable "Key: value" strings,
- * optionally skipping a specific key (used to skip the extracted base64 field).
- * Also strips any key that is in JUNK_KEYS_SKYLERS and any value that looks like
- * an API token so token info never leaks into nested results or section items.
+ * Deeply flattens a plain object to displayable "Key: value" strings.
+ * Handles nested objects and arrays recursively (up to depth 5).
+ * Skips junk keys and token-like values at every level.
  */
-function flattenObjToItems(obj: Record<string, unknown>, skipKey?: string): string[] {
-  return Object.entries(obj)
-    .filter(([sk, sv]) => {
-      if (sk === skipKey) return false;
-      if (JUNK_KEYS_SKYLERS.has(sk.toLowerCase())) return false;
-      if (!isUseful(sv) || typeof sv === "object") return false;
+function flattenObjToItems(obj: Record<string, unknown>, skipKey?: string, _depth = 0): string[] {
+  if (_depth > 5) return [];
+  const items: string[] = [];
+  for (const [sk, sv] of Object.entries(obj)) {
+    if (sk === skipKey) continue;
+    if (JUNK_KEYS_SKYLERS.has(sk.toLowerCase())) continue;
+    if (sv === null || sv === undefined) continue;
+    const label = humanizeKey(sk);
+
+    if (Array.isArray(sv)) {
+      if (sv.length === 0) continue;
+      // Array of primitives → join as comma list
+      const prims = sv.filter((x) => x !== null && x !== undefined && typeof x !== "object" && isUseful(x));
+      if (prims.length > 0) {
+        items.push(`${label}: ${prims.slice(0, 10).join(", ")}`);
+        continue;
+      }
+      // Array of objects → flatten each item
+      for (const item of sv.slice(0, 15)) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const subItems = flattenObjToItems(item as Record<string, unknown>, undefined, _depth + 1);
+          for (const si of subItems) items.push(`${label} ${si}`);
+        } else if (isUseful(item)) {
+          items.push(`${label}: ${String(item)}`);
+        }
+      }
+    } else if (sv && typeof sv === "object" && !Array.isArray(sv)) {
+      // Nested object → recurse with parent key as prefix
+      const subItems = flattenObjToItems(sv as Record<string, unknown>, undefined, _depth + 1);
+      for (const si of subItems) items.push(`${label} ${si}`);
+    } else {
+      if (!isUseful(sv)) continue;
       const s = String(sv).trim();
-      if (isTokenLikeValue(s)) return false;
-      return true;
-    })
-    .map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
+      if (isTokenLikeValue(s)) continue;
+      items.push(`${label}: ${s}`);
+    }
+  }
+  return items;
 }
 
 /**
@@ -939,40 +965,30 @@ function parseSkylers(data: unknown): Parsed {
         const b64 = extractBase64Photo(sub);
         if (b64) {
           fotoUrl.value = b64.dataUri;
-          // Flatten the rest (strip junk keys + token-like values)
-          const subEntries = Object.entries(sub)
-            .filter(([sk, sv]) =>
-              sk !== b64.key &&
-              !JUNK_KEYS_SKYLERS.has(sk.toLowerCase()) &&
-              isUseful(sv) &&
-              typeof sv !== "object" &&
-              !isTokenLikeValue(String(sv).trim())
-            );
-          if (subEntries.length <= 3) {
-            for (const [sk, sv] of subEntries) {
-              result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
+          // Deep-flatten the rest, skipping the base64 key
+          const subItems = flattenObjToItems(sub, b64.key);
+          if (subItems.length <= 3) {
+            for (const si of subItems) {
+              const colonIdx = si.indexOf(": ");
+              if (colonIdx > -1) result.fields.push({ key: `${humanizeKey(k)} · ${si.slice(0, colonIdx)}`, value: si.slice(colonIdx + 2) });
             }
           } else {
-            const items = subEntries.map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
-            result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+            result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: subItems });
           }
           continue;
         }
       }
-      const subEntries = Object.entries(sub).filter(([sk, sv]) =>
-        !JUNK_KEYS_SKYLERS.has(sk.toLowerCase()) &&
-        isUseful(sv) &&
-        typeof sv !== "object" &&
-        !isTokenLikeValue(String(sv).trim())
-      );
-      if (subEntries.length === 0) continue;
-      if (subEntries.length <= 3) {
-        for (const [sk, sv] of subEntries) {
-          result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
+      // Deep-flatten nested object using recursive flattenObjToItems
+      const subItems = flattenObjToItems(sub);
+      if (subItems.length === 0) continue;
+      if (subItems.length <= 3) {
+        for (const si of subItems) {
+          const colonIdx = si.indexOf(": ");
+          if (colonIdx > -1) result.fields.push({ key: `${humanizeKey(k)} · ${si.slice(0, colonIdx)}`, value: si.slice(colonIdx + 2) });
+          else result.fields.push({ key: humanizeKey(k), value: si });
         }
       } else {
-        const items = subEntries.map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
-        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: subItems });
       }
 
     } else {

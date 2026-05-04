@@ -226,6 +226,66 @@ function PasswordEditor({ username }: { username: string }) {
   );
 }
 
+function RoleEditor({ username, currentRole, isMe, onSaved }: { username: string; currentRole: string; isMe: boolean; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  if (isMe) return null;
+
+  const changeRole = async (newRole: string) => {
+    if (newRole === currentRole || saving) return;
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role: newRole }),
+      });
+      setSaved(true);
+      setTimeout(() => { setSaved(false); onSaved(); }, 1200);
+    } catch {
+      // silent
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const roles: Array<{ key: string; label: string; color: string; activeBg: string }> = [
+    { key: "user",  label: "Membro", color: "text-emerald-300", activeBg: "bg-emerald-400/15 border-emerald-400/45" },
+    { key: "vip",   label: "VIP",    color: "text-amber-300",   activeBg: "bg-amber-400/15 border-amber-400/45"   },
+    { key: "admin", label: "Admin",  color: "text-sky-300",     activeBg: "bg-sky-400/15 border-sky-400/45"       },
+  ];
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {saved && (
+        <span className="flex items-center gap-0.5 text-[9px] text-emerald-400 font-semibold">
+          <Check className="w-2.5 h-2.5" /> Salvo
+        </span>
+      )}
+      {!saved && roles.map((r) => {
+        const isActive = currentRole === r.key;
+        return (
+          <button
+            key={r.key}
+            onClick={() => changeRole(r.key)}
+            disabled={saving || isActive}
+            title={`Mudar cargo para ${r.label}`}
+            className={`flex items-center gap-1 text-[9px] px-2 py-0.5 rounded border uppercase tracking-wider font-bold transition-all ${
+              isActive
+                ? `${r.activeBg} ${r.color} cursor-default`
+                : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/25 hover:text-foreground disabled:opacity-50"
+            }`}
+          >
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface InfinityNotif {
   id: string;
   title: string;
@@ -678,6 +738,18 @@ export default function Configuracoes() {
                               }}
                             />
                             <PasswordEditor username={u.username} />
+                            <div className="mt-1.5 pt-1.5 border-t border-white/5">
+                              <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Cargo</p>
+                              <RoleEditor
+                                username={u.username}
+                                currentRole={u.role}
+                                isMe={u.username === me?.username}
+                                onSaved={() => {
+                                  queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+                                  refetchUsers();
+                                }}
+                              />
+                            </div>
                           </div>
                           <button
                             disabled={u.username === me?.username || deleteUser.isPending}
