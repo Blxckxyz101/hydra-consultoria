@@ -92,6 +92,14 @@ export default function Personalizar() {
     setCurrentKey(t.key);
     localStorage.setItem(LS_KEY, t.key);
     applyTheme(t);
+    const token = localStorage.getItem("infinity_token");
+    if (token) {
+      fetch("/api/infinity/theme", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ theme: t.key }),
+      }).catch(() => {});
+    }
   };
 
   const current = THEMES.find(t => t.key === currentKey) ?? THEMES[0]!;

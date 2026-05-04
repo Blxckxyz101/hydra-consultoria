@@ -20,6 +20,24 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
 
+// ─── Theme store ────────────────────────────────────────────────────────────
+let globalTheme = "sky";
+const THEME_COLOR_HEX: Record<string, number> = {
+  sky: 0x38BDF8, violeta: 0xA78BFA, esmeralda: 0x34D399, ambar: 0xFBBF24,
+  rosa: 0xF472B6, vermelho: 0xF87171, indigo: 0x818CF8, laranja: 0xFB923C,
+  lima: 0xA3E635, coral: 0xFB7185, ciano: 0x22D3EE, roxo: 0xC084FC,
+};
+const THEME_EMOJI: Record<string, string> = {
+  sky: "🌊", violeta: "🟣", esmeralda: "💚", ambar: "✨",
+  rosa: "🌸", vermelho: "🔴", indigo: "🌌", laranja: "🔥",
+  lima: "⚡", coral: "🪸", ciano: "🧊", roxo: "💜",
+};
+const THEME_HSL: Record<string, string> = {
+  sky: "195 90% 55%", violeta: "270 80% 65%", esmeralda: "160 70% 50%", ambar: "38 95% 58%",
+  rosa: "330 90% 65%", vermelho: "0 84% 60%", indigo: "240 80% 65%", laranja: "20 95% 60%",
+  lima: "80 80% 55%", coral: "15 90% 65%", ciano: "185 100% 45%", roxo: "290 85% 65%",
+};
+
 const TIPO_TO_SKYLERS: Record<string, string> = {
   cpf: "iseek-cpf",
   nome: "iseek-dados---nomeabreviadofriltros",
@@ -764,6 +782,30 @@ async function callSkylers(
   }
 }
 
+// ─── DarkFlow (foto CNH) ────────────────────────────────────────────────────
+const DARKFLOW_URL = "https://darkflowapis.space/api.php";
+const DARKFLOW_TOK = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
+
+async function callFoto(cpf: string, signal: AbortSignal): Promise<{
+  ok: boolean; photoUrl?: string; error?: string;
+}> {
+  try {
+    const cpfNum = cpf.replace(/\D/g, "");
+    const r = await fetch(
+      `${DARKFLOW_URL}?token=${DARKFLOW_TOK}&modulo=foto_br&consulta=${encodeURIComponent(cpfNum)}`,
+      { signal },
+    );
+    if (!r.ok) return { ok: false, error: `DarkFlow HTTP ${r.status}` };
+    const j = await r.json() as { url?: string; base64?: string; error?: string; status?: number };
+    if (j.error || j.status === 500 || !j.url) {
+      return { ok: false, error: j.error ?? "Foto não encontrada" };
+    }
+    return { ok: true, photoUrl: j.url };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "erro de rede" };
+  }
+}
+
 // ─── auth ──────────────────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
@@ -1270,7 +1312,7 @@ const CONSULTA_TOOL = {
   function: {
     name: "consultar_infinity",
     description:
-      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, etc.",
+      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, foto de CNH, etc. O tipo 'foto' busca a foto CNH da pessoa pelo CPF.",
     parameters: {
       type: "object",
       properties: {
@@ -1280,10 +1322,16 @@ const CONSULTA_TOOL = {
             "cpf", "nome", "placa", "chassi", "telefone", "pix", "nis", "cns",
             "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
             "socios", "empregos", "cnh", "renavam", "obito", "rg", "email", "motor", "vacinas",
+            "foto",
           ],
-          description: "Tipo de consulta OSINT",
+          description: "Tipo de consulta OSINT. Use 'foto' para buscar foto da CNH pelo CPF.",
         },
-        dados: { type: "string", description: "O dado a ser consultado" },
+        dados: { type: "string", description: "O dado a ser consultado (CPF, placa, nome, etc.)" },
+        base: {
+          type: "string",
+          enum: ["geass", "skylers"],
+          description: "Base de dados opcional. Use 'skylers' para usar a Skylers API (90+ módulos). Padrão: geass.",
+        },
       },
       required: ["tipo", "dados"],
     },
@@ -1404,20 +1452,58 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         const dados = String(args.dados ?? "");
 
         if (tipo && dados) {
-          res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}: ${dados}...` })}\n\n`);
-          const consultResult = await callProvider(tipo, dados, new AbortController().signal);
+          const base = String((args as { base?: string }).base ?? "geass");
+          res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
           let toolContent = "";
-          if (consultResult.ok && consultResult.parsed) {
-            const p = consultResult.parsed;
-            const lines: string[] = [];
-            p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
-            p.sections.forEach((s) => {
-              lines.push(`\n${s.name} (${s.items.length} registros):`);
-              s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
-            });
-            toolContent = lines.join("\n") || p.raw.slice(0, 800);
+
+          if (tipo === "foto") {
+            // Photo CNH lookup via DarkFlow
+            const fotoResult = await callFoto(dados, new AbortController().signal);
+            if (fotoResult.ok && fotoResult.photoUrl) {
+              toolContent = `Foto CNH encontrada: ${fotoResult.photoUrl}`;
+            } else {
+              toolContent = `Foto não encontrada: ${fotoResult.error ?? "CPF sem foto cadastrada na CNH"}`;
+            }
+          } else if (base === "skylers") {
+            const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
+            if (modulo) {
+              const sk = await callSkylers(modulo, dados, new AbortController().signal);
+              if (sk.ok && sk.parsed) {
+                const p = sk.parsed;
+                const lines: string[] = [];
+                p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+                p.sections.forEach((s) => {
+                  lines.push(`\n${s.name} (${s.items.length} registros):`);
+                  s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
+                });
+                toolContent = lines.join("\n") || p.raw.slice(0, 800);
+              } else {
+                toolContent = `Sem resultado Skylers: ${sk.error ?? "dado não encontrado"}`;
+              }
+            } else {
+              toolContent = `Tipo '${tipo}' não suportado pela Skylers API, usando base principal.`;
+              const fallback = await callProvider(tipo, dados, new AbortController().signal);
+              if (fallback.ok && fallback.parsed) {
+                const p = fallback.parsed;
+                const lines: string[] = [];
+                p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+                toolContent = lines.join("\n") || p.raw.slice(0, 800);
+              }
+            }
           } else {
-            toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
+            const consultResult = await callProvider(tipo, dados, new AbortController().signal);
+            if (consultResult.ok && consultResult.parsed) {
+              const p = consultResult.parsed;
+              const lines: string[] = [];
+              p.fields.forEach((f) => lines.push(`${f.key}: ${f.value}`));
+              p.sections.forEach((s) => {
+                lines.push(`\n${s.name} (${s.items.length} registros):`);
+                s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
+              });
+              toolContent = lines.join("\n") || p.raw.slice(0, 800);
+            } else {
+              toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
+            }
           }
           finalMessages = [
             { role: "system", content: systemPrompt },
@@ -1665,6 +1751,29 @@ router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
     .returning();
   if (!updated) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
   res.json(serializeUser(updated));
+});
+
+// ─── Theme endpoints ─────────────────────────────────────────────────────────
+router.get("/theme", (_req, res) => {
+  res.json({
+    theme: globalTheme,
+    color: THEME_COLOR_HEX[globalTheme] ?? 0x38BDF8,
+    emoji: THEME_EMOJI[globalTheme] ?? "🌊",
+    hsl: THEME_HSL[globalTheme] ?? "195 90% 55%",
+  });
+});
+
+router.put("/theme", requireAuth, (req, res) => {
+  const { theme } = req.body as { theme?: string };
+  if (theme && THEME_COLOR_HEX[theme]) {
+    globalTheme = theme;
+  }
+  res.json({
+    ok: true,
+    theme: globalTheme,
+    color: THEME_COLOR_HEX[globalTheme] ?? 0x38BDF8,
+    emoji: THEME_EMOJI[globalTheme] ?? "🌊",
+  });
 });
 
 export default router;

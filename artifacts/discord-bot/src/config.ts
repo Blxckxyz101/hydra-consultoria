@@ -20,6 +20,33 @@ export const COLORS = {
   GRAY:     0x2C2F33,
 } as const;
 
+// ── Dynamic theme color (synced from Infinity panel Personalizar) ──────────────
+const THEME_HEX_MAP: Record<string, number> = {
+  sky: 0x38BDF8, violeta: 0xA78BFA, esmeralda: 0x34D399, ambar: 0xFBBF24,
+  rosa: 0xF472B6, vermelho: 0xF87171, indigo: 0x818CF8, laranja: 0xFB923C,
+  lima: 0xA3E635, coral: 0xFB7185, ciano: 0x22D3EE, roxo: 0xC084FC,
+};
+
+let _themePrimary: number = COLORS.CRIMSON;
+let _themeLastFetch = 0;
+
+export function getPrimaryColor(): number { return _themePrimary; }
+
+export async function getThemeColor(): Promise<number> {
+  if (Date.now() - _themeLastFetch < 120_000) return _themePrimary;
+  try {
+    const r = await fetch(`${API_BASE}/api/infinity/theme`, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const j = await r.json() as { theme?: string };
+      if (j.theme && THEME_HEX_MAP[j.theme]) _themePrimary = THEME_HEX_MAP[j.theme]!;
+      _themeLastFetch = Date.now();
+    }
+  } catch { /* keep cached */ }
+  return _themePrimary;
+}
+
+export async function refreshTheme(): Promise<void> { await getThemeColor(); }
+
 export const TIER_COLORS: Record<string, number> = {
   S: COLORS.RED,
   A: COLORS.ORANGE,

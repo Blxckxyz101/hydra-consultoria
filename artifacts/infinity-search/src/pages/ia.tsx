@@ -43,6 +43,8 @@ function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
+const IMAGE_URL_RE = /https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?/i;
+
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
   const result: React.ReactNode[] = [];
@@ -62,11 +64,27 @@ function renderMarkdown(text: string) {
       );
       i++; continue;
     }
+    // Detect standalone image URLs (photo CNH, etc.)
+    const imgMatch = line.match(IMAGE_URL_RE);
+    if (imgMatch && line.trim() === imgMatch[0]) {
+      result.push(
+        <div key={i} className="my-3">
+          <img
+            src={imgMatch[0]}
+            alt="Foto"
+            className="max-w-[260px] w-full rounded-xl border border-white/10 shadow-lg"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+          <p className="text-[9px] text-muted-foreground/50 mt-1 uppercase tracking-widest">Foto CNH · DarkFlow</p>
+        </div>
+      );
+      i++; continue;
+    }
     if (line.startsWith("### "))      result.push(<p key={i} className="font-bold text-primary text-sm mt-3 mb-1">{inlineRender(line.slice(4))}</p>);
     else if (line.startsWith("## ")) result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
     else if (line.startsWith("# "))  result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
     else if (line.startsWith("- ") || line.startsWith("• "))
-      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/60 mt-0.5 shrink-0">·</span><span>{inlineRender(line.slice(2))}</span></div>);
+      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/60 mt-0.5 shrink-0">·</span><span>{inlineRender(line)}</span></div>);
     else if (line === "") result.push(<div key={i} className="h-2" />);
     else result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
     i++;

@@ -10,6 +10,27 @@ const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
 
+// ── Theme sync ────────────────────────────────────────────────────────────────
+// Cache theme from the Infinity API, refresh every 2 minutes
+const INFINITY_API_THEME = "http://localhost:8080/api/infinity/theme";
+let cachedThemeEmoji = "🌊";
+let cachedThemeName = "sky";
+let themeLastFetch = 0;
+
+async function getThemeEmoji(): Promise<string> {
+  if (Date.now() - themeLastFetch < 120_000) return cachedThemeEmoji;
+  try {
+    const r = await fetch(INFINITY_API_THEME, { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      const j = await r.json() as { emoji?: string; theme?: string };
+      if (j.emoji) cachedThemeEmoji = j.emoji;
+      if (j.theme) cachedThemeName = j.theme;
+      themeLastFetch = Date.now();
+    }
+  } catch { /* fallback to cached */ }
+  return cachedThemeEmoji;
+}
+
 // ── Access control ────────────────────────────────────────────────────────────
 // Channel users must join to use the bot (private invite channel)
 const CHANNEL_INVITE = "https://t.me/+7sBxmhOFPhJlYzcx";
@@ -405,8 +426,9 @@ async function executeQuery(
     const totalRegistros = parsed.sections.reduce((a, s) => a + s.items.length, 0);
     const txtContent = formatResultTxt(tipo, dados, parsed, raw);
 
+    const themeEmoji = await getThemeEmoji();
     const summaryParts: string[] = [
-      `✅ <b>Resultado encontrado</b>`,
+      `${themeEmoji} <b>∞ INFINITY SEARCH — Resultado</b>`,
       ``,
       `<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>`,
       `<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,

@@ -5,7 +5,7 @@ import {
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { Attack, AttackStats, AnalyzeResult, Method } from "./api.js";
-import { COLORS, METHOD_EMOJIS, AUTHOR, BOT_NAME } from "./config.js";
+import { COLORS, METHOD_EMOJIS, AUTHOR, BOT_NAME, getPrimaryColor } from "./config.js";
 
 // ── Asset paths ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -338,7 +338,7 @@ export function buildAttackEmbed(
   proxyCount     = 0,
 ): EmbedBuilder {
   const isRunning = attack.status === "running";
-  const color     = isRunning ? COLORS.CRIMSON
+  const color     = isRunning ? getPrimaryColor()
     : attack.status === "finished" ? COLORS.GREEN
     : COLORS.GRAY;
   const emoji     = METHOD_EMOJIS[attack.method] ?? "⚡";
@@ -518,7 +518,7 @@ export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): Emb
   const completed = attacks.filter(a => a.status !== "running").slice(0, 8);
 
   const embed = new EmbedBuilder()
-    .setColor(running.length > 0 ? COLORS.CRIMSON : COLORS.GOLD)
+    .setColor(running.length > 0 ? getPrimaryColor() : COLORS.GOLD)
     .setTitle(pt ? "👁️ REGISTRO DE ATAQUES GEASS" : "👁️ GEASS ATTACK REGISTRY")
     .setDescription(
       running.length > 0
@@ -1134,7 +1134,7 @@ export function buildInfoEmbed(opts: {
   };
 
   return new EmbedBuilder()
-    .setColor(COLORS.CRIMSON)
+    .setColor(getPrimaryColor())
     .setTitle(T.title)
     .setDescription(`${T.quote}\n\n${T.desc}`)
     .setImage("attachment://lelouch.gif")

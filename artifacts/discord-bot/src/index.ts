@@ -29,7 +29,7 @@ type MonitorEditFn = (opts: {
   embeds:     EmbedBuilder[];
   components: ActionRowBuilder<MessageActionRowComponentBuilder>[];
 }) => Promise<unknown>;
-import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE, METHOD_EMOJIS } from "./config.js";
+import { BOT_TOKEN, APPLICATION_ID, ALL_GUILD_IDS, COLORS, AUTHOR, BOT_NAME, API_BASE, METHOD_EMOJIS, refreshTheme } from "./config.js";
 import { api, apiProbe, type ScheduledAttack, type AiAdvice, type ProxyStats, type DbRecord, type QueryResult, type QueryStats, type NitroCodeResult } from "./api.js";
 import {
   getLogChannelId, setLogChannelId,
@@ -6820,6 +6820,10 @@ async function main(): Promise<void> {
       activities: [{ name: "⚔️ /attack start — Choose your vector" }],
       status: "online",
     });
+
+    // ── Theme sync — refresh every 2 minutes so embeds use the panel color ──
+    void refreshTheme();
+    setInterval(() => { void refreshTheme(); }, 120_000);
 
     // ── T006: Proactive API health check — alerts all log channels on failure ──
     let apiDownCount = 0;
