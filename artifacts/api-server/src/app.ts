@@ -17,6 +17,8 @@ const ALLOWED_ORIGINS = [
   /^https:\/\/.*\.replit\.dev$/,
   /^https:\/\/.*\.replit\.app$/,
   /^http:\/\/localhost(:\d+)?$/,
+  /^https:\/\/infinitysearch\.pro$/,
+  /^https:\/\/www\.infinitysearch\.pro$/,
 ];
 
 function isOriginAllowed(origin: string | undefined): boolean {
@@ -84,5 +86,13 @@ app.use("/api/static", express.static(path.join(__dirname, "../public"), {
 }));
 
 app.use("/api", router);
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = (err as { status?: number; statusCode?: number }).status
+    ?? (err as { status?: number; statusCode?: number }).statusCode
+    ?? 500;
+  const message = err.message || "Internal Server Error";
+  res.status(status).json({ error: message });
+});
 
 export default app;
