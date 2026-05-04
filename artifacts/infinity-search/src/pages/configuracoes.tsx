@@ -245,7 +245,7 @@ export default function Configuracoes() {
   };
 
   const handleLogout = async () => {
-    try { await logout.mutateAsync({}); } catch {}
+    try { await logout.mutateAsync(); } catch {}
     localStorage.removeItem("infinity_token");
     setLocation("/login");
   };

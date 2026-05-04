@@ -432,7 +432,7 @@ export default function Skylers() {
                       <span className="uppercase tracking-widest font-semibold">{result.error ?? "Sem resultado"}</span>
                     </div>
                   )}
-                  {result.success && result.data && (
+                  {result.success && !!result.data && (
                     <ResultViewer
                       tipo={selectedModule.category.toLowerCase() as never}
                       query={query}

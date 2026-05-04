@@ -269,7 +269,7 @@ export default function Consultas() {
             Consultas
           </motion.h1>
           <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-            39 módulos · Geass + Skylers API (80+ endpoints) conectados
+            61 módulos · Geass + Skylers API (80+ endpoints) conectados
           </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
