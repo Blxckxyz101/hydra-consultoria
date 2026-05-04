@@ -12,11 +12,12 @@ import {
   Calendar, MessageCircle, GraduationCap, Hash, ThumbsUp, ClipboardList,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
+import { CpfFullPanel } from "@/components/consultas/CpfFullPanel";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
 type Tipo =
   // Pessoa
-  | "cpf" | "cpfbasico" | "nome" | "rg" | "mae" | "pai" | "nasc" | "nis" | "cns"
+  | "cpf" | "cpfbasico" | "cpffull" | "nome" | "rg" | "mae" | "pai" | "nasc" | "nis" | "cns"
   | "titulo" | "email" | "pix" | "telefone" | "endereco" | "cep" | "parentes"
   | "dividas" | "bens" | "score" | "score2" | "obito" | "rais" | "mandado"
   | "beneficios" | "certidoes" | "vacinas" | "faculdades" | "irpf" | "assessoria"
@@ -59,6 +60,7 @@ const placa8 = (s: string) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0
 const TABS: TabDef[] = [
   // ── PESSOA ────────────────────────────────────────────────────────────────
   { id: "cpf",        label: "CPF",          category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos",                               inputMode: "numeric", icon: IdCard,        sanitize: cpf11 },
+  { id: "cpffull",    label: "CPF Full",     category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · consulta completa · 17 módulos", inputMode: "numeric", icon: IdCard,     sanitize: cpf11 },
   { id: "cpfbasico",  label: "CPF Básico",   category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · Skylers",                     inputMode: "numeric", icon: FileText,      sanitize: cpf11 },
   { id: "nome",       label: "Nome",         category: "Pessoa", placeholder: "Nome completo",       hint: "texto livre",                              icon: User,            sanitize: (s) => s.slice(0, 80) },
   { id: "rg",         label: "RG",           category: "Pessoa", placeholder: "RG ou identidade",    hint: "texto/numérico",                           icon: ScrollText },
@@ -209,6 +211,7 @@ export default function Consultas() {
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("Pessoa");
   const [showBaseSelector, setShowBaseSelector] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<{ tipo: Tipo; dados: string } | null>(null);
+  const [cpfFullQuery, setCpfFullQuery] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const historyKey = ["infinity-history", 20] as const;
@@ -277,6 +280,10 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
+    if (tab === "cpffull") {
+      setCpfFullQuery(query.trim());
+      return;
+    }
     if (SKYLERS_ONLY_TIPOS.has(tab)) {
       await executeQuery(tab, query.trim(), "skylers");
       return;
@@ -371,7 +378,7 @@ export default function Consultas() {
           return (
             <button
               key={t.id}
-              onClick={() => { setTab(t.id); setQuery(""); setResult(null); }}
+              onClick={() => { setTab(t.id); setQuery(""); setResult(null); setCpfFullQuery(null); }}
               className={`relative group flex flex-col items-center gap-1.5 p-3 sm:p-4 rounded-xl border transition-all ${
                 isActive
                   ? "bg-primary/15 border-primary/50 shadow-[0_0_20px_-4px_rgba(56,189,248,0.6)]"
@@ -526,7 +533,7 @@ export default function Consultas() {
               <InfinityLoader size={72} label="Consultando fontes" />
             </motion.div>
           )}
-          {!pending && !showBaseSelector && result && (
+          {!pending && !showBaseSelector && result && tab !== "cpffull" && (
             <ResultViewer
               tipo={tab}
               query={query}
@@ -535,6 +542,11 @@ export default function Consultas() {
           )}
         </AnimatePresence>
       </motion.div>
+
+      {/* CPF Full panel — rendered below the form block */}
+      {tab === "cpffull" && cpfFullQuery && (
+        <CpfFullPanel cpf={cpfFullQuery} />
+      )}
 
       {/* History */}
       <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6">

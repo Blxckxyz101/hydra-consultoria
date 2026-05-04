@@ -14,7 +14,6 @@ import Bases from "@/pages/bases";
 import Favoritos from "@/pages/favoritos";
 import Personalizar, { initSavedTheme } from "@/pages/personalizar";
 import Skylers from "@/pages/skylers";
-import CpfFull from "@/pages/cpffull";
 
 // Apply saved color theme immediately on load
 initSavedTheme();
@@ -49,7 +48,6 @@ function Router() {
               <Route path="/configuracoes" component={Configuracoes} />
               <Route path="/personalizar" component={Personalizar} />
               <Route path="/skylers" component={Skylers} />
-              <Route path="/cpffull" component={CpfFull} />
               <Route component={NotFound} />
             </Switch>
           </Layout>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search, User, Phone, MapPin, Users, Briefcase, IdCard,
+  User, Phone, MapPin, Users, Briefcase, IdCard,
   Wallet, BarChart2, FileText, Car, CheckCircle2, XCircle,
   Loader2, MessageCircle, Scale, Building2, Award, Gift,
   AlertTriangle, Receipt, Star, ChevronDown, ChevronUp,
@@ -29,12 +29,10 @@ type Identity = {
   sexo: string; estadoCivil: string; orgaoEmissor: string; dataEmissao: string;
   situacaoCadastral: string; tipoSanguineo: string;
 };
-type Phone  = { ddd: string; numero: string; prioridade: string; classificacao: string; data: string };
-type Address = { logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; uf: string; cep: string; lat?: number; lng?: number };
-type Relation = { cpf: string; relacao: string; nome: string; nascimento: string; sexo: string; grau: string; grauOficial: string; origem: string };
-type Employment = { empresa: string; cnpj: string; cargo: string; admissao: string; demissao: string; salario: string };
-
-const SKYLERS = new Set(["cpfbasico","foto","score","score2","irpf","beneficios","mandado","dividas","bens","processos","spc","titulo","certidoes","nasc"]);
+type PhoneEntry  = { ddd: string; numero: string; prioridade: string; classificacao: string; data: string };
+type Address     = { logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; uf: string; cep: string; lat?: number; lng?: number };
+type Relation    = { cpf: string; relacao: string; nome: string; nascimento: string; sexo: string; grau: string; grauOficial: string; origem: string };
+type Employment  = { empresa: string; cnpj: string; cargo: string; admissao: string; demissao: string; salario: string };
 
 const MODULES = [
   { tipo: "cpf",        label: "CPF",           skylers: false },
@@ -55,6 +53,17 @@ const MODULES = [
   { tipo: "spc",        label: "SPC",            skylers: true  },
   { tipo: "titulo",     label: "Título Eleitor", skylers: true  },
 ];
+
+function normalizeFields(raw: unknown): [string, string][] {
+  if (!Array.isArray(raw)) return [];
+  if (raw.length === 0) return [];
+  const first = raw[0];
+  if (Array.isArray(first)) return raw as [string, string][];
+  if (typeof first === "object" && first !== null && "key" in first) {
+    return (raw as { key: string; value: string }[]).map(f => [f.key ?? "", f.value ?? ""] as [string, string]);
+  }
+  return [];
+}
 
 function gf(fields: [string, string][], ...keys: string[]): string {
   for (const key of keys) {
@@ -85,7 +94,12 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean): Promi
     if (typeof json.data === "string") {
       parsed = { fields: [], sections: [], raw: json.data };
     } else if (json.data && typeof json.data === "object") {
-      parsed = json.data as ParsedData;
+      const d = json.data as Record<string, unknown>;
+      parsed = {
+        fields:   normalizeFields(d["fields"]),
+        sections: Array.isArray(d["sections"]) ? d["sections"] as ParsedData["sections"] : [],
+        raw:      typeof d["raw"] === "string" ? d["raw"] : "",
+      };
     } else {
       return { status: "error" };
     }
@@ -99,34 +113,34 @@ function buildIdentity(r1?: ModuleResult, r2?: ModuleResult): Identity {
   const f = [...(r1?.data?.fields ?? []), ...(r2?.data?.fields ?? [])];
   const raw = (r1?.data?.raw ?? "") + (r2?.data?.raw ?? "");
   return {
-    nome:             gf(f,"NOME","NOME COMPLETO")         || rxv(raw,"NOME"),
-    cpf:              gf(f,"CPF","NUMERO CPF")             || rxv(raw,"CPF"),
-    rg:               gf(f,"RG","NUMERO RG","REGISTRO GERAL") || rxv(raw,"RG"),
-    mae:              gf(f,"NOME MÃE","NOME MAE","MAE")    || rxv(raw,"MAE"),
-    pai:              gf(f,"NOME PAI","PAI")               || rxv(raw,"PAI"),
-    naturalidade:     gf(f,"MUNICIPIO DE NASCIMENTO","MUNICÍPIO DE NASCIMENTO","NATURALIDADE") || rxv(raw,"NATURALIDADE"),
-    nacionalidade:    gf(f,"NACIONALIDADE","PAIS NASCIMENTO") || "BRASIL",
-    dataNascimento:   gf(f,"DATA NASCIMENTO","DT NASCIMENTO","NASCIMENTO") || rxv(raw,"NASCIMENTO"),
-    sexo:             gf(f,"SEXO","GENERO","GÊNERO")       || rxv(raw,"SEXO"),
-    estadoCivil:      gf(f,"ESTADO CIVIL","ESTADO_CIVIL")  || rxv(raw,"ESTADO CIVIL"),
-    orgaoEmissor:     gf(f,"ORGAO EMISSOR","ÓRGÃO EMISSOR","ORGAO_EMISSOR") || rxv(raw,"ORGAO"),
-    dataEmissao:      gf(f,"DATA EMISSAO","DATA EMISSÃO")  || rxv(raw,"EMISSAO"),
-    situacaoCadastral:gf(f,"SITUACAO CADASTRAL","SITUAÇÃO CADASTRAL","STATUS NA RECEITA","STATUS") || rxv(raw,"SITUACAO"),
-    tipoSanguineo:    gf(f,"TIPO SANGUINEO","TIPO SANGÚINEO","SANGUE") || rxv(raw,"SANGUE"),
+    nome:              gf(f,"NOME","NOME COMPLETO")                          || rxv(raw,"NOME"),
+    cpf:               gf(f,"CPF","NUMERO CPF")                              || rxv(raw,"CPF"),
+    rg:                gf(f,"RG","NUMERO RG","REGISTRO GERAL")               || rxv(raw,"RG"),
+    mae:               gf(f,"NOME MÃE","NOME MAE","MAE")                    || rxv(raw,"MAE"),
+    pai:               gf(f,"NOME PAI","PAI")                               || rxv(raw,"PAI"),
+    naturalidade:      gf(f,"MUNICIPIO DE NASCIMENTO","MUNICÍPIO DE NASCIMENTO","NATURALIDADE") || rxv(raw,"NATURALIDADE"),
+    nacionalidade:     gf(f,"NACIONALIDADE","PAIS NASCIMENTO")              || "BRASIL",
+    dataNascimento:    gf(f,"DATA NASCIMENTO","DT NASCIMENTO","NASCIMENTO")  || rxv(raw,"NASCIMENTO"),
+    sexo:              gf(f,"SEXO","GENERO","GÊNERO")                        || rxv(raw,"SEXO"),
+    estadoCivil:       gf(f,"ESTADO CIVIL","ESTADO_CIVIL")                  || rxv(raw,"ESTADO CIVIL"),
+    orgaoEmissor:      gf(f,"ORGAO EMISSOR","ÓRGÃO EMISSOR","ORGAO_EMISSOR") || rxv(raw,"ORGAO"),
+    dataEmissao:       gf(f,"DATA EMISSAO","DATA EMISSÃO")                  || rxv(raw,"EMISSAO"),
+    situacaoCadastral: gf(f,"SITUACAO CADASTRAL","SITUAÇÃO CADASTRAL","STATUS NA RECEITA","STATUS") || rxv(raw,"SITUACAO"),
+    tipoSanguineo:     gf(f,"TIPO SANGUINEO","TIPO SANGÚINEO","SANGUE")     || rxv(raw,"SANGUE"),
   };
 }
 
-function buildPhones(r?: ModuleResult): Phone[] {
+function buildPhones(r?: ModuleResult): PhoneEntry[] {
   if (!r?.data) return [];
-  const phones: Phone[] = [];
+  const phones: PhoneEntry[] = [];
   for (const sec of r.data.sections) {
     if (/TELEFON|CONTATO|CELULAR|FONE/i.test(sec.name)) {
       for (const item of sec.items) {
-        const ddd   = item.match(/DDD[\s:]+(\d{1,3})/i)?.[1]   ?? item.match(/^\s*(\d{2})\s/)?.[1] ?? "";
-        const num   = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d{7,11})/i)?.[1] ?? item.match(/\d{2}\s+(\d{8,9})/)?.[1] ?? "";
-        const prio  = item.match(/PRIORIDADE[\s:]+([^\s|·]+)/i)?.[1] ?? "";
-        const cls   = item.match(/CLASSIFICA[CÇ][AÃ]O[\s:]+([^\s|·]+)/i)?.[1] ?? "";
-        const data  = item.match(/DATA[\s:]+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? "Não Informado";
+        const ddd  = item.match(/DDD[\s:]+(\d{1,3})/i)?.[1]   ?? item.match(/^\s*(\d{2})\s/)?.[1] ?? "";
+        const num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d{7,11})/i)?.[1] ?? item.match(/\d{2}\s+(\d{8,9})/)?.[1] ?? "";
+        const prio = item.match(/PRIORIDADE[\s:]+([^\s|·]+)/i)?.[1] ?? "";
+        const cls  = item.match(/CLASSIFICA[CÇ][AÃ]O[\s:]+([^\s|·]+)/i)?.[1] ?? "";
+        const data = item.match(/DATA[\s:]+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? "Não Informado";
         if (num) phones.push({ ddd, numero: num, prioridade: prio, classificacao: cls, data });
       }
     }
@@ -136,9 +150,8 @@ function buildPhones(r?: ModuleResult): Phone[] {
       const clean = v.replace(/\D/g,"");
       const ddd   = clean.length >= 10 ? clean.slice(0,2) : "";
       const num   = clean.length >= 10 ? clean.slice(2)   : clean;
-      if (num && !phones.some(p => p.numero === num)) {
+      if (num && !phones.some(p => p.numero === num))
         phones.push({ ddd, numero: num, prioridade: "", classificacao: "", data: "Não Informado" });
-      }
     }
   }
   return phones;
@@ -165,17 +178,15 @@ function buildAddresses(r?: ModuleResult): Address[] {
   if (out.length === 0) {
     const f = r.data.fields;
     const logradouro = gf(f,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO");
-    if (logradouro) {
-      out.push({
-        logradouro,
-        numero:      gf(f,"NUMERO","NÚMERO","NUM"),
-        complemento: gf(f,"COMPLEMENTO","COMPL") || "Não Informado",
-        bairro:      gf(f,"BAIRRO"),
-        cidade:      gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"),
-        uf:          gf(f,"UF","ESTADO"),
-        cep:         gf(f,"CEP"),
-      });
-    }
+    if (logradouro) out.push({
+      logradouro,
+      numero:      gf(f,"NUMERO","NÚMERO","NUM"),
+      complemento: gf(f,"COMPLEMENTO","COMPL") || "Não Informado",
+      bairro:      gf(f,"BAIRRO"),
+      cidade:      gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"),
+      uf:          gf(f,"UF","ESTADO"),
+      cep:         gf(f,"CEP"),
+    });
   }
   return out;
 }
@@ -256,7 +267,6 @@ function IdentityCard({ id, photo }: { id: Identity; photo?: string }) {
 
   return (
     <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/60">
-      {/* Purple header */}
       <div className="relative px-8 py-7 text-center overflow-hidden" style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4338ca 50%, #6d28d9 100%)" }}>
         <div className="absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "radial-gradient(circle at 15% 50%, #fff 1.5px, transparent 1.5px), radial-gradient(circle at 85% 20%, #fff 1.5px, transparent 1.5px)", backgroundSize: "55px 55px" }} />
         <div className="relative z-10">
@@ -270,7 +280,6 @@ function IdentityCard({ id, photo }: { id: Identity; photo?: string }) {
       </div>
 
       <div className="bg-[#0c0e1c] p-6 sm:p-8">
-        {/* RG */}
         <div className="text-center mb-7">
           <p className="text-[9px] uppercase tracking-[0.32em] text-white/35">Registro Geral Nº</p>
           <p className="text-[32px] font-black tracking-[0.15em] text-white mt-1.5 leading-none">{id.rg || "—"}</p>
@@ -302,7 +311,7 @@ function IdentityCard({ id, photo }: { id: Identity; photo?: string }) {
             </div>
           </div>
 
-          <div className="shrink-0 flex flex-col items-center gap-2 hidden sm:flex">
+          <div className="shrink-0 hidden sm:flex flex-col items-center gap-2">
             <div className="w-28 h-36 rounded-xl overflow-hidden border border-white/15 bg-white/5 flex items-center justify-center">
               {photoSrc
                 ? <img src={photoSrc} alt="Foto" className="w-full h-full object-cover" />
@@ -349,39 +358,39 @@ function CollapsibleSection({ title, icon: Icon, count, children }: { title: str
   );
 }
 
-export default function CpfFull() {
-  const [cpf, setCpf] = useState("");
-  const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
-  const [mStates, setMStates] = useState<Record<string, ModuleStatus>>({});
+type Props = { cpf: string };
+
+export function CpfFullPanel({ cpf }: Props) {
+  const [running, setRunning]   = useState(false);
+  const [done, setDone]         = useState(false);
+  const [mStates, setMStates]   = useState<Record<string, ModuleStatus>>({});
   const [mResults, setMResults] = useState<Record<string, ModuleResult>>({});
-  const [geoAddr, setGeoAddr] = useState<Address[]>([]);
+  const [geoAddr, setGeoAddr]   = useState<Address[]>([]);
   const runRef = useRef(0);
 
-  const setMS = (tipo: string, s: ModuleStatus) => setMStates(p => ({ ...p, [tipo]: s }));
-  const setMR = (tipo: string, r: ModuleResult) => setMResults(p => ({ ...p, [tipo]: r }));
+  useEffect(() => {
+    const clean = cpf.replace(/\D/g,"");
+    if (clean.length !== 11) return;
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = cpf.replace(/\D/g, "");
-    if (clean.length !== 11 || running) return;
     const id = ++runRef.current;
     setRunning(true); setDone(false);
     setMStates(Object.fromEntries(MODULES.map(m => [m.tipo, "loading"])));
     setMResults({});
     setGeoAddr([]);
 
-    await Promise.allSettled(
+    void Promise.allSettled(
       MODULES.map(async ({ tipo, skylers }) => {
         const res = await fetchModule(tipo, clean, skylers);
         if (runRef.current !== id) return;
-        setMS(tipo, res.status);
-        setMR(tipo, res);
+        setMStates(p => ({ ...p, [tipo]: res.status }));
+        setMResults(p => ({ ...p, [tipo]: res }));
       })
-    );
+    ).then(() => {
+      if (runRef.current === id) { setRunning(false); setDone(true); }
+    });
 
-    if (runRef.current === id) { setRunning(false); setDone(true); }
-  };
+    return () => { runRef.current = id + 1; };
+  }, [cpf]);
 
   useEffect(() => {
     if (!done) return;
@@ -403,7 +412,7 @@ export default function CpfFull() {
       if (!cancelled) setGeoAddr(result);
     })();
     return () => { cancelled = true; };
-  }, [done]);
+  }, [done, mResults]);
 
   const identity    = buildIdentity(mResults["cpf"], mResults["cpfbasico"]);
   const phones      = buildPhones(mResults["cpf"]);
@@ -412,8 +421,11 @@ export default function CpfFull() {
   const employments = buildEmployments(mResults["empregos"]);
 
   const photoRaw  = mResults["foto"]?.data;
-  const photo     = photoRaw ? (photoRaw.fields.find(([k]) => /FOTO|URL|BASE64|IMG/i.test(k))?.[1] ?? (photoRaw.raw.length < 200000 ? photoRaw.raw : "")) : undefined;
-  const score1    = gf(mResults["score"]?.data?.fields ?? [], "SCORE","PONTUACAO","PONTUAÇÃO") || (mResults["score"]?.data?.raw?.match(/\d{3,4}/)?.[0] ?? "");
+  const photo     = photoRaw
+    ? (photoRaw.fields.find(([k]) => /FOTO|URL|BASE64|IMG/i.test(k))?.[1] ?? (photoRaw.raw.length < 200000 ? photoRaw.raw : ""))
+    : undefined;
+
+  const score1    = gf(mResults["score"]?.data?.fields ?? [],  "SCORE","PONTUACAO","PONTUAÇÃO") || (mResults["score"]?.data?.raw?.match(/\d{3,4}/)?.[0] ?? "");
   const score2Val = gf(mResults["score2"]?.data?.fields ?? [], "SCORE","PONTUACAO","PONTUAÇÃO") || (mResults["score2"]?.data?.raw?.match(/\d{3,4}/)?.[0] ?? "");
 
   const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
@@ -424,54 +436,24 @@ export default function CpfFull() {
   const hasCNH      = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
   const hasObito    = mResults["obito"]?.status === "done" && (mResults["obito"]?.data?.fields.length ?? 0) > 0;
   const hasLegal    = ["processos","mandado"].some(k => mResults[k]?.status === "done" && (mResults[k]?.data?.sections?.length ?? 0) > 0);
-  const extras      = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k => mResults[k]?.status === "done" && mResults[k]?.data && ((mResults[k]!.data!.fields.length ?? 0) > 0 || (mResults[k]!.data!.sections.length ?? 0) > 0));
+  const extras      = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
+    mResults[k]?.status === "done" && mResults[k]?.data &&
+    ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0))
+  );
 
   const extraLabels: Record<string, { label: string; icon: React.ComponentType<{className?:string}> }> = {
-    irpf:      { label: "IRPF", icon: Receipt },
-    beneficios:{ label: "Benefícios Sociais", icon: Gift },
-    dividas:   { label: "Dívidas", icon: Wallet },
-    bens:      { label: "Bens", icon: Building2 },
-    titulo:    { label: "Título de Eleitor", icon: Award },
-    spc:       { label: "SPC / Negativação", icon: AlertTriangle },
+    irpf:      { label: "IRPF",                icon: Receipt },
+    beneficios:{ label: "Benefícios Sociais",  icon: Gift },
+    dividas:   { label: "Dívidas",             icon: Wallet },
+    bens:      { label: "Bens",                icon: Building2 },
+    titulo:    { label: "Título de Eleitor",   icon: Award },
+    spc:       { label: "SPC / Negativação",   icon: AlertTriangle },
   };
 
   const noData = done && !hasIdentity && !phones.length && !relations.length && !addresses.length;
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-black tracking-[0.2em] uppercase neon-text">CPF Full</h1>
-        <p className="text-sm text-muted-foreground mt-1">Consulta completa — {MODULES.length} módulos simultâneos</p>
-      </div>
-
-      {/* Search */}
-      <form onSubmit={handleSearch}>
-        <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-xl p-6">
-          <div className="flex gap-3">
-            <div className="relative flex-1">
-              <IdCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                value={cpf}
-                onChange={e => setCpf(e.target.value.replace(/\D/g,"").slice(0,11))}
-                placeholder="CPF — 11 dígitos"
-                inputMode="numeric"
-                className="w-full h-12 pl-11 pr-4 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/30 transition-all text-sm font-mono tracking-[0.2em]"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={cpf.replace(/\D/g,"").length !== 11 || running}
-              className="h-12 px-8 rounded-xl font-bold text-sm uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2 text-white"
-              style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, #4f46e5))", boxShadow: !running ? "0 0 28px -4px color-mix(in srgb, var(--color-primary) 50%, transparent)" : undefined }}
-            >
-              {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              {running ? "Consultando..." : "Consultar"}
-            </button>
-          </div>
-        </div>
-      </form>
-
+    <div className="mt-6 space-y-8">
       {/* Progress */}
       <AnimatePresence>
         {(running || done) && (
@@ -483,14 +465,19 @@ export default function CpfFull() {
               {running && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
             </div>
             <div className="h-1 bg-white/5 rounded-full mb-4 overflow-hidden">
-              <motion.div className="h-full rounded-full" style={{ background: "var(--color-primary)" }} animate={{ width: `${(doneCount / MODULES.length) * 100}%` }} transition={{ duration: 0.5 }} />
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: "var(--color-primary)" }}
+                animate={{ width: `${(doneCount / MODULES.length) * 100}%` }}
+                transition={{ duration: 0.5 }}
+              />
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-1.5">
               {MODULES.map(m => {
                 const s = mStates[m.tipo] ?? "idle";
                 return (
                   <div key={m.tipo} className="flex items-center gap-1.5 text-[10px] truncate">
-                    {s === "loading" && <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: "var(--color-primary)" }} />}
+                    {s === "loading" && <Loader2 className="w-3 h-3 animate-spin shrink-0 text-primary" />}
                     {s === "done"    && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
                     {s === "error"   && <XCircle className="w-3 h-3 text-red-400/50 shrink-0" />}
                     {s === "idle"    && <div className="w-3 h-3 rounded-full bg-white/10 shrink-0" />}
@@ -508,7 +495,7 @@ export default function CpfFull() {
         {done && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="space-y-10">
 
-            {/* ── Carteira de Identidade ── */}
+            {/* Carteira de Identidade */}
             {hasIdentity && (
               <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
                 <SectionHeader icon={IdCard} title="Carteira de Identidade" />
@@ -516,7 +503,7 @@ export default function CpfFull() {
               </motion.div>
             )}
 
-            {/* ── Telefones ── */}
+            {/* Telefones */}
             {phones.length > 0 && (
               <CollapsibleSection icon={Phone} title="Telefones" count={phones.length}>
                 <div className="rounded-2xl border border-white/10 bg-[#0c0e1c] overflow-hidden">
@@ -543,8 +530,11 @@ export default function CpfFull() {
                             <td className="px-4 py-3 text-white/45 text-xs">{p.data}</td>
                             <td className="px-4 py-3">
                               {(p.ddd || p.numero) && (
-                                <a href={`https://wa.me/55${p.ddd}${p.numero.replace(/\D/g,"")}`} target="_blank" rel="noopener noreferrer"
-                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold transition-colors whitespace-nowrap">
+                                <a
+                                  href={`https://wa.me/55${p.ddd}${p.numero.replace(/\D/g,"")}`}
+                                  target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold transition-colors whitespace-nowrap"
+                                >
                                   <MessageCircle className="w-3 h-3" /> WhatsApp
                                 </a>
                               )}
@@ -558,7 +548,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Relações ── */}
+            {/* Relações */}
             {relations.length > 0 && (
               <CollapsibleSection icon={Users} title="Relações" count={relations.length}>
                 <div className="rounded-2xl border border-white/10 bg-[#0c0e1c] overflow-hidden">
@@ -572,23 +562,23 @@ export default function CpfFull() {
                         </tr>
                       </thead>
                       <tbody>
-                        {relations.map((r, i) => (
+                        {relations.map((rel, i) => (
                           <tr key={i} className="border-b border-white/5 hover:bg-white/[0.025] transition-colors">
                             <td className="px-3 py-2.5">
-                              <div className="w-10 h-12 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                              <div className="w-10 h-12 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
                                 <User className="w-5 h-5 text-white/15" />
                               </div>
                             </td>
-                            <td className="px-3 py-2.5 font-mono text-xs text-white/50">{fmtCPF(r.cpf) || "—"}</td>
+                            <td className="px-3 py-2.5 font-mono text-xs text-white/50">{fmtCPF(rel.cpf) || "—"}</td>
                             <td className="px-3 py-2.5">
-                              <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white/10 text-white/80">{r.relacao || "—"}</span>
+                              <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white/10 text-white/80">{rel.relacao || "—"}</span>
                             </td>
-                            <td className="px-3 py-2.5 text-white font-semibold text-[13px] whitespace-nowrap">{r.nome || "—"}</td>
-                            <td className="px-3 py-2.5 text-white/55 text-xs whitespace-nowrap">{r.nascimento || "—"}</td>
-                            <td className="px-3 py-2.5 text-white/55 text-xs">{r.sexo || "—"}</td>
-                            <td className="px-3 py-2.5 text-white/55 text-xs text-center">{r.grau || "—"}</td>
-                            <td className="px-3 py-2.5 text-white/55 text-xs text-center">{r.grauOficial || "—"}</td>
-                            <td className="px-3 py-2.5 text-white/50 text-xs">{r.origem || "—"}</td>
+                            <td className="px-3 py-2.5 text-white font-semibold text-[13px] whitespace-nowrap">{rel.nome || "—"}</td>
+                            <td className="px-3 py-2.5 text-white/55 text-xs whitespace-nowrap">{rel.nascimento || "—"}</td>
+                            <td className="px-3 py-2.5 text-white/55 text-xs">{rel.sexo || "—"}</td>
+                            <td className="px-3 py-2.5 text-white/55 text-xs text-center">{rel.grau || "—"}</td>
+                            <td className="px-3 py-2.5 text-white/55 text-xs text-center">{rel.grauOficial || "—"}</td>
+                            <td className="px-3 py-2.5 text-white/50 text-xs">{rel.origem || "—"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -598,11 +588,10 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Visualização Geográfica ── */}
+            {/* Visualização Geográfica */}
             {addresses.length > 0 && (
               <CollapsibleSection icon={MapPin} title="Visualização Geográfica" count={addresses.length}>
                 <div className="rounded-2xl border border-white/10 overflow-hidden">
-                  {/* Map */}
                   <div className="relative h-[300px]">
                     <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4} className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
                       <TileLayer
@@ -618,8 +607,11 @@ export default function CpfFull() {
                               {addr.bairro && <p className="text-gray-600">{addr.bairro}</p>}
                               <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" - ")}</p>
                               {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
-                              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.bairro,addr.cidade,addr.uf].filter(Boolean).join(", "))}`}
-                                 target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-semibold hover:underline mt-1.5">
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.bairro,addr.cidade,addr.uf].filter(Boolean).join(", "))}`}
+                                target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-violet-600 font-semibold hover:underline mt-1.5"
+                              >
                                 📍 Google Maps
                               </a>
                             </div>
@@ -627,15 +619,13 @@ export default function CpfFull() {
                         </CircleMarker>
                       ))}
                     </MapContainer>
-                    {/* Overlay badge */}
                     <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-[#0c0e1c]/90 backdrop-blur rounded-xl px-3 py-2 border border-white/10 pointer-events-none">
                       <MapPin className="w-3.5 h-3.5" style={{ color:"var(--color-primary)" }} />
                       <span className="text-xs font-semibold text-white">Visualização Geográfica</span>
-                      <span className="text-xs text-white/35">{addresses.length} endereços localizados</span>
+                      <span className="text-xs text-white/35">{addresses.length} endereços</span>
                     </div>
                   </div>
 
-                  {/* Addresses table */}
                   <div className="bg-[#0c0e1c] border-t border-white/8 overflow-x-auto">
                     <table className="w-full text-sm min-w-[700px]">
                       <thead>
@@ -656,10 +646,12 @@ export default function CpfFull() {
                             <td className="px-4 py-3 text-white/55 font-mono">{a.uf || "—"}</td>
                             <td className="px-4 py-3 text-white/40 font-mono text-xs">{a.cep || "—"}</td>
                             <td className="px-4 py-3">
-                              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a.logradouro,a.numero,a.bairro,a.cidade,a.uf].filter(Boolean).join(", "))}`}
-                                 target="_blank" rel="noopener noreferrer"
-                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-[11px] font-bold transition-colors whitespace-nowrap"
-                                 style={{ background:"color-mix(in srgb, var(--color-primary) 25%, transparent)", border:"1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }}>
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([a.logradouro,a.numero,a.bairro,a.cidade,a.uf].filter(Boolean).join(", "))}`}
+                                target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-[11px] font-bold transition-colors whitespace-nowrap"
+                                style={{ background:"color-mix(in srgb, var(--color-primary) 25%, transparent)", border:"1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }}
+                              >
                                 <MapPin className="w-3 h-3" /> Maps
                               </a>
                             </td>
@@ -672,7 +664,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Empregos ── */}
+            {/* Empregos */}
             {employments.length > 0 && (
               <CollapsibleSection icon={Briefcase} title="Empregos" count={employments.length}>
                 <div className="rounded-2xl border border-white/10 bg-[#0c0e1c] overflow-hidden">
@@ -703,7 +695,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Score ── */}
+            {/* Score */}
             {(score1 || score2Val) && (
               <CollapsibleSection icon={BarChart2} title="Score de Crédito">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -725,7 +717,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── CNH ── */}
+            {/* CNH */}
             {hasCNH && (
               <CollapsibleSection icon={Car} title="CNH">
                 <div className="rounded-2xl border border-white/10 bg-[#0c0e1c] p-5 grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -739,7 +731,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Processos / Mandados ── */}
+            {/* Processos / Mandados */}
             {hasLegal && (
               <CollapsibleSection icon={Scale} title="Processos & Mandados">
                 <div className="space-y-3">
@@ -764,7 +756,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Extras (IRPF, Benefícios, Dívidas, Bens, Título, SPC) ── */}
+            {/* Extras */}
             {extras.length > 0 && (
               <CollapsibleSection icon={FileText} title="Dados Adicionais">
                 <div className="space-y-4">
@@ -809,7 +801,7 @@ export default function CpfFull() {
               </CollapsibleSection>
             )}
 
-            {/* ── Óbito ── */}
+            {/* Óbito */}
             {hasObito && (
               <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
                 <SectionHeader icon={AlertTriangle} title="Registro de Óbito" />
@@ -830,12 +822,11 @@ export default function CpfFull() {
               </motion.div>
             )}
 
-            {/* ── No data ── */}
+            {/* Sem dados */}
             {noData && (
               <div className="text-center py-20 text-muted-foreground">
-                <Search className="w-12 h-12 mx-auto mb-4 opacity-15" />
+                <FileText className="w-16 h-16 mx-auto mb-4 opacity-20" />
                 <p className="text-sm">Nenhum dado encontrado para este CPF.</p>
-                <p className="text-xs mt-1 opacity-60">Verifique o número e tente novamente.</p>
               </div>
             )}
           </motion.div>
