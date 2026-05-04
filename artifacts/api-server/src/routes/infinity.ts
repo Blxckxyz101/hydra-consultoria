@@ -1876,7 +1876,7 @@ router.get("/foto/:id", (req, res) => {
 });
 
 // ─── External scraper routes ───────────────────────────────────────────────
-const INTERNAL_KEY = "infinity-bot";
+const INTERNAL_KEY = process.env["INTERNAL_BOT_KEY"] ?? "infinity-bot-fallback-change-me";
 
 function requireAuthOrInternal(req: import("express").Request, res: import("express").Response, next: import("express").NextFunction): void {
   const internalKey = req.headers["x-internal-key"];
@@ -2129,10 +2129,11 @@ router.post("/notifications", requireAuth, (req, res) => {
   if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem enviar novidades" }); return; }
   const { title, body } = req.body as { title?: string; body?: string };
   if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e mensagem são obrigatórios" }); return; }
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, c => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#039;": "'" }[c] ?? c));
   const notif: Notification = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: title.trim().slice(0, 120),
-    body: body.trim().slice(0, 1000),
+    title: stripHtml(title.trim()).slice(0, 120),
+    body: stripHtml(body.trim()).slice(0, 1000),
     createdAt: new Date().toISOString(),
     authorName: user.username,
   };

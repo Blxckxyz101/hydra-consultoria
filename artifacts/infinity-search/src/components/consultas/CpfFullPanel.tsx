@@ -495,7 +495,7 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}>
       {/* Header banner */}
-      <div className="relative px-8 py-5 overflow-hidden" style={{ background: "linear-gradient(135deg,#5b21b6 0%,#4338ca 50%,#6d28d9 100%)" }}>
+      <div className="relative px-8 py-5 overflow-hidden" style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 55%, black) 0%, color-mix(in srgb, var(--color-primary) 40%, black) 50%, color-mix(in srgb, var(--color-primary) 48%, black) 100%)" }}>
         <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: "repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }} />
         <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at 80% 50%, rgba(255,255,255,0.08) 0%, transparent 70%)" }} />
         <div className="relative z-10 flex items-center justify-between">
@@ -590,14 +590,18 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
       animate={{ opacity: 1, scale: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
       className="relative overflow-hidden rounded-3xl"
-      style={{ border: "1px solid rgba(6,182,212,0.22)", boxShadow: "0 0 60px rgba(6,182,212,0.08), inset 0 1px 0 rgba(255,255,255,0.06)" }}>
+      style={{
+        border: "1px solid color-mix(in srgb, var(--color-primary) 22%, transparent)",
+        boxShadow: "0 0 60px color-mix(in srgb, var(--color-primary) 8%, transparent), inset 0 1px 0 rgba(255,255,255,0.06)",
+        backdropFilter: "blur(20px)",
+      }}>
 
       {/* Background gradient */}
-      <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, rgba(6,182,212,0.12) 0%, rgba(9,9,15,0.95) 60%, rgba(9,9,15,1) 100%)" }} />
+      <div className="absolute inset-0" style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 14%, transparent) 0%, rgba(9,9,15,0.95) 60%)" }} />
       {/* Animated glow */}
-      <motion.div className="absolute -left-20 top-0 bottom-0 w-72 rounded-full blur-3xl"
-        style={{ background: "rgba(6,182,212,0.12)" }}
-        animate={{ opacity: [0.5, 0.8, 0.5] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }} />
+      <motion.div className="absolute -left-20 top-0 bottom-0 w-72 rounded-full blur-3xl pointer-events-none"
+        style={{ background: "color-mix(in srgb, var(--color-primary) 14%, transparent)" }}
+        animate={{ opacity: [0.5, 0.9, 0.5] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }} />
 
       <div className="relative flex items-stretch">
         {/* Large photo */}
@@ -605,21 +609,21 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
           <img src={photo} alt={identity.nome} className="w-full h-full object-cover"
             style={{ minHeight: 180 }}
             onError={() => setImgOk(false)} />
-          {/* Fade to right */}
-          <div className="absolute inset-0" style={{ background: "linear-gradient(to right, transparent 60%, rgba(9,9,15,0.95))" }} />
+          <div className="absolute inset-0" style={{ background: "linear-gradient(to right, transparent 55%, rgba(9,9,15,0.96))" }} />
           {/* Fingerprint badge */}
           <div className="absolute bottom-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full"
-            style={{ background: "rgba(6,182,212,0.15)", border: "1px solid rgba(6,182,212,0.35)", backdropFilter: "blur(8px)" }}>
-            <Fingerprint className="w-2.5 h-2.5 text-cyan-400" />
-            <span className="text-[7px] uppercase tracking-widest text-cyan-300 font-bold">Biométrica</span>
+            style={{ background: "color-mix(in srgb, var(--color-primary) 18%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)", backdropFilter: "blur(8px)" }}>
+            <Fingerprint className="w-2.5 h-2.5" style={{ color: "var(--color-primary)" }} />
+            <span className="text-[7px] uppercase tracking-widest font-bold" style={{ color: "color-mix(in srgb, var(--color-primary) 90%, white)" }}>Biométrica</span>
           </div>
         </div>
 
         {/* Info */}
         <div className="flex-1 p-6 sm:p-8 flex flex-col justify-center min-w-0">
           <div className="flex items-center gap-2 mb-3">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            <span className="text-[9px] uppercase tracking-[0.3em] text-cyan-400/70 font-bold">Foto Biométrica Confirmada</span>
+            <motion.div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--color-primary)" }}
+              animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }} />
+            <span className="text-[9px] uppercase tracking-[0.3em] font-bold" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>Foto Biométrica Confirmada</span>
           </div>
 
           <p className="text-2xl sm:text-3xl font-black text-white leading-tight break-words mb-1">
@@ -628,9 +632,7 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
 
           <div className="flex flex-wrap items-center gap-3 mt-2">
             <span className="font-mono text-sm text-white/40">{fmtCPF(cpf)}</span>
-            {identity.dataNascimento && (
-              <span className="text-xs text-white/30">· Nasc. {identity.dataNascimento}</span>
-            )}
+            {identity.dataNascimento && <span className="text-xs text-white/30">· Nasc. {identity.dataNascimento}</span>}
             {identity.situacaoCadastral && (
               <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${/REGULAR|ATIVO/i.test(identity.situacaoCadastral) ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/15 text-amber-300 border border-amber-500/30"}`}>
                 ◉ {identity.situacaoCadastral}
@@ -640,8 +642,8 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
 
           <div className="flex items-center gap-3 mt-5">
             <a href={photo} download={`foto-${cpf}.jpg`}
-              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold px-3.5 py-2 rounded-xl transition-all"
-              style={{ background: "rgba(6,182,212,0.12)", border: "1px solid rgba(6,182,212,0.3)", color: "rgb(103,232,249)" }}>
+              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-bold px-3.5 py-2 rounded-xl transition-all hover:brightness-110"
+              style={{ background: "color-mix(in srgb, var(--color-primary) 14%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 32%, transparent)", color: "var(--color-primary)" }}>
               ↓ Baixar Foto
             </a>
           </div>
@@ -659,9 +661,9 @@ function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
     return (
       <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.03 }}
         className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
-        <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+        <Phone className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--color-primary)" }} />
         <span className="flex-1 font-mono text-[13px] font-bold text-white">{formatted}</span>
-        {phone.tipo && <span className="text-[9px] text-emerald-400/60 uppercase tracking-wider">{phone.tipo}</span>}
+        {phone.tipo && <span className="text-[9px] uppercase tracking-wider" style={{ color: "color-mix(in srgb, var(--color-primary) 60%, transparent)" }}>{phone.tipo}</span>}
         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <CopyBtn text={formatted} />
           <a href={`https://wa.me/55${phone.ddd}${phone.numero}`} target="_blank" rel="noopener noreferrer"
@@ -675,14 +677,14 @@ function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
   return (
     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
       className="group flex items-center gap-3 rounded-xl transition-all p-3"
-      style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)" }}>
-      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)" }}>
-        <Phone className="w-4 h-4 text-emerald-400" />
+      style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)", backdropFilter: "blur(8px)" }}>
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 25%, transparent)" }}>
+        <Phone className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[14px] font-bold font-mono text-white">{formatted}</p>
         <div className="flex items-center gap-2 flex-wrap mt-0.5">
-          {phone.tipo && <span className="text-[9px] text-emerald-400/70 uppercase tracking-wider">{phone.tipo}</span>}
+          {phone.tipo && <span className="text-[9px] uppercase tracking-wider" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>{phone.tipo}</span>}
           {phone.prioridade && <span className="text-[9px] text-white/30">· Prioridade: {phone.prioridade}</span>}
           {phone.classificacao && <span className="text-[9px] text-white/30">· {phone.classificacao}</span>}
           {phone.data && phone.data !== "Não Informado" && <span className="text-[9px] text-white/20">· {phone.data}</span>}
@@ -708,9 +710,9 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
     return (
       <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.03 }}
         className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
-        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black shrink-0" style={{ background: "rgba(245,158,11,0.2)", color: "rgb(252,211,77)", border: "1px solid rgba(245,158,11,0.3)" }}>{idx + 1}</span>
+        <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black shrink-0" style={{ background: "color-mix(in srgb, var(--color-primary) 18%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }}>{idx + 1}</span>
         <span className="flex-1 text-[12px] text-white/75 truncate">{full || "—"}</span>
-        <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-amber-400/60 hover:text-amber-300">
+        <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "color-mix(in srgb, var(--color-primary) 60%, transparent)" }}>
           <MapPin className="w-3.5 h-3.5" />
         </a>
       </motion.div>
@@ -719,18 +721,18 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
   return (
     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
       className="group flex items-start gap-3 rounded-xl transition-all p-3"
-      style={{ border: "1px solid rgba(245,158,11,0.14)", background: "rgba(245,158,11,0.04)" }}>
-      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5" style={{ background: "rgba(245,158,11,0.2)", color: "rgb(252,211,77)", border: "1px solid rgba(245,158,11,0.3)" }}>{idx + 1}</div>
+      style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 18%, transparent)", background: "color-mix(in srgb, var(--color-primary) 5%, transparent)", backdropFilter: "blur(8px)" }}>
+      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5" style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }}>{idx + 1}</div>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-semibold text-white break-words">
           {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.complemento && addr.complemento !== "Não Informado" ? ` — ${addr.complemento}` : ""}
         </p>
         <p className="text-[12px] text-white/55 mt-0.5">{[addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(" · ")}{addr.cep ? ` · CEP ${addr.cep}` : ""}</p>
-        {addr.lat && <p className="text-[9px] text-amber-400/40 mt-0.5">📍 {addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
+        {addr.lat && <p className="text-[9px] mt-0.5" style={{ color: "color-mix(in srgb, var(--color-primary) 45%, transparent)" }}>📍 {addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
       </div>
       <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
-        className="flex items-center gap-1 px-2 py-1 rounded-lg text-amber-300 text-[10px] font-semibold hover:bg-amber-500/10 transition-colors whitespace-nowrap shrink-0"
-        style={{ border: "1px solid rgba(245,158,11,0.25)" }}>
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-all hover:brightness-110 whitespace-nowrap shrink-0"
+        style={{ color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 28%, transparent)", background: "color-mix(in srgb, var(--color-primary) 8%, transparent)" }}>
         <MapPin className="w-3 h-3" /> Maps
       </a>
     </motion.div>
@@ -780,10 +782,10 @@ function EmploymentTimeline({ employments }: { employments: Employment[] }) {
                 {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
               </div>
               <div className="rounded-2xl border p-4 transition-all"
-                style={{ border: isCurrent ? "1px solid rgba(16,185,129,0.22)" : "1px solid rgba(255,255,255,0.07)", background: isCurrent ? "rgba(6,78,59,0.12)" : "rgba(0,0,0,0.18)" }}>
+                style={{ border: isCurrent ? "1px solid rgba(16,185,129,0.22)" : "1px solid rgba(255,255,255,0.07)", background: isCurrent ? "rgba(6,78,59,0.12)" : "rgba(0,0,0,0.18)", backdropFilter: "blur(8px)" }}>
                 <div className="flex items-start gap-3">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center text-[12px] font-black shrink-0"
-                    style={isCurrent ? { background: "rgba(16,185,129,0.15)", color: "rgb(110,231,183)", border: "1px solid rgba(16,185,129,0.3)" } : { background: "rgba(124,58,237,0.12)", color: "rgba(167,139,250,0.8)", border: "1px solid rgba(124,58,237,0.2)" }}>
+                    style={isCurrent ? { background: "rgba(16,185,129,0.15)", color: "rgb(110,231,183)", border: "1px solid rgba(16,185,129,0.3)" } : { background: "color-mix(in srgb, var(--color-primary) 10%, transparent)", color: "color-mix(in srgb, var(--color-primary) 80%, white)", border: "1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)" }}>
                     {initials}
                   </div>
                   <div className="flex-1 min-w-0">

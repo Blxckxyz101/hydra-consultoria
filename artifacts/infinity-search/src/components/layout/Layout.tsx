@@ -101,9 +101,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: user } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
   const logout = useInfinityLogout();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [profilePhoto, setProfilePhoto] = useState<string | null>(() =>
-    localStorage.getItem("infinity_profile_photo")
-  );
+  const [profilePhoto, setProfilePhoto]   = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
+  const [profileStatus, setProfileStatus] = useState<string>(() => localStorage.getItem("infinity_profile_status") ?? "online");
   const [bellOpen, setBellOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const bellDesktopRef = useRef<HTMLDivElement>(null);
@@ -142,7 +141,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => { setMobileOpen(false); }, [location]);
 
   useEffect(() => {
-    const handler = () => setProfilePhoto(localStorage.getItem("infinity_profile_photo"));
+    const handler = () => {
+      setProfilePhoto(localStorage.getItem("infinity_profile_photo"));
+      setProfileStatus(localStorage.getItem("infinity_profile_status") ?? "online");
+    };
     window.addEventListener("infinity-profile-updated", handler);
     return () => window.removeEventListener("infinity-profile-updated", handler);
   }, []);
@@ -269,15 +271,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="p-4 border-t border-white/5 space-y-3">
         <div className="px-4 py-3 rounded-xl bg-black/40 border border-white/5">
           <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-sm shrink-0"
-              style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
-            >
-              {profilePhoto ? (
-                <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
-              ) : (
-                user?.username?.[0]?.toUpperCase() ?? "?"
-              )}
+            {/* Avatar with Discord-style status dot */}
+            <div className="relative shrink-0">
+              <div
+                className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-sm"
+                style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
+              >
+                {profilePhoto ? (
+                  <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  user?.username?.[0]?.toUpperCase() ?? "?"
+                )}
+              </div>
+              <span
+                className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#06091a]"
+                style={{ background: profileStatus === "online" ? "#22c55e" : profileStatus === "busy" ? "#ef4444" : profileStatus === "away" ? "#f59e0b" : "#6b7280" }}
+              />
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold text-sm truncate">{user?.username}</div>
