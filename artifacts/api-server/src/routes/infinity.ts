@@ -1639,7 +1639,7 @@ async function streamGroq(
     const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages }),
+      body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages, max_tokens: 1536 }),
     });
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "");
@@ -1700,13 +1700,14 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. " +
-    "Use a ferramenta consultar_infinity quando o usuário pedir para buscar/consultar/verificar qualquer dado específico (CPF, CNPJ, telefone, placa, nome, foto, score, benefícios, dívidas, IRPF, processos, etc.). " +
-    "Quando o usuário pedir foto, biometria, imagem ou qualquer variante relacionada a imagem de uma pessoa, use tipo='foto' e base='skylers'. " +
-    "NÃO use a ferramenta apenas para agradecimentos, saudações ou perguntas genéricas sem dado para consultar. " +
-    "Nunca invente dados — se não tiver resultado da ferramenta, diga que não foi encontrado. " +
-    "IMPORTANTE: quando o resultado contiver uma foto, ela JÁ É exibida automaticamente no chat pelo painel — você NÃO precisa incluir URLs de foto na sua resposta. Apenas confirme os dados textuais encontrados. " +
-    "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
+    "Você é a Infinity IA, assistente de inteligência do painel Infinity Search — plataforma OSINT brasileira. " +
+    "IDIOMA: sempre responda em português brasileiro. " +
+    "FERRAMENTA: use consultar_infinity SEMPRE que o usuário pedir busca/consulta de CPF, CNPJ, telefone, placa, nome, email, foto, score, benefícios, dívidas, IRPF, título, mandado, processos, CNH, RG, CEP, veículo, endereço, etc. Não invente dados — nunca. " +
+    "FOTO/BIOMETRIA: quando o usuário pedir foto, imagem, rosto ou biometria de uma pessoa, use tipo='foto' e base='skylers'. A foto JÁ É exibida automaticamente no chat; NÃO inclua URL de foto na resposta. " +
+    "FORMATO DA RESPOSTA: após receber o resultado da ferramenta, apresente os dados de forma organizada usando bullet points (- Campo: Valor). Agrupe informações relacionadas. Seja direto — não repita o que o usuário perguntou. " +
+    "Se o resultado tiver muitos dados, mostre os mais relevantes (nome, CPF, nascimento, filiação, endereço, telefone) e mencione que há mais dados disponíveis. " +
+    "Se não encontrar resultado, informe claramente e sugira verificar se o dado está correto. " +
+    "Para saudações e perguntas genéricas, responda brevemente SEM usar a ferramenta.";
 
   const cleanMessages = messages.filter(
     (m: { role?: string; content?: string }) => m && typeof m.content === "string"
@@ -1719,6 +1720,8 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   ];
 
   try {
+    const phase1Ctrl = new AbortController();
+    const phase1Timer = setTimeout(() => phase1Ctrl.abort(), 20_000);
     const phase1Resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -1728,9 +1731,11 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
         messages: finalMessages,
         tools: [CONSULTA_TOOL],
         tool_choice: "auto",
-        max_tokens: 400,
+        max_tokens: 512,
       }),
+      signal: phase1Ctrl.signal,
     });
+    clearTimeout(phase1Timer);
 
     if (phase1Resp.ok) {
       type ToolCall = { id: string; function: { name: string; arguments: string } };
@@ -1755,29 +1760,39 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
 
           function buildToolContent(p: { fields: Array<{key:string;value:string}>; sections: Array<{name:string;items:string[]}>; raw: string }): string {
             const lines: string[] = [];
+            // Priority fields shown first if present
+            const PRIORITY = ["Nome", "CPF", "RG", "Nascimento", "Mãe", "Pai", "Endereço", "Telefone", "Email", "Score", "Situação"];
+            const priorityFields: string[] = [];
+            const otherFields: string[] = [];
+
             p.fields.forEach((f) => {
               if (f.key === "FOTO_URL") {
-                // Extract photo URL server-side — will be sent as a dedicated SSE event
-                // so the AI doesn't need to output it at all
                 if (f.value.startsWith("data:image")) {
                   const fotoId = storeFoto(f.value);
                   capturedPhotoUrl = `/api/infinity/foto/${fotoId}`;
                 } else if (f.value) {
                   capturedPhotoUrl = f.value;
                 }
-                // Do NOT add to lines — AI doesn't need to see/output the URL
               } else {
-                lines.push(`${f.key}: ${f.value}`);
+                const isPriority = PRIORITY.some((p) => f.key.toLowerCase().includes(p.toLowerCase()));
+                if (isPriority) priorityFields.push(`- ${f.key}: ${f.value}`);
+                else otherFields.push(`- ${f.key}: ${f.value}`);
               }
             });
-            if (capturedPhotoUrl) {
-              lines.unshift("[FOTO ENCONTRADA — já exibida automaticamente no chat do usuário]");
-            }
+
+            if (capturedPhotoUrl) lines.push("[FOTO ENCONTRADA — exibida automaticamente no chat]");
+            lines.push(...priorityFields);
+            lines.push(...otherFields.slice(0, 20));
+            if (otherFields.length > 20) lines.push(`... e mais ${otherFields.length - 20} campos adicionais`);
+
             p.sections.forEach((s) => {
+              const shown = s.items.slice(0, 8);
               lines.push(`\n${s.name} (${s.items.length} registros):`);
-              s.items.slice(0, 10).forEach((it) => lines.push(`  • ${it}`));
+              shown.forEach((it) => lines.push(`  • ${it}`));
+              if (s.items.length > 8) lines.push(`  ... e mais ${s.items.length - 8} registros`);
             });
-            return lines.join("\n") || p.raw.slice(0, 800);
+
+            return lines.join("\n") || p.raw.slice(0, 600);
           }
 
           if (base === "skylers") {

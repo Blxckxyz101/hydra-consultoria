@@ -253,15 +253,43 @@ export default function IA() {
     let finalReply = "";
     let assistantMsgAdded = false;
 
+    const addErrorMsg = (err: string) => {
+      const errContent = `⚠️ ${err}`;
+      if (!assistantMsgAdded) {
+        assistantMsgAdded = true;
+        updateSession(currentId, (s) => ({
+          ...s,
+          messages: [...s.messages, { role: "assistant", content: errContent, ts: Date.now() }],
+          updatedAt: Date.now(),
+        }));
+      } else {
+        updateSession(currentId, (s) => {
+          const msgs = [...s.messages];
+          const last = msgs[msgs.length - 1];
+          if (last?.role === "assistant" && !last.content) {
+            msgs[msgs.length - 1] = { ...last, content: errContent };
+          }
+          return { ...s, messages: msgs };
+        });
+      }
+    };
+
     try {
       const token = localStorage.getItem("infinity_token");
-      const historyMessages = [...messages, userEntry].map(({ role, content }) => ({ role, content }));
+      const historyMessages = [...messages, userEntry].map(({ role, content }) => ({
+        role,
+        content: content.replace(/\n\/api\/infinity\/foto\/[a-f0-9]+\n/g, "[foto exibida acima]"),
+      }));
       const res = await fetch("/api/infinity/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ messages: historyMessages }),
       });
-      if (!res.ok) throw new Error("Falha na comunicação");
+      if (!res.ok) {
+        let errMsg = "Falha na comunicação com a IA.";
+        try { const j = await res.json(); if (j?.error) errMsg = j.error; } catch {}
+        throw new Error(errMsg);
+      }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -279,6 +307,12 @@ export default function IA() {
             if (data === "[DONE]") { setConsultingStatus(null); continue; }
             try {
               const parsed = JSON.parse(data);
+              if (parsed.error) {
+                setConsultingStatus(null);
+                setIsThinking(false);
+                addErrorMsg(parsed.error);
+                continue;
+              }
               if (parsed.status) { setConsultingStatus(parsed.status); continue; }
               if (parsed.photo) {
                 setConsultingStatus(null);
@@ -328,24 +362,14 @@ export default function IA() {
             } catch {}
           }
         }
+        if (!assistantMsgAdded) {
+          addErrorMsg("A IA não retornou uma resposta. Verifique sua conexão e tente novamente.");
+        }
       }
-    } catch {
+    } catch (err) {
       setIsThinking(false);
       setConsultingStatus(null);
-      if (!assistantMsgAdded) {
-        updateSession(currentId, (s) => ({
-          ...s,
-          messages: [...s.messages, { role: "assistant", content: "Erro ao processar resposta da IA.", ts: Date.now() }],
-          updatedAt: Date.now(),
-        }));
-      } else {
-        updateSession(currentId, (s) => {
-          const msgs = [...s.messages];
-          const last = msgs[msgs.length - 1];
-          if (last?.role === "assistant" && !last.content) msgs[msgs.length - 1] = { ...last, content: "Erro ao processar resposta da IA." };
-          return { ...s, messages: msgs };
-        });
-      }
+      addErrorMsg(err instanceof Error ? err.message : "Erro ao processar resposta da IA.");
     } finally {
       setIsThinking(false);
       setConsultingStatus(null);
@@ -738,7 +762,7 @@ export default function IA() {
                   }`}>
                     {msg.content
                       ? renderMarkdown(msg.content)
-                      : (msg.role === "assistant" ? <ThinkingPanel /> : null)
+                      : (msg.role === "assistant" ? <span className="text-muted-foreground/50 text-xs italic">Sem resposta</span> : null)
                     }
                     {/* Copy button */}
                     <div className={`absolute ${isUser ? "top-2 left-2" : "top-2 right-2"} opacity-0 group-hover:opacity-100 transition-opacity`}>
