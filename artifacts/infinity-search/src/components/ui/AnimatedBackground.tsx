@@ -1,6 +1,23 @@
 import { useEffect, useRef } from "react";
 import bgUrl from "@/assets/background.png";
 
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  s /= 100; l /= 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+function getThemeRgb(): [number, number, number] {
+  const hsl = document.documentElement.getAttribute("data-theme-hsl") ?? "195 90% 55%";
+  const parts = hsl.split(" ");
+  const h = parseFloat(parts[0] ?? "195");
+  const s = parseFloat((parts[1] ?? "90%").replace("%", ""));
+  const l = parseFloat((parts[2] ?? "55%").replace("%", ""));
+  return hslToRgb(h, s, l);
+}
+
 export function AnimatedBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -53,17 +70,26 @@ export function AnimatedBackground() {
     }
 
     let t = 0;
+    let frameCount = 0;
+    let rgb: [number, number, number] = getThemeRgb();
+
     const render = () => {
       t += 0.005;
+      frameCount++;
+      // Re-read theme color every 30 frames (~0.5s) to catch theme changes
+      if (frameCount % 30 === 0) rgb = getThemeRgb();
+
       mouseX += (targetX - mouseX) * 0.06;
       mouseY += (targetY - mouseY) * 0.06;
 
       ctx.clearRect(0, 0, width, height);
 
+      const [rr, gg, bb] = rgb;
+
       // Subtle radial vignette glow following cursor
       const g = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 520);
-      g.addColorStop(0, "rgba(56, 189, 248, 0.18)");
-      g.addColorStop(0.5, "rgba(45, 124, 220, 0.06)");
+      g.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, 0.18)`);
+      g.addColorStop(0.5, `rgba(${Math.round(rr * 0.8)}, ${Math.round(gg * 0.65)}, ${Math.round(bb * 0.87)}, 0.06)`);
       g.addColorStop(1, "rgba(0, 0, 0, 0)");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, width, height);
@@ -71,7 +97,6 @@ export function AnimatedBackground() {
       // Connecting + drifting particles
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        // Mouse repulsion creates a wake
         const dx = p.x - mouseX;
         const dy = p.y - mouseY;
         const d2 = dx * dx + dy * dy;
@@ -92,7 +117,11 @@ export function AnimatedBackground() {
         const twinkle = 0.45 + Math.sin(t * 3 + p.phase) * 0.35;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(125, 211, 252, ${twinkle * 0.7})`;
+        // Lighter version of primary for particles
+        const lr = Math.min(255, Math.round(rr + (255 - rr) * 0.45));
+        const lg = Math.min(255, Math.round(gg + (255 - gg) * 0.45));
+        const lb = Math.min(255, Math.round(bb + (255 - bb) * 0.45));
+        ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, ${twinkle * 0.7})`;
         ctx.fill();
 
         // connect nearby
@@ -102,11 +131,11 @@ export function AnimatedBackground() {
           const ddy = p.y - q.y;
           const dd = ddx * ddx + ddy * ddy;
           if (dd < 11000) {
-            const a = (1 - dd / 11000) * 0.18;
+            const alpha = (1 - dd / 11000) * 0.18;
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(q.x, q.y);
-            ctx.strokeStyle = `rgba(56, 189, 248, ${a})`;
+            ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha})`;
             ctx.lineWidth = 0.6;
             ctx.stroke();
           }

@@ -35,6 +35,10 @@ function applyTheme(t: ThemeDef) {
   const p = `hsl(${t.primary})`;
   const a = `hsl(${t.accent})`;
   const r = `hsl(${t.ring})`;
+
+  // Extract just the hue for background tinting
+  const hue = t.primary.split(" ")[0]!;
+
   // Raw HSL vars (for hsl(var(--primary)) patterns)
   root.style.setProperty("--primary", t.primary);
   root.style.setProperty("--accent", t.accent);
@@ -42,6 +46,13 @@ function applyTheme(t: ThemeDef) {
   root.style.setProperty("--sidebar-primary", t.primary);
   root.style.setProperty("--sidebar-ring", t.ring);
   root.style.setProperty("--chart-1", t.primary);
+
+  // Background, card, sidebar tinted with theme hue — keeps it very dark, just shifts hue
+  root.style.setProperty("--background", `${hue} 22% 6%`);
+  root.style.setProperty("--sidebar", `${hue} 22% 6%`);
+  root.style.setProperty("--card", `${hue} 18% 9%`);
+  root.style.setProperty("--popover", `${hue} 18% 9%`);
+
   // Computed --color-* vars used by Tailwind v4 @theme inline utilities
   root.style.setProperty("--color-primary", p);
   root.style.setProperty("--color-primary-foreground", "hsl(220 30% 10%)");
@@ -52,6 +63,13 @@ function applyTheme(t: ThemeDef) {
   root.style.setProperty("--color-sidebar-ring", r);
   root.style.setProperty("--color-chart-1", p);
   root.style.setProperty("--color-primary-border", p);
+  root.style.setProperty("--color-background", `hsl(${hue} 22% 6%)`);
+  root.style.setProperty("--color-sidebar", `hsl(${hue} 22% 6%)`);
+  root.style.setProperty("--color-card", `hsl(${hue} 18% 9%)`);
+  root.style.setProperty("--color-popover", `hsl(${hue} 18% 9%)`);
+
+  // Canvas particle color exposed as a data attribute for AnimatedBackground to read
+  root.setAttribute("data-theme-hsl", t.primary);
 }
 
 function loadThemeKey(): string { return localStorage.getItem(LS_KEY) ?? "sky"; }

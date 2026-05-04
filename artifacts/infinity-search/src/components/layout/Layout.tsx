@@ -63,16 +63,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <>
       <div className="px-6 pt-6 pb-6 flex items-center gap-3 border-b border-white/5">
         <div className="relative">
-          <div className="absolute inset-0 rounded-xl bg-primary/30 blur-xl scale-110" />
+          {/* Glow blob behind logo — follows theme via CSS var */}
+          <div
+            className="absolute inset-0 rounded-xl blur-xl scale-110"
+            style={{ background: "color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
+          />
           <img
             src={logoUrl}
             alt="Infinity Search"
-            className="relative w-11 h-11 object-contain drop-shadow-[0_0_12px_rgba(56,189,248,0.6)]"
+            className="relative w-11 h-11 object-contain"
+            style={{ filter: "drop-shadow(0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
           />
         </div>
         <div className="flex flex-col">
           <span className="font-bold tracking-[0.25em] text-base text-foreground">INFINITY</span>
-          <span className="text-[9px] uppercase tracking-[0.4em] text-primary/70">SEARCH</span>
+          <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>SEARCH</span>
         </div>
       </div>
 
@@ -91,17 +96,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 href={item.href}
                 className={`group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 relative overflow-hidden ${
                   isActive
-                    ? "bg-primary/15 text-primary border border-primary/30 shadow-[0_0_25px_-5px_rgba(56,189,248,0.4)]"
+                    ? "text-primary border"
                     : "text-muted-foreground hover:bg-white/5 hover:text-foreground border border-transparent"
                 }`}
+                style={isActive ? {
+                  background: "color-mix(in srgb, var(--color-primary) 12%, transparent)",
+                  borderColor: "color-mix(in srgb, var(--color-primary) 30%, transparent)",
+                  boxShadow: "0 0 25px -5px color-mix(in srgb, var(--color-primary) 35%, transparent)",
+                } : {}}
               >
                 {isActive && (
                   <motion.div
                     layoutId="activePill"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-primary rounded-r-full shadow-[0_0_12px_rgba(56,189,248,0.8)]"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 rounded-r-full"
+                    style={{
+                      background: "var(--color-primary)",
+                      boxShadow: "0 0 12px color-mix(in srgb, var(--color-primary) 80%, transparent)",
+                    }}
                   />
                 )}
-                <Icon className={`w-4 h-4 ${isActive ? "drop-shadow-[0_0_6px_rgba(56,189,248,0.8)]" : ""}`} />
+                <Icon
+                  className="w-4 h-4"
+                  style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : {}}
+                />
                 <span className="font-medium text-sm flex-1">{item.label}</span>
                 {isActive && <ChevronRight className="w-3 h-3" />}
               </Link>
@@ -113,7 +130,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="p-4 border-t border-white/5 space-y-3">
         <div className="px-4 py-3 rounded-xl bg-black/40 border border-white/5">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full overflow-hidden bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-sm shrink-0">
+            {/* Avatar — gradient follows theme */}
+            <div
+              className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-sm shrink-0"
+              style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
+            >
               {profilePhoto ? (
                 <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
               ) : (
@@ -122,7 +143,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold text-sm truncate">{user?.username}</div>
-              <div className="text-[9px] uppercase tracking-[0.3em] text-primary/70">{user?.role ? roleLabel(user.role) : ""}</div>
+              <div
+                className="text-[9px] uppercase tracking-[0.3em]"
+                style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}
+              >
+                {user?.role ? roleLabel(user.role) : ""}
+              </div>
             </div>
           </div>
         </div>
@@ -140,7 +166,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
             href="https://t.me/Blxckxyz"
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
+            style={{ ["--hover-color" as string]: "var(--color-primary)" }}
+            onMouseEnter={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
+              el.style.color = "var(--color-primary)";
+              el.style.borderColor = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
+            }}
+            onMouseLeave={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "";
+              el.style.color = "";
+              el.style.borderColor = "";
+            }}
           >
             <MessageCircle className="w-4 h-4" />
             <span>Suporte</span>
@@ -150,7 +189,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
             href="https://t.me/xxmathexx"
             target="_blank"
             rel="noopener noreferrer"
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-sm font-medium border border-transparent hover:border-sky-500/30"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
+            onMouseEnter={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
+              el.style.color = "var(--color-primary)";
+              el.style.borderColor = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
+            }}
+            onMouseLeave={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "";
+              el.style.color = "";
+              el.style.borderColor = "";
+            }}
           >
             <MessageCircle className="w-4 h-4" />
             <span>Suporte</span>
@@ -189,7 +240,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex items-center gap-2">
-          <img src={logoUrl} alt="" className="w-7 h-7 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]" />
+          <img
+            src={logoUrl}
+            alt=""
+            className="w-7 h-7 object-contain"
+            style={{ filter: "drop-shadow(0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
+          />
           <span className="font-bold tracking-[0.2em] text-sm">INFINITY</span>
         </div>
         <div className="w-10" />
