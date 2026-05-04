@@ -1,3 +1,30 @@
+import { useState, useRef } from "react";
+
+/* ── Media localStorage keys (exported for App.tsx) ── */
+export const LS_PANEL_BANNER = "lb_custom_banner";
+export const LS_PANEL_AVATAR = "lb_custom_avatar";
+
+/** Hook: reads/writes custom banner & avatar GIF from localStorage */
+export function useMediaSettings() {
+  const [banner, setBannerState] = useState<string | null>(
+    () => localStorage.getItem(LS_PANEL_BANNER)
+  );
+  const [avatar, setAvatarState] = useState<string | null>(
+    () => localStorage.getItem(LS_PANEL_AVATAR)
+  );
+  const setBanner = (url: string | null) => {
+    setBannerState(url);
+    if (url) localStorage.setItem(LS_PANEL_BANNER, url);
+    else localStorage.removeItem(LS_PANEL_BANNER);
+  };
+  const setAvatar = (url: string | null) => {
+    setAvatarState(url);
+    if (url) localStorage.setItem(LS_PANEL_AVATAR, url);
+    else localStorage.removeItem(LS_PANEL_AVATAR);
+  };
+  return { banner, avatar, setBanner, setAvatar };
+}
+
 export type CustomThemeKey =
   | "crimson" | "azul" | "sakura" | "violeta"
   | "laranja" | "rosa" | "cyber" | "dourado"
@@ -133,6 +160,32 @@ export function buildThemeStyle(t: CustomThemeDef): string {
 }
 
 const STYLES = `
+/* ── Media section ── */
+.pz-media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 600px) { .pz-media-grid { grid-template-columns: 1fr; } }
+.pz-media-card { border-radius: 14px; border: 1px solid rgba(255,255,255,0.09); background: rgba(0,0,0,0.3); overflow: hidden; }
+.pz-media-preview { position: relative; width: 100%; height: 140px; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; }
+.pz-media-preview:hover .pz-media-overlay { opacity: 1; }
+.pz-media-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pz-media-placeholder { display: flex; flex-direction: column; align-items: center; gap: 8px; color: rgba(230,216,255,0.3); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+.pz-media-placeholder-icon { font-size: 28px; opacity: 0.5; }
+.pz-media-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; gap: 8px; opacity: 0; transition: opacity 0.2s; }
+.pz-media-overlay-btn { padding: 6px 14px; border-radius: 8px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); color: #fff; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; }
+.pz-media-overlay-btn:hover { background: rgba(255,255,255,0.22); }
+.pz-media-overlay-btn--danger { background: rgba(192,57,43,0.25); border-color: rgba(192,57,43,0.5); color: #ff8a80; }
+.pz-media-overlay-btn--danger:hover { background: rgba(192,57,43,0.45); }
+.pz-media-footer { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.pz-media-label { font-size: 9px; letter-spacing: 4px; text-transform: uppercase; color: rgba(230,216,255,0.5); margin-bottom: 2px; }
+.pz-media-url-row { display: flex; gap: 6px; }
+.pz-media-url-input { flex: 1; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.12); border-radius: 7px; padding: 6px 10px; font-size: 11px; color: #e6d8ff; outline: none; font-family: monospace; }
+.pz-media-url-input:focus { border-color: rgba(212,175,55,0.5); }
+.pz-media-url-input::placeholder { color: rgba(230,216,255,0.25); }
+.pz-media-url-btn { padding: 6px 12px; border-radius: 7px; background: rgba(212,175,55,0.15); border: 1px solid rgba(212,175,55,0.35); color: #D4AF37; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.pz-media-url-btn:hover { background: rgba(212,175,55,0.28); }
+.pz-media-hint { font-size: 9px; color: rgba(230,216,255,0.3); font-family: 'Crimson Text', serif; }
+/* ── avatar preview (round) ── */
+.pz-avatar-preview img { border-radius: 50%; width: 80px; height: 80px; object-fit: cover; }
+/* ────────────────────────── */
 .pz-wrap { padding: 24px; color: #e6d8ff; font-family: 'Cinzel','Georgia',serif; }
 .pz-title { font-size: 11px; letter-spacing: 5px; text-transform: uppercase; color: var(--gold, #D4AF37); margin-bottom: 8px; }
 .pz-desc { font-size: 12px; color: rgba(230,216,255,0.45); margin-bottom: 28px; font-family: 'Crimson Text', serif; }
@@ -175,13 +228,110 @@ const SUGGESTIONS = [
   { icon: "🐉", name: "HP Bar do Alvo", text: "Barra de HP animada do domínio atacado baseada no % de requests com erro. Quando chega a zero: tela de 'GAME OVER' épica." },
 ];
 
+/* ── MediaCard — single banner or avatar uploader ── */
+interface MediaCardProps {
+  label: string;
+  icon: string;
+  hint: string;
+  value: string | null;
+  round?: boolean;
+  onChange: (url: string | null) => void;
+}
+function MediaCard({ label, icon, hint, value, round, onChange }: MediaCardProps) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [urlInput, setUrlInput] = useState("");
+
+  function readFile(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = await readFile(file);
+    onChange(url);
+    e.target.value = "";
+  }
+
+  function handleUrl() {
+    const u = urlInput.trim();
+    if (!u) return;
+    onChange(u);
+    setUrlInput("");
+  }
+
+  return (
+    <div className="pz-media-card">
+      <div
+        className={`pz-media-preview${round ? " pz-avatar-preview" : ""}`}
+        onClick={() => fileRef.current?.click()}
+        title="Clique para enviar arquivo"
+      >
+        {value ? (
+          <img src={value} alt={label} />
+        ) : (
+          <div className="pz-media-placeholder">
+            <span className="pz-media-placeholder-icon">{icon}</span>
+            <span>Sem {label.toLowerCase()}</span>
+          </div>
+        )}
+        <div className="pz-media-overlay">
+          <button className="pz-media-overlay-btn" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+            📁 Arquivo
+          </button>
+          {value && (
+            <button
+              className="pz-media-overlay-btn pz-media-overlay-btn--danger"
+              onClick={(e) => { e.stopPropagation(); onChange(null); }}
+            >
+              ✕ Remover
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="pz-media-footer">
+        <div className="pz-media-label">{label}</div>
+        <div className="pz-media-url-row">
+          <input
+            className="pz-media-url-input"
+            placeholder="https://exemplo.com/banner.gif"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleUrl()}
+          />
+          <button className="pz-media-url-btn" onClick={handleUrl}>OK</button>
+        </div>
+        <div className="pz-media-hint">{hint} · GIF, MP4, JPG, PNG suportados</div>
+      </div>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,video/gif,video/mp4"
+        style={{ display: "none" }}
+        onChange={handleFile}
+      />
+    </div>
+  );
+}
+
 interface Props {
   currentKey: string;
   onSelect: (key: CustomThemeKey) => void;
   symbolFilter: string;
+  mediaBanner: string | null;
+  mediaAvatar: string | null;
+  onBannerChange: (url: string | null) => void;
+  onAvatarChange: (url: string | null) => void;
 }
 
-export function PersonalizarPage({ currentKey, onSelect, symbolFilter }: Props) {
+export function PersonalizarPage({ currentKey, onSelect, symbolFilter, mediaBanner, mediaAvatar, onBannerChange, onAvatarChange }: Props) {
   const t = getThemeDef(currentKey);
 
   return (
@@ -234,6 +384,28 @@ export function PersonalizarPage({ currentKey, onSelect, symbolFilter }: Props) 
           </div>
           <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 8 }}>
             <div style={{ width: 180, height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${t.accent}, ${t.gold})`, boxShadow: `0 0 12px ${t.accent}88` }} />
+          </div>
+        </div>
+
+        {/* ── Mídia ── */}
+        <div className="pz-section" style={{ marginTop: 36 }}>
+          <div className="pz-section-label">🖼️ Mídia do Painel</div>
+          <div className="pz-media-grid">
+            <MediaCard
+              label="Banner (GIF do Card)"
+              icon="🎞️"
+              hint="Substitui o GIF do Lelouch no card principal"
+              value={mediaBanner}
+              onChange={onBannerChange}
+            />
+            <MediaCard
+              label="Perfil / Avatar"
+              icon="👁️"
+              hint="Aparece no header ao lado do título"
+              value={mediaAvatar}
+              round
+              onChange={onAvatarChange}
+            />
           </div>
         </div>
 

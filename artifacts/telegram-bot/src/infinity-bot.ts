@@ -6,8 +6,37 @@ const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL = "https://t.me/Blxckxyz";
 const SUPPORT_URL2 = "https://t.me/xxmathexx";
-const BOT_BANNER_URL = process.env.INFINITY_BOT_BANNER_URL
+let BOT_BANNER_URL: string = process.env.INFINITY_BOT_BANNER_URL
   ?? (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}/api/static/logo.png` : "");
+
+/** Returns true if the URL looks like an animated GIF or MP4 */
+function isAnimatedBanner(url: string): boolean {
+  const lower = url.toLowerCase().split("?")[0];
+  return lower.endsWith(".gif") || lower.endsWith(".mp4") || lower.endsWith(".webm");
+}
+
+/**
+ * Sends the bot banner with caption+keyboard.
+ * Uses sendAnimation for GIF/MP4 banners, sendPhoto for static images.
+ * Falls back to plain HTML reply if the media send fails.
+ */
+async function sendBanner(
+  ctx: { replyWithAnimation: any; replyWithPhoto: any; replyWithHTML: any },
+  caption: string,
+  extra: object,
+): Promise<void> {
+  if (!BOT_BANNER_URL) {
+    await (ctx.replyWithHTML as (t: string, e?: object) => Promise<any>)(caption, extra);
+    return;
+  }
+  if (isAnimatedBanner(BOT_BANNER_URL)) {
+    await ctx.replyWithAnimation(BOT_BANNER_URL, { caption, parse_mode: "HTML", ...extra } as any)
+      .catch(() => (ctx.replyWithHTML as (t: string, e?: object) => Promise<any>)(caption, extra));
+  } else {
+    await ctx.replyWithPhoto(BOT_BANNER_URL, { caption, parse_mode: "HTML", ...extra } as any)
+      .catch(() => (ctx.replyWithHTML as (t: string, e?: object) => Promise<any>)(caption, extra));
+  }
+}
 const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
@@ -1035,6 +1064,8 @@ export function startInfinityBot(): void {
     { command: "addpago",     description: "💎 Adicionar usuário BLACK (ID)" },
     { command: "removepago",  description: "❌ Remover usuário BLACK (ID)" },
     { command: "listpagos",   description: "📋 Listar usuários BLACK" },
+    { command: "setbanner",   description: "🖼️ Trocar banner do /start (gif/jpg/png/mp4)" },
+    { command: "setperfil",   description: "🤖 Trocar foto de perfil do bot (jpg/png)" },
   ];
   void bot.telegram.setMyCommands(USER_COMMANDS).catch(() => {});
 
@@ -1246,6 +1277,70 @@ export function startInfinityBot(): void {
     );
   });
 
+  // /setbanner — troca o banner do /start em runtime (admin only)
+  bot.command("setbanner", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    try { await ctx.deleteMessage(); } catch {}
+    const url = ctx.message.text.split(" ").slice(1).join(" ").trim();
+    if (!url) {
+      const current = BOT_BANNER_URL || "nenhum";
+      await ctx.replyWithHTML(
+        `🖼️ <b>Banner atual</b>\n\n` +
+        `<code>${current}</code>\n\n` +
+        `Para trocar, envie:\n<code>/setbanner https://exemplo.com/banner.gif</code>\n\n` +
+        `✅ Suporta: <b>jpg, png, gif, mp4, webm</b>`,
+        Markup.inlineKeyboard([[Markup.button.callback("🏠 Menu", "home")]])
+      );
+      return;
+    }
+    BOT_BANNER_URL = url;
+    const tipo = isAnimatedBanner(url) ? "🎞️ GIF/Vídeo" : "🖼️ Imagem estática";
+    await ctx.replyWithHTML(
+      `✅ <b>Banner atualizado!</b>\n\n` +
+      `Tipo: <b>${tipo}</b>\n` +
+      `URL: <code>${url}</code>\n\n` +
+      `O próximo <code>/start</code> já vai usar o novo banner.`,
+      Markup.inlineKeyboard([[Markup.button.callback("🏠 Testar agora", "home")]])
+    );
+  });
+
+  // /setperfil — troca a foto de perfil do bot (admin only)
+  bot.command("setperfil", async (ctx) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id, from.username)) return;
+    try { await ctx.deleteMessage(); } catch {}
+    const url = ctx.message.text.split(" ").slice(1).join(" ").trim();
+    if (!url) {
+      await ctx.replyWithHTML(
+        `🤖 <b>Foto de perfil do bot</b>\n\n` +
+        `Envie a URL de uma imagem (jpg ou png):\n` +
+        `<code>/setperfil https://exemplo.com/avatar.jpg</code>\n\n` +
+        `⚠️ O Telegram só aceita <b>imagens estáticas</b> (jpg/png) como foto de perfil.\n` +
+        `Para foto animada, use o @BotFather.`
+      );
+      return;
+    }
+    try {
+      const imgRes = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      await bot.telegram.setMyPhoto({ source: buf } as any);
+      await ctx.replyWithHTML(
+        `✅ <b>Foto de perfil atualizada!</b>\n\n` +
+        `URL: <code>${url}</code>`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await ctx.replyWithHTML(
+        `❌ <b>Falha ao atualizar foto de perfil</b>\n\n` +
+        `<code>${msg.slice(0, 200)}</code>\n\n` +
+        `Dica: Use uma URL direta de imagem <b>jpg/png</b>.\n` +
+        `Para foto animada (GIF), configure pelo @BotFather.`
+      );
+    }
+  });
+
   // ── /start ────────────────────────────────────────────────────────────────
   bot.command("start", async (ctx) => {
     resetSession(ctx.from.id);
@@ -1262,23 +1357,11 @@ export function startInfinityBot(): void {
 
     // DM: require BLACK tier
     if (chat.type === "private" && !paid) {
-      if (BOT_BANNER_URL) {
-        await ctx.replyWithPhoto(BOT_BANNER_URL, { caption: buildUpgradeDMMsg(), parse_mode: "HTML", ...buildUpgradeKeyboard() } as any).catch(() =>
-          ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard())
-        );
-      } else {
-        await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
-      }
+      await sendBanner(ctx, buildUpgradeDMMsg(), buildUpgradeKeyboard());
       return;
     }
 
-    if (BOT_BANNER_URL) {
-      await ctx.replyWithPhoto(BOT_BANNER_URL, { caption: buildHomeText(from), parse_mode: "HTML", ...buildHomeKeyboard() } as any).catch(() =>
-        ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard())
-      );
-    } else {
-      await ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard());
-    }
+    await sendBanner(ctx, buildHomeText(from), buildHomeKeyboard());
   });
 
   // ── /consultar ───────────────────────────────────────────────────────────
@@ -1469,6 +1552,12 @@ export function startInfinityBot(): void {
       lines.push(`<code>/removepago 123456</code> — remover usuário BLACK`);
       lines.push(`<code>/listpagos</code> — listar usuários BLACK`);
       lines.push(`<code>/status_bot</code> — status de grupos e usuários`);
+      lines.push(``);
+      lines.push(`<b>🖼️ Personalização:</b>`);
+      lines.push(`<code>/setbanner &lt;url&gt;</code> — trocar banner do /start`);
+      lines.push(`  ✅ Suporta: gif · mp4 · webm · jpg · png`);
+      lines.push(`<code>/setperfil &lt;url&gt;</code> — trocar foto de perfil do bot`);
+      lines.push(`  ✅ Suporta: jpg · png (GIF animado → @BotFather)`);
     }
 
     lines.push(``);

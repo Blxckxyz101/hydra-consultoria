@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties }
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { InfinityUsers } from "./InfinityUsers";
 import { Wallboard } from "./Wallboard";
-import { PersonalizarPage, CUSTOM_THEMES, getThemeDef, getSymbolFilter, buildThemeStyle, type CustomThemeKey } from "./PersonalizarPage";
+import { PersonalizarPage, CUSTOM_THEMES, getThemeDef, getSymbolFilter, buildThemeStyle, useMediaSettings, type CustomThemeKey } from "./PersonalizarPage";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
@@ -1310,6 +1310,9 @@ function SocialDashboard({ base }: { base: string }) {
 
 /* ── Panel ── */
 function Panel() {
+  /* ── Custom media (banner GIF + avatar) ── */
+  const { banner: mediaBanner, avatar: mediaAvatar, setBanner: setMediaBanner, setAvatar: setMediaAvatar } = useMediaSettings();
+
   /* Config state — all persisted to localStorage */
   const [target, setTarget]       = useState(() => localStorage.getItem("lb-target") ?? "");
   const [method, setMethod]       = useState(() => localStorage.getItem("lb-method") ?? "http-flood");
@@ -3716,9 +3719,28 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             </div>
           )}
           <div className="lb-title-row">
-            <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }} />
+            {mediaAvatar ? (
+              <img
+                src={mediaAvatar}
+                className="lb-header-symbol"
+                alt="Avatar"
+                style={{ borderRadius: "50%", objectFit: "cover", width: 36, height: 36, border: `2px solid ${getThemeDef(customThemeKey).gold}55` }}
+              />
+            ) : (
+              <img src={GEASS_SYMBOL} className="lb-header-symbol" alt="Geass" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }} />
+            )}
             <h1 className="lb-title">Lelouch Painel</h1>
-            <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }}/>
+            {mediaAvatar ? (
+              <img
+                src={mediaAvatar}
+                className="lb-header-symbol lb-header-symbol--flip"
+                alt=""
+                aria-hidden="true"
+                style={{ borderRadius: "50%", objectFit: "cover", width: 36, height: 36, border: `2px solid ${getThemeDef(customThemeKey).gold}55` }}
+              />
+            ) : (
+              <img src={GEASS_SYMBOL} className="lb-header-symbol lb-header-symbol--flip" alt="" aria-hidden="true" style={{ filter: getSymbolFilter(getThemeDef(customThemeKey)) }}/>
+            )}
           </div>
           <p className="lb-sub">Because absolute power is even more beautiful when wielded by Zero.</p>
           <ThemeToggle theme={theme} setTheme={setTheme} />
@@ -3870,6 +3892,10 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             currentKey={customThemeKey}
             onSelect={(key) => setCustomThemeKey(key)}
             symbolFilter={getSymbolFilter(getThemeDef(customThemeKey))}
+            mediaBanner={mediaBanner}
+            mediaAvatar={mediaAvatar}
+            onBannerChange={setMediaBanner}
+            onAvatarChange={setMediaAvatar}
           />
         )}
 
@@ -6074,7 +6100,7 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
         <div className={`lb-card ${isRunning ? "lb-card--active" : ""}`}>
           {/* GIF */}
           <div className="lb-gif-wrap">
-            <img src={LELOUCH_GIF} alt="Lelouch vi Britannia" className="lb-gif"/>
+            <img src={mediaBanner ?? LELOUCH_GIF} alt="Lelouch vi Britannia" className="lb-gif"/>
             <div className="lb-scanlines" aria-hidden="true"/>
             <div className="lb-gif-fade" aria-hidden="true"/>
             <img
