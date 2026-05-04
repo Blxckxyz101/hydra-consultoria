@@ -90,6 +90,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   cnhfull: "cnh-full",
   foto: "iseek-fotos---fotocnh",
   biometria: "iseek-fotos---biometria",
+  credilink: "credilink",
 };
 
 const DAILY_RATE_LIMIT = 350;
@@ -140,7 +141,7 @@ const SUPPORTED_TIPOS = new Set([
   "motor", "vacinas",
   // Skylers-only (validated separately via /external/skylers)
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
-  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria",
+  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "credilink",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");

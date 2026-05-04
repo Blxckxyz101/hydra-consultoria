@@ -6,6 +6,7 @@ const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL = "https://t.me/Blxckxyz";
 const SUPPORT_URL2 = "https://t.me/xxmathexx";
+const BOT_BANNER_URL = process.env.INFINITY_BOT_BANNER_URL ?? "";
 const AUTHOR = "blxckxyz";
 const LINE = "═".repeat(40);
 const LINE2 = "─".repeat(40);
@@ -304,6 +305,9 @@ function buildBaseKeyboard(tipo: string, freeMode: boolean = false) {
   }
   if (["cpf", "cns", "nome", "vacinas"].includes(tipo)) {
     rows.push([Markup.button.callback("💉 SI-PNI", "base:sipni")]);
+  }
+  if (tipo === "cpf") {
+    rows.push([Markup.button.callback("💳 CrediLink (Skylers)", "base:credilink")]);
   }
   rows.push([Markup.button.callback("∞ Infinity Search", "base:infinity")]);
   if (freeMode) {
@@ -978,11 +982,23 @@ export function startInfinityBot(): void {
 
     // DM: require BLACK tier
     if (chat.type === "private" && !paid) {
-      await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
+      if (BOT_BANNER_URL) {
+        await ctx.replyWithPhoto(BOT_BANNER_URL, { caption: buildUpgradeDMMsg(), parse_mode: "HTML", ...buildUpgradeKeyboard() } as any).catch(() =>
+          ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard())
+        );
+      } else {
+        await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
+      }
       return;
     }
 
-    await ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard());
+    if (BOT_BANNER_URL) {
+      await ctx.replyWithPhoto(BOT_BANNER_URL, { caption: buildHomeText(from), parse_mode: "HTML", ...buildHomeKeyboard() } as any).catch(() =>
+        ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard())
+      );
+    } else {
+      await ctx.replyWithHTML(buildHomeText(from), buildHomeKeyboard());
+    }
   });
 
   // ── /consultar ───────────────────────────────────────────────────────────
@@ -1208,10 +1224,10 @@ export function startInfinityBot(): void {
   });
 
   // ── Base selector callback ──────────────────────────────────────────────
-  bot.action(/^base:(sisreg|sipni|infinity)$/, async (ctx) => {
+  bot.action(/^base:(sisreg|sipni|infinity|credilink)$/, async (ctx) => {
     await ctx.answerCbQuery();
     if (!ctx.chat) return;
-    const source = ctx.match[1] as "sisreg" | "sipni" | "infinity";
+    const source = ctx.match[1] as "sisreg" | "sipni" | "infinity" | "credilink";
     const session = getSession(ctx.from.id);
 
     if (session.state !== "awaiting_base" || !session.tipo || !session.dados) {
@@ -1237,17 +1253,21 @@ export function startInfinityBot(): void {
     }
 
     const sourceLabel =
-      source === "sisreg" ? "🏥 SISREG-III" :
-      source === "sipni"  ? "💉 SI-PNI"     : "∞ Infinity Search";
+      source === "sisreg"    ? "🏥 SISREG-III"         :
+      source === "sipni"     ? "💉 SI-PNI"              :
+      source === "credilink" ? "💳 CrediLink (Skylers)" : "∞ Infinity Search";
 
     const tipoObj = TIPOS.find((t) => t.id === tipo);
     const loadMsg = await ctx.replyWithHTML(
-      `⏳ <b>Consultando ${sourceLabel} — ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
+      `⏳ <b>Consultando ${sourceLabel}...</b>\n<code>${dados}</code>`
     );
 
     const chatCtx = { telegram: ctx.telegram, chat: { id: ctx.chat.id } };
     if (source === "infinity") {
       await executeQuery(chatCtx, tipo, dados, loadMsg.message_id);
+    } else if (source === "credilink") {
+      // CrediLink: query via Skylers with tipo=credilink
+      await executeSkylersBotQuery(chatCtx, "credilink", dados, loadMsg.message_id);
     } else {
       await executeExternalQuery(chatCtx, source, tipo, dados, loadMsg.message_id);
     }

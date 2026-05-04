@@ -106,7 +106,9 @@ const SKYLERS_ONLY_TIPOS = new Set([
   "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
   "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria",
 ]);
-type ExternalBase = "skylers";
+type ExternalBase = "skylers" | "credilink";
+// Tipos que também têm base CrediLink (Skylers)
+const CREDILINK_BASES = new Set<Tipo>(["cpf"]);
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
@@ -159,11 +161,25 @@ export default function Consultas() {
     setPendingQuery(null);
     try {
       const token = localStorage.getItem("infinity_token");
-      const endpoint = base ? `/api/infinity/external/${base}` : `/api/infinity/consultas/${tipo}`;
+      let endpoint: string;
+      let body: Record<string, string>;
+
+      if (base === "credilink") {
+        // CrediLink: usa o external/skylers com tipo=credilink
+        endpoint = "/api/infinity/external/skylers";
+        body = { tipo: "credilink", dados };
+      } else if (base) {
+        endpoint = `/api/infinity/external/${base}`;
+        body = { tipo, dados };
+      } else {
+        endpoint = `/api/infinity/consultas/${tipo}`;
+        body = { tipo, dados };
+      }
+
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ tipo, dados }),
+        body: JSON.stringify(body),
       });
       const data = await r.json() as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
       if (data.rateLimited) {
@@ -342,7 +358,7 @@ export default function Consultas() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className={`grid gap-3 ${CREDILINK_BASES.has(pendingQuery.tipo) ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
                 <motion.button
                   whileHover={{ scale: 1.015 }}
                   whileTap={{ scale: 0.985 }}
@@ -392,6 +408,33 @@ export default function Consultas() {
                     <span>Fonte alternativa</span>
                   </div>
                 </motion.button>
+
+                {CREDILINK_BASES.has(pendingQuery.tipo) && (
+                  <motion.button
+                    whileHover={{ scale: 1.015 }}
+                    whileTap={{ scale: 0.985 }}
+                    onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "credilink")}
+                    className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-blue-400/30 hover:from-blue-500/[0.07] transition-all duration-200 text-left overflow-hidden"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/15 transition-colors">
+                        <CreditCard className="w-4 h-4 text-blue-400" />
+                      </div>
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                        <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-blue-300 group-hover:text-white transition-colors">CrediLink</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">CPF via CrediLink · Skylers · dados financeiros</p>
+                    </div>
+                    <div className="flex items-center gap-1 text-[9px] text-blue-400/50 group-hover:text-blue-400 transition-colors">
+                      <ChevronRight className="w-3 h-3" />
+                      <span>Fonte financeira</span>
+                    </div>
+                  </motion.button>
+                )}
 
               </div>
             </motion.div>
