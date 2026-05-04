@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Search, AlertTriangle, CheckCircle2, History, FileText,
-  IdCard, Building2, Phone, Syringe, User, CreditCard, Heart,
+  IdCard, Building2, Phone, User, CreditCard, Heart,
   MapPin, Car, Users, Briefcase, Mail, Cog, Skull, ScrollText,
-  Wallet, Cpu, Network, Database, Activity, ShieldCheck,
-  ChevronRight, X, WifiOff, RotateCcw, Eye,
+  Wallet, Cpu, Network, Syringe, Database, Activity, ShieldCheck,
+  ChevronRight, X, RotateCcw, Eye, Camera,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
@@ -15,7 +15,7 @@ type Tipo =
   | "nome" | "cpf" | "pix" | "nis" | "cns" | "placa" | "chassi" | "telefone"
   | "mae" | "pai" | "parentes" | "cep" | "frota" | "cnpj" | "fucionarios"
   | "socios" | "empregos" | "cnh" | "renavam" | "obito" | "rg" | "email"
-  | "motor" | "vacinas";
+  | "motor" | "vacinas" | "foto";
 
 type TabDef = {
   id: Tipo;
@@ -48,6 +48,7 @@ const TABS: TabDef[] = [
   { id: "renavam", label: "Renavam", category: "Veículo", placeholder: "00000000000", hint: "11 dígitos", inputMode: "numeric", icon: ScrollText, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "motor", label: "Motor", category: "Veículo", placeholder: "Nº do motor", hint: "alfanumérico", icon: Cpu },
   { id: "cnh", label: "CNH", category: "Veículo", placeholder: "CPF do condutor", hint: "11 dígitos", inputMode: "numeric", icon: IdCard, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
+  { id: "foto", label: "Foto CNH", category: "Pessoa", placeholder: "CPF", hint: "11 dígitos — foto biométrica da CNH", inputMode: "numeric", icon: Camera, sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "frota", label: "Frota", category: "Veículo", placeholder: "CPF/CNPJ", hint: "frota do titular", icon: Network, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
   { id: "cnpj", label: "CNPJ", category: "Empresa", placeholder: "00000000000000", hint: "14 dígitos", inputMode: "numeric", icon: Building2, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
   { id: "socios", label: "Sócios", category: "Empresa", placeholder: "CNPJ", hint: "14 dígitos", inputMode: "numeric", icon: Users, sanitize: (s) => s.replace(/\D/g, "").slice(0, 14) },
@@ -72,7 +73,8 @@ const PANEL_EXTERNAL_TIPOS = new Set([
   "telefone", "email", "pix", "cep", "placa", "chassi", "renavam", "motor", "cnh",
   "frota", "cnpj", "fucionarios", "socios", "empregos",
 ]);
-type ExternalBase = "sipni" | "sisreg" | "skylers";
+// "foto" não entra no seletor de base — sempre vai direto para DarkFlow
+type ExternalBase = "skylers";
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
@@ -182,7 +184,7 @@ export default function Consultas() {
             Consultas
           </motion.h1>
           <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-            24 fontes operacionais · Geass + Skylers API conectados
+            25 módulos · Geass + Skylers API + DarkFlow conectados
           </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
@@ -353,59 +355,6 @@ export default function Consultas() {
                   </div>
                 </motion.button>
 
-                {(pendingQuery.tipo === "cpf" || pendingQuery.tipo === "nome") && (
-                  <motion.button
-                    whileHover={{ scale: 1.015 }}
-                    whileTap={{ scale: 0.985 }}
-                    onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sisreg")}
-                    className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-rose-400/30 hover:from-rose-500/[0.07] transition-all duration-200 text-left overflow-hidden"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 group-hover:bg-rose-500/15 transition-colors">
-                        <Building2 className="w-4 h-4 text-rose-400" />
-                      </div>
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-                        <WifiOff className="w-2.5 h-2.5 text-amber-400" />
-                        <span className="text-[8px] uppercase tracking-wider text-amber-400 font-semibold">Indisponível</span>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">SISREG-III</p>
-                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">Sistema de Regulação em Saúde · Ministério da Saúde</p>
-                    </div>
-                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground/40 group-hover:text-rose-400/60 transition-colors">
-                      <span>Consultar mesmo assim</span>
-                      <ChevronRight className="w-3 h-3" />
-                    </div>
-                  </motion.button>
-                )}
-
-                {(["cpf", "cns", "nome", "vacinas"] as Tipo[]).includes(pendingQuery.tipo) && (
-                  <motion.button
-                    whileHover={{ scale: 1.015 }}
-                    whileTap={{ scale: 0.985 }}
-                    onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "sipni")}
-                    className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-violet-400/30 hover:from-violet-500/[0.07] transition-all duration-200 text-left overflow-hidden"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="p-2 rounded-xl bg-violet-500/10 border border-violet-500/20 group-hover:bg-violet-500/15 transition-colors">
-                        <Syringe className="w-4 h-4 text-violet-400" />
-                      </div>
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-                        <WifiOff className="w-2.5 h-2.5 text-amber-400" />
-                        <span className="text-[8px] uppercase tracking-wider text-amber-400 font-semibold">Credenciais</span>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-foreground/90 group-hover:text-white transition-colors">SI-PNI</p>
-                      <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">Programa Nacional de Imunizações · DATASUS</p>
-                    </div>
-                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground/40 group-hover:text-violet-400/60 transition-colors">
-                      <span>Consultar mesmo assim</span>
-                      <ChevronRight className="w-3 h-3" />
-                    </div>
-                  </motion.button>
-                )}
               </div>
             </motion.div>
           )}

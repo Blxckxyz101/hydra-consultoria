@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Star,
   FileText,
+  Camera,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -171,9 +172,51 @@ function isParsed(d: unknown): d is Parsed {
   );
 }
 
+// Humaniza chaves com underscores e números (ex: MARCA_MODEL0 → Marca/Modelo)
+const KEY_FIXES: Record<string, string> = {
+  "MARCA_MODEL0": "Marca / Modelo",
+  "MARCA_MODELO": "Marca / Modelo",
+  "PROPRIETARIO_NOME": "Proprietário",
+  "PROPRIETARIO_CPF": "CPF do Proprietário",
+  "ESTADO_ENDERECO": "Estado (Endereço)",
+  "TIPO_VEICULO": "Tipo de Veículo",
+  "ANO_MODELO": "Ano do Modelo",
+  "ANO_FABRICACAO": "Ano de Fabricação",
+  "HABILITADO_PARA_DIRIGIR": "Habilitado p/ Dirigir",
+  "DATA_NASCIMENTO": "Data de Nascimento",
+  "NOME_MAE": "Nome da Mãe",
+  "NOME_PAI": "Nome do Pai",
+  "RAZAO_SOCIAL": "Razão Social",
+  "NOME_FANTASIA": "Nome Fantasia",
+  "CAPITAL_SOCIAL": "Capital Social",
+  "NATUREZA_JURIDICA": "Natureza Jurídica",
+  "DATA_ABERTURA": "Data de Abertura",
+  "DATA_SITUACAO": "Data da Situação",
+  "ULTIMA_ATUALIZACAO": "Última Atualização",
+};
+
+function humanizeKey(key: string): string {
+  if (KEY_FIXES[key]) return KEY_FIXES[key];
+  return key
+    .replace(/_/g, " ")
+    .replace(/0$/, "O") // MODELO0 → MODELOO não, apenas substituir trailing 0 por O em casos específicos
+    .trim();
+}
+
+// Filtra valores vazios/inúteis
+function isUselessValue(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (!v || v === "none" || v === "null" || v === "undefined") return true;
+  if (v === "sem informação" || v === "sem informacao" || v === "sem info") return true;
+  if (v === "não informado" || v === "nao informado") return true;
+  if (/^r\$\s*0[,.]00$/.test(v)) return false; // manter multas zeradas pois são informativas
+  return false;
+}
+
 function isImportantField(key: string): boolean {
   const k = key.toUpperCase();
-  return ["NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG", "DATA NASCIMENTO", "NASCIMENTO", "NOME MÃE", "NOME PAI"].some((imp) => k.includes(imp));
+  const important = ["NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "RAZAO SOCIAL", "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG", "DATA NASCIMENTO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "FOTO_URL"];
+  return important.some((imp) => k.includes(imp));
 }
 
 function fieldGradient(key: string): string {
@@ -200,12 +243,26 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
 
   const parsed: Parsed = useMemo(() => {
-    if (isParsed(result.data)) return result.data;
+    if (isParsed(result.data)) {
+      const d = result.data as Parsed;
+      // Apply humanizeKey and filter useless values
+      const cleanFields = d.fields
+        .filter((f) => f.key !== "FOTO_URL" && !isUselessValue(f.value))
+        .map((f) => ({ key: humanizeKey(f.key), value: f.value }));
+      const fotoField = d.fields.find((f) => f.key === "FOTO_URL");
+      return {
+        fields: fotoField ? [fotoField, ...cleanFields] : cleanFields,
+        sections: d.sections,
+        raw: d.raw,
+      };
+    }
     return { fields: [], sections: [], raw: typeof result.data === "string" ? result.data : JSON.stringify(result.data ?? {}) };
   }, [result.data]);
 
-  const headlineFields = parsed.fields.filter((f) => isImportantField(f.key)).slice(0, 4);
-  const otherFields = parsed.fields.filter((f) => !headlineFields.includes(f));
+  const photoUrl = parsed.fields.find((f) => f.key === "FOTO_URL")?.value;
+  const displayFields = parsed.fields.filter((f) => f.key !== "FOTO_URL");
+  const headlineFields = displayFields.filter((f) => isImportantField(f.key)).slice(0, 4);
+  const otherFields = displayFields.filter((f) => !headlineFields.includes(f));
 
   const exportText = useMemo(() => {
     const lines = [
@@ -367,6 +424,43 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
           <SaveToDossieButton tipo={tipo} query={query} data={result.data} />
         </div>
       </div>
+
+      {/* Foto CNH card */}
+      {photoUrl && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-sky-500/5 backdrop-blur-xl p-5 flex flex-col sm:flex-row items-center gap-5"
+        >
+          <div className="relative shrink-0">
+            <div className="absolute inset-0 rounded-xl bg-cyan-400/20 blur-xl" />
+            <img
+              src={photoUrl}
+              alt="Foto CNH"
+              className="relative w-32 h-40 object-cover rounded-xl border-2 border-cyan-400/40 shadow-[0_0_30px_rgba(34,211,238,0.3)]"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          </div>
+          <div className="flex flex-col gap-2 text-center sm:text-left">
+            <div className="flex items-center gap-2 justify-center sm:justify-start">
+              <Camera className="w-4 h-4 text-cyan-400" />
+              <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-cyan-300">Foto CNH · DarkFlow</span>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">Foto biométrica encontrada na base de dados da CNH.</p>
+            <div className="flex gap-2 justify-center sm:justify-start flex-wrap">
+              <CopyButton text={photoUrl} label="Copiar URL" />
+              <a
+                href={photoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
+              >
+                <Eye className="w-3 h-3" /> Abrir original
+              </a>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Headline cards (most important fields) */}
       {headlineFields.length > 0 && (

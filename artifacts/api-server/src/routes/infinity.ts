@@ -120,7 +120,7 @@ const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
   "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
   "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
-  "motor", "vacinas",
+  "motor", "vacinas", "foto",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
@@ -1104,8 +1104,7 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
   const bases = [
     { id: "geass",    name: "Geass API",       description: "Provedor OSINT principal · 24 tipos",           url: PROVIDER_BASE.replace("/api/consulta", "/") },
     { id: "skylers",  name: "Skylers API",     description: "Provedor OSINT avançado · 90+ módulos",         url: `${SKYLERS_BASE}/token/info?token=${SKYLERS_TOKEN}` },
-    { id: "sipni",    name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações",             url: "https://sipni.datasus.gov.br" },
-    { id: "sisreg",   name: "SISREG-III",       description: "Sistema de Regulação em Saúde",                url: "https://sisregiii.saude.gov.br" },
+    { id: "darkflow", name: "DarkFlow",           description: "Foto CNH · consulta biométrica por CPF",      url: "https://darkflowapis.space" },
     { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
     { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
     { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
@@ -1237,6 +1236,39 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
       error: `Seu limite diário de ${userLimit} consultas foi atingido. Tente novamente amanhã.`,
       rateLimited: true,
       limitInfo: { used: userCount, limit: userLimit },
+    });
+    return;
+  }
+
+  // ─── Foto CNH (DarkFlow) ─────────────────────────────────────────────────
+  if (tipo === "foto") {
+    const cpfNum = onlyDigits(dadosRaw);
+    if (cpfNum.length !== 11) {
+      res.status(400).json({ error: "CPF inválido (11 dígitos)" });
+      return;
+    }
+    const fotoCtrl = new AbortController();
+    const fotoTimer = setTimeout(() => fotoCtrl.abort(), 15_000);
+    const fotoResult = await callFoto(cpfNum, fotoCtrl.signal);
+    clearTimeout(fotoTimer);
+    const fotoFields: Parsed["fields"] = [{ key: "CPF", value: cpfNum }];
+    if (fotoResult.ok && fotoResult.photoUrl) {
+      fotoFields.push({ key: "FOTO_URL", value: fotoResult.photoUrl });
+      fotoFields.push({ key: "Fonte", value: "DarkFlow · Biometria CNH" });
+    }
+    const fotoParsed: Parsed = {
+      fields: fotoFields,
+      sections: [],
+      raw: fotoResult.ok ? `Foto CNH encontrada: ${fotoResult.photoUrl}` : `Foto não encontrada: ${fotoResult.error ?? "CPF sem foto cadastrada"}`,
+    };
+    await logConsulta({ tipo: "foto", query: cpfNum, username, success: fotoResult.ok, result: fotoParsed });
+    bumpCaches(username);
+    res.json({
+      success: fotoResult.ok,
+      tipo: "foto",
+      query: cpfNum,
+      data: fotoParsed,
+      error: fotoResult.ok ? null : (fotoResult.error ?? "Foto não encontrada para este CPF"),
     });
     return;
   }
@@ -1419,9 +1451,11 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
 
   const systemPrompt =
     "Você é o assistente do painel Infinity Search, uma plataforma OSINT brasileira. Responda em português brasileiro, de forma clara, objetiva e profissional. " +
-    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, etc.). " +
+    "Use a ferramenta consultar_infinity SOMENTE quando a mensagem ATUAL do usuário pedir EXPLICITAMENTE uma nova busca/consulta de um dado específico (CPF, CNPJ, telefone, placa, e-mail, foto de CNH, etc.). " +
     "NÃO use a ferramenta em resposta a: agradecimentos, saudações, perguntas sobre resultados anteriores, confirmações ou qualquer mensagem que não contenha um pedido claro de nova consulta. " +
     "Nunca repita consultas de mensagens anteriores. Nunca invente dados. " +
+    "IMPORTANTE: quando uma foto CNH for encontrada, coloque a URL da imagem EXATAMENTE em uma linha separada, sozinha, sem nenhum outro texto na mesma linha. " +
+    "Exemplo correto de resposta com foto:\nEncontrei a foto CNH:\n\nhttps://url-da-foto.jpg\n\nCPF consultado: 12345678901. " +
     "Suas respostas podem ser lidas em voz alta — seja conciso, use frases naturais e evite listas muito longas.";
 
   const cleanMessages = messages.filter(
@@ -1470,9 +1504,10 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
             // Photo CNH lookup via DarkFlow
             const fotoResult = await callFoto(dados, new AbortController().signal);
             if (fotoResult.ok && fotoResult.photoUrl) {
-              toolContent = `Foto CNH encontrada: ${fotoResult.photoUrl}`;
+              // URL isolada na última linha para renderMarkdown detectar como imagem
+              toolContent = `Foto CNH encontrada para o CPF ${dados}.\n\n${fotoResult.photoUrl}`;
             } else {
-              toolContent = `Foto não encontrada: ${fotoResult.error ?? "CPF sem foto cadastrada na CNH"}`;
+              toolContent = `Foto CNH não encontrada para o CPF ${dados}: ${fotoResult.error ?? "CPF sem foto cadastrada na CNH"}`;
             }
           } else if (base === "skylers") {
             const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
@@ -1539,8 +1574,8 @@ function requireAuthOrInternal(req: import("express").Request, res: import("expr
 }
 
 router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
-  const source = req.params.source as "sipni" | "sisreg" | "skylers";
-  if (source !== "sipni" && source !== "sisreg" && source !== "skylers") {
+  const source = req.params.source as "skylers";
+  if (source !== "skylers") {
     res.status(400).json({ success: false, error: "Fonte inválida." });
     return;
   }
@@ -1589,33 +1624,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     return;
   }
 
-  try {
-    let result: { success: boolean; data?: string; error?: string };
-
-    if (source === "sipni") {
-      const { sipniSearch } = await import("../scrapers/sipni.js");
-      const tipoSipni = (["cpf", "nome", "cns"].includes(tipo) ? tipo : "cpf") as "cpf" | "nome" | "cns";
-      result = await sipniSearch(tipoSipni, dadosStr);
-    } else {
-      const { sisregSearch } = await import("../scrapers/sisreg.js");
-      const tipoSisreg = (["cpf", "nome"].includes(tipo) ? tipo : "cpf") as "cpf" | "nome";
-      result = await sisregSearch(tipoSisreg, dadosStr);
-    }
-
-    const username = (req as unknown as { user?: { username?: string } }).user?.username ?? "bot";
-    await logConsulta({
-      tipo: `${source}:${tipo}`,
-      query: dadosStr,
-      username,
-      success: result.success,
-      result: { source, data: result.data?.slice(0, 2000) },
-    });
-
-    res.json(result);
-  } catch (err) {
-    req.log.error({ err }, "External scraper error");
-    res.status(500).json({ success: false, error: "Erro interno ao consultar fonte externa." });
-  }
+  res.status(400).json({ success: false, error: "Fonte inválida." });
 });
 
 // ─── Panel PIN session auth ─────────────────────────────────────────────────
