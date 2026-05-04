@@ -5,7 +5,7 @@ import {
   Wallet, BarChart2, FileText, Car, CheckCircle2, XCircle,
   Loader2, MessageCircle, Scale, Building2, Award, Gift,
   AlertTriangle, Receipt, Star, ChevronDown, ChevronUp, Copy, Check,
-  Camera, Fingerprint, Home,
+  Camera, Fingerprint, Home, GitBranch,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -26,6 +26,7 @@ type PhoneEntry  = { ddd: string; numero: string; prioridade: string; classifica
 type Address     = { logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; uf: string; cep: string; lat?: number; lng?: number };
 type Employment  = { empresa: string; cnpj: string; cargo: string; admissao: string; demissao: string; salario: string };
 type Relative    = { cpf: string; nome: string; nasc: string; sexo: string; relacao: string; origem: string };
+type RelCat      = "pai" | "mae" | "conjuge" | "filho" | "filha" | "irmao" | "irma" | "outro";
 
 // ─── Modules list ─────────────────────────────────────────────────────────────
 const MODULES = [
@@ -48,7 +49,7 @@ const MODULES = [
   { tipo: "titulo",     label: "Título Eleitor", skylers: true  },
 ];
 
-// ─── Normalize API fields (handles both tuple[] and {key,value}[] formats) ───
+// ─── Normalize API fields ─────────────────────────────────────────────────────
 function normalizeFields(raw: unknown): [string, string][] {
   if (!Array.isArray(raw) || raw.length === 0) return [];
   const first = raw[0];
@@ -89,6 +90,46 @@ function mergeRaw(results: (ModuleResult | undefined)[]): string {
   return results.map(r => r?.data?.raw ?? "").join("\n");
 }
 
+// ─── Date parsing & duration ──────────────────────────────────────────────────
+function parseDateBR(s: string): Date | null {
+  if (!s) return null;
+  const m1 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m1) return new Date(parseInt(m1[3]), parseInt(m1[2]) - 1, parseInt(m1[1]));
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m2) return new Date(parseInt(m2[1]), parseInt(m2[2]) - 1, parseInt(m2[3]));
+  return null;
+}
+function calcDuration(start: string, end: string): string {
+  const s = parseDateBR(start);
+  if (!s) return "";
+  const e = end ? (parseDateBR(end) ?? new Date()) : new Date();
+  const months = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth());
+  if (months < 1) return "< 1 mês";
+  if (months < 12) return `${months} mes${months > 1 ? "es" : ""}`;
+  const yrs = Math.floor(months / 12);
+  const rem = months % 12;
+  return `${yrs} ano${yrs > 1 ? "s" : ""}${rem > 0 ? ` ${rem}m` : ""}`;
+}
+
+// ─── Relative categorizer ─────────────────────────────────────────────────────
+function categorizeRel(rel: Relative): RelCat {
+  const r = (rel.relacao + " " + rel.nome)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/gi, " ");
+  if (/\bpai\b|father|genitor\b/.test(r)) return "pai";
+  if (/\bmae\b|mother|genitora\b/.test(r)) return "mae";
+  if (/conjuge|esposa|esposo|marido|companheiro|companheira|wife|husband/.test(r)) return "conjuge";
+  if (/\bfilha\b/.test(r)) return "filha";
+  if (/\bfilho\b/.test(r)) return "filho";
+  if (/\bfilh/.test(r)) return rel.sexo?.toLowerCase() === "f" ? "filha" : "filho";
+  if (/\birma\b/.test(r)) return "irma";
+  if (/\birmao\b/.test(r)) return "irmao";
+  if (/\birm/.test(r)) return rel.sexo?.toLowerCase() === "f" ? "irma" : "irmao";
+  return "outro";
+}
+
 // ─── Fetch one module ─────────────────────────────────────────────────────────
 async function fetchModule(tipo: string, dados: string, skylers: boolean): Promise<ModuleResult> {
   const token = localStorage.getItem("infinity_token");
@@ -100,7 +141,6 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean): Promi
       body: JSON.stringify({ tipo, dados }),
     });
     const json = await r.json() as { success: boolean; data?: unknown; error?: string };
-    // Even on success=false, keep the data if it exists (some modules return partial data)
     let parsed: ParsedData | undefined;
     if (json.data && typeof json.data === "object") {
       const d = json.data as Record<string, unknown>;
@@ -126,30 +166,27 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const sources = ["cpf", "cpfbasico", "titulo", "cnh"];
   const f = mergeFields(sources.map(k => results[k]));
   const raw = mergeRaw(sources.map(k => results[k]));
-
-  const nome              = gf(f,"NOME","NOME COMPLETO","NOMECOMPLETO")                   || rxv(raw,"NOME COMPLETO","NOME");
-  const cpfVal            = gf(f,"CPF","NUMERO CPF","NUMEROCPF")                          || rxv(raw,"CPF");
-  const rg                = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE")           || rxv(raw,"RG","IDENTIDADE");
-  const mae               = gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1")     || rxv(raw,"NOME DA MÃE","NOMEMAE","MAE","FILIACAO 1");
-  const pai               = gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2")     || rxv(raw,"NOME DO PAI","NOMEPAI","PAI","FILIACAO 2");
+  const nome              = gf(f,"NOME","NOME COMPLETO","NOMECOMPLETO")                     || rxv(raw,"NOME COMPLETO","NOME");
+  const cpfVal            = gf(f,"CPF","NUMERO CPF","NUMEROCPF")                            || rxv(raw,"CPF");
+  const rg                = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE")             || rxv(raw,"RG","IDENTIDADE");
+  const mae               = gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1")       || rxv(raw,"NOME DA MÃE","NOMEMAE","MAE","FILIACAO 1");
+  const pai               = gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2")       || rxv(raw,"NOME DO PAI","NOMEPAI","PAI","FILIACAO 2");
   const naturalidade      = gf(f,"MUNICIPIO NASCIMENTO","NATURALIDADE","CIDADE NASCIMENTO") || rxv(raw,"NATURALIDADE","MUNICIPIO.*NASC");
   const dataNascimento    = gf(f,"DATA NASCIMENTO","DATANASCIMENTO","DT NASCIMENTO","NASCIMENTO") || rxv(raw,"DATA.*NASC","NASCIMENTO");
-  const sexo              = gf(f,"SEXO","GENERO","GÊNERO")                                || rxv(raw,"SEXO","GÊNERO");
-  const estadoCivil       = gf(f,"ESTADO CIVIL","ESTADOCIVIL")                            || rxv(raw,"ESTADO CIVIL");
-  const orgaoEmissor      = gf(f,"ORGAO EMISSOR","ORGAOEMISSOR","ÓRGÃO EMISSOR")          || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
-  const dataEmissao       = gf(f,"DATA EMISSAO","DATAEMISSAO","DATA EMISSÃO")             || rxv(raw,"DATA.*EMIS");
+  const sexo              = gf(f,"SEXO","GENERO","GÊNERO")                                  || rxv(raw,"SEXO","GÊNERO");
+  const estadoCivil       = gf(f,"ESTADO CIVIL","ESTADOCIVIL")                              || rxv(raw,"ESTADO CIVIL");
+  const orgaoEmissor      = gf(f,"ORGAO EMISSOR","ORGAOEMISSOR","ÓRGÃO EMISSOR")            || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
+  const dataEmissao       = gf(f,"DATA EMISSAO","DATAEMISSAO","DATA EMISSÃO")               || rxv(raw,"DATA.*EMIS");
   const situacaoCadastral = gf(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
-  const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE")               || rxv(raw,"SANGUE","TIPO SANG");
-  const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO")               || rxv(raw,"TITULO.*ELEITOR");
-  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                     || rxv(raw,"PIS","NIS");
-  const nis               = gf(f,"NIS","PIS","NUMERONIS")                                 || rxv(raw,"NIS");
-  const email             = gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL")                        || rxv(raw,"EMAIL","E-MAIL");
-
+  const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE")                 || rxv(raw,"SANGUE","TIPO SANG");
+  const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO")                 || rxv(raw,"TITULO.*ELEITOR");
+  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                       || rxv(raw,"PIS","NIS");
+  const nis               = gf(f,"NIS","PIS","NUMERONIS")                                   || rxv(raw,"NIS");
+  const email             = gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL")                          || rxv(raw,"EMAIL","E-MAIL");
   const addr = buildAddresses(results)[0];
   const enderecoPrincipal = addr
     ? [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(", ")
     : rxv(raw,"LOGRADOURO","ENDERECO","RUA") || "";
-
   return { nome, cpf: cpfVal, rg, mae, pai, naturalidade, nacionalidade: "BRASIL",
     dataNascimento, sexo, estadoCivil, orgaoEmissor, dataEmissao, situacaoCadastral,
     tipoSanguineo, tituloEleitor, pis, nis, email, enderecoPrincipal };
@@ -159,14 +196,12 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
 function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
   const phones: PhoneEntry[] = [];
   const seen = new Set<string>();
-
   function add(ddd: string, num: string, prio = "", cls = "", data = "", tipo = "") {
     const key = `${ddd}${num.replace(/\D/g,"")}`;
     if (seen.has(key) || num.replace(/\D/g,"").length < 7) return;
     seen.add(key);
     phones.push({ ddd, numero: num.replace(/\D/g,""), prioridade: prio, classificacao: cls, data, tipo });
   }
-
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
     for (const sec of mod.data.sections) {
@@ -186,15 +221,12 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
       if (!/TELEFON|CELULAR|FONE|PHONE/i.test(k)) continue;
       const clean = v.replace(/\D/g,"");
       if (clean.length >= 8) {
-        const ddd = clean.length >= 10 ? clean.slice(0,2) : "";
-        const num = clean.length >= 10 ? clean.slice(2) : clean;
-        add(ddd, num, "", "", "", /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "");
+        add(clean.length >= 10 ? clean.slice(0,2) : "", clean.length >= 10 ? clean.slice(2) : clean, "", "", "",
+          /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "");
       }
     }
-    const rawPhones = mod.data.raw.matchAll(/\((\d{2})\)\s*(\d{4,5}[-\s]?\d{4})/g);
-    for (const m of rawPhones) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
-    const rawPhones2 = mod.data.raw.matchAll(/\b(\d{2})\s+(\d{4,5}\d{4})\b/g);
-    for (const m of rawPhones2) {
+    for (const m of mod.data.raw.matchAll(/\((\d{2})\)\s*(\d{4,5}[-\s]?\d{4})/g)) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
+    for (const m of mod.data.raw.matchAll(/\b(\d{2})\s+(\d{4,5}\d{4})\b/g)) {
       if (parseInt(m[1]) >= 11 && parseInt(m[1]) <= 99) add(m[1], m[2], "", "", "", "");
     }
   }
@@ -205,15 +237,12 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
 function buildAddresses(results: Record<string, ModuleResult>): Address[] {
   const out: Address[] = [];
   const seen = new Set<string>();
-
   function addAddr(a: Address) {
     const key = `${a.logradouro}|${a.numero}|${a.cep}`.toLowerCase().trim();
     if (!key || key === "||" || (!a.logradouro && !a.cep)) return;
     if (seen.has(key)) return;
-    seen.add(key);
-    out.push(a);
+    seen.add(key); out.push(a);
   }
-
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
     for (const sec of mod.data.sections) {
@@ -232,32 +261,18 @@ function buildAddresses(results: Record<string, ModuleResult>): Address[] {
     }
     const f = mod.data.fields;
     const logradouro = gf(f,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO","LOGRADOUROCOMPLETO");
-    if (logradouro) {
-      addAddr({
-        logradouro,
-        numero:      gf(f,"NUMERO","NÚMERO","NUM","NUMEROIMOVEL"),
-        complemento: gf(f,"COMPLEMENTO","COMPL","APTO"),
-        bairro:      gf(f,"BAIRRO"),
-        cidade:      gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"),
-        uf:          gf(f,"UF","ESTADO","UFENDERECO"),
-        cep:         gf(f,"CEP","CEPENDERECO"),
-      });
-    }
-    const raw = mod.data.raw;
-    const cepMatches = raw.matchAll(/CEP[\s:·]+(\d{5}-?\d{3})/gi);
-    for (const cm of cepMatches) {
-      const cep = cm[1];
-      const idx = cm.index ?? 0;
-      const chunk = raw.slice(Math.max(0, idx - 400), idx + 200);
-      addAddr({
-        logradouro:  rxv(chunk,"LOGRADOURO","ENDERECO","RUA","AV") || "",
-        numero:      rxv(chunk,"NUMERO","N[UÚ]MERO","NUM") || "",
-        complemento: rxv(chunk,"COMPLEMENTO","COMPL","APTO") || "",
-        bairro:      rxv(chunk,"BAIRRO") || "",
-        cidade:      rxv(chunk,"CIDADE","MUNICIPIO","MUNICÍPIO") || "",
-        uf:          chunk.match(/\bUF[\s:·]+([A-Z]{2})\b/i)?.[1] ?? "",
-        cep,
-      });
+    if (logradouro) addAddr({
+      logradouro, numero: gf(f,"NUMERO","NÚMERO","NUM","NUMEROIMOVEL"),
+      complemento: gf(f,"COMPLEMENTO","COMPL","APTO"), bairro: gf(f,"BAIRRO"),
+      cidade: gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"), uf: gf(f,"UF","ESTADO","UFENDERECO"), cep: gf(f,"CEP","CEPENDERECO"),
+    });
+    for (const cm of mod.data.raw.matchAll(/CEP[\s:·]+(\d{5}-?\d{3})/gi)) {
+      const cep = cm[1]; const idx = cm.index ?? 0;
+      const chunk = mod.data.raw.slice(Math.max(0, idx - 400), idx + 200);
+      addAddr({ logradouro: rxv(chunk,"LOGRADOURO","ENDERECO","RUA","AV") || "",
+        numero: rxv(chunk,"NUMERO","N[UÚ]MERO","NUM") || "", complemento: rxv(chunk,"COMPLEMENTO","COMPL","APTO") || "",
+        bairro: rxv(chunk,"BAIRRO") || "", cidade: rxv(chunk,"CIDADE","MUNICIPIO","MUNICÍPIO") || "",
+        uf: chunk.match(/\bUF[\s:·]+([A-Z]{2})\b/i)?.[1] ?? "", cep });
     }
   }
   return out;
@@ -272,8 +287,7 @@ function buildEmployments(r?: ModuleResult): Employment[] {
       const empresa = item.match(/(?:EMPRESA|RAZAO SOCIAL|EMPREGADOR|NOMEEMPREGADOR)[\s:·]+([^|·\n]+)/i)?.[1]?.trim()
                    ?? item.match(/^([^|·\n:]{5,60})(?:\s*[|·]|$)/)?.[1]?.trim() ?? "";
       out.push({
-        empresa,
-        cnpj:     item.match(/CNPJ[\s:·]+(\d[\d.\-/]+)/i)?.[1] ?? "",
+        empresa, cnpj: item.match(/CNPJ[\s:·]+(\d[\d.\-/]+)/i)?.[1] ?? "",
         cargo:    item.match(/(?:CARGO|FUNCAO|FUNÇÃO|CBO)[\s:·]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
         admissao: item.match(/(?:ADMISSAO|ADMISSÃO|ENTRADA|DTADMISSAO|DATA ADMIS)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
         demissao: item.match(/(?:DEMISSAO|DEMISSÃO|SAIDA|DTRESCISAO|DATA DEMIS)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
@@ -284,151 +298,99 @@ function buildEmployments(r?: ModuleResult): Employment[] {
   return out.filter(e => e.empresa);
 }
 
-// ─── Build relatives (parentes) ───────────────────────────────────────────────
-// Handles both bullet-per-relative and consecutive key-value pair formats
+// ─── Build relatives ──────────────────────────────────────────────────────────
 function buildRelatives(res?: ModuleResult): Relative[] {
   if (!res?.data) return [];
   const relatives: Relative[] = [];
   const seen = new Set<string>();
-
   function addRel(r: Partial<Relative>) {
     const key = (r.cpf || r.nome || "").toLowerCase();
     if (!key || seen.has(key)) return;
     seen.add(key);
-    relatives.push({
-      cpf:     r.cpf     || "",
-      nome:    r.nome    || "",
-      nasc:    r.nasc    || "",
-      sexo:    r.sexo    || "",
-      relacao: r.relacao || "",
-      origem:  r.origem  || "",
-    });
+    relatives.push({ cpf: r.cpf||"", nome: r.nome||"", nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
   }
-
-  // Also scan raw text for relatives
   function scanRaw(raw: string) {
-    // Pattern: NOME followed by CPF on nearby text
     const entries = raw.split(/\bNOME[\s:·]+/i);
     for (let i = 1; i < entries.length; i++) {
       const chunk = entries[i].slice(0, 300);
-      const nome  = chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]?.trim() ?? "";
-      const cpf   = chunk.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
-      const nasc  = chunk.match(/(?:NASC|NASCIMENTO|DATA_NASC)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
-      const sexo  = chunk.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
+      const nome = chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]?.trim() ?? "";
+      const cpf  = chunk.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
+      const nasc = chunk.match(/(?:NASC|NASCIMENTO|DATA_NASC)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+      const sexo = chunk.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
       if (nome || cpf) addRel({ nome, cpf, nasc, sexo });
     }
   }
-
   for (const sec of res.data.sections) {
     const items = sec.items;
     if (!items.length) continue;
-
-    // Detect if items are complete records (each item has multiple fields like NOME + CPF)
     const isFullRecord = items.some(it =>
-      (it.includes("CPF") || it.includes("NOME")) &&
-      (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
+      (it.includes("CPF") || it.includes("NOME")) && (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
     );
-
     if (isFullRecord) {
-      // Each item is one complete relative
       for (const item of items) {
         const cpf  = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
-        const nome = (
-          item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1] ||
-          item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
-        )?.trim() ?? "";
+        const nome = (item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
+                  || item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1])?.trim() ?? "";
         const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
         const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
         const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
         if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: sec.name, origem });
       }
     } else {
-      // Items are individual key-value pairs — group into relatives
       let cur: Partial<Relative> = { relacao: sec.name };
       for (const item of items) {
         const kv = item.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9 ]+):\s*(.+)$/i);
         if (!kv) continue;
-        const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,"");
-        const v = kv[2].trim();
+        const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,""); const v = kv[2].trim();
         const isNome = k === "NOME" || k === "NOMERELACIONADO" || k === "NOMEPARTE";
-        if (isNome && cur.nome) {
-          addRel(cur);
-          cur = { relacao: sec.name };
-        }
-        if (isNome)                                                    cur.nome   = v;
+        if (isNome && cur.nome) { addRel(cur); cur = { relacao: sec.name }; }
+        if (isNome) cur.nome = v;
         else if (k === "CPF" || k === "CPFREL" || k === "CPFRELACIONADO") cur.cpf = v.replace(/\D/g,"");
-        else if (k.includes("NASC") || k.includes("DATANASC"))             cur.nasc = v;
-        else if (k === "SEXO")                                             cur.sexo = v;
-        else if (k.includes("ORIGEM"))                                     cur.origem = v;
-        else if (k.includes("RELAC") || k.includes("PARENT"))             cur.relacao = v;
+        else if (k.includes("NASC") || k.includes("DATANASC")) cur.nasc = v;
+        else if (k === "SEXO") cur.sexo = v;
+        else if (k.includes("ORIGEM")) cur.origem = v;
+        else if (k.includes("RELAC") || k.includes("PARENT")) cur.relacao = v;
       }
       addRel(cur);
     }
   }
-
-  // Fallback: scan raw text if no structured data
   if (relatives.length === 0 && res.data.raw) scanRaw(res.data.raw);
-
-  // Also scan fields for any relative data
   if (relatives.length === 0 && res.data.fields.length > 0) {
-    // Treat fields as key-value pairs for one relative
-    const cpf  = gf(res.data.fields, "CPF","CPFREL");
-    const nome = gf(res.data.fields, "NOME","NOMERELACIONADO");
-    const nasc = gf(res.data.fields, "NASC","NASCIMENTO","DATANASCIMENTO");
+    const cpf = gf(res.data.fields,"CPF","CPFREL"); const nome = gf(res.data.fields,"NOME","NOMERELACIONADO");
+    const nasc = gf(res.data.fields,"NASC","NASCIMENTO","DATANASCIMENTO");
     if (cpf || nome) addRel({ cpf, nome, nasc });
   }
-
   return relatives;
 }
 
-// ─── Extract photo from foto module or fallback ───────────────────────────────
+// ─── Extract photo ────────────────────────────────────────────────────────────
 function extractPhotoFromResult(res: ModuleResult): string | null {
   if (!res?.data) return null;
   const raw = res.data.raw ?? "";
-
-  // Check raw: might be a data URI, a URL, or raw base64
   if (raw) {
     const trimmed = raw.trim().replace(/\s/g, "");
     if (raw.trim().startsWith("data:image")) return raw.trim();
     if (/^https?:\/\//.test(raw.trim())) return raw.trim();
-    if (trimmed.length > 500 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 200))) {
-      return `data:image/jpeg;base64,${trimmed}`;
-    }
+    if (trimmed.length > 500 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 200))) return `data:image/jpeg;base64,${trimmed}`;
   }
-
-  // Check all fields - try any field that looks like photo data
-  for (const [k, v] of res.data.fields) {
+  for (const [, v] of res.data.fields) {
     if (!v) continue;
     if (v.trim().startsWith("data:image")) return v.trim();
     if (/^https?:\/\//.test(v.trim())) return v.trim();
-    // Long base64-like value
     const clean = v.replace(/\s/g, "");
-    if (clean.length > 200 && /^[A-Za-z0-9+/=]+$/.test(clean.slice(0, 100))) {
-      return `data:image/jpeg;base64,${clean}`;
-    }
-    // Known photo field names
-    if (/FOTO|URL|BASE64|IMG|IMAGE|FOTO_URL/i.test(k) && v.length > 50) {
-      return `data:image/jpeg;base64,${clean}`;
-    }
+    if (clean.length > 200 && /^[A-Za-z0-9+/=]+$/.test(clean.slice(0, 100))) return `data:image/jpeg;base64,${clean}`;
   }
-
   return null;
 }
-
 function extractPhoto(results: Record<string, ModuleResult>): string | null {
   const fotoRes = results["foto"];
-  if (fotoRes?.data) {
-    const p = extractPhotoFromResult(fotoRes);
-    if (p) return p;
-  }
-  // Fallback: check cpfbasico / cpf
+  if (fotoRes?.data) { const p = extractPhotoFromResult(fotoRes); if (p) return p; }
   for (const key of ["cpfbasico", "cpf"]) {
     const res = results[key];
     if (!res?.data) continue;
     for (const [k, v] of res.data.fields) {
-      if (/FOTO|URL_FOTO|IMAGEM|BASE64/i.test(k) && v && v.length > 50) {
+      if (/FOTO|URL_FOTO|IMAGEM|BASE64/i.test(k) && v && v.length > 50)
         return v.startsWith("http") ? v : v.startsWith("data:") ? v : `data:image/jpeg;base64,${v}`;
-      }
     }
   }
   return null;
@@ -446,7 +408,7 @@ function fmtPhone(ddd: string, num: string) {
   return ddd ? `(${ddd}) ${n}` : n;
 }
 
-// ─── Small copy button ────────────────────────────────────────────────────────
+// ─── Copy button ──────────────────────────────────────────────────────────────
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
@@ -466,11 +428,7 @@ function SectionHeader({ icon: Icon, title, count }: { icon: IconProp; title: st
         <Icon className="w-4.5 h-4.5" style={{ color: "var(--color-primary)" }} />
         <h2 className="text-lg font-bold text-white flex items-center gap-2">
           {title}
-          {count !== undefined && (
-            <span className="text-sm font-normal" style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>
-              ({count})
-            </span>
-          )}
+          {count !== undefined && <span className="text-sm font-normal" style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>({count})</span>}
         </h2>
       </div>
       <div className="h-px mt-2" style={{ background: "linear-gradient(to right, var(--color-primary), transparent)" }} />
@@ -488,11 +446,7 @@ function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = 
         <Icon className="w-4.5 h-4.5 shrink-0" style={{ color: "var(--color-primary)" }} />
         <span className="text-lg font-bold text-white flex-1">
           {title}
-          {count !== undefined && (
-            <span className="text-sm font-normal ml-2" style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>
-              ({count})
-            </span>
-          )}
+          {count !== undefined && <span className="text-sm font-normal ml-2" style={{ color: "color-mix(in srgb, var(--color-primary) 55%, transparent)" }}>({count})</span>}
         </span>
         <span className="text-white/30 group-hover:text-white/60 transition-colors">
           {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -510,7 +464,7 @@ function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = 
   );
 }
 
-// ─── Identity Card ─────────────────────────────────────────────────────────────
+// ─── Identity Card ────────────────────────────────────────────────────────────
 function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
   const uf = id.orgaoEmissor.match(/\b([A-Z]{2})$/)?.[1] ?? id.orgaoEmissor.match(/[-\/\s]([A-Z]{2})$/)?.[1] ?? "";
   const F = ({ label, value, mono = false, accent }: { label: string; value: string; mono?: boolean; accent?: string }) => (
@@ -522,30 +476,19 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
       <div className="h-px bg-white/5 mt-1.5" />
     </div>
   );
-
   return (
     <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/60">
-      <div className="relative px-8 py-6 overflow-hidden" style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4338ca 50%, #6d28d9 100%)" }}>
-        <div className="absolute inset-0 opacity-[0.06]" style={{
-          backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)",
-          backgroundSize: "12px 12px"
-        }} />
+      <div className="relative px-8 py-6 overflow-hidden" style={{ background: "linear-gradient(135deg,#5b21b6 0%,#4338ca 50%,#6d28d9 100%)" }}>
+        <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: "repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }} />
         <div className="relative z-10 flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xl">🇧🇷</span>
-              <p className="text-[9px] font-extrabold tracking-[0.24em] text-white/95">REPÚBLICA FEDERATIVA DO BRASIL</p>
-            </div>
+            <div className="flex items-center gap-2 mb-1"><span className="text-xl">🇧🇷</span><p className="text-[9px] font-extrabold tracking-[0.24em] text-white/95">REPÚBLICA FEDERATIVA DO BRASIL</p></div>
             {uf && <p className="text-[8px] tracking-[0.16em] text-white/60 mb-0.5">SECRETARIA DE SEGURANÇA PÚBLICA — SSP/{uf}</p>}
             <p className="text-[13px] font-black tracking-[0.32em] text-white mt-1">CARTEIRA DE IDENTIDADE</p>
           </div>
           <div className="text-right">
             <span className="inline-block text-[8px] bg-white/20 backdrop-blur rounded-full px-3 py-1 text-white/90 border border-white/25 font-semibold tracking-widest">1ª VIA</span>
-            {id.situacaoCadastral && (
-              <p className={`text-[9px] mt-1.5 font-bold tracking-widest ${/REGULAR|ATIVO/i.test(id.situacaoCadastral) ? "text-emerald-300" : "text-amber-300"}`}>
-                ◉ {id.situacaoCadastral.toUpperCase()}
-              </p>
-            )}
+            {id.situacaoCadastral && <p className={`text-[9px] mt-1.5 font-bold tracking-widest ${/REGULAR|ATIVO/i.test(id.situacaoCadastral) ? "text-emerald-300" : "text-amber-300"}`}>◉ {id.situacaoCadastral.toUpperCase()}</p>}
           </div>
         </div>
       </div>
@@ -557,23 +500,10 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
               <p className="text-[28px] font-black tracking-[0.12em] text-white leading-none">{id.rg || "—"}</p>
             </div>
             <F label="Nome Completo" value={id.nome} accent="text-white text-[14px]" />
-            <div className="grid grid-cols-2 gap-4">
-              <F label="Mãe" value={id.mae} />
-              <F label="Pai" value={id.pai} />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <F label="Nascimento" value={id.dataNascimento} />
-              <F label="Sexo" value={id.sexo} />
-              <F label="Estado Civil" value={id.estadoCivil} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <F label="CPF" value={fmtCPF(id.cpf)} mono />
-              <F label="Naturalidade" value={id.naturalidade} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <F label="Órgão Emissor" value={id.orgaoEmissor} />
-              <F label="Data de Emissão" value={id.dataEmissao} />
-            </div>
+            <div className="grid grid-cols-2 gap-4"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
+            <div className="grid grid-cols-3 gap-3"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
+            <div className="grid grid-cols-2 gap-4"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
+            <div className="grid grid-cols-2 gap-4"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
             {(id.tituloEleitor || id.pis) && (
               <div className="grid grid-cols-2 gap-4">
                 {id.tituloEleitor && <F label="Título de Eleitor" value={id.tituloEleitor} mono />}
@@ -591,22 +521,11 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
               </div>
             )}
           </div>
-
-          {/* Photo column */}
           <div className="shrink-0 hidden sm:flex flex-col items-center gap-2 mt-1">
             <div className="w-28 h-36 rounded-xl overflow-hidden border-2 border-white/15 bg-white/5 flex items-center justify-center relative">
-              {photo
-                ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                : <div className="flex flex-col items-center gap-1.5">
-                    <Camera className="w-8 h-8 text-white/10" />
-                    <p className="text-[8px] text-white/15 text-center leading-tight px-1">Sem foto</p>
-                  </div>
-              }
-              {photo && (
-                <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400/20 border border-emerald-400/40 flex items-center justify-center">
-                  <Fingerprint className="w-2.5 h-2.5 text-emerald-300" />
-                </div>
-              )}
+              {photo ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                : <div className="flex flex-col items-center gap-1.5"><Camera className="w-8 h-8 text-white/10" /><p className="text-[8px] text-white/15 text-center leading-tight px-1">Sem foto</p></div>}
+              {photo && <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400/20 border border-emerald-400/40 flex items-center justify-center"><Fingerprint className="w-2.5 h-2.5 text-emerald-300" /></div>}
             </div>
             <p className="text-[7.5px] uppercase tracking-[0.2em] text-white/20 text-center">Foto do Titular</p>
             {id.tipoSanguineo && (
@@ -625,12 +544,9 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
 // ─── Phone card ───────────────────────────────────────────────────────────────
 function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
   const formatted = fmtPhone(phone.ddd, phone.numero);
-  const waLink = `https://wa.me/55${phone.ddd}${phone.numero}`;
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
-      className="group flex items-center gap-3 rounded-xl border border-white/8 bg-black/25 hover:bg-black/40 hover:border-white/15 transition-all p-3"
-    >
+    <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
+      className="group flex items-center gap-3 rounded-xl border border-white/8 bg-black/25 hover:bg-black/40 hover:border-white/15 transition-all p-3">
       <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
         <Phone className="w-4 h-4 text-emerald-400" />
       </div>
@@ -645,7 +561,7 @@ function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
       </div>
       <div className="flex items-center gap-1.5">
         <CopyBtn text={formatted} />
-        <a href={waLink} target="_blank" rel="noopener noreferrer"
+        <a href={`https://wa.me/55${phone.ddd}${phone.numero}`} target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[10px] font-bold transition-colors whitespace-nowrap">
           <MessageCircle className="w-3 h-3" /> WA
         </a>
@@ -657,27 +573,18 @@ function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
 // ─── Address card ─────────────────────────────────────────────────────────────
 function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
   const full = [addr.logradouro, addr.numero, addr.complemento && addr.complemento !== "Não Informado" ? addr.complemento : "", addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(", ");
-  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(full)}`;
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
-      className="group flex items-start gap-3 rounded-xl border border-amber-500/15 bg-amber-500/5 hover:bg-amber-500/8 hover:border-amber-500/25 transition-all p-3"
-    >
-      <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[11px] font-black text-amber-300 shrink-0 mt-0.5">
-        {idx + 1}
-      </div>
+    <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
+      className="group flex items-start gap-3 rounded-xl border border-amber-500/15 bg-amber-500/5 hover:bg-amber-500/8 hover:border-amber-500/25 transition-all p-3">
+      <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[11px] font-black text-amber-300 shrink-0 mt-0.5">{idx + 1}</div>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-semibold text-white break-words">
-          {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}
-          {addr.complemento && addr.complemento !== "Não Informado" ? ` — ${addr.complemento}` : ""}
+          {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.complemento && addr.complemento !== "Não Informado" ? ` — ${addr.complemento}` : ""}
         </p>
-        <p className="text-[12px] text-white/55 mt-0.5">
-          {[addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(" · ")}
-          {addr.cep ? ` · CEP ${addr.cep}` : ""}
-        </p>
+        <p className="text-[12px] text-white/55 mt-0.5">{[addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(" · ")}{addr.cep ? ` · CEP ${addr.cep}` : ""}</p>
         {addr.lat && <p className="text-[9px] text-amber-400/40 mt-0.5">📍 {addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
       </div>
-      <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+      <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(full)}`} target="_blank" rel="noopener noreferrer"
         className="flex items-center gap-1 px-2 py-1 rounded-lg text-amber-300 text-[10px] font-semibold border border-amber-500/25 hover:bg-amber-500/10 transition-colors whitespace-nowrap shrink-0">
         <MapPin className="w-3 h-3" /> Maps
       </a>
@@ -685,63 +592,278 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
   );
 }
 
-// ─── Relative card ─────────────────────────────────────────────────────────────
-function RelativeCard({ rel, idx, photo, loadingPhoto }: {
-  rel: Relative; idx: number; photo?: string; loadingPhoto?: boolean;
-}) {
+// ─── Employment Timeline ──────────────────────────────────────────────────────
+function EmploymentTimeline({ employments }: { employments: Employment[] }) {
+  const sorted = [...employments].sort((a, b) => {
+    const da = parseDateBR(a.admissao)?.getTime() ?? 0;
+    const db = parseDateBR(b.admissao)?.getTime() ?? 0;
+    return db - da;
+  });
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}
-      className="flex items-center gap-4 p-4 rounded-2xl border border-white/8 bg-black/25 hover:bg-black/35 hover:border-white/14 transition-all"
-    >
-      {/* Photo */}
-      <div className="relative shrink-0">
-        <div className="w-16 h-20 rounded-xl overflow-hidden border-2 border-white/12 bg-white/5 flex items-center justify-center">
-          {loadingPhoto
-            ? <Loader2 className="w-5 h-5 animate-spin text-white/20" />
-            : photo
-              ? <img src={photo} alt={rel.nome} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-              : <User className="w-6 h-6 text-white/12" />
-          }
-        </div>
+    <div className="relative pl-8">
+      <div className="absolute left-[11px] top-3 bottom-3 w-0.5 rounded-full"
+        style={{ background: "linear-gradient(to bottom, var(--color-primary), rgba(255,255,255,0.06), transparent)" }} />
+      <div className="space-y-5">
+        {sorted.map((emp, i) => {
+          const isCurrent = !emp.demissao;
+          const duration = calcDuration(emp.admissao, emp.demissao);
+          const initials = emp.empresa.match(/\b\w/g)?.slice(0, 2).join("").toUpperCase() ?? "?";
+          return (
+            <motion.div key={i} initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.07 }} className="relative">
+              {/* Dot */}
+              <div className={`absolute -left-[21px] top-5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center
+                ${isCurrent ? "border-emerald-400 bg-emerald-900/60 shadow-[0_0_10px_rgba(52,211,153,0.45)]" : "border-primary/50 bg-[#09090f]"}`}>
+                {isCurrent && <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              </div>
+              <div className={`rounded-2xl border p-4 transition-all hover:border-white/14
+                ${isCurrent ? "border-emerald-500/25 bg-gradient-to-br from-emerald-950/30 to-transparent" : "border-white/8 bg-black/20"}`}>
+                <div className="flex items-start gap-3">
+                  {/* Company avatar */}
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-[12px] font-black shrink-0 border
+                    ${isCurrent ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : "bg-primary/10 text-primary/70 border-primary/20"}`}>
+                    {initials}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-bold text-white leading-tight truncate">{emp.empresa}</p>
+                        {emp.cargo && <p className="text-[11px] text-white/45 mt-0.5">{emp.cargo}</p>}
+                      </div>
+                      {isCurrent && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[9px] font-bold uppercase tracking-widest shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Atual
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-[10px] text-white/35">
+                        <span>{emp.admissao || "?"}</span>
+                        <span className="text-white/15">→</span>
+                        <span className={isCurrent ? "text-emerald-400/70" : ""}>{isCurrent ? "Presente" : emp.demissao}</span>
+                      </div>
+                      {duration && (
+                        <span className="text-[9px] px-2 py-0.5 rounded-full border border-white/8 bg-white/4 text-white/30">{duration}</span>
+                      )}
+                      {emp.cnpj && <span className="text-[9px] font-mono text-white/18">{emp.cnpj}</span>}
+                    </div>
+                    {emp.salario && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[8.5px] uppercase tracking-wider text-white/22">Remuneração</span>
+                        <span className="text-[13px] font-bold text-emerald-400">
+                          {/^R/.test(emp.salario.trim()) ? emp.salario : `R$ ${emp.salario}`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Person Node (for family tree) ────────────────────────────────────────────
+function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo }: {
+  nome?: string; cpf?: string; nasc?: string; photo?: string; loading?: boolean;
+  isMain?: boolean; label?: string; sexo?: string;
+}) {
+  const emoji = sexo?.toLowerCase() === "f" ? "♀" : sexo?.toLowerCase() === "m" ? "♂" : "";
+  return (
+    <div className="flex flex-col items-center gap-1.5 min-w-0">
+      {label && (
+        <span className={`text-[8px] uppercase tracking-widest font-bold mb-0.5 ${isMain ? "text-primary" : "text-white/30"}`}>{label}</span>
+      )}
+      <div className={`relative overflow-hidden flex items-center justify-center
+        ${isMain
+          ? "w-[72px] h-[88px] rounded-2xl border-2 border-primary/70 shadow-[0_0_24px_rgba(124,58,237,0.35)] bg-white/5"
+          : "w-[52px] h-[64px] rounded-xl border border-white/15 bg-white/4"}`}>
+        {loading
+          ? <Loader2 className={`animate-spin text-white/20 ${isMain ? "w-6 h-6" : "w-4 h-4"}`} />
+          : photo
+            ? <img src={photo} alt={nome} className="w-full h-full object-cover"
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+            : <User className={`text-white/12 ${isMain ? "w-7 h-7" : "w-5 h-5"}`} />
+        }
+        {isMain && (
+          <div className="absolute top-1 left-1 w-4 h-4 rounded-full bg-primary/50 flex items-center justify-center">
+            <Star className="w-2 h-2 text-white" fill="white" />
+          </div>
+        )}
         {photo && (
-          <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400/25 border border-emerald-400/50 flex items-center justify-center">
-            <Fingerprint className="w-2 h-2 text-emerald-300" />
+          <div className={`absolute bottom-1 right-1 rounded-full bg-emerald-400/25 border border-emerald-400/50 flex items-center justify-center ${isMain ? "w-4 h-4" : "w-3 h-3"}`}>
+            <Fingerprint className={`text-emerald-300 ${isMain ? "w-2 h-2" : "w-1.5 h-1.5"}`} />
           </div>
         )}
       </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0 space-y-1.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          {rel.relacao && (
-            <span className="inline-block px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-primary/12 text-primary/80">{rel.relacao}</span>
-          )}
-          {rel.sexo && (
-            <span className="text-[9px] text-white/30">{rel.sexo === "M" || rel.sexo.toLowerCase() === "m" ? "Masculino" : "Feminino"}</span>
-          )}
-        </div>
-        <p className="text-[15px] font-bold text-white leading-tight">{rel.nome || "—"}</p>
-        <div className="flex items-center gap-3 flex-wrap">
-          {rel.cpf && (
-            <span className="font-mono text-[11px] text-white/45">{fmtCPF(rel.cpf)}</span>
-          )}
-          {rel.nasc && (
-            <span className="text-[11px] text-white/35">📅 {rel.nasc}</span>
-          )}
-          {rel.origem && (
-            <span className="text-[10px] text-white/25">{rel.origem}</span>
-          )}
-        </div>
+      <div className={`text-center ${isMain ? "max-w-[90px]" : "max-w-[72px]"}`}>
+        <p className={`font-bold leading-tight line-clamp-2 ${isMain ? "text-[11px] text-white" : "text-[9px] text-white/70"}`}>
+          {nome || "—"} {emoji && <span className="text-white/30">{emoji}</span>}
+        </p>
+        {cpf && cpf.length === 11 && (
+          <p className="text-[7px] font-mono text-white/28 mt-0.5 truncate">{fmtCPF(cpf)}</p>
+        )}
+        {nasc && <p className="text-[7px] text-white/22 mt-0.5">{nasc}</p>}
       </div>
+    </div>
+  );
+}
 
-      {/* Actions */}
-      {rel.cpf && (
-        <div className="shrink-0 flex flex-col gap-1.5">
-          <CopyBtn text={fmtCPF(rel.cpf)} />
+// ─── Family Tree ──────────────────────────────────────────────────────────────
+function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
+  relatives: Relative[]; photos: Record<string, string>;
+  loadingPhotos: Set<string>; identity: Identity; mainPhoto: string | null;
+}) {
+  const cats: Record<RelCat, Relative[]> = { pai:[], mae:[], conjuge:[], filho:[], filha:[], irmao:[], irma:[], outro:[] };
+  for (const r of relatives) cats[categorizeRel(r)].push(r);
+
+  const np = (r: Relative) => ({ photo: r.cpf ? photos[r.cpf] : undefined, loading: r.cpf ? loadingPhotos.has(r.cpf) : false });
+
+  // Parents: use relatives or fall back to identity fields (no photo, no CPF)
+  type ParentEntry = { nome: string; cpf: string; nasc: string; label: string; rel?: Relative };
+  const parents: ParentEntry[] = [];
+  if (cats.mae.length > 0) cats.mae.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Mãe", rel: r }));
+  else if (identity.mae) parents.push({ nome: identity.mae, cpf: "", nasc: "", label: "Mãe" });
+  if (cats.pai.length > 0) cats.pai.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Pai", rel: r }));
+  else if (identity.pai) parents.push({ nome: identity.pai, cpf: "", nasc: "", label: "Pai" });
+
+  const siblings = [...cats.irmao, ...cats.irma];
+  const children = [...cats.filho, ...cats.filha];
+  const conjuges = cats.conjuge;
+  const outros   = cats.outro;
+
+  const hasTree = parents.length > 0 || siblings.length > 0 || children.length > 0 || conjuges.length > 0 || relatives.length > 0;
+
+  const Connector = ({ h = 28 }: { h?: number }) => (
+    <div className="flex justify-center pointer-events-none select-none">
+      <div className="w-0.5 rounded-full" style={{ height: h, background: "linear-gradient(to bottom,rgba(124,58,237,0.3),rgba(255,255,255,0.06))" }} />
+    </div>
+  );
+  const HConnector = () => (
+    <div className="flex-1 h-0.5 self-center mx-1 rounded-full" style={{ background: "rgba(255,255,255,0.07)" }} />
+  );
+
+  if (!hasTree) {
+    return (
+      <div className="rounded-2xl border border-white/8 bg-[#09090f] p-8 text-center">
+        <Users className="w-10 h-10 mx-auto mb-3 text-white/10" />
+        <p className="text-sm text-white/25">Nenhum parente encontrado.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#09090f] overflow-x-auto">
+      <div className="min-w-[480px] p-6 sm:p-8">
+
+        {/* ── Generation: Pais ─────────────────────────────────── */}
+        {parents.length > 0 && (
+          <>
+            <div className="flex items-end justify-center gap-10">
+              {parents.map((p, i) => (
+                <motion.div key={i} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
+                  <PersonNode
+                    nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label}
+                    photo={p.rel ? np(p.rel).photo : undefined}
+                    loading={p.rel ? np(p.rel).loading : false}
+                  />
+                </motion.div>
+              ))}
+            </div>
+            <Connector h={32} />
+          </>
+        )}
+
+        {/* ── Generation: Titular ─────────────────────────────── */}
+        <div className="flex items-center justify-center gap-2">
+
+          {/* Irmãos (esquerda) */}
+          {siblings.length > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="flex gap-4">
+                {siblings.slice(0, 3).map((s, i) => (
+                  <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.08 }}>
+                    <PersonNode
+                      nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
+                      label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"}
+                      {...np(s)}
+                    />
+                  </motion.div>
+                ))}
+                {siblings.length > 3 && (
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="w-[52px] h-[64px] rounded-xl border border-white/10 bg-white/4 flex items-center justify-center">
+                      <span className="text-[11px] text-white/30 font-bold">+{siblings.length - 3}</span>
+                    </div>
+                    <p className="text-[8px] text-white/20 mt-1">mais</p>
+                  </div>
+                )}
+              </div>
+              <HConnector />
+            </div>
+          )}
+
+          {/* Titular */}
+          <motion.div initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }}>
+            <PersonNode
+              nome={identity.nome || "Titular"} cpf={identity.cpf}
+              nasc={identity.dataNascimento} sexo={identity.sexo}
+              photo={mainPhoto ?? undefined} isMain label="★ Titular"
+            />
+          </motion.div>
+
+          {/* Cônjuge */}
+          {conjuges.length > 0 && (
+            <div className="flex items-center gap-2">
+              <HConnector />
+              <div className="flex gap-4">
+                {conjuges.map((c, i) => (
+                  <motion.div key={i} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.08 }}>
+                    <PersonNode nome={c.nome} cpf={c.cpf} nasc={c.nasc} sexo={c.sexo} label="Cônjuge" {...np(c)} />
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
-    </motion.div>
+
+        {/* ── Generation: Filhos ───────────────────────────────── */}
+        {children.length > 0 && (
+          <>
+            <Connector h={32} />
+            <div className="flex items-start justify-center gap-6 flex-wrap">
+              {children.map((c, i) => (
+                <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.07 }}>
+                  <PersonNode
+                    nome={c.nome} cpf={c.cpf} nasc={c.nasc} sexo={c.sexo}
+                    label={/filha/i.test(c.relacao) || c.sexo?.toLowerCase() === "f" ? "Filha" : "Filho"}
+                    {...np(c)}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* ── Outros ──────────────────────────────────────────── */}
+        {outros.length > 0 && (
+          <>
+            <div className="h-px bg-white/5 mt-8 mb-6" />
+            <p className="text-[8px] uppercase tracking-widest text-white/20 mb-5 font-bold text-center">Outros Relacionados ({outros.length})</p>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-5">
+              {outros.map((r, i) => (
+                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 * i }} className="flex flex-col items-center gap-1">
+                  <PersonNode nome={r.nome} cpf={r.cpf} nasc={r.nasc} sexo={r.sexo} label={r.relacao || "Relacionado"} {...np(r)} />
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )}
+
+      </div>
+    </div>
   );
 }
 
@@ -754,28 +876,22 @@ export function CpfFullPanel({ cpf }: Props) {
   const [mStates, setMStates]   = useState<Record<string, ModuleStatus>>({});
   const [mResults, setMResults] = useState<Record<string, ModuleResult>>({});
   const [geoAddr, setGeoAddr]   = useState<Address[]>([]);
-  const [relPhotos, setRelPhotos] = useState<Record<string, string>>({});
+  const [relPhotos, setRelPhotos]       = useState<Record<string, string>>({});
   const [relPhotosLoading, setRelPhotosLoading] = useState<Set<string>>(new Set());
 
-  // Stable ref to final results snapshot — avoids stale closure in geocode effect
   const finalResultsRef = useRef<Record<string, ModuleResult>>({});
   const runRef = useRef(0);
 
-  // ── Module fetch effect ──────────────────────────────────────────────────
+  // ── Module fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
     const clean = cpf.replace(/\D/g,"");
     if (clean.length !== 11) return;
     const id = ++runRef.current;
     setRunning(true); setDone(false);
     setMStates(Object.fromEntries(MODULES.map(m => [m.tipo, "loading" as ModuleStatus])));
-    setMResults({});
-    setGeoAddr([]);
-    setRelPhotos({});
-    setRelPhotosLoading(new Set());
+    setMResults({}); setGeoAddr([]); setRelPhotos({}); setRelPhotosLoading(new Set());
     finalResultsRef.current = {};
-
     const accumulated: Record<string, ModuleResult> = {};
-
     void Promise.allSettled(
       MODULES.map(async ({ tipo, skylers }) => {
         const res = await fetchModule(tipo, clean, skylers);
@@ -787,20 +903,16 @@ export function CpfFullPanel({ cpf }: Props) {
     ).then(() => {
       if (runRef.current !== id) return;
       finalResultsRef.current = accumulated;
-      setRunning(false);
-      setDone(true);
+      setRunning(false); setDone(true);
     });
-
     return () => { runRef.current++; };
   }, [cpf]);
 
-  // ── Geocode effect — runs ONCE when done becomes true ────────────────────
+  // ── Geocode — runs once when done ─────────────────────────────────────────
   useEffect(() => {
     if (!done) return;
-    // Use the snapshot ref, NOT the mResults state (stable, no extra renders)
     const addrs = buildAddresses(finalResultsRef.current);
     if (!addrs.length) return;
-
     let cancelled = false;
     (async () => {
       const result: Address[] = [];
@@ -809,9 +921,7 @@ export function CpfFullPanel({ cpf }: Props) {
         if (!addr.logradouro && !addr.cep) { result.push(addr); continue; }
         const q = [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf, "Brasil"].filter(Boolean).join(", ");
         try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, {
-            headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" }
-          });
+          const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, { headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" } });
           const data = await r.json() as { lat: string; lon: string }[];
           result.push(data[0] ? { ...addr, lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : addr);
         } catch { result.push(addr); }
@@ -820,28 +930,26 @@ export function CpfFullPanel({ cpf }: Props) {
       if (!cancelled) setGeoAddr(result);
     })();
     return () => { cancelled = true; };
-  }, [done]); // intentionally only [done] — finalResultsRef is stable
+  }, [done]);
 
-  // ── Relative photos effect ────────────────────────────────────────────────
+  // ── Relative photos — runs once when done ─────────────────────────────────
   useEffect(() => {
     if (!done) return;
     const rels = buildRelatives(finalResultsRef.current["parentes"]);
     const cpfsToFetch = rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf);
     if (!cpfsToFetch.length) return;
-
     setRelPhotosLoading(new Set(cpfsToFetch));
-
     void Promise.allSettled(
       cpfsToFetch.map(async (relCpf) => {
         const res = await fetchModule("foto", relCpf, true);
-        const photo = res.data ? extractPhotoFromResult(res) : null;
+        const ph = res.data ? extractPhotoFromResult(res) : null;
         setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
-        if (photo) setRelPhotos(prev => ({ ...prev, [relCpf]: photo }));
+        if (ph) setRelPhotos(prev => ({ ...prev, [relCpf]: ph }));
       })
     );
-  }, [done]); // only [done]
+  }, [done]);
 
-  // ── Derived data (pure computation from current state) ─────────────────────
+  // ── Derived data ──────────────────────────────────────────────────────────
   const identity    = buildIdentity(mResults);
   const phones      = buildPhones(mResults);
   const addresses   = buildAddresses(mResults);
@@ -849,9 +957,8 @@ export function CpfFullPanel({ cpf }: Props) {
   const relatives   = buildRelatives(mResults["parentes"]);
   const photo       = extractPhoto(mResults);
 
-  // Score — avoid mixing ?? with || (Babel strict parser)
-  const scoreFields1  = mResults["score"]?.data?.fields ?? [];
-  const scoreFields2  = mResults["score2"]?.data?.fields ?? [];
+  const scoreFields1 = mResults["score"]?.data?.fields ?? [];
+  const scoreFields2 = mResults["score2"]?.data?.fields ?? [];
   const score1    = gf(scoreFields1,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
   const score2Val = gf(scoreFields2,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
 
@@ -860,18 +967,15 @@ export function CpfFullPanel({ cpf }: Props) {
   const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
 
   const hasIdentity = !!(identity.nome || identity.rg);
-  const hasCNH      = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
-  const hasObito    = mResults["obito"]?.status === "done" && (
-    (mResults["obito"]?.data?.fields.length ?? 0) > 0 ||
-    /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? "")
-  );
-  const hasLegal    = ["processos","mandado"].some(k =>
-    mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0)
-  );
+  const hasCNH  = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
+  const hasObito = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
+  const hasLegal = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
   const extras = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)
   );
+
+  const hasParentes = relatives.length > 0 || identity.mae || identity.pai || mResults["parentes"]?.status === "done";
 
   const extraLabels: Record<string, { label: string; icon: IconProp }> = {
     irpf:      { label: "IRPF / Imposto de Renda", icon: Receipt },
@@ -883,13 +987,12 @@ export function CpfFullPanel({ cpf }: Props) {
   };
 
   const noData = done && !hasIdentity && !phones.length && !addresses.length && !relatives.length;
-
-  // Geocoding in progress = geocode effect has started but no geocoded results yet AND addresses exist
   const geocodingInProgress = done && addresses.length > 0 && geoAddr.length === 0;
 
   return (
     <div className="mt-6 space-y-8">
-      {/* ── Progress tracker ───────────────────────────────────────────────── */}
+
+      {/* ── Progress ──────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {(running || done) && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
@@ -913,9 +1016,7 @@ export function CpfFullPanel({ cpf }: Props) {
                     {s === "done"    && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400 shrink-0" />}
                     {s === "error"   && <XCircle className="w-2.5 h-2.5 text-red-400/40 shrink-0" />}
                     {s === "idle"    && <div className="w-2.5 h-2.5 rounded-full bg-white/8 shrink-0" />}
-                    <span className={s === "done" ? "text-white/65" : s === "error" ? "text-white/20" : "text-white/35"}>
-                      {m.label}
-                    </span>
+                    <span className={s === "done" ? "text-white/65" : s === "error" ? "text-white/20" : "text-white/35"}>{m.label}</span>
                   </div>
                 );
               })}
@@ -924,7 +1025,7 @@ export function CpfFullPanel({ cpf }: Props) {
         )}
       </AnimatePresence>
 
-      {/* ── Results ─────────────────────────────────────────────────────────── */}
+      {/* ── Results ───────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {done && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="space-y-10">
@@ -937,7 +1038,7 @@ export function CpfFullPanel({ cpf }: Props) {
               </motion.div>
             )}
 
-            {/* Foto biométrica standalone */}
+            {/* Foto biométrica */}
             {photo && (
               <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
                 className="rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/8 to-transparent p-4 flex items-center gap-5">
@@ -972,32 +1073,22 @@ export function CpfFullPanel({ cpf }: Props) {
               </CollapsibleSection>
             )}
 
-            {/* Parentes / Relações */}
-            {(relatives.length > 0 || mResults["parentes"]?.status === "done") && (
-              <CollapsibleSection icon={Users} title="Relações & Parentes"
-                count={relatives.length > 0 ? relatives.length : undefined}>
-                {relatives.length > 0 ? (
-                  <div className="space-y-2">
-                    {relatives.map((rel, i) => (
-                      <RelativeCard
-                        key={i}
-                        rel={rel}
-                        idx={i}
-                        photo={rel.cpf ? relPhotos[rel.cpf] : undefined}
-                        loadingPhoto={rel.cpf ? relPhotosLoading.has(rel.cpf) : false}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-white/8 bg-black/20 p-4">
-                    {/* If done with error / no data, show raw */}
-                    {mResults["parentes"]?.data?.raw ? (
-                      <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">
-                        {mResults["parentes"].data.raw}
-                      </pre>
-                    ) : (
-                      <p className="text-sm text-white/30 text-center py-4">Nenhum parente encontrado.</p>
-                    )}
+            {/* Árvore Genealógica / Parentes */}
+            {hasParentes && (
+              <CollapsibleSection icon={GitBranch} title="Árvore Genealógica" count={relatives.length > 0 ? relatives.length : undefined}>
+                <FamilyTree
+                  relatives={relatives}
+                  photos={relPhotos}
+                  loadingPhotos={relPhotosLoading}
+                  identity={identity}
+                  mainPhoto={photo}
+                />
+                {/* Raw fallback if no structured data but raw exists */}
+                {relatives.length === 0 && !identity.mae && !identity.pai && mResults["parentes"]?.data?.raw && (
+                  <div className="mt-3 rounded-xl border border-white/8 bg-black/20 p-4">
+                    <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">
+                      {mResults["parentes"].data.raw}
+                    </pre>
                   </div>
                 )}
               </CollapsibleSection>
@@ -1006,24 +1097,17 @@ export function CpfFullPanel({ cpf }: Props) {
             {/* Endereços + Mapa */}
             {addresses.length > 0 && (
               <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length}>
-                {/* Map */}
                 <div className="rounded-2xl border border-white/10 overflow-hidden mb-4">
                   <div className="relative h-[320px]">
-                    <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4}
-                      className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
-                      <TileLayer
-                        attribution='&copy; <a href="https://www.openstreetmap.org/">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
-                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                      />
+                    <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4} className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
+                      <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
+                        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
                       {geocoded.map((addr, i) => (
-                        <CircleMarker key={i} center={[addr.lat!, addr.lng!]}
-                          radius={12}
-                          pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
+                        <CircleMarker key={i} center={[addr.lat!, addr.lng!]} radius={12} pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
                           <Tooltip permanent direction="top" offset={[0, -14]}>
                             <div style={{ background: "rgba(9,9,15,0.92)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: 8, padding: "4px 8px", color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", maxWidth: 220 }}>
                               <span style={{ color: "#a855f7", marginRight: 5 }}>◉ {i+1}</span>
-                              {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}
-                              {addr.cidade ? ` — ${addr.cidade}` : ""}
+                              {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.cidade ? ` — ${addr.cidade}` : ""}
                             </div>
                           </Tooltip>
                           <Popup>
@@ -1034,8 +1118,7 @@ export function CpfFullPanel({ cpf }: Props) {
                               <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" — ")}</p>
                               {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
                               <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.cidade,addr.uf].filter(Boolean).join(","))}`}
-                                target="_blank" rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1">
+                                target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1">
                                 📍 Google Maps
                               </a>
                             </div>
@@ -1043,52 +1126,25 @@ export function CpfFullPanel({ cpf }: Props) {
                         </CircleMarker>
                       ))}
                     </MapContainer>
-
                     <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-[#09090f]/90 backdrop-blur rounded-xl px-3 py-2 border border-white/10 pointer-events-none">
                       <MapPin className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
                       <span className="text-[10px] font-semibold text-white">Mapa de Endereços</span>
                       {geocodingInProgress
                         ? <><Loader2 className="w-3 h-3 animate-spin text-primary/60" /><span className="text-[9px] text-white/30">Geocodificando…</span></>
-                        : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>
-                      }
+                        : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>}
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-2">
                   {addresses.map((a, i) => <AddressCard key={i} addr={a} idx={i} />)}
                 </div>
               </CollapsibleSection>
             )}
 
-            {/* Empregos */}
+            {/* Timeline de Empregos */}
             {employments.length > 0 && (
-              <CollapsibleSection icon={Briefcase} title="Empregos / Vínculos" count={employments.length}>
-                <div className="rounded-2xl border border-white/10 bg-[#09090f] overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm min-w-[580px]">
-                      <thead>
-                        <tr className="border-b border-white/8 bg-black/30">
-                          {["Empresa","CNPJ","Cargo","Admissão","Demissão","Salário"].map(h => (
-                            <th key={h} className="px-4 py-3 text-left text-[9px] uppercase tracking-[0.2em] text-white/30 font-semibold">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {employments.map((e, i) => (
-                          <tr key={i} className="border-b border-white/4 hover:bg-white/[0.025] transition-colors">
-                            <td className="px-4 py-3 text-white font-semibold">{e.empresa || "—"}</td>
-                            <td className="px-4 py-3 text-white/35 font-mono text-xs">{e.cnpj || "—"}</td>
-                            <td className="px-4 py-3 text-white/60">{e.cargo || "—"}</td>
-                            <td className="px-4 py-3 text-white/45 text-xs">{e.admissao || "—"}</td>
-                            <td className="px-4 py-3 text-white/45 text-xs">{e.demissao || "Atual"}</td>
-                            <td className="px-4 py-3 text-emerald-400 font-bold">{e.salario || "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              <CollapsibleSection icon={Briefcase} title="Histórico Profissional" count={employments.length}>
+                <EmploymentTimeline employments={employments} />
               </CollapsibleSection>
             )}
 
@@ -1097,16 +1153,14 @@ export function CpfFullPanel({ cpf }: Props) {
               <CollapsibleSection icon={BarChart2} title="Score de Crédito">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {[
-                    { label: "Score Serasa / Bureau 1", val: score1,    grad: "from-violet-600 to-indigo-600",  bgGrad: "from-violet-500/10 to-indigo-500/5",  border: "border-violet-500/25" },
-                    { label: "Score Bureau 2",          val: score2Val, grad: "from-sky-600 to-indigo-500",     bgGrad: "from-sky-500/10 to-indigo-500/5",     border: "border-sky-500/25" },
+                    { label: "Score Serasa / Bureau 1", val: score1,    grad: "from-violet-600 to-indigo-600", bgGrad: "from-violet-500/10 to-indigo-500/5", border: "border-violet-500/25" },
+                    { label: "Score Bureau 2",          val: score2Val, grad: "from-sky-600 to-indigo-500",    bgGrad: "from-sky-500/10 to-indigo-500/5",    border: "border-sky-500/25" },
                   ].filter(s => s.val).map(s => {
                     const pct = Math.min(100, (parseInt(s.val) / 1000) * 100);
                     const color = pct > 70 ? "text-emerald-300" : pct > 40 ? "text-amber-300" : "text-red-300";
                     return (
                       <div key={s.label} className={`rounded-2xl border ${s.border} bg-gradient-to-br ${s.bgGrad} p-5 flex items-center gap-5`}>
-                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-black text-white shrink-0 bg-gradient-to-br ${s.grad} shadow-lg`}>
-                          {s.val}
-                        </div>
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-lg font-black text-white shrink-0 bg-gradient-to-br ${s.grad} shadow-lg`}>{s.val}</div>
                         <div className="flex-1 min-w-0">
                           <p className="text-[9px] uppercase tracking-widest text-white/30 mb-1.5">{s.label}</p>
                           <div className="h-2 bg-white/8 rounded-full overflow-hidden mb-1">
@@ -1142,11 +1196,8 @@ export function CpfFullPanel({ cpf }: Props) {
                   {["processos","mandado"].flatMap(tipo => {
                     const res = mResults[tipo];
                     if (!res?.data) return [];
-                    const secs = res.data.sections.length > 0
-                      ? res.data.sections
-                      : (res.data.fields.length > 0
-                          ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }]
-                          : []);
+                    const secs = res.data.sections.length > 0 ? res.data.sections
+                      : (res.data.fields.length > 0 ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }] : []);
                     return secs.map((sec, si) => (
                       <div key={`${tipo}-${si}`} className="rounded-2xl border border-rose-500/20 bg-rose-500/5 overflow-hidden">
                         <div className="px-4 py-2.5 bg-black/20 border-b border-rose-500/10 flex items-center gap-2">
@@ -1155,9 +1206,7 @@ export function CpfFullPanel({ cpf }: Props) {
                           <span className="text-[9px] text-rose-400/30 ml-1">({sec.items.length})</span>
                         </div>
                         <div className="divide-y divide-rose-500/8 max-h-64 overflow-y-auto">
-                          {sec.items.map((item, ii) => (
-                            <div key={ii} className="px-4 py-2.5 text-sm text-white/60 leading-relaxed">{item}</div>
-                          ))}
+                          {sec.items.map((item, ii) => <div key={ii} className="px-4 py-2.5 text-sm text-white/60 leading-relaxed">{item}</div>)}
                         </div>
                       </div>
                     ));
@@ -1166,13 +1215,12 @@ export function CpfFullPanel({ cpf }: Props) {
               </CollapsibleSection>
             )}
 
-            {/* Dados Adicionais (IRPF, Benefícios, etc.) */}
+            {/* Dados Adicionais */}
             {extras.length > 0 && (
               <CollapsibleSection icon={FileText} title="Dados Adicionais" defaultOpen={false}>
                 <div className="space-y-4">
                   {extras.map(key => {
-                    const meta = extraLabels[key];
-                    const res  = mResults[key];
+                    const meta = extraLabels[key]; const res = mResults[key];
                     if (!meta || !res?.data) return null;
                     const { label, icon: Icon } = meta;
                     const { fields, sections, raw } = res.data;
@@ -1185,21 +1233,14 @@ export function CpfFullPanel({ cpf }: Props) {
                         <div className="p-4 space-y-3">
                           {fields.length > 0 && (
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {fields.map(([k, v], i) => (
-                                <div key={i}>
-                                  <p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p>
-                                  <p className="text-sm font-semibold text-white">{v}</p>
-                                </div>
-                              ))}
+                              {fields.map(([k, v], i) => <div key={i}><p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p><p className="text-sm font-semibold text-white">{v}</p></div>)}
                             </div>
                           )}
                           {sections.map((sec, si) => (
                             <div key={si}>
                               {sec.name && <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">{sec.name}</p>}
                               <div className="divide-y divide-white/4 rounded-xl border border-white/6 overflow-hidden">
-                                {sec.items.map((item, ii) => (
-                                  <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>
-                                ))}
+                                {sec.items.map((item, ii) => <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>)}
                               </div>
                             </div>
                           ))}
@@ -1224,18 +1265,14 @@ export function CpfFullPanel({ cpf }: Props) {
                   </div>
                   <div className="p-5">
                     <p className="text-xs text-red-400/70 mb-3">Pessoa falecida conforme registros oficiais.</p>
-                    {(mResults["obito"]?.data?.fields ?? []).length > 0 ? (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {(mResults["obito"]?.data?.fields ?? []).map(([k, v], i) => (
-                          <div key={i}>
-                            <p className="text-[9px] uppercase tracking-[0.2em] text-red-400/40 mb-0.5">{k}</p>
-                            <p className="text-sm font-semibold text-red-200">{v}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-red-300/60 font-mono">{mResults["obito"]?.data?.raw}</p>
-                    )}
+                    {(mResults["obito"]?.data?.fields ?? []).length > 0
+                      ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {(mResults["obito"]?.data?.fields ?? []).map(([k, v], i) => (
+                            <div key={i}><p className="text-[9px] uppercase tracking-[0.2em] text-red-400/40 mb-0.5">{k}</p><p className="text-sm font-semibold text-red-200">{v}</p></div>
+                          ))}
+                        </div>
+                      : <p className="text-sm text-red-300/60 font-mono">{mResults["obito"]?.data?.raw}</p>
+                    }
                   </div>
                 </div>
               </motion.div>
