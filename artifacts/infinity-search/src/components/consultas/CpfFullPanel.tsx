@@ -20,12 +20,12 @@ type Identity = {
   naturalidade: string; nacionalidade: string; dataNascimento: string;
   sexo: string; estadoCivil: string; orgaoEmissor: string; dataEmissao: string;
   situacaoCadastral: string; tipoSanguineo: string; tituloEleitor: string;
-  pis: string; nis: string; email: string;
-  enderecoPrincipal: string;
+  pis: string; nis: string; email: string; enderecoPrincipal: string;
 };
 type PhoneEntry  = { ddd: string; numero: string; prioridade: string; classificacao: string; data: string; tipo: string };
 type Address     = { logradouro: string; numero: string; complemento: string; bairro: string; cidade: string; uf: string; cep: string; lat?: number; lng?: number };
 type Employment  = { empresa: string; cnpj: string; cargo: string; admissao: string; demissao: string; salario: string };
+type Relative    = { cpf: string; nome: string; nasc: string; sexo: string; relacao: string; origem: string };
 
 // ─── Modules list ─────────────────────────────────────────────────────────────
 const MODULES = [
@@ -58,21 +58,20 @@ function normalizeFields(raw: unknown): [string, string][] {
   return [];
 }
 
-// ─── Field getter — searches fields array with flexible key matching ──────────
+// ─── Field getter ─────────────────────────────────────────────────────────────
 function gf(fields: [string, string][], ...keys: string[]): string {
   for (const key of keys) {
-    const ku = key.toUpperCase();
+    const ku = key.toUpperCase().replace(/[_\-\s]/g, "");
     const f = fields.find(([fk]) => {
       const fku = fk.toUpperCase().replace(/[_\-\s]/g, "");
-      const ku2 = ku.replace(/[_\-\s]/g, "");
-      return fku === ku2 || fku.includes(ku2) || ku2.includes(fku);
+      return fku === ku || fku.includes(ku) || ku.includes(fku);
     });
     if (f?.[1]?.trim()) return f[1].trim();
   }
   return "";
 }
 
-// ─── Raw text field extractor ─────────────────────────────────────────────────
+// ─── Raw text extractor ───────────────────────────────────────────────────────
 function rxv(raw: string, ...keys: string[]): string {
   for (const key of keys) {
     const pattern = new RegExp(`(?:^|\\n|\\|)\\s*${key}[\\s:·]+([^\\n|·]{2,80})`, "im");
@@ -82,7 +81,7 @@ function rxv(raw: string, ...keys: string[]): string {
   return "";
 }
 
-// ─── Merge all fields from multiple results ───────────────────────────────────
+// ─── Merge helpers ────────────────────────────────────────────────────────────
 function mergeFields(results: (ModuleResult | undefined)[]): [string, string][] {
   return results.flatMap(r => r?.data?.fields ?? []);
 }
@@ -101,51 +100,51 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean): Promi
       body: JSON.stringify({ tipo, dados }),
     });
     const json = await r.json() as { success: boolean; data?: unknown; error?: string };
-    if (!json.success) return { status: "error", error: json.error ?? "Sem resultado" };
-    let parsed: ParsedData;
-    if (typeof json.data === "string") {
-      parsed = { fields: [], sections: [], raw: json.data };
-    } else if (json.data && typeof json.data === "object") {
+    // Even on success=false, keep the data if it exists (some modules return partial data)
+    let parsed: ParsedData | undefined;
+    if (json.data && typeof json.data === "object") {
       const d = json.data as Record<string, unknown>;
       parsed = {
         fields:   normalizeFields(d["fields"]),
         sections: Array.isArray(d["sections"]) ? d["sections"] as ParsedData["sections"] : [],
         raw:      typeof d["raw"] === "string" ? d["raw"] : "",
       };
-    } else {
-      return { status: "error" };
+    } else if (typeof json.data === "string") {
+      parsed = { fields: [], sections: [], raw: json.data };
     }
-    return { status: "done", data: parsed };
+    if (!json.success && !parsed?.fields.length && !parsed?.sections.length && !parsed?.raw) {
+      return { status: "error", error: json.error ?? "Sem resultado" };
+    }
+    return { status: parsed ? "done" : "error", data: parsed, error: json.success ? undefined : (json.error ?? undefined) };
   } catch (e) {
     return { status: "error", error: e instanceof Error ? e.message : "Erro de rede" };
   }
 }
 
-// ─── Build identity from all CPF-related modules ──────────────────────────────
+// ─── Build identity ───────────────────────────────────────────────────────────
 function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const sources = ["cpf", "cpfbasico", "titulo", "cnh"];
   const f = mergeFields(sources.map(k => results[k]));
   const raw = mergeRaw(sources.map(k => results[k]));
 
-  const nome              = gf(f,"NOME","NOME COMPLETO","NOME_COMPLETO")                 || rxv(raw,"NOME COMPLETO","NOME");
-  const cpfVal            = gf(f,"CPF","NUMERO CPF","NUMERO_CPF")                        || rxv(raw,"CPF");
-  const rg                = gf(f,"RG","REGISTRO GERAL","NUMERO_RG","NUMERO RG","IDENTIDADE") || rxv(raw,"RG","IDENTIDADE");
-  const mae               = gf(f,"NOME MAE","NOME_MAE","MAE","FILIACAO 1","FILIACAO1")   || rxv(raw,"NOME DA MÃE","NOME_MAE","MAE","FILIACAO 1");
-  const pai               = gf(f,"NOME PAI","NOME_PAI","PAI","FILIACAO 2","FILIACAO2")   || rxv(raw,"NOME DO PAI","NOME_PAI","PAI","FILIACAO 2");
-  const naturalidade      = gf(f,"MUNICIPIO NASCIMENTO","MUNICIPIO_NASCIMENTO","NATURALIDADE","CIDADE NASCIMENTO") || rxv(raw,"NATURALIDADE","MUNICIPIO.*NASC","CIDADE.*NASC");
-  const dataNascimento    = gf(f,"DATA NASCIMENTO","DATA_NASCIMENTO","DT NASCIMENTO","DT_NASCIMENTO","NASCIMENTO") || rxv(raw,"DATA.*NASC","NASCIMENTO");
-  const sexo              = gf(f,"SEXO","GENERO","GÊNERO")                               || rxv(raw,"SEXO","GÊNERO");
-  const estadoCivil       = gf(f,"ESTADO CIVIL","ESTADO_CIVIL")                          || rxv(raw,"ESTADO CIVIL");
-  const orgaoEmissor      = gf(f,"ORGAO EMISSOR","ORGAO_EMISSOR","ÓRGÃO EMISSOR")        || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
-  const dataEmissao       = gf(f,"DATA EMISSAO","DATA_EMISSAO","DATA EMISSÃO")           || rxv(raw,"DATA.*EMIS");
-  const situacaoCadastral = gf(f,"SITUACAO CADASTRAL","SITUACAO_CADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
-  const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPO_SANGUINEO","SANGUE")             || rxv(raw,"SANGUE","TIPO SANG");
-  const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULO_ELEITOR","NÚMERO TÍTULO")      || rxv(raw,"TITULO.*ELEITOR");
-  const pis               = gf(f,"PIS","NIS","PIS PASEP","PIS_PASEP")                   || rxv(raw,"PIS","NIS");
-  const nis               = gf(f,"NIS","PIS","NUMERO_NIS")                              || rxv(raw,"NIS");
-  const email             = gf(f,"EMAIL","E-MAIL","ENDERECO EMAIL")                     || rxv(raw,"EMAIL","E-MAIL");
+  const nome              = gf(f,"NOME","NOME COMPLETO","NOMECOMPLETO")                   || rxv(raw,"NOME COMPLETO","NOME");
+  const cpfVal            = gf(f,"CPF","NUMERO CPF","NUMEROCPF")                          || rxv(raw,"CPF");
+  const rg                = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE")           || rxv(raw,"RG","IDENTIDADE");
+  const mae               = gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1")     || rxv(raw,"NOME DA MÃE","NOMEMAE","MAE","FILIACAO 1");
+  const pai               = gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2")     || rxv(raw,"NOME DO PAI","NOMEPAI","PAI","FILIACAO 2");
+  const naturalidade      = gf(f,"MUNICIPIO NASCIMENTO","NATURALIDADE","CIDADE NASCIMENTO") || rxv(raw,"NATURALIDADE","MUNICIPIO.*NASC");
+  const dataNascimento    = gf(f,"DATA NASCIMENTO","DATANASCIMENTO","DT NASCIMENTO","NASCIMENTO") || rxv(raw,"DATA.*NASC","NASCIMENTO");
+  const sexo              = gf(f,"SEXO","GENERO","GÊNERO")                                || rxv(raw,"SEXO","GÊNERO");
+  const estadoCivil       = gf(f,"ESTADO CIVIL","ESTADOCIVIL")                            || rxv(raw,"ESTADO CIVIL");
+  const orgaoEmissor      = gf(f,"ORGAO EMISSOR","ORGAOEMISSOR","ÓRGÃO EMISSOR")          || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
+  const dataEmissao       = gf(f,"DATA EMISSAO","DATAEMISSAO","DATA EMISSÃO")             || rxv(raw,"DATA.*EMIS");
+  const situacaoCadastral = gf(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
+  const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE")               || rxv(raw,"SANGUE","TIPO SANG");
+  const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO")               || rxv(raw,"TITULO.*ELEITOR");
+  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                     || rxv(raw,"PIS","NIS");
+  const nis               = gf(f,"NIS","PIS","NUMERONIS")                                 || rxv(raw,"NIS");
+  const email             = gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL")                        || rxv(raw,"EMAIL","E-MAIL");
 
-  // Build a short address string for the identity card header
   const addr = buildAddresses(results)[0];
   const enderecoPrincipal = addr
     ? [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(", ")
@@ -156,7 +155,7 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
     tipoSanguineo, tituloEleitor, pis, nis, email, enderecoPrincipal };
 }
 
-// ─── Build phones from all modules ───────────────────────────────────────────
+// ─── Build phones ─────────────────────────────────────────────────────────────
 function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
   const phones: PhoneEntry[] = [];
   const seen = new Set<string>();
@@ -168,13 +167,12 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
     phones.push({ ddd, numero: num.replace(/\D/g,""), prioridade: prio, classificacao: cls, data, tipo });
   }
 
-  // From sections of any module
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
     for (const sec of mod.data.sections) {
       if (!/TELEFON|CELULAR|CONTATO|FONE|PHONE/i.test(sec.name)) continue;
       for (const item of sec.items) {
-        const ddd  = item.match(/DDD[\s:]+(\d{2,3})/i)?.[1]   ?? item.match(/\((\d{2})\)/)?.[1] ?? item.match(/^\s*(\d{2})\b/)?.[1] ?? "";
+        const ddd  = item.match(/DDD[\s:]+(\d{2,3})/i)?.[1] ?? item.match(/\((\d{2})\)/)?.[1] ?? item.match(/^\s*(\d{2})\b/)?.[1] ?? "";
         const num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d[\d\s\-]{6,11})/i)?.[1]?.replace(/\D/g,"")
                   ?? item.match(/\(?\d{2}\)?[\s\-]?(\d{4,5}[\s\-]?\d{4})/)?.[1]?.replace(/\D/g,"") ?? "";
         const prio = item.match(/PRIORIDADE[\s:]+(\S+)/i)?.[1] ?? "";
@@ -184,99 +182,84 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
         if (num) add(ddd, num, prio, cls, dt, tipo);
       }
     }
-
-    // From fields
     for (const [k, v] of mod.data.fields) {
       if (!/TELEFON|CELULAR|FONE|PHONE/i.test(k)) continue;
       const clean = v.replace(/\D/g,"");
       if (clean.length >= 8) {
         const ddd = clean.length >= 10 ? clean.slice(0,2) : "";
         const num = clean.length >= 10 ? clean.slice(2) : clean;
-        const tipo = /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "";
-        add(ddd, num, "", "", "", tipo);
+        add(ddd, num, "", "", "", /CELULAR|MOVEL/i.test(k) ? "Celular" : /FIXO|RESIDENC/i.test(k) ? "Fixo" : "");
       }
     }
-
-    // From raw text — match (XX) XXXXX-XXXX patterns
     const rawPhones = mod.data.raw.matchAll(/\((\d{2})\)\s*(\d{4,5}[-\s]?\d{4})/g);
     for (const m of rawPhones) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
-
-    // Raw text — match standalone DDD + number patterns
     const rawPhones2 = mod.data.raw.matchAll(/\b(\d{2})\s+(\d{4,5}\d{4})\b/g);
     for (const m of rawPhones2) {
       if (parseInt(m[1]) >= 11 && parseInt(m[1]) <= 99) add(m[1], m[2], "", "", "", "");
     }
   }
-
   return phones;
 }
 
-// ─── Build addresses from all modules ─────────────────────────────────────────
+// ─── Build addresses ──────────────────────────────────────────────────────────
 function buildAddresses(results: Record<string, ModuleResult>): Address[] {
   const out: Address[] = [];
   const seen = new Set<string>();
 
   function addAddr(a: Address) {
-    const key = `${a.logradouro}|${a.numero}|${a.cep}`.toLowerCase();
-    if (seen.has(key) || (!a.logradouro && !a.cep)) return;
+    const key = `${a.logradouro}|${a.numero}|${a.cep}`.toLowerCase().trim();
+    if (!key || key === "||" || (!a.logradouro && !a.cep)) return;
+    if (seen.has(key)) return;
     seen.add(key);
     out.push(a);
   }
 
   for (const mod of Object.values(results)) {
     if (!mod?.data) continue;
-
-    // From sections
     for (const sec of mod.data.sections) {
       if (!/ENDEREC|LOGRADOURO|RESID|CEP|MORADA/i.test(sec.name)) continue;
       for (const item of sec.items) {
         addAddr({
-          logradouro:  item.match(/(?:LOGRADOURO|ENDERECO|RUA|AV\.?|ALAMEDA)[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
-          numero:      item.match(/(?:\bNUMERO\b|\bNUM\b|Nº|N°)[\s:]+([^|·\n\s,]+)/i)?.[1]?.trim() ?? "",
-          complemento: item.match(/(?:COMPLEMENTO|COMPL|APTO|AP)[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
-          bairro:      item.match(/BAIRRO[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
-          cidade:      item.match(/(?:CIDADE|MUNICIPIO|MUNICÍPIO)[\s:]+([^|·\n,\-]+)/i)?.[1]?.trim() ?? "",
-          uf:          item.match(/(?:\bUF\b|\bESTADO\b)[\s:]+([A-Z]{2})/i)?.[1]?.trim() ?? "",
-          cep:         item.match(/CEP[\s:]+(\d{5}-?\d{3}|\d{8})/i)?.[1]?.trim() ?? "",
+          logradouro:  item.match(/(?:LOGRADOURO|ENDERECO|RUA|AV\.?|ALAMEDA)[\s:·]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
+          numero:      item.match(/(?:\bNUMERO\b|\bNUM\b|Nº|N°)[\s:·]+([^|·\n\s,]+)/i)?.[1]?.trim() ?? "",
+          complemento: item.match(/(?:COMPLEMENTO|COMPL|APTO|AP)[\s:·]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
+          bairro:      item.match(/BAIRRO[\s:·]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
+          cidade:      item.match(/(?:CIDADE|MUNICIPIO|MUNICÍPIO)[\s:·]+([^|·\n,\-]+)/i)?.[1]?.trim() ?? "",
+          uf:          item.match(/(?:\bUF\b|\bESTADO\b)[\s:·]+([A-Z]{2})/i)?.[1]?.trim() ?? "",
+          cep:         item.match(/CEP[\s:·]+(\d{5}-?\d{3}|\d{8})/i)?.[1]?.trim() ?? "",
         });
       }
     }
-
-    // From fields
     const f = mod.data.fields;
-    const logradouro = gf(f,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO","LOGRADOURO_COMPLETO");
+    const logradouro = gf(f,"LOGRADOURO","ENDERECO","RUA","ENDERECO COMPLETO","LOGRADOUROCOMPLETO");
     if (logradouro) {
       addAddr({
         logradouro,
-        numero:      gf(f,"NUMERO","NÚMERO","NUM","NUMERO_IMOVEL"),
+        numero:      gf(f,"NUMERO","NÚMERO","NUM","NUMEROIMOVEL"),
         complemento: gf(f,"COMPLEMENTO","COMPL","APTO"),
         bairro:      gf(f,"BAIRRO"),
         cidade:      gf(f,"CIDADE","MUNICIPIO","MUNICÍPIO"),
-        uf:          gf(f,"UF","ESTADO","UF_ENDERECO"),
-        cep:         gf(f,"CEP","CEP_ENDERECO"),
+        uf:          gf(f,"UF","ESTADO","UFENDERECO"),
+        cep:         gf(f,"CEP","CEPENDERECO"),
       });
     }
-
-    // From raw text — look for CEP + surrounding address lines
     const raw = mod.data.raw;
     const cepMatches = raw.matchAll(/CEP[\s:·]+(\d{5}-?\d{3})/gi);
     for (const cm of cepMatches) {
       const cep = cm[1];
-      // Get the 4 lines surrounding the CEP match
       const idx = cm.index ?? 0;
       const chunk = raw.slice(Math.max(0, idx - 400), idx + 200);
       addAddr({
-        logradouro:  rxv(chunk, "LOGRADOURO","ENDERECO","RUA","AV") || "",
-        numero:      rxv(chunk, "NUMERO","N[UÚ]MERO","NUM") || "",
-        complemento: rxv(chunk, "COMPLEMENTO","COMPL","APTO") || "",
-        bairro:      rxv(chunk, "BAIRRO") || "",
-        cidade:      rxv(chunk, "CIDADE","MUNICIPIO","MUNICÍPIO") || "",
+        logradouro:  rxv(chunk,"LOGRADOURO","ENDERECO","RUA","AV") || "",
+        numero:      rxv(chunk,"NUMERO","N[UÚ]MERO","NUM") || "",
+        complemento: rxv(chunk,"COMPLEMENTO","COMPL","APTO") || "",
+        bairro:      rxv(chunk,"BAIRRO") || "",
+        cidade:      rxv(chunk,"CIDADE","MUNICIPIO","MUNICÍPIO") || "",
         uf:          chunk.match(/\bUF[\s:·]+([A-Z]{2})\b/i)?.[1] ?? "",
         cep,
       });
     }
   }
-
   return out;
 }
 
@@ -286,52 +269,166 @@ function buildEmployments(r?: ModuleResult): Employment[] {
   const out: Employment[] = [];
   for (const sec of r.data.sections) {
     for (const item of sec.items) {
-      const empresa = item.match(/(?:EMPRESA|RAZAO SOCIAL|EMPREGADOR|NOME_EMPREGADOR)[\s:]+([^|·\n]+)/i)?.[1]?.trim()
+      const empresa = item.match(/(?:EMPRESA|RAZAO SOCIAL|EMPREGADOR|NOMEEMPREGADOR)[\s:·]+([^|·\n]+)/i)?.[1]?.trim()
                    ?? item.match(/^([^|·\n:]{5,60})(?:\s*[|·]|$)/)?.[1]?.trim() ?? "";
       out.push({
         empresa,
-        cnpj:     item.match(/CNPJ[\s:]+(\d[\d.\-/]+)/i)?.[1] ?? "",
-        cargo:    item.match(/(?:CARGO|FUNCAO|FUNÇÃO|CBO)[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
-        admissao: item.match(/(?:ADMISSAO|ADMISSÃO|ENTRADA|DT_ADMISSAO|DATA ADMIS)[\s:]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
-        demissao: item.match(/(?:DEMISSAO|DEMISSÃO|SAIDA|DT_RESCISAO|DATA DEMIS)[\s:]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
-        salario:  item.match(/(?:SALARIO|SALÁRIO|REMUNER|SALARIO_CONTRIBUICAO)[\s:]+([R$\d.,\s]+)/i)?.[1]?.trim() ?? "",
+        cnpj:     item.match(/CNPJ[\s:·]+(\d[\d.\-/]+)/i)?.[1] ?? "",
+        cargo:    item.match(/(?:CARGO|FUNCAO|FUNÇÃO|CBO)[\s:·]+([^|·\n]+)/i)?.[1]?.trim() ?? "",
+        admissao: item.match(/(?:ADMISSAO|ADMISSÃO|ENTRADA|DTADMISSAO|DATA ADMIS)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
+        demissao: item.match(/(?:DEMISSAO|DEMISSÃO|SAIDA|DTRESCISAO|DATA DEMIS)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "",
+        salario:  item.match(/(?:SALARIO|SALÁRIO|REMUNER|SALARIOCONTRIBUICAO)[\s:·]+([R$\d.,\s]+)/i)?.[1]?.trim() ?? "",
       });
     }
   }
   return out.filter(e => e.empresa);
 }
 
+// ─── Build relatives (parentes) ───────────────────────────────────────────────
+// Handles both bullet-per-relative and consecutive key-value pair formats
+function buildRelatives(res?: ModuleResult): Relative[] {
+  if (!res?.data) return [];
+  const relatives: Relative[] = [];
+  const seen = new Set<string>();
+
+  function addRel(r: Partial<Relative>) {
+    const key = (r.cpf || r.nome || "").toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    relatives.push({
+      cpf:     r.cpf     || "",
+      nome:    r.nome    || "",
+      nasc:    r.nasc    || "",
+      sexo:    r.sexo    || "",
+      relacao: r.relacao || "",
+      origem:  r.origem  || "",
+    });
+  }
+
+  // Also scan raw text for relatives
+  function scanRaw(raw: string) {
+    // Pattern: NOME followed by CPF on nearby text
+    const entries = raw.split(/\bNOME[\s:·]+/i);
+    for (let i = 1; i < entries.length; i++) {
+      const chunk = entries[i].slice(0, 300);
+      const nome  = chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]?.trim() ?? "";
+      const cpf   = chunk.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
+      const nasc  = chunk.match(/(?:NASC|NASCIMENTO|DATA_NASC)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+      const sexo  = chunk.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
+      if (nome || cpf) addRel({ nome, cpf, nasc, sexo });
+    }
+  }
+
+  for (const sec of res.data.sections) {
+    const items = sec.items;
+    if (!items.length) continue;
+
+    // Detect if items are complete records (each item has multiple fields like NOME + CPF)
+    const isFullRecord = items.some(it =>
+      (it.includes("CPF") || it.includes("NOME")) &&
+      (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
+    );
+
+    if (isFullRecord) {
+      // Each item is one complete relative
+      for (const item of items) {
+        const cpf  = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
+        const nome = (
+          item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1] ||
+          item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
+        )?.trim() ?? "";
+        const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+        const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
+        const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
+        if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: sec.name, origem });
+      }
+    } else {
+      // Items are individual key-value pairs — group into relatives
+      let cur: Partial<Relative> = { relacao: sec.name };
+      for (const item of items) {
+        const kv = item.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9 ]+):\s*(.+)$/i);
+        if (!kv) continue;
+        const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,"");
+        const v = kv[2].trim();
+        const isNome = k === "NOME" || k === "NOMERELACIONADO" || k === "NOMEPARTE";
+        if (isNome && cur.nome) {
+          addRel(cur);
+          cur = { relacao: sec.name };
+        }
+        if (isNome)                                                    cur.nome   = v;
+        else if (k === "CPF" || k === "CPFREL" || k === "CPFRELACIONADO") cur.cpf = v.replace(/\D/g,"");
+        else if (k.includes("NASC") || k.includes("DATANASC"))             cur.nasc = v;
+        else if (k === "SEXO")                                             cur.sexo = v;
+        else if (k.includes("ORIGEM"))                                     cur.origem = v;
+        else if (k.includes("RELAC") || k.includes("PARENT"))             cur.relacao = v;
+      }
+      addRel(cur);
+    }
+  }
+
+  // Fallback: scan raw text if no structured data
+  if (relatives.length === 0 && res.data.raw) scanRaw(res.data.raw);
+
+  // Also scan fields for any relative data
+  if (relatives.length === 0 && res.data.fields.length > 0) {
+    // Treat fields as key-value pairs for one relative
+    const cpf  = gf(res.data.fields, "CPF","CPFREL");
+    const nome = gf(res.data.fields, "NOME","NOMERELACIONADO");
+    const nasc = gf(res.data.fields, "NASC","NASCIMENTO","DATANASCIMENTO");
+    if (cpf || nome) addRel({ cpf, nome, nasc });
+  }
+
+  return relatives;
+}
+
 // ─── Extract photo from foto module or fallback ───────────────────────────────
+function extractPhotoFromResult(res: ModuleResult): string | null {
+  if (!res?.data) return null;
+  const raw = res.data.raw ?? "";
+
+  // Check raw: might be a data URI, a URL, or raw base64
+  if (raw) {
+    const trimmed = raw.trim().replace(/\s/g, "");
+    if (raw.trim().startsWith("data:image")) return raw.trim();
+    if (/^https?:\/\//.test(raw.trim())) return raw.trim();
+    if (trimmed.length > 500 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 200))) {
+      return `data:image/jpeg;base64,${trimmed}`;
+    }
+  }
+
+  // Check all fields - try any field that looks like photo data
+  for (const [k, v] of res.data.fields) {
+    if (!v) continue;
+    if (v.trim().startsWith("data:image")) return v.trim();
+    if (/^https?:\/\//.test(v.trim())) return v.trim();
+    // Long base64-like value
+    const clean = v.replace(/\s/g, "");
+    if (clean.length > 200 && /^[A-Za-z0-9+/=]+$/.test(clean.slice(0, 100))) {
+      return `data:image/jpeg;base64,${clean}`;
+    }
+    // Known photo field names
+    if (/FOTO|URL|BASE64|IMG|IMAGE|FOTO_URL/i.test(k) && v.length > 50) {
+      return `data:image/jpeg;base64,${clean}`;
+    }
+  }
+
+  return null;
+}
+
 function extractPhoto(results: Record<string, ModuleResult>): string | null {
   const fotoRes = results["foto"];
   if (fotoRes?.data) {
-    // Check raw — if it's a base64 blob
-    const raw = fotoRes.data.raw;
-    if (raw && raw.length > 500 && /^[A-Za-z0-9+/=]{100,}/.test(raw.trim())) {
-      return `data:image/jpeg;base64,${raw.trim()}`;
-    }
-    if (raw?.startsWith("data:image")) return raw;
-    if (/^https?:\/\//.test(raw?.trim() ?? "")) return raw.trim();
-
-    // Check fields
-    for (const [k, v] of fotoRes.data.fields) {
-      if (/FOTO|URL|BASE64|IMG|IMAGE/i.test(k) && v) {
-        if (v.startsWith("data:image")) return v;
-        if (/^https?:\/\//.test(v)) return v;
-        if (v.length > 200) return `data:image/jpeg;base64,${v}`;
-      }
-    }
-    // If no key matched, try any long field value
-    const longField = fotoRes.data.fields.find(([,v]) => v.length > 500);
-    if (longField) return `data:image/jpeg;base64,${longField[1]}`;
+    const p = extractPhotoFromResult(fotoRes);
+    if (p) return p;
   }
-
-  // Fallback: check cpfbasico / cpf for a photo URL field
+  // Fallback: check cpfbasico / cpf
   for (const key of ["cpfbasico", "cpf"]) {
     const res = results[key];
     if (!res?.data) continue;
     for (const [k, v] of res.data.fields) {
-      if (/FOTO|URL_FOTO|IMAGEM/i.test(k) && v) return v.startsWith("http") ? v : `data:image/jpeg;base64,${v}`;
+      if (/FOTO|URL_FOTO|IMAGEM|BASE64/i.test(k) && v && v.length > 50) {
+        return v.startsWith("http") ? v : v.startsWith("data:") ? v : `data:image/jpeg;base64,${v}`;
+      }
     }
   }
   return null;
@@ -361,7 +458,8 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 // ─── Section header ───────────────────────────────────────────────────────────
-function SectionHeader({ icon: Icon, title, count }: { icon: React.ComponentType<{className?:string; style?: React.CSSProperties}>; title: string; count?: number }) {
+type IconProp = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+function SectionHeader({ icon: Icon, title, count }: { icon: IconProp; title: string; count?: number }) {
   return (
     <div className="mb-4">
       <div className="flex items-center gap-2.5">
@@ -380,9 +478,9 @@ function SectionHeader({ icon: Icon, title, count }: { icon: React.ComponentType
   );
 }
 
-// ─── Collapsible section wrapper ──────────────────────────────────────────────
+// ─── Collapsible section ──────────────────────────────────────────────────────
 function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = true }:
-  { title: string; icon: React.ComponentType<{className?:string; style?: React.CSSProperties}>; count?: number; children: React.ReactNode; defaultOpen?: boolean }) {
+  { title: string; icon: IconProp; count?: number; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
@@ -427,7 +525,6 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
 
   return (
     <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl shadow-black/60">
-      {/* Header band */}
       <div className="relative px-8 py-6 overflow-hidden" style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4338ca 50%, #6d28d9 100%)" }}>
         <div className="absolute inset-0 opacity-[0.06]" style={{
           backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)",
@@ -452,18 +549,13 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
           </div>
         </div>
       </div>
-
-      {/* Body */}
       <div className="bg-[#09090f] p-5 sm:p-7">
         <div className="flex gap-5">
-          {/* Main data */}
           <div className="flex-1 space-y-3 min-w-0">
-            {/* RG number */}
             <div className="text-center mb-5">
               <p className="text-[8.5px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
               <p className="text-[28px] font-black tracking-[0.12em] text-white leading-none">{id.rg || "—"}</p>
             </div>
-
             <F label="Nome Completo" value={id.nome} accent="text-white text-[14px]" />
             <div className="grid grid-cols-2 gap-4">
               <F label="Mãe" value={id.mae} />
@@ -517,8 +609,6 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
               )}
             </div>
             <p className="text-[7.5px] uppercase tracking-[0.2em] text-white/20 text-center">Foto do Titular</p>
-
-            {/* Type sanguineo badge */}
             {id.tipoSanguineo && (
               <div className="mt-1 w-14 h-14 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
                 <p className="text-[8px] text-red-400/60 uppercase tracking-widest">Tipo</p>
@@ -595,6 +685,66 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
   );
 }
 
+// ─── Relative card ─────────────────────────────────────────────────────────────
+function RelativeCard({ rel, idx, photo, loadingPhoto }: {
+  rel: Relative; idx: number; photo?: string; loadingPhoto?: boolean;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}
+      className="flex items-center gap-4 p-4 rounded-2xl border border-white/8 bg-black/25 hover:bg-black/35 hover:border-white/14 transition-all"
+    >
+      {/* Photo */}
+      <div className="relative shrink-0">
+        <div className="w-16 h-20 rounded-xl overflow-hidden border-2 border-white/12 bg-white/5 flex items-center justify-center">
+          {loadingPhoto
+            ? <Loader2 className="w-5 h-5 animate-spin text-white/20" />
+            : photo
+              ? <img src={photo} alt={rel.nome} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              : <User className="w-6 h-6 text-white/12" />
+          }
+        </div>
+        {photo && (
+          <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-400/25 border border-emerald-400/50 flex items-center justify-center">
+            <Fingerprint className="w-2 h-2 text-emerald-300" />
+          </div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          {rel.relacao && (
+            <span className="inline-block px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-primary/12 text-primary/80">{rel.relacao}</span>
+          )}
+          {rel.sexo && (
+            <span className="text-[9px] text-white/30">{rel.sexo === "M" || rel.sexo.toLowerCase() === "m" ? "Masculino" : "Feminino"}</span>
+          )}
+        </div>
+        <p className="text-[15px] font-bold text-white leading-tight">{rel.nome || "—"}</p>
+        <div className="flex items-center gap-3 flex-wrap">
+          {rel.cpf && (
+            <span className="font-mono text-[11px] text-white/45">{fmtCPF(rel.cpf)}</span>
+          )}
+          {rel.nasc && (
+            <span className="text-[11px] text-white/35">📅 {rel.nasc}</span>
+          )}
+          {rel.origem && (
+            <span className="text-[10px] text-white/25">{rel.origem}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Actions */}
+      {rel.cpf && (
+        <div className="shrink-0 flex flex-col gap-1.5">
+          <CopyBtn text={fmtCPF(rel.cpf)} />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // ─── Main CpfFullPanel ────────────────────────────────────────────────────────
 type Props = { cpf: string };
 
@@ -604,61 +754,106 @@ export function CpfFullPanel({ cpf }: Props) {
   const [mStates, setMStates]   = useState<Record<string, ModuleStatus>>({});
   const [mResults, setMResults] = useState<Record<string, ModuleResult>>({});
   const [geoAddr, setGeoAddr]   = useState<Address[]>([]);
+  const [relPhotos, setRelPhotos] = useState<Record<string, string>>({});
+  const [relPhotosLoading, setRelPhotosLoading] = useState<Set<string>>(new Set());
+
+  // Stable ref to final results snapshot — avoids stale closure in geocode effect
+  const finalResultsRef = useRef<Record<string, ModuleResult>>({});
   const runRef = useRef(0);
 
+  // ── Module fetch effect ──────────────────────────────────────────────────
   useEffect(() => {
     const clean = cpf.replace(/\D/g,"");
     if (clean.length !== 11) return;
     const id = ++runRef.current;
     setRunning(true); setDone(false);
-    setMStates(Object.fromEntries(MODULES.map(m => [m.tipo, "loading"])));
+    setMStates(Object.fromEntries(MODULES.map(m => [m.tipo, "loading" as ModuleStatus])));
     setMResults({});
     setGeoAddr([]);
+    setRelPhotos({});
+    setRelPhotosLoading(new Set());
+    finalResultsRef.current = {};
+
+    const accumulated: Record<string, ModuleResult> = {};
 
     void Promise.allSettled(
       MODULES.map(async ({ tipo, skylers }) => {
         const res = await fetchModule(tipo, clean, skylers);
         if (runRef.current !== id) return;
+        accumulated[tipo] = res;
         setMStates(p => ({ ...p, [tipo]: res.status }));
         setMResults(p => ({ ...p, [tipo]: res }));
       })
-    ).then(() => { if (runRef.current === id) { setRunning(false); setDone(true); } });
+    ).then(() => {
+      if (runRef.current !== id) return;
+      finalResultsRef.current = accumulated;
+      setRunning(false);
+      setDone(true);
+    });
 
-    return () => { runRef.current = id + 1; };
+    return () => { runRef.current++; };
   }, [cpf]);
 
-  // Geocode addresses after all modules are done
+  // ── Geocode effect — runs ONCE when done becomes true ────────────────────
   useEffect(() => {
     if (!done) return;
-    const addrs = buildAddresses(mResults);
+    // Use the snapshot ref, NOT the mResults state (stable, no extra renders)
+    const addrs = buildAddresses(finalResultsRef.current);
     if (!addrs.length) return;
+
     let cancelled = false;
     (async () => {
       const result: Address[] = [];
       for (const addr of addrs.slice(0, 8)) {
         if (cancelled) break;
+        if (!addr.logradouro && !addr.cep) { result.push(addr); continue; }
         const q = [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf, "Brasil"].filter(Boolean).join(", ");
         try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, { headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" } });
+          const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, {
+            headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" }
+          });
           const data = await r.json() as { lat: string; lon: string }[];
           result.push(data[0] ? { ...addr, lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : addr);
         } catch { result.push(addr); }
-        await new Promise(res => setTimeout(res, 400));
+        await new Promise(res => setTimeout(res, 500));
       }
       if (!cancelled) setGeoAddr(result);
     })();
     return () => { cancelled = true; };
-  }, [done, mResults]);
+  }, [done]); // intentionally only [done] — finalResultsRef is stable
 
-  // Derived data
+  // ── Relative photos effect ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!done) return;
+    const rels = buildRelatives(finalResultsRef.current["parentes"]);
+    const cpfsToFetch = rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf);
+    if (!cpfsToFetch.length) return;
+
+    setRelPhotosLoading(new Set(cpfsToFetch));
+
+    void Promise.allSettled(
+      cpfsToFetch.map(async (relCpf) => {
+        const res = await fetchModule("foto", relCpf, true);
+        const photo = res.data ? extractPhotoFromResult(res) : null;
+        setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
+        if (photo) setRelPhotos(prev => ({ ...prev, [relCpf]: photo }));
+      })
+    );
+  }, [done]); // only [done]
+
+  // ── Derived data (pure computation from current state) ─────────────────────
   const identity    = buildIdentity(mResults);
   const phones      = buildPhones(mResults);
   const addresses   = buildAddresses(mResults);
   const employments = buildEmployments(mResults["empregos"]);
+  const relatives   = buildRelatives(mResults["parentes"]);
   const photo       = extractPhoto(mResults);
 
-  const score1    = (gf(mResults["score"]?.data?.fields  ?? [], "SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1]) ?? "";
-  const score2Val = (gf(mResults["score2"]?.data?.fields ?? [], "SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1]) ?? "";
+  // Score — avoid mixing ?? with || (Babel strict parser)
+  const scoreFields1  = mResults["score"]?.data?.fields ?? [];
+  const scoreFields2  = mResults["score2"]?.data?.fields ?? [];
+  const score1    = gf(scoreFields1,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
+  const score2Val = gf(scoreFields2,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
 
   const geocoded  = geoAddr.filter(a => a.lat && a.lng);
   const center: [number,number] = geocoded[0] ? [geocoded[0].lat!, geocoded[0].lng!] : [-14.235, -51.925];
@@ -673,12 +868,12 @@ export function CpfFullPanel({ cpf }: Props) {
   const hasLegal    = ["processos","mandado"].some(k =>
     mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0)
   );
-  const extras      = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
+  const extras = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)
   );
 
-  const extraLabels: Record<string, { label: string; icon: React.ComponentType<{className?:string}> }> = {
+  const extraLabels: Record<string, { label: string; icon: IconProp }> = {
     irpf:      { label: "IRPF / Imposto de Renda", icon: Receipt },
     beneficios:{ label: "Benefícios Sociais",       icon: Gift },
     dividas:   { label: "Dívidas",                  icon: Wallet },
@@ -687,11 +882,14 @@ export function CpfFullPanel({ cpf }: Props) {
     spc:       { label: "SPC / Negativação",         icon: AlertTriangle },
   };
 
-  const noData = done && !hasIdentity && !phones.length && !addresses.length;
+  const noData = done && !hasIdentity && !phones.length && !addresses.length && !relatives.length;
+
+  // Geocoding in progress = geocode effect has started but no geocoded results yet AND addresses exist
+  const geocodingInProgress = done && addresses.length > 0 && geoAddr.length === 0;
 
   return (
     <div className="mt-6 space-y-8">
-      {/* ── Progress tracker ──────────────────────────────────────────────── */}
+      {/* ── Progress tracker ───────────────────────────────────────────────── */}
       <AnimatePresence>
         {(running || done) && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
@@ -726,7 +924,7 @@ export function CpfFullPanel({ cpf }: Props) {
         )}
       </AnimatePresence>
 
-      {/* ── Results ───────────────────────────────────────────────────────── */}
+      {/* ── Results ─────────────────────────────────────────────────────────── */}
       <AnimatePresence>
         {done && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} className="space-y-10">
@@ -739,9 +937,9 @@ export function CpfFullPanel({ cpf }: Props) {
               </motion.div>
             )}
 
-            {/* Foto standalone (if found and identity exists) */}
-            {photo && hasIdentity && (
-              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+            {/* Foto biométrica standalone */}
+            {photo && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
                 className="rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/8 to-transparent p-4 flex items-center gap-5">
                 <div className="relative shrink-0">
                   <div className="absolute -inset-2 rounded-2xl bg-cyan-400/10 blur-xl" />
@@ -755,8 +953,8 @@ export function CpfFullPanel({ cpf }: Props) {
                     <Fingerprint className="w-3.5 h-3.5 text-cyan-400" />
                     <span className="text-[9px] uppercase tracking-widest font-bold text-cyan-300">Foto Biométrica</span>
                   </div>
-                  <p className="text-sm text-white font-semibold">{identity.nome}</p>
-                  <p className="text-xs text-white/40 mt-0.5">{fmtCPF(identity.cpf)}</p>
+                  <p className="text-sm text-white font-semibold">{identity.nome || "Titular"}</p>
+                  <p className="text-xs text-white/40 mt-0.5">{fmtCPF(cpf)}</p>
                   <a href={photo} download={`foto-${cpf}.jpg`}
                     className="inline-flex items-center gap-1.5 mt-2 text-[10px] uppercase tracking-widest text-cyan-400/70 hover:text-cyan-300 border border-cyan-400/20 hover:border-cyan-400/40 rounded-lg px-2.5 py-1 transition-colors">
                     ↓ Baixar Foto
@@ -774,69 +972,38 @@ export function CpfFullPanel({ cpf }: Props) {
               </CollapsibleSection>
             )}
 
-            {/* Relações / Parentes */}
-            {(() => {
-              const res = mResults["parentes"];
-              if (!res?.data) return null;
-              const allItems = res.data.sections.flatMap(s => s.items.map(item => ({ sec: s.name, item })));
-              if (!allItems.length && !res.data.fields.length) return null;
-              return (
-                <CollapsibleSection icon={Users} title="Relações & Parentes" count={allItems.length || res.data.fields.length}>
-                  <div className="rounded-2xl border border-white/10 bg-[#09090f] overflow-hidden">
-                    {allItems.length > 0 ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm min-w-[600px]">
-                          <thead>
-                            <tr className="border-b border-white/8 bg-black/30">
-                              {["Foto","CPF","Relação","Nome","Nascimento","Sexo","Origem"].map(h => (
-                                <th key={h} className="px-3 py-3 text-left text-[9px] uppercase tracking-[0.18em] text-white/30 font-semibold whitespace-nowrap">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {allItems.map(({ sec, item }, i) => {
-                              const cpfM    = item.match(/CPF[\s:]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1] ?? "";
-                              const nome    = item.match(/NOME[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "";
-                              const nasc    = item.match(/(?:NASC|DATA_NASC)[\s:]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
-                              const sexo    = item.match(/SEXO[\s:]+([MFMF])/i)?.[1] ?? "";
-                              const origem  = item.match(/ORIGEM[\s:]+([^|·\n]+)/i)?.[1]?.trim() ?? "";
-                              return (
-                                <tr key={i} className="border-b border-white/4 hover:bg-white/[0.02] transition-colors">
-                                  <td className="px-3 py-2.5">
-                                    <div className="w-9 h-11 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center">
-                                      <User className="w-4 h-4 text-white/12" />
-                                    </div>
-                                  </td>
-                                  <td className="px-3 py-2.5 font-mono text-xs text-white/40">{fmtCPF(cpfM) || "—"}</td>
-                                  <td className="px-3 py-2.5">
-                                    <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-primary/10 text-primary/80">{sec || "—"}</span>
-                                  </td>
-                                  <td className="px-3 py-2.5 text-white font-semibold text-[13px] whitespace-nowrap">{nome || "—"}</td>
-                                  <td className="px-3 py-2.5 text-white/45 text-xs whitespace-nowrap">{nasc || "—"}</td>
-                                  <td className="px-3 py-2.5 text-white/45 text-xs">{sexo || "—"}</td>
-                                  <td className="px-3 py-2.5 text-white/35 text-xs">{origem || "—"}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+            {/* Parentes / Relações */}
+            {(relatives.length > 0 || mResults["parentes"]?.status === "done") && (
+              <CollapsibleSection icon={Users} title="Relações & Parentes"
+                count={relatives.length > 0 ? relatives.length : undefined}>
+                {relatives.length > 0 ? (
+                  <div className="space-y-2">
+                    {relatives.map((rel, i) => (
+                      <RelativeCard
+                        key={i}
+                        rel={rel}
+                        idx={i}
+                        photo={rel.cpf ? relPhotos[rel.cpf] : undefined}
+                        loadingPhoto={rel.cpf ? relPhotosLoading.has(rel.cpf) : false}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-white/8 bg-black/20 p-4">
+                    {/* If done with error / no data, show raw */}
+                    {mResults["parentes"]?.data?.raw ? (
+                      <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">
+                        {mResults["parentes"].data.raw}
+                      </pre>
                     ) : (
-                      <div className="p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {res.data.fields.map(([k, v], i) => (
-                          <div key={i}>
-                            <p className="text-[8.5px] uppercase tracking-widest text-white/25 mb-0.5">{k}</p>
-                            <p className="text-sm text-white font-medium">{v}</p>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-sm text-white/30 text-center py-4">Nenhum parente encontrado.</p>
                     )}
                   </div>
-                </CollapsibleSection>
-              );
-            })()}
+                )}
+              </CollapsibleSection>
+            )}
 
-            {/* Visualização Geográfica + Endereços */}
+            {/* Endereços + Mapa */}
             {addresses.length > 0 && (
               <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length}>
                 {/* Map */}
@@ -852,9 +1019,7 @@ export function CpfFullPanel({ cpf }: Props) {
                         <CircleMarker key={i} center={[addr.lat!, addr.lng!]}
                           radius={12}
                           pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
-                          {/* Permanent label showing address */}
-                          <Tooltip permanent direction="top" offset={[0, -14]}
-                            className="leaflet-tooltip-dark">
+                          <Tooltip permanent direction="top" offset={[0, -14]}>
                             <div style={{ background: "rgba(9,9,15,0.92)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: 8, padding: "4px 8px", color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", maxWidth: 220 }}>
                               <span style={{ color: "#a855f7", marginRight: 5 }}>◉ {i+1}</span>
                               {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}
@@ -879,24 +1044,17 @@ export function CpfFullPanel({ cpf }: Props) {
                       ))}
                     </MapContainer>
 
-                    {/* Map overlay badge */}
                     <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 bg-[#09090f]/90 backdrop-blur rounded-xl px-3 py-2 border border-white/10 pointer-events-none">
                       <MapPin className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
                       <span className="text-[10px] font-semibold text-white">Mapa de Endereços</span>
-                      <span className="text-[9px] text-white/30">{geocoded.length} geocodificados</span>
+                      {geocodingInProgress
+                        ? <><Loader2 className="w-3 h-3 animate-spin text-primary/60" /><span className="text-[9px] text-white/30">Geocodificando…</span></>
+                        : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>
+                      }
                     </div>
-                    {geocoded.length === 0 && (
-                      <div className="absolute inset-0 flex items-center justify-center z-[1000] pointer-events-none">
-                        <div className="bg-[#09090f]/80 rounded-xl px-4 py-3 border border-white/8 text-center">
-                          <Loader2 className="w-4 h-4 animate-spin text-primary mx-auto mb-1" />
-                          <p className="text-[10px] text-white/40">Geocodificando endereços…</p>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
 
-                {/* Address cards */}
                 <div className="space-y-2">
                   {addresses.map((a, i) => <AddressCard key={i} addr={a} idx={i} />)}
                 </div>
@@ -984,7 +1142,11 @@ export function CpfFullPanel({ cpf }: Props) {
                   {["processos","mandado"].flatMap(tipo => {
                     const res = mResults[tipo];
                     if (!res?.data) return [];
-                    const secs = res.data.sections.length > 0 ? res.data.sections : (res.data.fields.length > 0 ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }] : []);
+                    const secs = res.data.sections.length > 0
+                      ? res.data.sections
+                      : (res.data.fields.length > 0
+                          ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }]
+                          : []);
                     return secs.map((sec, si) => (
                       <div key={`${tipo}-${si}`} className="rounded-2xl border border-rose-500/20 bg-rose-500/5 overflow-hidden">
                         <div className="px-4 py-2.5 bg-black/20 border-b border-rose-500/10 flex items-center gap-2">
@@ -1012,7 +1174,7 @@ export function CpfFullPanel({ cpf }: Props) {
                     const meta = extraLabels[key];
                     const res  = mResults[key];
                     if (!meta || !res?.data) return null;
-                    const { label, icon: Icon } = meta as { label: string; icon: React.ComponentType<{className?:string; style?: React.CSSProperties}> };
+                    const { label, icon: Icon } = meta;
                     const { fields, sections, raw } = res.data;
                     return (
                       <div key={key} className="rounded-2xl border border-white/10 bg-[#09090f] overflow-hidden">
