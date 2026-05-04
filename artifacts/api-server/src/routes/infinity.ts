@@ -856,7 +856,15 @@ function processArray(
 }
 
 function parseSkylers(data: unknown): Parsed {
-  const raw = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  // Build sanitized raw: remove junk keys (token, criador, etc.) so they never appear in the raw display
+  let sanitizedForRaw: unknown = data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    sanitizedForRaw = Object.fromEntries(
+      Object.entries(data as Record<string, unknown>)
+        .filter(([k]) => !JUNK_KEYS_SKYLERS.has(k.toLowerCase()))
+    );
+  }
+  const raw = typeof data === "string" ? data : JSON.stringify(sanitizedForRaw, null, 2);
   const result: Parsed = { fields: [], sections: [], raw };
 
   if (!data) return result;
@@ -1800,14 +1808,21 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
 
   // ── Skylers external proxy ───────────────────────────────────────────────
   if (source === "skylers") {
-    const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
-    if (!modulo) {
+    const tipoLower = tipo.toLowerCase() as "telegram" | "likes" | string;
+    const isSpecialEndpoint = tipoLower === "telegram" || tipoLower === "likes";
+    const modulo = isSpecialEndpoint ? "" : TIPO_TO_SKYLERS[tipoLower];
+    if (!isSpecialEndpoint && !modulo) {
       res.json({ success: false, error: `Tipo '${tipo}' não mapeado na Skylers API.`, data: "" });
       return;
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 25_000);
-    const provider = await callSkylers(modulo, dadosStr, ctrl.signal);
+    const provider = await callSkylers(
+      modulo,
+      dadosStr,
+      ctrl.signal,
+      isSpecialEndpoint ? (tipoLower as "telegram" | "likes") : undefined,
+    );
     clearTimeout(timer);
     const success = provider.ok && !!provider.parsed;
     // Serialize parsed result as compact string for the base-selector "raw" display

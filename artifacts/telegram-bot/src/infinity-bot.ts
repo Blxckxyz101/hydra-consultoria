@@ -198,6 +198,9 @@ const TIPOS = [
   { id: "placafipe",    label: "🚗 Placa FIPE",        prompt: "placa do veículo (ex: ABC1D23)" },
   { id: "placaserpro",  label: "🚗 Placa Serpro",      prompt: "placa do veículo (ex: ABC1D23)" },
   { id: "vistoria",     label: "🔍 Vistoria",          prompt: "CPF da pessoa ou placa" },
+  // ── Social ────────────────────────────────────────────────────────────────
+  { id: "telegram",    label: "✈️ Telegram (Nick)",    prompt: "username do Telegram (sem @)" },
+  { id: "likes",       label: "❤️ Likes (Instagram)",  prompt: "ID do perfil no Instagram" },
 ] as const;
 
 type TipoId = (typeof TIPOS)[number]["id"];
@@ -209,6 +212,8 @@ const SKYLERS_ONLY_TIPOS = new Set<string>([
   "advogadooab", "advogadooabuf", "advogadocpf", "oab", "matricula", "cheque",
   "catcpf", "catnumero", "faculdades", "assessoria", "registro", "nasc",
   "placafipe", "placaserpro", "vistoria",
+  // Social (Skylers)
+  "telegram", "likes",
   // CNH por estado (Skylers)
   "cnham", "cnhnc", "cnhrs", "cnhrr", "fotodetran",
   // Fotos por estado
@@ -307,6 +312,9 @@ const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
   placafipe:     { title: "PLACA FIPE  ·  SKYLERS",       lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
   placaserpro:   { title: "PLACA SERPRO  ·  SKYLERS",     lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
   vistoria:      { title: "VISTORIA  ·  SKYLERS",         lines: ["DIGITE O CPF OU PLACA DO VEÍCULO"] },
+  // Social
+  telegram:      { title: "TELEGRAM (NICK)  ·  SKYLERS",  lines: ["DIGITE O USERNAME DO TELEGRAM", "OBS: SEM O @ (ex: username)"] },
+  likes:         { title: "LIKES INSTAGRAM  ·  SKYLERS",  lines: ["DIGITE O ID DO PERFIL NO INSTAGRAM"] },
 };
 
 function buildQueryPrompt(tipoId: string): string {
