@@ -567,11 +567,27 @@ const MAIN_TIPOS_SKIP = new Set([
   "cnham", "cnhnc", "cnhrs", "cnhrr",
 ]);
 
+// ── Keyboard helpers ──────────────────────────────────────────────────────────
+/** Separator row — full-width label button (calls "noop" → just closes toast) */
+function sep(label: string) {
+  return [Markup.button.callback(label, "noop")];
+}
+/** Tipo button, with lock prefix in freeMode if tipo is not free */
+function tipoBtn(id: string, freeMode: boolean) {
+  const t = TIPOS.find(t => t.id === id);
+  if (!t) return Markup.button.callback(id, "noop");
+  const lock = freeMode && !FREE_TIPOS.has(id);
+  return Markup.button.callback(lock ? `🔒 ${t.label}` : t.label, `tipo:${id}`);
+}
+function row2(a: string, b: string | undefined, freeMode: boolean) {
+  return b ? [tipoBtn(a, freeMode), tipoBtn(b, freeMode)] : [tipoBtn(a, freeMode)];
+}
+
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 function buildHomeKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔍  Nova Consulta", "consultar")],
-    [Markup.button.callback("🪪 CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
+    [Markup.button.callback("🔍 Nova Consulta", "consultar")],
+    [Markup.button.callback("🪪 CPF — Módulos", "cpf_menu"), Markup.button.callback("📸 Fotos", "fotos_menu")],
     [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.callback("💬 Suporte", "show_suporte")],
   ]);
 }
@@ -585,51 +601,93 @@ function buildSupportKeyboard() {
 
 function buildTiposKeyboard(freeMode: boolean = false) {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  const fm = freeMode;
 
-  // CPF mega-menu button at top
-  rows.push([Markup.button.callback("🪪 CPF — Ver módulos", "cpf_menu")]);
+  rows.push([Markup.button.callback("🪪 CPF — Todos os módulos", "cpf_menu")]);
+  rows.push([Markup.button.callback("📸 FOTOS — Todos os estados", "fotos_menu")]);
 
-  // Filtered tipos: skip foto/* and state CNH (already in sub-menus), skip bare cpf (now in cpf_menu)
-  const arr = [...TIPOS].filter(t => !MAIN_TIPOS_SKIP.has(t.id) && t.id !== "cpf");
-  for (let i = 0; i < arr.length; i += 2) {
-    const t1 = arr[i];
-    const t2 = arr[i + 1];
-    const lock1 = freeMode && !FREE_TIPOS.has(t1.id);
-    const lock2 = t2 && freeMode && !FREE_TIPOS.has(t2.id);
-    rows.push([
-      Markup.button.callback(lock1 ? `🔒 ${t1.label}` : t1.label, `tipo:${t1.id}`),
-      ...(t2 ? [Markup.button.callback(lock2 ? `🔒 ${t2.label}` : t2.label, `tipo:${t2.id}`)] : []),
-    ]);
-  }
+  rows.push(sep("━━━ 🔍 BUSCA BÁSICA ━━━━━━━━━━━━━"));
+  rows.push(row2("nome",       "rg",          fm));
+  rows.push(row2("telefone",   "email",        fm));
+  rows.push(row2("pix",        "cep",          fm));
 
-  // Fotos sub-menu button
-  rows.push([Markup.button.callback("📸 FOTOS — Ver estados", "fotos_menu")]);
+  rows.push(sep("━━━ 🚗 VEÍCULOS ━━━━━━━━━━━━━━━━━"));
+  rows.push(row2("placa",      "cnh",          fm));
+  rows.push(row2("chassi",     "renavam",      fm));
+  rows.push(row2("placafipe",  "placaserpro",  fm));
+  rows.push(row2("vistoria",   undefined,      fm));
+
+  rows.push(sep("━━━ 🏢 EMPRESARIAL ━━━━━━━━━━━━━━"));
+  rows.push(row2("cnpj",       "socios",       fm));
+  rows.push(row2("fucionarios","empregos",     fm));
+
+  rows.push(sep("━━━ 🏥 SAÚDE & FAMÍLIA ━━━━━━━━━━"));
+  rows.push(row2("mae",        "pai",          fm));
+  rows.push(row2("parentes",   "obito",        fm));
+  rows.push(row2("cns",        "nis",          fm));
+  rows.push(row2("vacinas",    undefined,      fm));
+
+  rows.push(sep("━━━ ⚖️ JURÍDICO ━━━━━━━━━━━━━━━━━"));
+  rows.push(row2("processo",     "advogadooab",    fm));
+  rows.push(row2("advogadooabuf","advogadocpf",    fm));
+  rows.push(row2("oab",          undefined,        fm));
+
+  rows.push(sep("━━━ 💎 SKYLERS BLACK ━━━━━━━━━━━━"));
+  rows.push(row2("cpfbasico",  "score",        fm));
+  rows.push(row2("score2",     "titulo",       fm));
+  rows.push(row2("irpf",       "beneficios",   fm));
+  rows.push(row2("mandado",    "dividas",      fm));
+  rows.push(row2("bens",       "processos",    fm));
+  rows.push(row2("spc",        "iptu",         fm));
+  rows.push(row2("certidoes",  "cnhfull",      fm));
+  rows.push(row2("biometria",  "cheque",       fm));
+  rows.push(row2("matricula",  "registro",     fm));
+  rows.push(row2("nasc",       "assessoria",   fm));
+  rows.push(row2("faculdades", "catcpf",       fm));
+  rows.push(row2("catnumero",  "telegram",     fm));
+  rows.push(row2("likes",      undefined,      fm));
 
   if (freeMode) {
-    rows.push([Markup.button.url("💎 Ver Plano BLACK", SUPPORT_URL)] as any);
+    rows.push([Markup.button.url("💎 Contratar Plano BLACK", SUPPORT_URL)] as any);
   }
-  rows.push([Markup.button.callback("↩ Cancelar", "home")]);
+  rows.push([Markup.button.callback("↩ Voltar ao Menu", "home")]);
   return Markup.inlineKeyboard(rows);
 }
 
 function buildCpfModuleKeyboard(freeMode: boolean = false) {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  const fm = freeMode;
 
-  // Build 2-column grid from CPF_MODULE_TIPOS
-  const cpfItems = CPF_MODULE_TIPOS.map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
-  for (let i = 0; i < cpfItems.length; i += 2) {
-    const t1 = cpfItems[i];
-    const t2 = cpfItems[i + 1];
-    const lock1 = freeMode && !FREE_TIPOS.has(t1.id);
-    const lock2 = t2 && freeMode && !FREE_TIPOS.has(t2.id);
-    rows.push([
-      Markup.button.callback(lock1 ? `🔒 ${t1.label}` : t1.label, `tipo:${t1.id}`),
-      ...(t2 ? [Markup.button.callback(lock2 ? `🔒 ${t2.label}` : t2.label, `tipo:${t2.id}`)] : []),
-    ]);
-  }
-  rows.push([Markup.button.callback("📸 FOTOS por Estado", "fotos_menu")]);
+  rows.push(sep("━━━ 👤 DADOS BÁSICOS ━━━━━━━━━━━━"));
+  rows.push(row2("cpf",        "cpfbasico",   fm));
+  rows.push(row2("mae",        "pai",          fm));
+  rows.push(row2("parentes",   "empregos",     fm));
+  rows.push(row2("nasc",       undefined,      fm));
+
+  rows.push(sep("━━━ 📄 DOCUMENTOS ━━━━━━━━━━━━━━━"));
+  rows.push(row2("cnh",        "cnhfull",      fm));
+  rows.push(row2("titulo",     "obito",        fm));
+  rows.push(row2("vacinas",    undefined,      fm));
+
+  rows.push(sep("━━━ 💰 FINANCEIRO ━━━━━━━━━━━━━━━"));
+  rows.push(row2("score",      "score2",       fm));
+  rows.push(row2("irpf",       "spc",          fm));
+  rows.push(row2("iptu",       "dividas",      fm));
+  rows.push(row2("bens",       undefined,      fm));
+
+  rows.push(sep("━━━ ⚖️ JUDICIAL ━━━━━━━━━━━━━━━━━"));
+  rows.push(row2("mandado",    "processos",    fm));
+  rows.push(row2("certidoes",  "cheque",       fm));
+  rows.push(row2("matricula",  "registro",     fm));
+  rows.push(row2("assessoria", undefined,      fm));
+
+  rows.push(sep("━━━ 🔍 OUTROS ━━━━━━━━━━━━━━━━━━━"));
+  rows.push(row2("beneficios", "biometria",    fm));
+  rows.push(row2("faculdades", "catcpf",       fm));
+
+  rows.push([Markup.button.callback("📸 FOTOS — Ver estados", "fotos_menu")]);
   if (freeMode) {
-    rows.push([Markup.button.url("💎 Ver Plano BLACK", SUPPORT_URL)] as any);
+    rows.push([Markup.button.url("💎 Contratar Plano BLACK", SUPPORT_URL)] as any);
   }
   rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
   return Markup.inlineKeyboard(rows);
@@ -637,35 +695,30 @@ function buildCpfModuleKeyboard(freeMode: boolean = false) {
 
 function buildFotosKeyboard() {
   const rows: ReturnType<typeof Markup.button.callback>[][] = [];
+  const fm = false;
 
-  const fotoItems = FOTOS_TIPOS.map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
-  for (let i = 0; i < fotoItems.length; i += 2) {
-    const t1 = fotoItems[i];
-    const t2 = fotoItems[i + 1];
-    rows.push([
-      Markup.button.callback(t1.label, `tipo:${t1.id}`),
-      ...(t2 ? [Markup.button.callback(t2.label, `tipo:${t2.id}`)] : []),
-    ]);
-  }
-  // CRLV photos (placa input)
-  const crlvItems = [
-    TIPOS.find(t => t.id === "crlvtofoto"),
-    TIPOS.find(t => t.id === "crlvmtfoto"),
-  ].filter(Boolean) as typeof TIPOS[number][];
-  if (crlvItems.length > 0) {
-    rows.push(crlvItems.map(t => Markup.button.callback(t.label, `tipo:${t.id}`)));
-  }
-  // State CNH
-  const cnhItems = ["cnham", "cnhnc", "cnhrs", "cnhrr"]
-    .map(id => TIPOS.find(t => t.id === id)).filter(Boolean) as typeof TIPOS[number][];
-  for (let i = 0; i < cnhItems.length; i += 2) {
-    const t1 = cnhItems[i];
-    const t2 = cnhItems[i + 1];
-    rows.push([
-      Markup.button.callback(t1.label, `tipo:${t1.id}`),
-      ...(t2 ? [Markup.button.callback(t2.label, `tipo:${t2.id}`)] : []),
-    ]);
-  }
+  rows.push(sep("━━━ 📸 FOTO CNH & DETRAN ━━━━━━━━"));
+  rows.push(row2("foto",       "fotodetran",   fm));
+
+  rows.push(sep("━━━ 📸 FOTOS — NACIONAL & ESTADOS"));
+  rows.push(row2("fotonc",     "fotoma",       fm));
+  rows.push(row2("fotoce",     "fotosp",       fm));
+  rows.push(row2("fotorj",     "fotomg",       fm));
+  rows.push(row2("fotoes",     "fotoba",       fm));
+  rows.push(row2("fotope",     "fotorn",       fm));
+  rows.push(row2("fotopb",     "fotoal",       fm));
+  rows.push(row2("fotodf",     "fotogo",       fm));
+  rows.push(row2("fotoms",     "fotopi",       fm));
+  rows.push(row2("fototo",     "fotoro",       fm));
+  rows.push(row2("fotopr",     "fotomapresos", fm));
+
+  rows.push(sep("━━━ 🖼️ CRLV — FOTO POR PLACA ━━━━"));
+  rows.push(row2("crlvtofoto", "crlvmtfoto",   fm));
+
+  rows.push(sep("━━━ 🪪 CNH POR ESTADO ━━━━━━━━━━━"));
+  rows.push(row2("cnham",      "cnhnc",         fm));
+  rows.push(row2("cnhrs",      "cnhrr",         fm));
+
   rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
   return Markup.inlineKeyboard(rows);
 }
@@ -989,18 +1042,18 @@ export function startInfinityBot(): void {
     const name = from.username ? `@${from.username}` : (from.first_name || "usuário");
     const admin = isAdmin(from.id, from.username);
     const paid = isPaid(from.id, from.username);
-    const cargo = admin ? "admin" : paid ? "black" : "membro";
-    const plano = admin ? "admin" : paid ? "💎 BLACK" : "🔓 FREE";
+    const plano = admin ? "👑 ADMIN" : paid ? "💎 BLACK" : "🔓 FREE";
     return (
       `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
       `┃\n` +
-      `┃ • OLÁ, <b>${name}</b>!\n` +
+      `┃  Bem-vindo, <b>${name}</b>!\n` +
+      `┃  Plano: <b>${plano}</b>  •  Status: ✅ Ativo\n` +
       `┠────────────────────────────\n` +
-      `┃ • CARGO: <code>${cargo}</code>\n` +
-      `┃ • STATUS: ✅ ativo\n` +
-      `┃ • PLANO: <code>${plano}</code>\n` +
+      `┃  🪪 <b>CPF</b> — 30+ módulos disponíveis\n` +
+      `┃  📸 <b>Fotos</b> — todos os estados\n` +
+      `┃  🔍 <b>Consultar</b> — menu completo\n` +
       `┠────────────────────────────\n` +
-      `┃  SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+      `┃  Escolha uma opção abaixo 👇🏻\n` +
       `╰────────────────────────────╯`
     );
   }
@@ -1008,10 +1061,13 @@ export function startInfinityBot(): void {
   const TIPO_MENU_TEXT =
     `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
     `┃\n` +
-    `┃ • ESCOLHA O MÓDULO DE CONSULTA\n` +
-    `┃ • QUE DESEJA UTILIZAR\n` +
+    `┃ 🔍 CENTRAL DE CONSULTAS\n` +
     `┠────────────────────────────\n` +
-    `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
+    `┃ • 🪪 CPF → abre todos os módulos CPF\n` +
+    `┃ • 📸 FOTOS → fotos por estado\n` +
+    `┃ • Demais tipos organizados abaixo\n` +
+    `┠────────────────────────────\n` +
+    `┃ Selecione o módulo desejado 👇🏻\n` +
     `╰────────────────────────────╯`;
 
   // ── Middleware: group authorization check ──────────────────────────────────
@@ -1368,13 +1424,14 @@ export function startInfinityBot(): void {
       `❓ <b>INFINITY SEARCH — AJUDA</b>`,
       `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
       ``,
-      `<b>Menus interativos:</b>`,
+      `<b>📁 Menus interativos:</b>`,
+      `<code>/consultar</code> — central de consultas (todos os módulos)`,
       `<code>/cpf</code> — seletor de módulos CPF (30+ tipos)`,
-      `<code>/fotos</code> — fotos por estado (Skylers)`,
-      `<code>/consultar</code> — todos os módulos disponíveis`,
+      `<code>/fotos</code> — fotos por estado`,
       ``,
-      `<b>Comandos de dados básicos:</b>`,
-      `<code>/cpf 12345678901</code> — CPF Full direto`,
+      `<b>🔍 Comandos diretos:</b>`,
+      `<code>/cpf 12345678901</code> — consulta CPF Full`,
+      `<code>/nome João Silva</code> — busca por nome`,
       `<code>/telefone 11999887766</code>`,
       `<code>/placa ABC1D23</code>`,
       `<code>/cnpj 12345678000195</code>`,
@@ -1382,21 +1439,18 @@ export function startInfinityBot(): void {
       `<code>/cep 01310100</code>`,
       `<code>/pix chave-pix</code>`,
       `<code>/rg 123456789</code>`,
-      `<code>/nome João Silva</code>`,
       `<code>/cnh 12345678901</code>`,
       ``,
-      `<b>Módulos Skylers (BLACK) — CPF:</b>`,
+      `<b>💎 Módulos Skylers (BLACK):</b>`,
       `<code>/score</code> · <code>/score2</code> · <code>/titulo</code>`,
       `<code>/beneficios</code> · <code>/mandado</code> · <code>/bens</code>`,
       `<code>/processos</code>`,
       ``,
-      `<b>Bases disponíveis:</b>`,
-      `∞ <b>Infinity</b> — OSINT completo`,
-      `🏥 <b>SISREG-III</b> — Regulação em saúde`,
-      `💉 <b>SI-PNI</b> — Vacinação nacional`,
-      `🔵 <b>Skylers</b> — Módulos exclusivos BLACK`,
+      `<b>🌐 Bases de dados:</b>`,
+      `∞ <b>Infinity Search</b> — OSINT completo`,
+      `🔵 <b>Skylers</b> — módulos exclusivos BLACK`,
       ``,
-      `<b>Acesso:</b>`,
+      `<b>🔑 Acesso:</b>`,
       `Membros do canal têm acesso automático.`,
       `Grupos precisam ser liberados por um admin.`,
     ];
@@ -1446,6 +1500,9 @@ export function startInfinityBot(): void {
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]]) }
     );
   });
+
+  // ── Callback: noop (separator buttons — just close the toast) ────────────
+  bot.action("noop", async (ctx) => { await ctx.answerCbQuery(); });
 
   // ── Callback: home ────────────────────────────────────────────────────────
   bot.action("home", async (ctx) => {
