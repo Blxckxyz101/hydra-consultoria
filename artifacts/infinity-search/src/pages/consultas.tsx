@@ -303,9 +303,15 @@ export default function Consultas() {
     setTab(tabDef.id);
     setQuery(dados);
     setResult(null);
-    const base: ExternalBase | null = SKYLERS_ONLY_TIPOS.has(tabDef.id) ? "skylers" : null;
-    executeQuery(tabDef.id, dados, base);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (SKYLERS_ONLY_TIPOS.has(tabDef.id)) {
+      executeQuery(tabDef.id, dados, "skylers");
+    } else if (PANEL_EXTERNAL_TIPOS.has(tabDef.id)) {
+      setPendingQuery({ tipo: tabDef.id, dados });
+      setShowBaseSelector(true);
+    } else {
+      executeQuery(tabDef.id, dados, null);
+    }
   };
 
   const loadSavedResult = (item: Historico[number]) => {

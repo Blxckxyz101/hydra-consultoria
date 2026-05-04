@@ -31,20 +31,24 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveErr, setSaveErr] = useState(false);
 
   const saveExpiry = async () => {
     setSaving(true);
+    setSaveErr(false);
     try {
       const token = localStorage.getItem("infinity_token");
-      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ expiresAt: dateVal || null }),
       });
+      if (!r.ok) throw new Error();
       setSaved(true);
       setTimeout(() => { setSaved(false); setEditing(false); onSaved(); }, 1000);
     } catch {
-      // silent
+      setSaveErr(true);
+      setTimeout(() => setSaveErr(false), 2500);
     } finally {
       setSaving(false);
     }
@@ -52,18 +56,21 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
 
   const removeExpiry = async () => {
     setSaving(true);
+    setSaveErr(false);
     try {
       const token = localStorage.getItem("infinity_token");
-      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ expiresAt: null }),
       });
+      if (!r.ok) throw new Error();
       setDateVal("");
       setSaved(true);
       setTimeout(() => { setSaved(false); setEditing(false); onSaved(); }, 1000);
     } catch {
-      // silent
+      setSaveErr(true);
+      setTimeout(() => setSaveErr(false), 2500);
     } finally {
       setSaving(false);
     }
@@ -94,9 +101,18 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
       <button
         onClick={saveExpiry}
         disabled={saving}
-        className="p-1.5 rounded-lg bg-emerald-400/10 border border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/20 transition-colors disabled:opacity-50"
+        className={`p-1.5 rounded-lg border transition-colors disabled:opacity-50 ${
+          saveErr
+            ? "bg-destructive/10 border-destructive/30 text-destructive"
+            : "bg-emerald-400/10 border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/20"
+        }`}
+        title={saveErr ? "Erro ao salvar" : "Salvar"}
       >
-        {saving ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" /> : saved ? <Check className="w-3 h-3" /> : <Check className="w-3 h-3 opacity-0 w-0" />}
+        {saving
+          ? <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin inline-block" />
+          : saveErr
+          ? <X className="w-3 h-3" />
+          : <Check className="w-3 h-3" />}
       </button>
       {currentExpiry && (
         <button

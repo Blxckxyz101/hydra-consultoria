@@ -1,7 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { db, attacksTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, attacksTable, infinitySessionsTable } from "@workspace/db";
+import { eq, lt } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -38,6 +38,23 @@ void (async () => {
     logger.warn({ err }, "Stale attack cleanup failed (non-fatal)");
   }
 })();
+
+// ── Expired session cleanup — runs every 24h ───────────────────────────────
+async function cleanExpiredSessions() {
+  try {
+    const deleted = await db
+      .delete(infinitySessionsTable)
+      .where(lt(infinitySessionsTable.expiresAt, new Date()))
+      .returning({ token: infinitySessionsTable.token });
+    if (deleted.length > 0) {
+      logger.info({ deleted: deleted.length }, "Cleaned up expired infinity sessions");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Expired session cleanup failed (non-fatal)");
+  }
+}
+void cleanExpiredSessions();
+setInterval(() => void cleanExpiredSessions(), 24 * 60 * 60 * 1000);
 
 const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
   const server = app.listen(port, () => {
