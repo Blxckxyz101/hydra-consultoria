@@ -17,6 +17,36 @@ const router: IRouter = Router();
 const PROVIDER_BASE = "http://149.56.18.68:25584/api/consulta";
 const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 
+const SKYLERS_BASE = "http://23.81.118.36:7070";
+const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
+
+const TIPO_TO_SKYLERS: Record<string, string> = {
+  cpf: "iseek-cpf",
+  nome: "iseek-dados---nomeabreviadofriltros",
+  rg: "iseek-dados---rg",
+  mae: "iseek-dados---mae",
+  pai: "iseek-dados---pai",
+  parentes: "iseek-dados---parentes",
+  obito: "iseek-dados---obito",
+  nis: "iseek-dados---nis",
+  cns: "iseek-cpf",
+  vacinas: "iseek-dados---vacinas",
+  telefone: "iseek-dados---telefone",
+  email: "iseek-dados---email",
+  pix: "iseek-dados---pix",
+  cep: "iseek-dados---cep",
+  placa: "iseek-dados---placa",
+  chassi: "iseek-dados---chassi",
+  renavam: "iseek-dados---renavam",
+  motor: "iseek-dados---motor",
+  cnh: "iseek-dados---cnh",
+  frota: "iseek-dados---veiculos",
+  cnpj: "iseek-dados---cnpj",
+  fucionarios: "iseek-dados---func",
+  socios: "iseek-dados---cnpj",
+  empregos: "iseek-dados---rais",
+};
+
 const DAILY_RATE_LIMIT = 350;
 const PER_USER_DAILY_LIMIT = 100;
 
@@ -612,6 +642,128 @@ async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
   }
 }
 
+// ─── Skylers API ────────────────────────────────────────────────────────────
+function parseSkylers(data: unknown): Parsed {
+  const raw = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  const result: Parsed = { fields: [], sections: [], raw };
+
+  if (!data) return result;
+
+  if (Array.isArray(data)) {
+    if (data.length === 0) return result;
+    const items = (data as unknown[]).map((item) => {
+      if (item && typeof item === "object") {
+        return Object.entries(item as Record<string, unknown>)
+          .filter(([, v]) => v !== null && v !== undefined && String(v).trim() && String(v) !== "None")
+          .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+          .join(" · ");
+      }
+      return String(item);
+    }).filter(Boolean);
+    if (items.length > 0) result.sections.push({ name: "RESULTADOS", items });
+    return result;
+  }
+
+  if (typeof data !== "object") {
+    result.fields.push({ key: "Resultado", value: String(data) });
+    return result;
+  }
+
+  const d = data as Record<string, unknown>;
+
+  // Unwrap common OSINT API response wrappers
+  const wrappers = ["data", "result", "resposta", "response", "content", "retorno", "dados"];
+  for (const w of wrappers) {
+    if (d[w] && typeof d[w] === "object" && !Array.isArray(d[w])) {
+      const inner = parseSkylers(d[w]);
+      if (inner.fields.length > 0 || inner.sections.length > 0) return { ...inner, raw };
+    }
+    if (Array.isArray(d[w]) && (d[w] as unknown[]).length > 0) {
+      return parseSkylers(d[w]);
+    }
+  }
+
+  // Flatten the object into fields / sections
+  for (const [k, v] of Object.entries(d)) {
+    if (["status", "token", "criador", "creditos", "creditos_restantes"].includes(k)) continue;
+    if (v === null || v === undefined) continue;
+
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue;
+      const items = v.map((item) => {
+        if (item && typeof item === "object") {
+          return Object.entries(item as Record<string, unknown>)
+            .filter(([, sv]) => sv !== null && sv !== undefined && String(sv).trim() !== "" && String(sv) !== "None")
+            .map(([sk, sv]) => `${sk.replace(/_/g, " ")}: ${sv}`)
+            .join(" · ");
+        }
+        return String(item);
+      }).filter((s) => s && s !== "None");
+      if (items.length > 0) result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+    } else if (typeof v === "object") {
+      const sub = v as Record<string, unknown>;
+      const items = Object.entries(sub)
+        .filter(([, sv]) => sv !== null && sv !== undefined && String(sv).trim() !== "" && String(sv) !== "None")
+        .map(([sk, sv]) => `${sk.replace(/_/g, " ")}: ${sv}`);
+      if (items.length > 0) result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+    } else {
+      const s = String(v).trim();
+      if (s && s !== "None" && s !== "null" && s !== "undefined") {
+        result.fields.push({ key: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), value: s });
+      }
+    }
+  }
+
+  return result;
+}
+
+async function callSkylers(
+  modulo: string,
+  valor: string,
+  signal: AbortSignal,
+  endpoint?: "likes" | "telegram",
+): Promise<{ ok: boolean; parsed?: Parsed; error?: string; raw?: unknown }> {
+  try {
+    let url: string;
+    if (endpoint === "likes") {
+      url = `${SKYLERS_BASE}/likes?token=${SKYLERS_TOKEN}&id=${encodeURIComponent(valor)}&region=BR`;
+    } else if (endpoint === "telegram") {
+      url = `${SKYLERS_BASE}/telegram?token=${SKYLERS_TOKEN}&user=${encodeURIComponent(valor)}`;
+    } else {
+      url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
+    }
+
+    const r = await fetch(url, { signal });
+    const text = await r.text();
+
+    if (!r.ok) {
+      return { ok: false, error: `Skylers HTTP ${r.status}`, raw: text.slice(0, 500) };
+    }
+
+    let json: unknown;
+    try { json = JSON.parse(text); } catch { json = { raw: text }; }
+
+    // Check for error responses
+    if (json && typeof json === "object" && !Array.isArray(json)) {
+      const dj = json as Record<string, unknown>;
+      const isErr = dj.error || (dj.status && String(dj.status).toLowerCase() === "error") ||
+        (dj.message && String(dj.message).toLowerCase().includes("error"));
+      if (isErr) {
+        return { ok: false, error: String(dj.message ?? dj.error ?? dj.detail ?? "Sem resultado"), raw: json };
+      }
+    }
+
+    const parsed = parseSkylers(json);
+    if (parsed.fields.length === 0 && parsed.sections.length === 0) {
+      return { ok: false, error: "Sem dados retornados para esta consulta", parsed };
+    }
+    return { ok: true, parsed };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "erro de rede";
+    return { ok: false, error: msg };
+  }
+}
+
 // ─── auth ──────────────────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
@@ -899,8 +1051,9 @@ router.get("/consultas", requireAuth, async (req, res) => {
 router.get("/bases/status", requireAuth, async (_req, res) => {
   const bases = [
     { id: "geass",    name: "Geass API",       description: "Provedor OSINT principal · 24 tipos",           url: PROVIDER_BASE.replace("/api/consulta", "/") },
-    { id: "sipni",    name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações",              url: "https://sipni.datasus.gov.br" },
-    { id: "sisreg",   name: "SISREG-III",       description: "Sistema de Regulação em Saúde",                 url: "https://sisregiii.saude.gov.br" },
+    { id: "skylers",  name: "Skylers API",     description: "Provedor OSINT avançado · 90+ módulos",         url: `${SKYLERS_BASE}/token/info?token=${SKYLERS_TOKEN}` },
+    { id: "sipni",    name: "SI-PNI / DATASUS", description: "Programa Nacional de Imunizações",             url: "https://sipni.datasus.gov.br" },
+    { id: "sisreg",   name: "SISREG-III",       description: "Sistema de Regulação em Saúde",                url: "https://sisregiii.saude.gov.br" },
     { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
     { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
     { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
@@ -935,6 +1088,68 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
   });
 
   res.json(results);
+});
+
+// ─── Skylers route ─────────────────────────────────────────────────────────
+router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
+  const { modulo, valor, endpoint } = req.body ?? {};
+
+  if (!valor) {
+    res.status(400).json({ success: false, error: "valor é obrigatório" });
+    return;
+  }
+
+  const ep = endpoint as "likes" | "telegram" | undefined;
+  if (!ep && !modulo) {
+    res.status(400).json({ success: false, error: "modulo é obrigatório" });
+    return;
+  }
+
+  const username = req.infinityUser!.username;
+  const [globalCount, userCount] = await Promise.all([
+    getGlobalDailyCount(),
+    getUserDailyCount(username),
+  ]);
+
+  if (globalCount >= DAILY_RATE_LIMIT) {
+    res.status(429).json({
+      success: false,
+      error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido.`,
+      rateLimited: true,
+    });
+    return;
+  }
+
+  const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
+  if (userCount >= userLimit) {
+    res.status(429).json({
+      success: false,
+      error: `Limite diário de ${userLimit} consultas atingido. Tente novamente amanhã.`,
+      rateLimited: true,
+      limitInfo: { used: userCount, limit: userLimit },
+    });
+    return;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25_000);
+
+  const provider = await callSkylers(
+    String(modulo ?? ""),
+    String(valor).trim(),
+    ctrl.signal,
+    ep,
+  );
+  clearTimeout(timer);
+
+  const success = provider.ok && !!provider.parsed;
+  const data = provider.parsed ?? { fields: [], sections: [], raw: "" };
+  const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
+
+  bumpCaches(username);
+  await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data });
+
+  res.json({ success, data, error: provider.error ?? null });
 });
 
 // ─── consultas universal ───────────────────────────────────────────────────
@@ -1228,9 +1443,9 @@ function requireAuthOrInternal(req: import("express").Request, res: import("expr
 }
 
 router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
-  const source = req.params.source as "sipni" | "sisreg";
-  if (source !== "sipni" && source !== "sisreg") {
-    res.status(400).json({ success: false, error: "Fonte inválida. Use 'sipni' ou 'sisreg'." });
+  const source = req.params.source as "sipni" | "sisreg" | "skylers";
+  if (source !== "sipni" && source !== "sisreg" && source !== "skylers") {
+    res.status(400).json({ success: false, error: "Fonte inválida." });
     return;
   }
 
@@ -1243,6 +1458,38 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   const dadosStr = String(dados).trim();
   if (!dadosStr) {
     res.status(400).json({ success: false, error: "Dados não podem estar vazios." });
+    return;
+  }
+
+  // ── Skylers external proxy ───────────────────────────────────────────────
+  if (source === "skylers") {
+    const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
+    if (!modulo) {
+      res.json({ success: false, error: `Tipo '${tipo}' não mapeado na Skylers API.`, data: "" });
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25_000);
+    const provider = await callSkylers(modulo, dadosStr, ctrl.signal);
+    clearTimeout(timer);
+    const success = provider.ok && !!provider.parsed;
+    // Serialize parsed result as compact string for the base-selector "raw" display
+    const rawText = provider.parsed?.raw ?? "";
+    if (req.infinityUser) {
+      bumpCaches(req.infinityUser.username);
+      await logConsulta({
+        tipo: `skylers:${modulo}`,
+        query: dadosStr,
+        username: req.infinityUser.username,
+        success,
+        result: provider.parsed ?? {},
+      });
+    }
+    if (success) {
+      res.json({ success: true, data: provider.parsed });
+    } else {
+      res.json({ success: false, error: provider.error ?? "Sem resultado", data: rawText });
+    }
     return;
   }
 

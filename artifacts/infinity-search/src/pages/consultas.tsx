@@ -67,8 +67,12 @@ const CATEGORY_GRADIENT: Record<string, string> = {
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; result: unknown | null; createdAt: string }>;
 
-const PANEL_EXTERNAL_TIPOS = new Set(["cpf", "nome", "cns", "vacinas"]);
-type ExternalBase = "sipni" | "sisreg";
+const PANEL_EXTERNAL_TIPOS = new Set([
+  "cpf", "nome", "rg", "mae", "pai", "parentes", "obito", "nis", "cns", "vacinas",
+  "telefone", "email", "pix", "cep", "placa", "chassi", "renavam", "motor", "cnh",
+  "frota", "cnpj", "fucionarios", "socios", "empregos",
+]);
+type ExternalBase = "sipni" | "sisreg" | "skylers";
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
@@ -178,7 +182,7 @@ export default function Consultas() {
             Consultas
           </motion.h1>
           <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-            24 fontes operacionais · provedor Geass conectado
+            24 fontes operacionais · Geass + Skylers API conectados
           </p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
@@ -298,7 +302,57 @@ export default function Consultas() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <motion.button
+                  whileHover={{ scale: 1.015 }}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, null)}
+                  className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.08] to-transparent hover:border-primary/40 hover:from-primary/[0.12] transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="p-2 rounded-xl bg-primary/15 border border-primary/25 group-hover:bg-primary/20 transition-colors">
+                      <Database className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                      <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                      <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Infinity Search</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Geass API · recomendado</p>
+                  </div>
+                  <div className="flex items-center gap-1 text-[9px] text-primary/50 group-hover:text-primary transition-colors">
+                    <ShieldCheck className="w-3 h-3" />
+                    <span>Fonte principal</span>
+                  </div>
+                </motion.button>
+
+                <motion.button
+                  whileHover={{ scale: 1.015 }}
+                  whileTap={{ scale: 0.985 }}
+                  onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, "skylers")}
+                  className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-white/8 bg-gradient-to-br from-white/[0.04] to-transparent hover:border-sky-400/30 hover:from-sky-500/[0.07] transition-all duration-200 text-left overflow-hidden"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="p-2 rounded-xl bg-sky-500/10 border border-sky-500/20 group-hover:bg-sky-500/15 transition-colors">
+                      <Network className="w-4 h-4 text-sky-400" />
+                    </div>
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                      <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                      <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-sky-300 group-hover:text-white transition-colors">Skylers API</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">Provedor avançado · 90+ módulos OSINT</p>
+                  </div>
+                  <div className="flex items-center gap-1 text-[9px] text-sky-400/50 group-hover:text-sky-400 transition-colors">
+                    <ChevronRight className="w-3 h-3" />
+                    <span>Fonte alternativa</span>
+                  </div>
+                </motion.button>
+
                 {(pendingQuery.tipo === "cpf" || pendingQuery.tipo === "nome") && (
                   <motion.button
                     whileHover={{ scale: 1.015 }}
@@ -352,31 +406,6 @@ export default function Consultas() {
                     </div>
                   </motion.button>
                 )}
-
-                <motion.button
-                  whileHover={{ scale: 1.015 }}
-                  whileTap={{ scale: 0.985 }}
-                  onClick={() => executeQuery(pendingQuery.tipo, pendingQuery.dados, null)}
-                  className="group relative flex flex-col gap-3 p-4 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.08] to-transparent hover:border-primary/40 hover:from-primary/[0.12] transition-all duration-200 text-left overflow-hidden"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="p-2 rounded-xl bg-primary/15 border border-primary/25 group-hover:bg-primary/20 transition-colors">
-                      <Database className="w-4 h-4 text-primary" />
-                    </div>
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                      <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                      <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Infinity Search</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Geass API · recomendado</p>
-                  </div>
-                  <div className="flex items-center gap-1 text-[9px] text-primary/50 group-hover:text-primary transition-colors">
-                    <ShieldCheck className="w-3 h-3" />
-                    <span>Fonte principal</span>
-                  </div>
-                </motion.button>
               </div>
             </motion.div>
           )}
