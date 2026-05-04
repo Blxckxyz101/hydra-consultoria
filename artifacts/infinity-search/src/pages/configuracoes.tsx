@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useInfinityMe,
@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send } from "lucide-react";
 
 const ROLE_CONFIG = {
   admin: { label: "Admin", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/30", icon: Shield },
@@ -118,6 +118,14 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
   );
 }
 
+interface InfinityNotif {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+}
+
 export default function Configuracoes() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -141,6 +149,66 @@ export default function Configuracoes() {
   const [newRole, setNewRole] = useState<"admin" | "vip">("vip");
   const [expiresAt, setExpiresAt] = useState("");
   const [formError, setFormError] = useState("");
+
+  // ── Notifications state ────────────────────────────────────────────────────
+  const [notifs, setNotifs] = useState<InfinityNotif[]>([]);
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifBody, setNotifBody] = useState("");
+  const [notifSending, setNotifSending] = useState(false);
+  const [notifSuccess, setNotifSuccess] = useState(false);
+  const [notifError, setNotifError] = useState("");
+
+  const loadNotifs = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/notifications", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (r.ok) setNotifs(await r.json());
+    } catch {}
+  }, [isAdmin]);
+
+  useEffect(() => { void loadNotifs(); }, [loadNotifs]);
+
+  const handleSendNotif = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNotifError("");
+    if (!notifTitle.trim() || !notifBody.trim()) return;
+    setNotifSending(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ title: notifTitle.trim(), body: notifBody.trim() }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({})) as { error?: string };
+        throw new Error(j.error ?? "Falha ao enviar");
+      }
+      setNotifTitle("");
+      setNotifBody("");
+      setNotifSuccess(true);
+      setTimeout(() => setNotifSuccess(false), 2500);
+      await loadNotifs();
+    } catch (err: any) {
+      setNotifError(err?.message ?? "Falha ao enviar novidade");
+    } finally {
+      setNotifSending(false);
+    }
+  };
+
+  const handleDeleteNotif = async (id: string) => {
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/notifications/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      await loadNotifs();
+    } catch {}
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -253,6 +321,107 @@ export default function Configuracoes() {
         </motion.div>
       ) : (
         <>
+          {/* ── Novidades / Notifications ──────────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center gap-2 mb-5">
+              <Bell className="w-4 h-4 text-primary" />
+              <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Novidades & Atualizações</h2>
+            </div>
+
+            {/* Send form */}
+            <form onSubmit={handleSendNotif} className="space-y-3 mb-6">
+              <input
+                value={notifTitle}
+                onChange={e => setNotifTitle(e.target.value)}
+                placeholder="Título da novidade..."
+                maxLength={120}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all"
+              />
+              <textarea
+                value={notifBody}
+                onChange={e => setNotifBody(e.target.value)}
+                placeholder="Descreva a atualização ou novidade para os operadores..."
+                rows={3}
+                maxLength={1000}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all resize-none"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={notifSending || !notifTitle.trim() || !notifBody.trim()}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-[0.25em] text-black transition-all disabled:opacity-50"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {notifSending ? "Enviando..." : "Publicar Novidade"}
+                </button>
+                {notifSuccess && (
+                  <motion.span
+                    initial={{ opacity: 0, x: -4 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="flex items-center gap-1 text-xs text-emerald-400"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Publicado!
+                  </motion.span>
+                )}
+              </div>
+              {notifError && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-3">{notifError}</div>
+              )}
+            </form>
+
+            {/* Existing notifications */}
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground mb-3">
+                Publicadas ({notifs.length})
+              </p>
+              {notifs.length === 0 ? (
+                <div className="rounded-xl border border-white/5 bg-black/20 px-4 py-6 text-center text-xs text-muted-foreground">
+                  Nenhuma novidade publicada ainda.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <AnimatePresence>
+                    {notifs.map((n, i) => (
+                      <motion.div
+                        key={n.id}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 8 }}
+                        transition={{ delay: i * 0.03 }}
+                        className="rounded-xl border border-white/5 bg-black/20 p-4 flex items-start gap-3"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-semibold text-foreground truncate">{n.title}</span>
+                            <span className="text-[9px] text-muted-foreground/50 shrink-0">
+                              {new Date(n.createdAt).toLocaleString("pt-BR")}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
+                          <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteNotif(n.id)}
+                          className="shrink-0 p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/30"
+                          title="Remover"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+          </motion.div>
+
           {/* Create user */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}

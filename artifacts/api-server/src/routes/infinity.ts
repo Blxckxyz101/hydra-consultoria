@@ -20,6 +20,16 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
 
+// ─── Notifications store ─────────────────────────────────────────────────────
+interface Notification {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+}
+const notifications: Notification[] = [];
+
 // ─── Theme store ────────────────────────────────────────────────────────────
 let globalTheme = "sky";
 const THEME_COLOR_HEX: Record<string, number> = {
@@ -1774,6 +1784,37 @@ router.put("/theme", requireAuth, (req, res) => {
     color: THEME_COLOR_HEX[globalTheme] ?? 0x38BDF8,
     emoji: THEME_EMOJI[globalTheme] ?? "🌊",
   });
+});
+
+// ─── Notification endpoints ──────────────────────────────────────────────────
+router.get("/notifications", requireAuth, (_req, res) => {
+  res.json([...notifications].reverse());
+});
+
+router.post("/notifications", requireAuth, (req, res) => {
+  const user = req.infinityUser;
+  if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem enviar novidades" }); return; }
+  const { title, body } = req.body as { title?: string; body?: string };
+  if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e mensagem são obrigatórios" }); return; }
+  const notif: Notification = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: title.trim().slice(0, 120),
+    body: body.trim().slice(0, 1000),
+    createdAt: new Date().toISOString(),
+    authorName: user.username,
+  };
+  notifications.push(notif);
+  if (notifications.length > 50) notifications.splice(0, notifications.length - 50);
+  res.status(201).json(notif);
+});
+
+router.delete("/notifications/:id", requireAuth, (req, res) => {
+  const user = req.infinityUser;
+  if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem remover novidades" }); return; }
+  const idx = notifications.findIndex(n => n.id === req.params.id);
+  if (idx === -1) { res.status(404).json({ error: "Notificação não encontrada" }); return; }
+  notifications.splice(idx, 1);
+  res.json({ ok: true });
 });
 
 export default router;

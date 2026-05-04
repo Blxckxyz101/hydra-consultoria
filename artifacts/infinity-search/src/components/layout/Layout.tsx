@@ -1,17 +1,99 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { LockScreen } from "@/components/ui/LockScreen";
+
+interface InfinityNotif {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+}
+
+const SEEN_KEY = "infinity_notif_seen";
+function getSeenIds(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]")); } catch { return new Set(); }
+}
+function markAllSeen(ids: string[]) {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(ids)); } catch {}
+}
 
 function isAccountExpired(user: { role?: string; accountExpiresAt?: string | null } | undefined): boolean {
   if (!user) return false;
   if (user.role === "admin") return false;
   if (!(user as any).accountExpiresAt) return false;
   return new Date((user as any).accountExpiresAt).getTime() < Date.now();
+}
+
+function NotifPanel({ onClose }: { onClose: () => void }) {
+  const [notifs, setNotifs] = useState<InfinityNotif[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/notifications", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(r => r.json())
+      .then((data: InfinityNotif[]) => {
+        setNotifs(data);
+        markAllSeen(data.map(n => n.id));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -6, scale: 0.97 }}
+      transition={{ duration: 0.16 }}
+      className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#070b1a]/95 backdrop-blur-2xl shadow-2xl z-50 overflow-hidden"
+    >
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <Bell className="w-3.5 h-3.5" style={{ color: "var(--color-primary)" }} />
+          <span className="text-[11px] font-bold uppercase tracking-[0.3em] text-foreground">Novidades</span>
+        </div>
+        <button
+          onClick={onClose}
+          className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="max-h-72 overflow-y-auto divide-y divide-white/5">
+        {loading ? (
+          <div className="px-4 py-6 text-center text-xs text-muted-foreground animate-pulse">Carregando...</div>
+        ) : notifs.length === 0 ? (
+          <div className="px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <Bell className="w-8 h-8 text-muted-foreground/20" />
+            <p className="text-xs text-muted-foreground">Nenhuma novidade por enquanto.</p>
+          </div>
+        ) : (
+          notifs.map(n => (
+            <div key={n.id} className="px-4 py-3 hover:bg-white/[0.03] transition-colors">
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <span className="text-xs font-semibold text-foreground leading-snug">{n.title}</span>
+                <span className="text-[9px] text-muted-foreground/50 shrink-0 mt-0.5">
+                  {new Date(n.createdAt).toLocaleDateString("pt-BR")}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
+              <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
+            </div>
+          ))
+        )}
+      </div>
+    </motion.div>
+  );
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -22,10 +104,42 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [profilePhoto, setProfilePhoto] = useState<string | null>(() =>
     localStorage.getItem("infinity_profile_photo")
   );
+  const [bellOpen, setBellOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const bellDesktopRef = useRef<HTMLDivElement>(null);
+  const bellMobileRef = useRef<HTMLDivElement>(null);
+
+  const fetchUnread = useCallback(() => {
+    const token = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/notifications", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(r => r.json())
+      .then((data: InfinityNotif[]) => {
+        const seen = getSeenIds();
+        setUnreadCount(data.filter(n => !seen.has(n.id)).length);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
-    setMobileOpen(false);
-  }, [location]);
+    fetchUnread();
+    const id = setInterval(fetchUnread, 60_000);
+    return () => clearInterval(id);
+  }, [fetchUnread]);
+
+  useEffect(() => {
+    if (!bellOpen) return;
+    function onDown(e: MouseEvent) {
+      const inDesktop = bellDesktopRef.current?.contains(e.target as Node);
+      const inMobile = bellMobileRef.current?.contains(e.target as Node);
+      if (!inDesktop && !inMobile) setBellOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [bellOpen]);
+
+  useEffect(() => { setMobileOpen(false); }, [location]);
 
   useEffect(() => {
     const handler = () => setProfilePhoto(localStorage.getItem("infinity_profile_photo"));
@@ -34,11 +148,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleLogout = async () => {
-    try {
-      await logout.mutateAsync();
-    } catch {}
+    try { await logout.mutateAsync(); } catch {}
     localStorage.removeItem("infinity_token");
     setLocation("/login");
+  };
+
+  const openBell = () => {
+    setBellOpen(v => {
+      if (!v) setUnreadCount(0);
+      return !v;
+    });
   };
 
   const navItems = [
@@ -63,7 +182,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <>
       <div className="px-6 pt-6 pb-6 flex items-center gap-3 border-b border-white/5">
         <div className="relative">
-          {/* Glow blob behind logo — follows theme via CSS var */}
           <div
             className="absolute inset-0 rounded-xl blur-xl scale-110"
             style={{ background: "color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
@@ -75,9 +193,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
             style={{ filter: "drop-shadow(0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
           />
         </div>
-        <div className="flex flex-col">
+        <div className="flex flex-col flex-1 min-w-0">
           <span className="font-bold tracking-[0.25em] text-base text-foreground">INFINITY</span>
           <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>SEARCH</span>
+        </div>
+        {/* Bell — desktop sidebar header */}
+        <div ref={bellDesktopRef} className="relative shrink-0">
+          <button
+            onClick={openBell}
+            className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20 transition-colors"
+            aria-label="Novidades"
+          >
+            <Bell className="w-4 h-4" />
+            {unreadCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
+                style={{ background: "var(--color-primary)" }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+          <AnimatePresence>
+            {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -130,7 +269,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="p-4 border-t border-white/5 space-y-3">
         <div className="px-4 py-3 rounded-xl bg-black/40 border border-white/5">
           <div className="flex items-center gap-3">
-            {/* Avatar — gradient follows theme */}
             <div
               className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-sm shrink-0"
               style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
@@ -167,7 +305,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
-            style={{ ["--hover-color" as string]: "var(--color-primary)" }}
             onMouseEnter={e => {
               const el = e.currentTarget as HTMLElement;
               el.style.background = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
@@ -248,7 +385,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
           />
           <span className="font-bold tracking-[0.2em] text-sm">INFINITY</span>
         </div>
-        <div className="w-10" />
+        {/* Bell — mobile topbar */}
+        <div ref={bellMobileRef} className="relative">
+          <button
+            onClick={openBell}
+            className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Novidades"
+          >
+            <Bell className="w-4 h-4" />
+            {unreadCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
+                style={{ background: "var(--color-primary)" }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+          <AnimatePresence>
+            {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
+          </AnimatePresence>
+        </div>
       </div>
 
       {/* Mobile drawer */}
