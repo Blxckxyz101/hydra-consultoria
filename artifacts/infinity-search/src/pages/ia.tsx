@@ -75,7 +75,7 @@ function renderMarkdown(text: string) {
             className="max-w-[260px] w-full rounded-xl border border-white/10 shadow-lg"
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           />
-          <p className="text-[9px] text-muted-foreground/50 mt-1 uppercase tracking-widest">Foto CNH · DarkFlow</p>
+          <p className="text-[9px] text-muted-foreground/50 mt-1 uppercase tracking-widest">Foto CNH · Skylers</p>
         </div>
       );
       i++; continue;
@@ -234,11 +234,7 @@ export default function IA() {
     setIsThinking(true);
     setIsStreaming(true);
     let finalReply = "";
-    const assistantTs = Date.now();
-    updateSession(currentId, (s) => ({
-      ...s,
-      messages: [...s.messages, { role: "assistant", content: "", ts: assistantTs }],
-    }));
+    let assistantMsgAdded = false;
 
     try {
       const token = localStorage.getItem("infinity_token");
@@ -252,7 +248,6 @@ export default function IA() {
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let firstChunk = true;
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
@@ -270,14 +265,26 @@ export default function IA() {
               if (parsed.status) { setConsultingStatus(parsed.status); continue; }
               if (parsed.delta) {
                 setConsultingStatus(null);
-                if (firstChunk) { setIsThinking(false); firstChunk = false; }
                 finalReply += parsed.delta;
-                updateSession(currentId, (s) => {
-                  const msgs = [...s.messages];
-                  const last = msgs[msgs.length - 1];
-                  if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: last.content + parsed.delta };
-                  return { ...s, messages: msgs, updatedAt: Date.now() };
-                });
+                if (!assistantMsgAdded) {
+                  // First chunk: stop thinking, add assistant message for the first time
+                  setIsThinking(false);
+                  assistantMsgAdded = true;
+                  const aTs = Date.now();
+                  updateSession(currentId, (s) => ({
+                    ...s,
+                    messages: [...s.messages, { role: "assistant", content: parsed.delta, ts: aTs }],
+                    updatedAt: aTs,
+                  }));
+                } else {
+                  // Subsequent chunks: append to existing assistant message
+                  updateSession(currentId, (s) => {
+                    const msgs = [...s.messages];
+                    const last = msgs[msgs.length - 1];
+                    if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: last.content + parsed.delta };
+                    return { ...s, messages: msgs, updatedAt: Date.now() };
+                  });
+                }
               }
             } catch {}
           }
@@ -286,12 +293,20 @@ export default function IA() {
     } catch {
       setIsThinking(false);
       setConsultingStatus(null);
-      updateSession(currentId, (s) => {
-        const msgs = [...s.messages];
-        const last = msgs[msgs.length - 1];
-        if (last?.role === "assistant") msgs[msgs.length - 1] = { ...last, content: "Erro ao processar resposta da IA." };
-        return { ...s, messages: msgs };
-      });
+      if (!assistantMsgAdded) {
+        updateSession(currentId, (s) => ({
+          ...s,
+          messages: [...s.messages, { role: "assistant", content: "Erro ao processar resposta da IA.", ts: Date.now() }],
+          updatedAt: Date.now(),
+        }));
+      } else {
+        updateSession(currentId, (s) => {
+          const msgs = [...s.messages];
+          const last = msgs[msgs.length - 1];
+          if (last?.role === "assistant" && !last.content) msgs[msgs.length - 1] = { ...last, content: "Erro ao processar resposta da IA." };
+          return { ...s, messages: msgs };
+        });
+      }
     } finally {
       setIsThinking(false);
       setConsultingStatus(null);

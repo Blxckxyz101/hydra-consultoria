@@ -188,8 +188,9 @@ export default function Consultas() {
     setTab(tabDef.id);
     setQuery(dados);
     setResult(null);
-    // Execute without base selector for speed
-    executeQuery(tabDef.id, dados, null);
+    // Route Skylers-only tipos correctly, others go to Geass
+    const base: ExternalBase | null = SKYLERS_ONLY_TIPOS.has(tabDef.id) ? "skylers" : null;
+    executeQuery(tabDef.id, dados, base);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 

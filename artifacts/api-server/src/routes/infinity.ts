@@ -137,6 +137,9 @@ const SUPPORTED_TIPOS = new Set([
   "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios",
   "socios", "empregos", "cnh", "renavam", "obito", "rg", "email",
   "motor", "vacinas",
+  // Skylers-only (validated separately via /external/skylers)
+  "cpfbasico", "titulo", "score", "irpf", "beneficios", "mandado",
+  "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto",
 ]);
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
@@ -687,35 +690,58 @@ async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
 }
 
 // ─── Skylers API ────────────────────────────────────────────────────────────
+// Values that are always useless to display
+const JUNK_VALUES = new Set(["None", "null", "undefined", "N/A", "n/a", "-", "", "0"]);
+const JUNK_KEYS_SKYLERS = new Set(["status", "token", "criador", "creditos", "creditos_restantes", "api_info", "mensagem"]);
+const PHOTO_URL_RE = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
+
+function isUseful(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  const s = String(v).trim();
+  return s.length > 0 && !JUNK_VALUES.has(s);
+}
+
+function humanizeKey(k: string): string {
+  return k
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function flattenObjToItems(obj: Record<string, unknown>): string[] {
+  return Object.entries(obj)
+    .filter(([, sv]) => isUseful(sv) && typeof sv !== "object")
+    .map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
+}
+
 function parseSkylers(data: unknown): Parsed {
   const raw = typeof data === "string" ? data : JSON.stringify(data, null, 2);
   const result: Parsed = { fields: [], sections: [], raw };
 
   if (!data) return result;
 
+  // ── Top-level array ────────────────────────────────────────────────────────
   if (Array.isArray(data)) {
     if (data.length === 0) return result;
     const items = (data as unknown[]).map((item) => {
       if (item && typeof item === "object") {
-        return Object.entries(item as Record<string, unknown>)
-          .filter(([, v]) => v !== null && v !== undefined && String(v).trim() && String(v) !== "None")
-          .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
-          .join(" · ");
+        const entries = flattenObjToItems(item as Record<string, unknown>);
+        return entries.join(" · ");
       }
-      return String(item);
+      return isUseful(item) ? String(item) : "";
     }).filter(Boolean);
     if (items.length > 0) result.sections.push({ name: "RESULTADOS", items });
     return result;
   }
 
   if (typeof data !== "object") {
-    result.fields.push({ key: "Resultado", value: String(data) });
+    if (isUseful(data)) result.fields.push({ key: "Resultado", value: String(data) });
     return result;
   }
 
   const d = data as Record<string, unknown>;
 
-  // Unwrap common OSINT API response wrappers
+  // ── Unwrap common OSINT API response wrappers ─────────────────────────────
   const wrappers = ["data", "result", "resposta", "response", "content", "retorno", "dados"];
   for (const w of wrappers) {
     if (d[w] && typeof d[w] === "object" && !Array.isArray(d[w])) {
@@ -723,49 +749,66 @@ function parseSkylers(data: unknown): Parsed {
       if (inner.fields.length > 0 || inner.sections.length > 0) return { ...inner, raw };
     }
     if (Array.isArray(d[w]) && (d[w] as unknown[]).length > 0) {
-      return parseSkylers(d[w]);
+      return { ...parseSkylers(d[w]), raw };
     }
   }
 
-  // Flatten the object into fields / sections
+  // ── Flatten object → fields and sections ──────────────────────────────────
   for (const [k, v] of Object.entries(d)) {
-    if (["status", "token", "criador", "creditos", "creditos_restantes"].includes(k)) continue;
-    if (v === null || v === undefined) continue;
+    if (JUNK_KEYS_SKYLERS.has(k.toLowerCase())) continue;
+    if (!isUseful(v) && !Array.isArray(v) && typeof v !== "object") continue;
 
     if (Array.isArray(v)) {
       if (v.length === 0) continue;
       const items = v.map((item) => {
         if (item && typeof item === "object") {
-          return Object.entries(item as Record<string, unknown>)
-            .filter(([, sv]) => sv !== null && sv !== undefined && String(sv).trim() !== "" && String(sv) !== "None")
-            .map(([sk, sv]) => `${sk.replace(/_/g, " ")}: ${sv}`)
-            .join(" · ");
+          const entries = flattenObjToItems(item as Record<string, unknown>);
+          return entries.join(" · ");
         }
-        return String(item);
-      }).filter((s) => s && s !== "None");
+        return isUseful(item) ? String(item) : "";
+      }).filter(Boolean);
       if (items.length > 0) result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
-    } else if (typeof v === "object") {
+
+    } else if (typeof v === "object" && v !== null) {
       const sub = v as Record<string, unknown>;
-      const items = Object.entries(sub)
-        .filter(([, sv]) => sv !== null && sv !== undefined && String(sv).trim() !== "" && String(sv) !== "None")
-        .map(([sk, sv]) => `${sk.replace(/_/g, " ")}: ${sv}`);
-      if (items.length > 0) result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+      const subEntries = Object.entries(sub).filter(([, sv]) => isUseful(sv) && typeof sv !== "object");
+      if (subEntries.length === 0) continue;
+      // Small sub-objects (≤3 fields) are merged into main fields for readability
+      if (subEntries.length <= 3) {
+        for (const [sk, sv] of subEntries) {
+          result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
+        }
+      } else {
+        const items = subEntries.map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
+        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items });
+      }
+
     } else {
       const s = String(v).trim();
-      if (s && s !== "None" && s !== "null" && s !== "undefined") {
-        result.fields.push({ key: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), value: s });
+      if (s && !JUNK_VALUES.has(s)) {
+        result.fields.push({ key: humanizeKey(k), value: s });
       }
     }
   }
 
-  // ── Detect photo URLs in fields → promote to FOTO_URL ────────────────────
-  const photoUrlRe = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
-  const existingFoto = result.fields.find((f) => f.key === "FOTO_URL");
-  if (!existingFoto) {
+  // ── Detect photo URLs in any field → promote to FOTO_URL ──────────────────
+  if (!result.fields.some((f) => f.key === "FOTO_URL")) {
     for (const f of result.fields) {
-      if (photoUrlRe.test(f.value.trim())) {
+      if (PHOTO_URL_RE.test(f.value.trim())) {
         result.fields.push({ key: "FOTO_URL", value: f.value.trim() });
         break;
+      }
+    }
+    // Also check section items
+    if (!result.fields.some((f) => f.key === "FOTO_URL")) {
+      outer: for (const sec of result.sections) {
+        for (const item of sec.items) {
+          const urlMatch = item.match(/(https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?)/i);
+          if (urlMatch) {
+            result.fields.push({ key: "FOTO_URL", value: urlMatch[1] });
+            break outer;
+          }
+        }
       }
     }
   }

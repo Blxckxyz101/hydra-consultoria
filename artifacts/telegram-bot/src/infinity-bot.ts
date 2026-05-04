@@ -68,56 +68,93 @@ async function isAuthorizedUser(
 
 // ── All tipos (flat list) ─────────────────────────────────────────────────────
 const TIPOS = [
-  { id: "cpf",         label: "🪪 CPF",           prompt: "CPF (11 dígitos, só números)" },
-  { id: "nome",        label: "👤 Nome",           prompt: "nome completo da pessoa" },
-  { id: "telefone",    label: "📞 Telefone",       prompt: "telefone com DDD (ex: 11999887766)" },
-  { id: "email",       label: "📧 E-mail",         prompt: "endereço de e-mail" },
-  { id: "placa",       label: "🚗 Placa",          prompt: "placa do veículo (ex: ABC1D23)" },
-  { id: "cnpj",        label: "🏭 CNPJ",           prompt: "CNPJ (14 dígitos, só números)" },
-  { id: "cep",         label: "📍 CEP",            prompt: "CEP (8 dígitos, só números)" },
-  { id: "pix",         label: "💳 PIX",            prompt: "chave PIX (CPF, e-mail, telefone ou aleatória)" },
-  { id: "rg",          label: "🪪 RG",             prompt: "número do RG" },
-  { id: "mae",         label: "👩 Mãe",            prompt: "CPF ou nome da mãe" },
-  { id: "pai",         label: "👨 Pai",            prompt: "CPF ou nome do pai" },
-  { id: "parentes",    label: "👨‍👩‍👧 Parentes",    prompt: "CPF da pessoa" },
-  { id: "chassi",      label: "🔩 Chassi",         prompt: "número do chassi" },
-  { id: "renavam",     label: "📄 Renavam",        prompt: "número do Renavam" },
-  { id: "cnh",         label: "🪪 CNH",            prompt: "número da CNH ou CPF" },
-  { id: "socios",      label: "🤝 Sócios",         prompt: "CNPJ da empresa" },
-  { id: "fucionarios", label: "👷 Funcionários",   prompt: "CNPJ da empresa" },
-  { id: "empregos",    label: "💼 Empregos",       prompt: "CPF da pessoa" },
-  { id: "cns",         label: "🏥 CNS",            prompt: "número do Cartão Nacional de Saúde" },
-  { id: "nis",         label: "💰 NIS/PIS",        prompt: "número do NIS ou PIS" },
-  { id: "obito",       label: "🕊️ Óbito",         prompt: "CPF da pessoa" },
-  { id: "vacinas",     label: "💉 Vacinas",        prompt: "CPF da pessoa" },
+  // ── Geass / ambos ─────────────────────────────────────────────────────────
+  { id: "cpf",         label: "🪪 CPF",            prompt: "CPF (11 dígitos, só números)" },
+  { id: "nome",        label: "👤 Nome",            prompt: "nome completo da pessoa" },
+  { id: "telefone",    label: "📞 Telefone",        prompt: "telefone com DDD (ex: 11999887766)" },
+  { id: "email",       label: "📧 E-mail",          prompt: "endereço de e-mail" },
+  { id: "placa",       label: "🚗 Placa",           prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "cnpj",        label: "🏭 CNPJ",            prompt: "CNPJ (14 dígitos, só números)" },
+  { id: "cep",         label: "📍 CEP",             prompt: "CEP (8 dígitos, só números)" },
+  { id: "pix",         label: "💳 PIX",             prompt: "chave PIX (CPF, e-mail, telefone ou aleatória)" },
+  { id: "rg",          label: "🪪 RG",              prompt: "número do RG" },
+  { id: "mae",         label: "👩 Mãe",             prompt: "CPF da pessoa (busca mãe)" },
+  { id: "pai",         label: "👨 Pai",             prompt: "CPF da pessoa (busca pai)" },
+  { id: "parentes",    label: "👨‍👩‍👧 Parentes",     prompt: "CPF da pessoa" },
+  { id: "chassi",      label: "🔩 Chassi",          prompt: "número do chassi" },
+  { id: "renavam",     label: "📄 Renavam",         prompt: "número do Renavam" },
+  { id: "cnh",         label: "🪪 CNH",             prompt: "CPF do condutor" },
+  { id: "socios",      label: "🤝 Sócios",          prompt: "CNPJ da empresa" },
+  { id: "fucionarios", label: "👷 Funcionários",    prompt: "CNPJ da empresa" },
+  { id: "empregos",    label: "💼 Empregos",        prompt: "CPF da pessoa" },
+  { id: "cns",         label: "🏥 CNS",             prompt: "número do Cartão Nacional de Saúde" },
+  { id: "nis",         label: "💰 NIS/PIS",         prompt: "número do NIS ou PIS" },
+  { id: "obito",       label: "🕊️ Óbito",          prompt: "CPF da pessoa" },
+  { id: "vacinas",     label: "💉 Vacinas",         prompt: "CPF da pessoa" },
+  // ── Skylers exclusivos ────────────────────────────────────────────────────
+  { id: "cpfbasico",   label: "📋 CPF Básico",      prompt: "CPF (11 dígitos)" },
+  { id: "foto",        label: "📸 Foto CNH",        prompt: "CPF do condutor (11 dígitos)" },
+  { id: "titulo",      label: "🗳️ Título Eleitor",  prompt: "CPF (11 dígitos)" },
+  { id: "score",       label: "📊 Score",           prompt: "CPF (11 dígitos)" },
+  { id: "irpf",        label: "🧾 IRPF",            prompt: "CPF (11 dígitos)" },
+  { id: "beneficios",  label: "🎁 Benefícios",      prompt: "CPF (11 dígitos)" },
+  { id: "mandado",     label: "⚠️ Mandado",         prompt: "CPF (11 dígitos)" },
+  { id: "dividas",     label: "🏦 Dívidas",         prompt: "CPF (11 dígitos)" },
+  { id: "bens",        label: "⭐ Bens",            prompt: "CPF (11 dígitos)" },
+  { id: "processos",   label: "⚖️ Processos",       prompt: "CPF (11 dígitos)" },
+  { id: "spc",         label: "💳 SPC",             prompt: "CPF (11 dígitos)" },
+  { id: "iptu",        label: "🏠 IPTU",            prompt: "CPF (11 dígitos)" },
+  { id: "certidoes",   label: "📜 Certidões",       prompt: "CPF (11 dígitos)" },
+  { id: "cnhfull",     label: "🛡️ CNH Full",        prompt: "CPF do condutor (11 dígitos)" },
 ] as const;
 
 type TipoId = (typeof TIPOS)[number]["id"];
 
+// Tipos que vão direto para Skylers (sem seletor de base)
+const SKYLERS_ONLY_TIPOS = new Set<string>([
+  "cpfbasico", "foto", "titulo", "score", "irpf", "beneficios",
+  "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull",
+]);
+
 // ── Styled query prompts ───────────────────────────────────────────────────────
 const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
-  cpf:         { title: "CONSULTA DE CPF",          lines: ["DIGITE O CPF QUE DESEJA CONSULTAR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  nome:        { title: "CONSULTA POR NOME",         lines: ["DIGITE O NOME COMPLETO DA PESSOA"] },
-  telefone:    { title: "CONSULTA DE TELEFONE",      lines: ["DIGITE O TELEFONE COM DDD", "EX: 11999887766 (SEM ESPAÇOS)"] },
-  email:       { title: "CONSULTA DE E-MAIL",        lines: ["DIGITE O ENDEREÇO DE E-MAIL"] },
-  placa:       { title: "CONSULTA DE PLACA",         lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  cnpj:        { title: "CONSULTA DE CNPJ",          lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  cep:         { title: "CONSULTA DE CEP",           lines: ["DIGITE O CEP", "OBS: 8 DÍGITOS, APENAS NÚMEROS"] },
-  pix:         { title: "CONSULTA DE CHAVE PIX",     lines: ["DIGITE A CHAVE PIX", "OBS: CPF, E-MAIL, TELEFONE OU ALEATÓRIA"] },
-  rg:          { title: "CONSULTA DE RG",            lines: ["DIGITE O NÚMERO DO RG"] },
-  mae:         { title: "CONSULTA DE MÃE",           lines: ["DIGITE O CPF OU NOME DA MÃE"] },
-  pai:         { title: "CONSULTA DE PAI",           lines: ["DIGITE O CPF OU NOME DO PAI"] },
-  parentes:    { title: "CONSULTA DE PARENTES",      lines: ["DIGITE O CPF DA PESSOA"] },
-  chassi:      { title: "CONSULTA DE CHASSI",        lines: ["DIGITE O NÚMERO DO CHASSI DO VEÍCULO"] },
-  renavam:     { title: "CONSULTA DE RENAVAM",       lines: ["DIGITE O NÚMERO DO RENAVAM DO VEÍCULO"] },
-  cnh:         { title: "CONSULTA DE CNH",           lines: ["DIGITE O NÚMERO DA CNH OU CPF"] },
-  socios:      { title: "CONSULTA DE SÓCIOS",        lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  fucionarios: { title: "CONSULTA DE FUNCIONÁRIOS",  lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  empregos:    { title: "CONSULTA DE EMPREGOS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cns:         { title: "CONSULTA DE CNS",           lines: ["DIGITE O NÚMERO DO CARTÃO NACIONAL DE SAÚDE"] },
-  nis:         { title: "CONSULTA DE NIS/PIS",       lines: ["DIGITE O NÚMERO DO NIS OU PIS"] },
-  obito:       { title: "CONSULTA DE ÓBITO",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  vacinas:     { title: "CONSULTA DE VACINAS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cpf:         { title: "CONSULTA DE CPF",           lines: ["DIGITE O CPF QUE DESEJA CONSULTAR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  nome:        { title: "CONSULTA POR NOME",          lines: ["DIGITE O NOME COMPLETO DA PESSOA"] },
+  telefone:    { title: "CONSULTA DE TELEFONE",       lines: ["DIGITE O TELEFONE COM DDD", "EX: 11999887766 (SEM ESPAÇOS)"] },
+  email:       { title: "CONSULTA DE E-MAIL",         lines: ["DIGITE O ENDEREÇO DE E-MAIL"] },
+  placa:       { title: "CONSULTA DE PLACA",          lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
+  cnpj:        { title: "CONSULTA DE CNPJ",           lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  cep:         { title: "CONSULTA DE CEP",            lines: ["DIGITE O CEP", "OBS: 8 DÍGITOS, APENAS NÚMEROS"] },
+  pix:         { title: "CONSULTA DE CHAVE PIX",      lines: ["DIGITE A CHAVE PIX", "OBS: CPF, E-MAIL, TELEFONE OU ALEATÓRIA"] },
+  rg:          { title: "CONSULTA DE RG",             lines: ["DIGITE O NÚMERO DO RG"] },
+  mae:         { title: "CONSULTA DE MÃE",            lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  pai:         { title: "CONSULTA DE PAI",            lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  parentes:    { title: "CONSULTA DE PARENTES",       lines: ["DIGITE O CPF DA PESSOA"] },
+  chassi:      { title: "CONSULTA DE CHASSI",         lines: ["DIGITE O NÚMERO DO CHASSI DO VEÍCULO"] },
+  renavam:     { title: "CONSULTA DE RENAVAM",        lines: ["DIGITE O NÚMERO DO RENAVAM DO VEÍCULO"] },
+  cnh:         { title: "CONSULTA DE CNH",            lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  socios:      { title: "CONSULTA DE SÓCIOS",         lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  fucionarios: { title: "CONSULTA DE FUNCIONÁRIOS",   lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
+  empregos:    { title: "CONSULTA DE EMPREGOS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cns:         { title: "CONSULTA DE CNS",            lines: ["DIGITE O NÚMERO DO CARTÃO NACIONAL DE SAÚDE"] },
+  nis:         { title: "CONSULTA DE NIS/PIS",        lines: ["DIGITE O NÚMERO DO NIS OU PIS"] },
+  obito:       { title: "CONSULTA DE ÓBITO",          lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  vacinas:     { title: "CONSULTA DE VACINAS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  // ── Skylers exclusivos ────────────────────────────────────────────────────
+  cpfbasico:   { title: "CPF BÁSICO  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  foto:        { title: "FOTO CNH  ·  SKYLERS",       lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  titulo:      { title: "TÍTULO ELEITOR  ·  SKYLERS", lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  score:       { title: "SCORE DE CRÉDITO  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  irpf:        { title: "IRPF  ·  SKYLERS",           lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  beneficios:  { title: "BENEFÍCIOS  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: Bolsa Família, BPC, etc.", "11 DÍGITOS, APENAS NÚMEROS"] },
+  mandado:     { title: "MANDADO DE PRISÃO  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  dividas:     { title: "DÍVIDAS  ·  SKYLERS",        lines: ["DIGITE O CPF", "OBS: BACEN, FGTS, etc.", "11 DÍGITOS, APENAS NÚMEROS"] },
+  bens:        { title: "BENS PATRIMONIAIS  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  processos:   { title: "PROCESSOS JUDICIAIS  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  spc:         { title: "SPC  ·  SKYLERS",            lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  iptu:        { title: "IPTU  ·  SKYLERS",           lines: ["DIGITE O CPF DO PROPRIETÁRIO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  certidoes:   { title: "CERTIDÕES  ·  SKYLERS",      lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
+  cnhfull:     { title: "CNH COMPLETO  ·  SKYLERS",   lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
 };
 
 function buildQueryPrompt(tipoId: string): string {
@@ -442,6 +479,129 @@ async function executeQuery(
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
       `❌ <b>Erro ao consultar:</b>\n<code>${msg.slice(0, 200)}</code>`,
+      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
+    ).catch(() => {});
+  }
+}
+
+// ── Skylers query executor ────────────────────────────────────────────────────
+async function executeSkylersBotQuery(
+  ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
+  tipo: string,
+  dados: string,
+  loadMsgId: number,
+) {
+  const chatId = ctx.chat.id;
+  const tipoObj = TIPOS.find((t) => t.id === tipo);
+  const label = tipoObj?.label ?? tipo.toUpperCase();
+
+  try {
+    const r = await fetch(`${INTERNAL_API_BASE}/api/infinity/external/skylers`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": INTERNAL_KEY,
+      },
+      body: JSON.stringify({ tipo, dados }),
+      signal: AbortSignal.timeout(35_000),
+    });
+
+    const json = await r.json() as { success: boolean; data?: unknown; error?: string };
+
+    if (!json.success || !json.data) {
+      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+        `⚠️ <b>Sem resultado — ${label}</b>\n\n` +
+        `<code>${json.error ?? "Nenhum dado encontrado para este valor."}</code>`,
+        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
+      return;
+    }
+
+    // data is a parsed { fields, sections, raw } object
+    type ParsedData = { fields: { key: string; value: string }[]; sections: { name: string; items: string[] }[]; raw: string };
+    const parsed = json.data as ParsedData;
+    const fields: [string, string][] = (parsed.fields ?? []).map((f) => [f.key, f.value]);
+    const sections = (parsed.sections ?? []).map((s) => ({ name: s.name, items: s.items }));
+    const raw = parsed.raw ?? "";
+
+    // Check for photo URL
+    const fotoField = fields.find(([k]) => k === "FOTO_URL");
+    const totalRegistros = sections.reduce((a, s) => a + s.items.length, 0);
+
+    const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const lines: string[] = [];
+    lines.push(LINE); lines.push(`       ∞  INFINITY SEARCH  ∞`); lines.push(LINE);
+    lines.push(`  Base      : Skylers`);
+    lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
+    lines.push(`  Dado      : ${dados}`);
+    lines.push(`  Data      : ${now}`);
+    lines.push(LINE); lines.push("");
+
+    const displayFields = fields.filter(([k]) => k !== "FOTO_URL");
+    if (displayFields.length > 0) {
+      lines.push("DADOS ENCONTRADOS"); lines.push(LINE2);
+      const maxKey = Math.min(22, Math.max(...displayFields.map(([k]) => k.length)));
+      for (const [k, v] of displayFields) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
+      lines.push("");
+    }
+    if (fotoField) {
+      lines.push("FOTO CNH"); lines.push(LINE2);
+      lines.push(`  URL: ${fotoField[1]}`);
+      lines.push("");
+    }
+    for (const sec of sections) {
+      lines.push(`${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`);
+      lines.push(LINE2);
+      sec.items.forEach((item, idx) => lines.push(`  ${String(idx + 1).padStart(3)}.  ${item}`));
+      lines.push("");
+    }
+    if (displayFields.length === 0 && sections.length === 0 && raw) {
+      lines.push("RESPOSTA BRUTA"); lines.push(LINE2); lines.push(raw.slice(0, 3000)); lines.push("");
+    }
+    lines.push(LINE);
+    lines.push(`  Made by ${AUTHOR} | Infinity Search`);
+    lines.push(`  Suporte : ${SUPPORT_URL}`);
+    lines.push(`  Suporte : ${SUPPORT_URL2}`);
+    lines.push(LINE);
+    const txtContent = lines.join("\n");
+
+    const summaryParts: string[] = [
+      `✅ <b>Resultado encontrado — Skylers</b>`,
+      ``,
+      `<code>◈</code> <b>Módulo:</b> <code>${tipo.toUpperCase()}</code>`,
+      `<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,
+    ];
+    if (displayFields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${displayFields.length}`);
+    if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
+    if (fotoField) summaryParts.push(`<code>◈</code> <b>Foto CNH:</b> disponível no arquivo`);
+
+    const preview = displayFields.slice(0, 5);
+    if (preview.length > 0) {
+      summaryParts.push(``, `<b>Prévia:</b>`);
+      for (const [k, v] of preview) summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
+    } else if (sections.length > 0 && sections[0].items.length > 0) {
+      summaryParts.push(``, `<b>Prévia (${sections[0].name}):</b>`);
+      sections[0].items.slice(0, 3).forEach((item) => summaryParts.push(`  • ${item.slice(0, 80)}`));
+    }
+
+    await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+
+    const filename = `skylers-${tipo}-${Date.now()}.txt`;
+    const sentDoc = await ctx.telegram.sendDocument(chatId,
+      { source: Buffer.from(txtContent, "utf-8"), filename },
+      {
+        caption: summaryParts.join("\n").slice(0, 1024),
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]),
+      }
+    );
+
+    const kb = resultKeyboard(chatId, sentDoc.message_id);
+    await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
+      `❌ <b>Erro ao consultar ${label}:</b>\n<code>${msg.slice(0, 200)}</code>`,
       { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
     ).catch(() => {});
   }
@@ -902,7 +1062,15 @@ export function startInfinityBot(): void {
 
     try { await ctx.deleteMessage(); } catch {}
 
-    if (EXTERNAL_BASES_TIPOS.has(tipo)) {
+    if (SKYLERS_ONLY_TIPOS.has(tipo)) {
+      // Skylers-only: go directly to Skylers, no base selector
+      resetSession(ctx.from.id);
+      const tipoObj = TIPOS.find((t) => t.id === tipo);
+      const loadMsg = await ctx.replyWithHTML(
+        `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()} via Skylers...</b>\n<code>${dados}</code>`
+      );
+      await executeSkylersBotQuery(ctx, tipo, dados, loadMsg.message_id);
+    } else if (EXTERNAL_BASES_TIPOS.has(tipo)) {
       // Show base selector — store dados in session
       session.state = "awaiting_base";
       session.dados = dados;
