@@ -766,7 +766,18 @@ async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
 // ─── Skylers API ────────────────────────────────────────────────────────────
 // Values that are always useless to display
 const JUNK_VALUES = new Set(["None", "null", "undefined", "N/A", "n/a", "-", "", "0"]);
-const JUNK_KEYS_SKYLERS = new Set(["status", "token", "criador", "creditos", "creditos_restantes", "api_info", "mensagem"]);
+const JUNK_KEYS_SKYLERS = new Set([
+  "status", "token", "criador", "creditos", "creditos_restantes", "api_info", "mensagem",
+  // Additional token/auth-related keys that Skylers may return
+  "token_info", "tokeninfo", "api_token", "access_token", "apikey", "api_key",
+  "chave_api", "api_secret", "authorization", "bearer", "hash_token",
+  "token_acesso", "chave_acesso", "senha", "password", "key",
+]);
+// Detect values that look like API tokens (long alphanum strings, no spaces)
+const TOKEN_VALUE_RE = /^[A-Za-z0-9_\-]{32,}$/;
+function isTokenLikeValue(s: string): boolean {
+  return TOKEN_VALUE_RE.test(s.trim());
+}
 const PHOTO_URL_RE = /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i;
 
 // Keys that commonly carry base64 photo data from Skylers foto modules
@@ -816,10 +827,19 @@ function extractBase64Photo(obj: Record<string, unknown>): { key: string; dataUr
 /**
  * Flattens a plain object to displayable "Key: value" strings,
  * optionally skipping a specific key (used to skip the extracted base64 field).
+ * Also strips any key that is in JUNK_KEYS_SKYLERS and any value that looks like
+ * an API token so token info never leaks into nested results or section items.
  */
 function flattenObjToItems(obj: Record<string, unknown>, skipKey?: string): string[] {
   return Object.entries(obj)
-    .filter(([sk, sv]) => sk !== skipKey && isUseful(sv) && typeof sv !== "object")
+    .filter(([sk, sv]) => {
+      if (sk === skipKey) return false;
+      if (JUNK_KEYS_SKYLERS.has(sk.toLowerCase())) return false;
+      if (!isUseful(sv) || typeof sv === "object") return false;
+      const s = String(sv).trim();
+      if (isTokenLikeValue(s)) return false;
+      return true;
+    })
     .map(([sk, sv]) => `${humanizeKey(sk)}: ${sv}`);
 }
 
@@ -919,9 +939,15 @@ function parseSkylers(data: unknown): Parsed {
         const b64 = extractBase64Photo(sub);
         if (b64) {
           fotoUrl.value = b64.dataUri;
-          // Flatten the rest
+          // Flatten the rest (strip junk keys + token-like values)
           const subEntries = Object.entries(sub)
-            .filter(([sk, sv]) => sk !== b64.key && isUseful(sv) && typeof sv !== "object");
+            .filter(([sk, sv]) =>
+              sk !== b64.key &&
+              !JUNK_KEYS_SKYLERS.has(sk.toLowerCase()) &&
+              isUseful(sv) &&
+              typeof sv !== "object" &&
+              !isTokenLikeValue(String(sv).trim())
+            );
           if (subEntries.length <= 3) {
             for (const [sk, sv] of subEntries) {
               result.fields.push({ key: `${humanizeKey(k)} · ${humanizeKey(sk)}`, value: String(sv) });
@@ -933,7 +959,12 @@ function parseSkylers(data: unknown): Parsed {
           continue;
         }
       }
-      const subEntries = Object.entries(sub).filter(([, sv]) => isUseful(sv) && typeof sv !== "object");
+      const subEntries = Object.entries(sub).filter(([sk, sv]) =>
+        !JUNK_KEYS_SKYLERS.has(sk.toLowerCase()) &&
+        isUseful(sv) &&
+        typeof sv !== "object" &&
+        !isTokenLikeValue(String(sv).trim())
+      );
       if (subEntries.length === 0) continue;
       if (subEntries.length <= 3) {
         for (const [sk, sv] of subEntries) {
@@ -955,6 +986,8 @@ function parseSkylers(data: unknown): Parsed {
             continue; // Don't add raw base64 to fields
           }
         }
+        // Skip values that look like API tokens
+        if (isTokenLikeValue(s)) continue;
         result.fields.push({ key: humanizeKey(k), value: s });
       }
     }

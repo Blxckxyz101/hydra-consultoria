@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo } from "react";
 import {
   AlertTriangle,
@@ -14,6 +14,30 @@ import {
   Star,
   FileText,
   Camera,
+  IdCard,
+  User,
+  Phone,
+  Mail,
+  MapPin,
+  Car,
+  Building2,
+  TrendingUp,
+  Wallet,
+  Scale,
+  Calendar,
+  CreditCard,
+  Fingerprint,
+  Heart,
+  ShieldAlert,
+  Hash,
+  List,
+  Briefcase,
+  Database,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -62,7 +86,7 @@ function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-amber-300 transition-colors"
       >
-        <FolderOpen className="w-3 h-3" /> Salvar no Dossiê
+        <FolderOpen className="w-3 h-3" /> Dossiê
       </button>
       {open && (
         <div className="absolute right-0 top-6 z-50 min-w-[200px] rounded-xl border border-white/10 bg-[#06091a]/95 backdrop-blur-2xl shadow-2xl overflow-hidden">
@@ -124,13 +148,11 @@ function FavoriteButton({ tipo, query, data }: { tipo: string; query: string; da
       disabled={fav}
       title={fav ? "Já é favorito" : "Adicionar aos favoritos"}
       className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors ${
-        fav
-          ? "text-amber-400 cursor-default"
-          : "text-muted-foreground hover:text-amber-400"
+        fav ? "text-amber-400 cursor-default" : "text-muted-foreground hover:text-amber-400"
       }`}
     >
       <Star className={`w-3 h-3 ${fav ? "fill-amber-400" : ""}`} />
-      {added ? "Favoritado" : fav ? "Favorito" : "Favoritar"}
+      {added ? "Salvo" : fav ? "Favorito" : "Favoritar"}
     </button>
   );
 }
@@ -158,8 +180,30 @@ function CopyButton({ text, label = "Copiar" }: { text: string; label?: string }
       }}
       className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
     >
-      {done ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {done ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
       {done ? "Copiado" : label}
+    </button>
+  );
+}
+
+function InlineCopy({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text).then(() => {
+          setDone(true);
+          setTimeout(() => setDone(false), 1000);
+        });
+      }}
+      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10"
+      title="Copiar"
+    >
+      {done
+        ? <Check className="w-3 h-3 text-emerald-400" />
+        : <Copy className="w-3 h-3 text-muted-foreground" />}
     </button>
   );
 }
@@ -172,7 +216,6 @@ function isParsed(d: unknown): d is Parsed {
   );
 }
 
-// Humaniza chaves com underscores e números (ex: MARCA_MODEL0 → Marca/Modelo)
 const KEY_FIXES: Record<string, string> = {
   "MARCA_MODEL0": "Marca / Modelo",
   "MARCA_MODELO": "Marca / Modelo",
@@ -197,19 +240,14 @@ const KEY_FIXES: Record<string, string> = {
 
 function humanizeKey(key: string): string {
   if (KEY_FIXES[key]) return KEY_FIXES[key];
-  return key
-    .replace(/_/g, " ")
-    .replace(/0$/, "O") // MODELO0 → MODELOO não, apenas substituir trailing 0 por O em casos específicos
-    .trim();
+  return key.replace(/_/g, " ").trim();
 }
 
-// Filtra valores vazios/inúteis
 function isUselessValue(value: string): boolean {
   const v = value.trim().toLowerCase();
   if (!v || v === "none" || v === "null" || v === "undefined") return true;
   if (v === "sem informação" || v === "sem informacao" || v === "sem info") return true;
   if (v === "não informado" || v === "nao informado") return true;
-  if (/^r\$\s*0[,.]00$/.test(v)) return false; // manter multas zeradas pois são informativas
   return false;
 }
 
@@ -219,24 +257,210 @@ function isImportantField(key: string): boolean {
   return important.some((imp) => k.includes(imp));
 }
 
-function fieldGradient(key: string): string {
+// ─── Field icons ─────────────────────────────────────────────────────────────
+function getFieldIcon(key: string): LucideIcon {
   const k = key.toUpperCase();
-  if (k.includes("CPF") || k.includes("RG") || k.includes("CNS")) return "from-sky-400/20 to-cyan-400/5";
-  if (k.includes("CNPJ") || k.includes("RAZÃO") || k.includes("EMPRESA")) return "from-violet-400/20 to-fuchsia-400/5";
-  if (k.includes("TELEFONE") || k.includes("EMAIL") || k.includes("PIX")) return "from-emerald-400/20 to-teal-400/5";
-  if (k.includes("PLACA") || k.includes("CHASSI") || k.includes("RENAVAM") || k.includes("MOTOR")) return "from-amber-400/20 to-orange-400/5";
-  if (k.includes("NOME") || k.includes("NASCIMENTO") || k.includes("MÃE") || k.includes("PAI")) return "from-rose-400/20 to-pink-400/5";
-  return "from-white/10 to-white/0";
+  if (k.includes("CPF") || k.includes(" RG") || k.includes("CNH") || k.includes("TÍTULO") || k.includes("TITULO")) return IdCard;
+  if (k.includes("NOME") || k.includes("PROPRIETARIO") || k.includes("TITULAR")) return User;
+  if (k.includes("MÃE") || k.includes("MAE") || k.includes("PAI") || k.includes("CÔNJUGE") || k.includes("CONJUGE") || k.includes("FILHO")) return Heart;
+  if (k.includes("TELEFONE") || k.includes("CELULAR") || k.includes("DDD") || k.includes("FONE")) return Phone;
+  if (k.includes("EMAIL") || k.includes("E-MAIL")) return Mail;
+  if (k.includes("ENDEREÇO") || k.includes("ENDERECO") || k.includes("RUA") || k.includes("CEP") || k.includes("BAIRRO") || k.includes("CIDADE") || k.includes("MUNICÍPIO") || k.includes("MUNICIPIO") || k.includes("LOGRADOURO") || k.includes("COMPLEMENTO") || k.includes("UF") || k.includes("ESTADO")) return MapPin;
+  if (k.includes("PLACA") || k.includes("CHASSI") || k.includes("RENAVAM") || k.includes("MOTOR") || k.includes("MARCA") || k.includes("MODELO") || k.includes("VEICULO") || k.includes("VEÍCULO") || k.includes("ANO_")) return Car;
+  if (k.includes("CNPJ") || k.includes("EMPRESA") || k.includes("RAZÃO") || k.includes("RAZAO") || k.includes("FANTASIA") || k.includes("CAPITAL") || k.includes("NATUREZA") || k.includes("PORTE")) return Building2;
+  if (k.includes("SCORE") || k.includes("CRÉDITO") || k.includes("CREDITO") || k.includes("RISCO") || k.includes("RATING")) return TrendingUp;
+  if (k.includes("DÍVIDA") || k.includes("DIVIDA") || k.includes("DÉBITO") || k.includes("DEBITO") || k.includes("FGTS") || k.includes("BACEN") || k.includes("VALOR") || k.includes("RENDA") || k.includes("SALÁRIO") || k.includes("SALARIO") || k.includes("BENEFÍCIO") || k.includes("BENEFICIO")) return Wallet;
+  if (k.includes("PROCESSO") || k.includes("MANDADO") || k.includes("OAB") || k.includes("ADVOGADO") || k.includes("JURÍDICO") || k.includes("JURIDICO") || k.includes("PENA") || k.includes("CRIME")) return Scale;
+  if (k.includes("DATA") || k.includes("NASCIMENTO") || k.includes("EMISSÃO") || k.includes("EMISSAO") || k.includes("VALIDADE") || k.includes("PRAZO") || k.includes("ABERTURA") || k.includes("SITUACAO")) return Calendar;
+  if (k.includes("NIS") || k.includes("PIS") || k.includes("CNS") || k.includes("SUS") || k.includes("CARTÃO") || k.includes("CARTAO")) return CreditCard;
+  if (k.includes("BIOMETRIA") || k.includes("DIGITAL") || k.includes("FACE") || k.includes("IMPRESSÃO")) return Fingerprint;
+  if (k.includes("SITUAÇÃO") || k.includes("SITUACAO") || k.includes("STATUS") || k.includes("ATIVO") || k.includes("OBITO") || k.includes("ÓBITO")) return ShieldAlert;
+  if (k.includes("HABILITADO") || k.includes("CNH")) return Car;
+  return Hash;
 }
 
-function fieldAccent(key: string): string {
+function getFieldAccent(key: string): string {
   const k = key.toUpperCase();
-  if (k.includes("CPF") || k.includes("RG")) return "text-sky-300";
-  if (k.includes("CNPJ") || k.includes("RAZÃO")) return "text-violet-300";
-  if (k.includes("TELEFONE") || k.includes("EMAIL")) return "text-emerald-300";
-  if (k.includes("PLACA") || k.includes("CHASSI")) return "text-amber-300";
-  if (k.includes("NOME")) return "text-rose-300";
+  if (k.includes("CPF") || k.includes("RG") || k.includes("CNH") || k.includes("TITULO")) return "text-sky-300";
+  if (k.includes("NOME") || k.includes("PROPRIETARIO") || k.includes("TITULAR")) return "text-rose-300";
+  if (k.includes("MÃE") || k.includes("MAE") || k.includes("PAI") || k.includes("FILHO")) return "text-pink-300";
+  if (k.includes("TELEFONE") || k.includes("CELULAR")) return "text-emerald-300";
+  if (k.includes("EMAIL")) return "text-teal-300";
+  if (k.includes("ENDEREÇO") || k.includes("ENDERECO") || k.includes("CEP") || k.includes("CIDADE") || k.includes("RUA")) return "text-amber-300";
+  if (k.includes("PLACA") || k.includes("CHASSI") || k.includes("VEICULO") || k.includes("VEÍCULO")) return "text-orange-300";
+  if (k.includes("CNPJ") || k.includes("EMPRESA") || k.includes("RAZÃO") || k.includes("RAZAO")) return "text-violet-300";
+  if (k.includes("SCORE") || k.includes("CRÉDITO") || k.includes("CREDITO")) return "text-lime-300";
+  if (k.includes("DÍVIDA") || k.includes("DIVIDA") || k.includes("VALOR") || k.includes("RENDA")) return "text-yellow-300";
+  if (k.includes("PROCESSO") || k.includes("MANDADO")) return "text-red-300";
+  if (k.includes("DATA") || k.includes("NASCIMENTO")) return "text-cyan-300";
   return "text-primary";
+}
+
+// ─── Format field values ──────────────────────────────────────────────────────
+function formatValue(key: string, value: string): string {
+  const k = key.toUpperCase();
+  const v = value.trim().replace(/\D/g, "");
+  if ((k === "CPF" || k.endsWith(" CPF") || k.startsWith("CPF ")) && /^\d{11}$/.test(v)) {
+    return `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6, 9)}-${v.slice(9)}`;
+  }
+  if ((k === "CNPJ" || k.includes("CNPJ")) && /^\d{14}$/.test(v)) {
+    return `${v.slice(0, 2)}.${v.slice(2, 5)}.${v.slice(5, 8)}/${v.slice(8, 12)}-${v.slice(12)}`;
+  }
+  if ((k.includes("TELEFONE") || k.includes("CELULAR")) && /^\d{10,11}$/.test(v)) {
+    if (v.length === 11) return `(${v.slice(0, 2)}) ${v.slice(2, 7)}-${v.slice(7)}`;
+    return `(${v.slice(0, 2)}) ${v.slice(2, 6)}-${v.slice(6)}`;
+  }
+  if (k.includes("CEP") && /^\d{8}$/.test(v)) {
+    return `${v.slice(0, 5)}-${v.slice(5)}`;
+  }
+  return value;
+}
+
+// ─── Section theming ──────────────────────────────────────────────────────────
+type SectionTheme = {
+  color: string;
+  bg: string;
+  border: string;
+  ring: string;
+  icon: LucideIcon;
+};
+
+function getSectionTheme(name: string): SectionTheme {
+  const n = name.toUpperCase();
+  if (n.includes("EMAIL") || n.includes("E-MAIL")) return { color: "text-sky-300", bg: "bg-sky-500/10", border: "border-sky-500/20", ring: "ring-sky-500/10", icon: Mail };
+  if (n.includes("TELEFONE") || n.includes("CELULAR") || n.includes("CONTATO") || n.includes("FONE")) return { color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/20", ring: "ring-emerald-500/10", icon: Phone };
+  if (n.includes("ENDEREÇO") || n.includes("ENDERECO") || n.includes("CEP") || n.includes("LOGRADOURO") || n.includes("RESIDENCIA")) return { color: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/20", ring: "ring-amber-500/10", icon: MapPin };
+  if (n.includes("VÍNCULO") || n.includes("VINCULO") || n.includes("EMPREGO") || n.includes("RAIS") || n.includes("TRABALHO") || n.includes("FUNC") || n.includes("EMPRESA")) return { color: "text-violet-300", bg: "bg-violet-500/10", border: "border-violet-500/20", ring: "ring-violet-500/10", icon: Briefcase };
+  if (n.includes("PROCESSO") || n.includes("JUDICIAL") || n.includes("MANDADO") || n.includes("CRIME")) return { color: "text-rose-300", bg: "bg-rose-500/10", border: "border-rose-500/20", ring: "ring-rose-500/10", icon: Scale };
+  if (n.includes("VEÍCULO") || n.includes("VEICULO") || n.includes("PLACA") || n.includes("FROTA") || n.includes("AUTO")) return { color: "text-orange-300", bg: "bg-orange-500/10", border: "border-orange-500/20", ring: "ring-orange-500/10", icon: Car };
+  if (n.includes("SÓCIO") || n.includes("SOCIO") || n.includes("QSA") || n.includes("PARCEIRO") || n.includes("MEMBRO")) return { color: "text-fuchsia-300", bg: "bg-fuchsia-500/10", border: "border-fuchsia-500/20", ring: "ring-fuchsia-500/10", icon: Building2 };
+  if (n.includes("PARENTE") || n.includes("FAMILIAR") || n.includes("FILHO") || n.includes("CÔNJUGE") || n.includes("CONJUGE")) return { color: "text-pink-300", bg: "bg-pink-500/10", border: "border-pink-500/20", ring: "ring-pink-500/10", icon: Heart };
+  return { color: "text-cyan-300", bg: "bg-cyan-500/10", border: "border-cyan-500/20", ring: "ring-cyan-500/10", icon: Database };
+}
+
+// ─── Headline card gradient ───────────────────────────────────────────────────
+function headlineGradient(key: string): string {
+  const k = key.toUpperCase();
+  if (k.includes("CPF") || k.includes("RG")) return "from-sky-500/20 via-sky-400/10 to-transparent border-sky-400/30";
+  if (k.includes("CNPJ") || k.includes("RAZÃO") || k.includes("RAZAO") || k.includes("EMPRESA")) return "from-violet-500/20 via-violet-400/10 to-transparent border-violet-400/30";
+  if (k.includes("TELEFONE") || k.includes("CELULAR")) return "from-emerald-500/20 via-emerald-400/10 to-transparent border-emerald-400/30";
+  if (k.includes("EMAIL")) return "from-teal-500/20 via-teal-400/10 to-transparent border-teal-400/30";
+  if (k.includes("PLACA") || k.includes("CHASSI") || k.includes("VEICULO") || k.includes("VEÍCULO")) return "from-orange-500/20 via-orange-400/10 to-transparent border-orange-400/30";
+  if (k.includes("NOME")) return "from-rose-500/20 via-rose-400/10 to-transparent border-rose-400/30";
+  if (k.includes("NASCIMENTO") || k.includes("DATA")) return "from-cyan-500/20 via-cyan-400/10 to-transparent border-cyan-400/30";
+  return "from-primary/20 via-primary/10 to-transparent border-primary/30";
+}
+
+// ─── Section item parser ──────────────────────────────────────────────────────
+function parseSectionItem(item: string): Array<{ k: string; v: string }> | null {
+  // Try "Key: Value · Key2: Value2" format
+  const parts = item.split(/\s·\s/);
+  const pairs: Array<{ k: string; v: string }> = [];
+  for (const part of parts) {
+    const colonIdx = part.indexOf(": ");
+    if (colonIdx > 0 && colonIdx < 35) {
+      pairs.push({ k: part.slice(0, colonIdx).trim(), v: part.slice(colonIdx + 2).trim() });
+    } else {
+      return null; // Not structured
+    }
+  }
+  return pairs.length >= 2 ? pairs : null;
+}
+
+// ─── Collapsible Section ──────────────────────────────────────────────────────
+const SECTION_COLLAPSE_THRESHOLD = 6;
+
+function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
+  const theme = getSectionTheme(sec.name);
+  const Icon = theme.icon;
+  const [collapsed, setCollapsed] = useState(sec.items.length > SECTION_COLLAPSE_THRESHOLD);
+
+  const visibleItems = collapsed ? sec.items.slice(0, 4) : sec.items;
+
+  return (
+    <motion.div
+      key={`${sec.name}-${idx}`}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.06 + idx * 0.04 }}
+      className={`rounded-2xl border ${theme.border} ${theme.bg} backdrop-blur-2xl overflow-hidden`}
+    >
+      {/* Section header */}
+      <div className="flex items-center justify-between px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-lg ${theme.bg} border ${theme.border} flex items-center justify-center shrink-0`}>
+            <Icon className={`w-4 h-4 ${theme.color}`} />
+          </div>
+          <div>
+            <h3 className={`text-xs font-bold uppercase tracking-[0.25em] ${theme.color}`}>{sec.name}</h3>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{sec.items.length} {sec.items.length === 1 ? "registro" : "registros"}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <CopyButton text={sec.items.join("\n")} label="Copiar" />
+          {sec.items.length > SECTION_COLLAPSE_THRESHOLD && (
+            <button
+              onClick={() => setCollapsed((v) => !v)}
+              className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest ${theme.color} opacity-70 hover:opacity-100 transition-opacity`}
+            >
+              {collapsed ? <><ChevronDown className="w-3 h-3" /> Ver todos</> : <><ChevronUp className="w-3 h-3" /> Recolher</>}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Items */}
+      <div className="px-5 pb-5 space-y-2">
+        <AnimatePresence initial={false}>
+          {visibleItems.map((item, i) => {
+            const structured = parseSectionItem(item);
+            return (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -6 }}
+                transition={{ delay: Math.min(i * 0.015, 0.3) }}
+                className="group relative"
+              >
+                {structured ? (
+                  <div className="rounded-xl bg-black/30 border border-white/5 hover:border-white/10 transition-colors p-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+                      {structured.map(({ k, v }, pi) => (
+                        <div key={pi} className="min-w-0">
+                          <p className="text-[9px] uppercase tracking-widest text-muted-foreground mb-0.5">{k}</p>
+                          <p className="text-xs font-medium break-words">{v}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <InlineCopy text={item} />
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 rounded-xl bg-black/30 border border-white/5 hover:border-white/10 hover:bg-black/50 transition-all p-3">
+                    <div className={`w-5 h-5 rounded-md ${theme.bg} border ${theme.border} flex items-center justify-center text-[9px] font-bold ${theme.color} shrink-0 mt-px`}>
+                      {i + 1}
+                    </div>
+                    <p className="text-xs font-mono flex-1 break-words leading-relaxed">{item}</p>
+                    <InlineCopy text={item} />
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+
+        {/* Expand/collapse summary */}
+        {collapsed && sec.items.length > SECTION_COLLAPSE_THRESHOLD && (
+          <button
+            onClick={() => setCollapsed(false)}
+            className={`w-full text-center py-2 text-[10px] uppercase tracking-widest ${theme.color} opacity-60 hover:opacity-100 transition-opacity`}
+          >
+            + {sec.items.length - 4} registros ocultos · Clique para expandir
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
 }
 
 export function ResultViewer({ tipo, query = "", result }: Props) {
@@ -245,7 +469,6 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   const parsed: Parsed = useMemo(() => {
     if (isParsed(result.data)) {
       const d = result.data as Parsed;
-      // Apply humanizeKey and filter useless values
       const cleanFields = d.fields
         .filter((f) => f.key !== "FOTO_URL" && !isUselessValue(f.value))
         .map((f) => ({ key: humanizeKey(f.key), value: f.value }));
@@ -272,7 +495,6 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       ``,
     ];
     parsed.fields.forEach((f) => {
-      // Skip raw base64 data — it's huge and unreadable in plain text
       if (f.key === "FOTO_URL" && f.value.startsWith("data:image")) {
         lines.push(`${f.key}: [imagem base64 — use a opção Baixar Foto]`);
       } else {
@@ -355,7 +577,6 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       <div><strong>Campos:</strong> ${parsed.fields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div>
     </div>
   </div>
-
   ${fotoForPdf ? `
   <div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;padding:12px;border:1px solid #e0f2f8;border-radius:8px;background:#f4fbfd;">
     <img src="${fotoForPdf.value}" alt="Foto Biométrica" style="width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid #0891b2;" onerror="this.style.display='none'" />
@@ -366,7 +587,6 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   </div>` : ""}
   ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}
   ${sectionsHtml}
-
   <div class="footer">Made by blxckxyz · Infinity Search · ${date}</div>
   <script>setTimeout(()=>window.print(),300)</script>
 </body>
@@ -403,215 +623,226 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       animate={{ opacity: 1, y: 0 }}
       className="mt-6 space-y-4"
     >
-      {/* Status header */}
-      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
-        <div className="flex items-center gap-2">
+      {/* ── Action toolbar ─────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between flex-wrap gap-2 px-1">
+        {/* Status badge */}
+        <div className="flex items-center gap-2.5">
           <div className="relative">
             <div className={`w-2 h-2 rounded-full ${result.success ? "bg-emerald-400" : "bg-amber-400"}`} />
-            <div className={`absolute inset-0 w-2 h-2 rounded-full ${result.success ? "bg-emerald-400" : "bg-amber-400"} animate-ping`} />
+            <div className={`absolute inset-0 w-2 h-2 rounded-full ${result.success ? "bg-emerald-400" : "bg-amber-400"} animate-ping opacity-60`} />
           </div>
-          <span className={`text-[10px] uppercase tracking-[0.4em] font-semibold ${result.success ? "text-emerald-300" : "text-amber-300"}`}>
-            {result.success ? "Resultado encontrado" : "Sem dados"}
+          <span className={`text-[10px] uppercase tracking-[0.35em] font-semibold ${result.success ? "text-emerald-300" : "text-amber-300"}`}>
+            {result.success ? "Encontrado" : "Sem dados"}
           </span>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-            · {parsed.fields.length} campos · {parsed.sections.length} listas
+          <span className="text-[10px] text-muted-foreground/60">
+            · {parsed.fields.filter(f => f.key !== "FOTO_URL").length} campos · {parsed.sections.length} listas
           </span>
         </div>
+        {/* Actions */}
         <div className="flex items-center gap-3 flex-wrap">
           <FavoriteButton tipo={tipo} query={query} data={result.data} />
-          <button
-            onClick={() => setShowRaw((v) => !v)}
-            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
-          >
-            {showRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-            {showRaw ? "Ocultar bruto" : "Ver bruto"}
+          <SaveToDossieButton tipo={tipo} query={query} data={result.data} />
+          <div className="w-px h-3 bg-white/10" />
+          <button onClick={downloadTxt} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
+            <Download className="w-3 h-3" /> TXT
           </button>
-          <button
-            onClick={downloadTxt}
-            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors"
-          >
-            <Download className="w-3 h-3" /> Exportar
-          </button>
-          <button
-            onClick={downloadPdf}
-            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors"
-          >
+          <button onClick={downloadPdf} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors">
             <FileText className="w-3 h-3" /> PDF
           </button>
-          <CopyButton text={exportText} label="Copiar tudo" />
-          <SaveToDossieButton tipo={tipo} query={query} data={result.data} />
+          <CopyButton text={exportText} label="Copiar" />
+          <div className="w-px h-3 bg-white/10" />
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          >
+            {showRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            {showRaw ? "Ocultar" : "Bruto"}
+          </button>
         </div>
       </div>
 
-      {/* Foto card */}
+      {/* ── Photo card ─────────────────────────────────────────────────────── */}
       {photoUrl && (
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-sky-500/5 backdrop-blur-xl p-5 flex flex-col sm:flex-row items-center gap-5"
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ type: "spring", stiffness: 300, damping: 24 }}
+          className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 via-sky-500/5 to-transparent backdrop-blur-xl overflow-hidden"
         >
-          <div className="relative shrink-0">
-            <div className="absolute inset-0 rounded-xl bg-cyan-400/20 blur-xl" />
-            <img
-              src={photoUrl}
-              alt="Foto Biométrica"
-              className="relative w-32 h-40 object-cover rounded-xl border-2 border-cyan-400/40 shadow-[0_0_30px_rgba(34,211,238,0.3)]"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
-          </div>
-          <div className="flex flex-col gap-2 text-center sm:text-left">
-            <div className="flex items-center gap-2 justify-center sm:justify-start">
-              <Camera className="w-4 h-4 text-cyan-400" />
-              <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-cyan-300">Foto Biométrica · Skylers</span>
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 p-5 sm:p-6">
+            {/* Photo */}
+            <div className="relative shrink-0">
+              <div className="absolute -inset-3 rounded-2xl bg-cyan-400/15 blur-2xl" />
+              <div className="relative w-28 h-36 sm:w-32 sm:h-40 rounded-xl overflow-hidden border-2 border-cyan-400/40 shadow-[0_0_40px_rgba(34,211,238,0.25)]">
+                <img
+                  src={photoUrl}
+                  alt="Foto Biométrica"
+                  className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+                />
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-cyan-400/20 border border-cyan-400/40 flex items-center justify-center">
+                <Camera className="w-3 h-3 text-cyan-300" />
+              </div>
             </div>
-            <p className="text-sm text-muted-foreground leading-relaxed">Foto biométrica encontrada na base de dados.</p>
-            <div className="flex gap-2 justify-center sm:justify-start flex-wrap">
-              {photoUrl.startsWith("data:image") ? (
-                <a
-                  href={photoUrl}
-                  download={`foto-biometrica-${tipo}-${Date.now()}.jpg`}
-                  className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
-                >
-                  <Download className="w-3 h-3" /> Baixar Foto
-                </a>
-              ) : (
-                <>
-                  <CopyButton text={photoUrl} label="Copiar URL" />
+            {/* Info */}
+            <div className="flex flex-col gap-3 text-center sm:text-left">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cyan-400/10 border border-cyan-400/20 mb-2">
+                  <Fingerprint className="w-3 h-3 text-cyan-400" />
+                  <span className="text-[9px] uppercase tracking-widest font-bold text-cyan-300">Foto Biométrica</span>
+                </div>
+                <p className="text-sm text-muted-foreground">Imagem biométrica encontrada na base de dados.</p>
+              </div>
+              <div className="flex items-center gap-3 justify-center sm:justify-start flex-wrap">
+                {photoUrl.startsWith("data:image") ? (
                   <a
                     href={photoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors"
+                    download={`foto-biometrica-${tipo}-${Date.now()}.jpg`}
+                    className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-cyan-400/70 hover:text-cyan-300 transition-colors border border-cyan-400/20 rounded-lg px-3 py-1.5 hover:border-cyan-400/40 hover:bg-cyan-400/5"
                   >
-                    <Eye className="w-3 h-3" /> Abrir original
+                    <Download className="w-3 h-3" /> Baixar Foto
                   </a>
-                </>
-              )}
+                ) : (
+                  <>
+                    <CopyButton text={photoUrl} label="Copiar URL" />
+                    <a
+                      href={photoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan-300 transition-colors border border-white/10 rounded-lg px-3 py-1.5 hover:border-cyan-400/30 hover:bg-cyan-400/5"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Abrir Original
+                    </a>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </motion.div>
       )}
 
-      {/* Headline cards (most important fields) */}
+      {/* ── Headline cards (top 4 important fields) ────────────────────────── */}
       {headlineFields.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {headlineFields.map((f, i) => (
-            <motion.div
-              key={`${f.key}-${i}`}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: i * 0.05 }}
-              whileHover={{ y: -2 }}
-              className={`relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br ${fieldGradient(f.key)} backdrop-blur-xl p-4`}
-            >
-              <div className="absolute inset-0 bg-black/30" />
-              <div className="relative">
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className={`text-[9px] uppercase tracking-[0.3em] font-semibold ${fieldAccent(f.key)}`}>{f.key}</p>
-                  <Sparkles className={`w-3 h-3 ${fieldAccent(f.key)} opacity-60`} />
-                </div>
-                <p className="text-base sm:text-lg font-bold break-words leading-tight">{f.value || "—"}</p>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      )}
-
-      {/* All fields grid */}
-      {otherFields.length > 0 && (
-        <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6">
-          <h3 className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-4">Detalhes</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3">
-            {otherFields.map((f, i) => (
+        <div className={`grid gap-3 ${headlineFields.length === 1 ? "grid-cols-1" : headlineFields.length === 2 ? "grid-cols-2" : headlineFields.length === 3 ? "grid-cols-3" : "grid-cols-2 lg:grid-cols-4"}`}>
+          {headlineFields.map((f, i) => {
+            const Icon = getFieldIcon(f.key);
+            const accent = getFieldAccent(f.key);
+            const grad = headlineGradient(f.key);
+            const displayVal = formatValue(f.key, f.value);
+            return (
               <motion.div
                 key={`${f.key}-${i}`}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: Math.min(i * 0.02, 0.4) }}
-                className="group flex flex-col gap-0.5 py-2 border-b border-white/5 last:border-0"
+                initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ delay: i * 0.06, type: "spring", stiffness: 300, damping: 22 }}
+                whileHover={{ y: -3, transition: { duration: 0.15 } }}
+                className={`group relative overflow-hidden rounded-2xl border bg-gradient-to-br ${grad} backdrop-blur-xl p-4 cursor-default`}
+                onClick={() => navigator.clipboard.writeText(f.value)}
+                title="Clique para copiar"
               >
-                <div className="flex items-center justify-between">
-                  <p className={`text-[9px] uppercase tracking-[0.25em] ${fieldAccent(f.key)} opacity-80`}>{f.key}</p>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(f.value)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Copiar"
-                  >
-                    <Copy className="w-3 h-3 text-muted-foreground hover:text-primary" />
-                  </button>
+                <div className="absolute inset-0 bg-black/20" />
+                <div className="relative flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className={`w-7 h-7 rounded-lg bg-black/30 border border-white/10 flex items-center justify-center`}>
+                      <Icon className={`w-3.5 h-3.5 ${accent}`} />
+                    </div>
+                    <Sparkles className={`w-3 h-3 ${accent} opacity-40 group-hover:opacity-80 transition-opacity`} />
+                  </div>
+                  <div>
+                    <p className={`text-[9px] uppercase tracking-[0.3em] font-semibold ${accent} opacity-80 mb-1`}>{f.key}</p>
+                    <p className="text-sm sm:text-base font-bold break-words leading-tight tracking-tight">{displayVal || "—"}</p>
+                  </div>
                 </div>
-                <p className="text-sm font-medium break-words">{f.value || "—"}</p>
+                {/* Copy hint on hover */}
+                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-60 transition-opacity">
+                  <Copy className="w-2.5 h-2.5 text-muted-foreground" />
+                </div>
               </motion.div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Sections (lists like SÓCIOS, EMAILS, TELEFONES) */}
-      {parsed.sections.map((sec, idx) => (
+      {/* ── Detail fields ───────────────────────────────────────────────────── */}
+      {otherFields.length > 0 && (
         <motion.div
-          key={`${sec.name}-${idx}`}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 + idx * 0.05 }}
-          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
+          transition={{ delay: 0.12 }}
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl overflow-hidden"
         >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold uppercase tracking-[0.3em] text-primary">{sec.name}</h3>
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md">
-                {sec.items.length}
-              </span>
-            </div>
-            <CopyButton text={sec.items.join("\n")} label={`Copiar ${sec.name.toLowerCase()}`} />
+          <div className="px-5 py-3.5 border-b border-white/5 flex items-center gap-2">
+            <List className="w-3.5 h-3.5 text-muted-foreground" />
+            <h3 className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground">Detalhes</h3>
+            <span className="text-[9px] text-muted-foreground/40 ml-1">· {otherFields.length} campos</span>
           </div>
-          <div className="space-y-1.5 max-h-96 overflow-y-auto pr-2">
-            {sec.items.map((item, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -4 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: Math.min(i * 0.015, 0.5) }}
-                className="group flex items-start gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-primary/20 transition-all"
-              >
-                <div className="w-6 h-6 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 mt-0.5">
-                  {i + 1}
-                </div>
-                <p className="text-sm flex-1 break-words leading-relaxed font-mono">{item}</p>
-                <button
-                  onClick={() => navigator.clipboard.writeText(item)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1"
+          <div className="divide-y divide-white/[0.04]">
+            {otherFields.map((f, i) => {
+              const Icon = getFieldIcon(f.key);
+              const accent = getFieldAccent(f.key);
+              const displayVal = formatValue(f.key, f.value);
+              return (
+                <motion.div
+                  key={`${f.key}-${i}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: Math.min(0.14 + i * 0.018, 0.5) }}
+                  className="group flex items-center gap-3.5 px-5 py-3 hover:bg-white/[0.03] transition-colors"
                 >
-                  <Copy className="w-3.5 h-3.5 text-muted-foreground hover:text-primary" />
-                </button>
-              </motion.div>
-            ))}
+                  {/* Icon */}
+                  <div className={`w-7 h-7 rounded-lg bg-black/40 border border-white/5 flex items-center justify-center shrink-0`}>
+                    <Icon className={`w-3.5 h-3.5 ${accent} opacity-70`} />
+                  </div>
+                  {/* Label + Value */}
+                  <div className="flex-1 min-w-0 grid grid-cols-[auto_1fr] gap-x-4 items-center sm:flex sm:flex-row sm:justify-between sm:gap-4">
+                    <p className={`text-[9px] uppercase tracking-[0.22em] font-medium ${accent} opacity-70 whitespace-nowrap shrink-0`}>{f.key}</p>
+                    <p className="text-sm font-medium break-words text-right sm:text-left truncate" title={displayVal}>{displayVal || "—"}</p>
+                  </div>
+                  {/* Copy */}
+                  <InlineCopy text={f.value} />
+                </motion.div>
+              );
+            })}
           </div>
-        </motion.div>
-      ))}
-
-      {/* Raw response (toggle) */}
-      {showRaw && parsed.raw && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          className="rounded-2xl border border-white/10 bg-black/40 backdrop-blur-2xl p-5 overflow-hidden"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <FileJson className="w-3.5 h-3.5 text-muted-foreground" />
-              <h3 className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground">Resposta bruta do provedor</h3>
-            </div>
-            <CopyButton text={parsed.raw} />
-          </div>
-          <pre className="text-xs font-mono whitespace-pre-wrap break-words text-muted-foreground/80 max-h-96 overflow-y-auto">
-            {parsed.raw}
-          </pre>
         </motion.div>
       )}
 
-      <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-2">
-        Made by blxckxyz · Infinity Search
+      {/* ── Sections ───────────────────────────────────────────────────────── */}
+      {parsed.sections.map((sec, idx) => (
+        <SectionCard key={`${sec.name}-${idx}`} sec={sec} idx={idx} />
+      ))}
+
+      {/* ── Raw response (toggle) ──────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showRaw && parsed.raw && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="rounded-2xl border border-white/8 bg-black/50 backdrop-blur-2xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <FileJson className="w-3.5 h-3.5 text-muted-foreground/60" />
+                <h3 className="text-[9px] uppercase tracking-[0.45em] text-muted-foreground/60">Resposta bruta do provedor</h3>
+              </div>
+              <CopyButton text={parsed.raw} />
+            </div>
+            <pre className="text-[11px] font-mono whitespace-pre-wrap break-words text-muted-foreground/70 max-h-80 overflow-y-auto p-5 leading-relaxed">
+              {parsed.raw}
+            </pre>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Footer ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-center gap-2 pt-1">
+        <Zap className="w-2.5 h-2.5 text-primary/30" />
+        <span className="text-[9px] uppercase tracking-[0.6em] text-muted-foreground/40">
+          Made by blxckxyz · Infinity Search
+        </span>
+        <Zap className="w-2.5 h-2.5 text-primary/30" />
       </div>
     </motion.div>
   );
