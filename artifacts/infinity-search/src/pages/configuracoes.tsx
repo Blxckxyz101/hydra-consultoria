@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff } from "lucide-react";
 
 const ROLE_CONFIG = {
   admin: { label: "Admin", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/30", icon: Shield },
@@ -114,6 +114,114 @@ function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; 
       >
         cancelar
       </button>
+    </div>
+  );
+}
+
+function PasswordEditor({ username }: { username: string }) {
+  const [editing, setEditing] = useState(false);
+  const [newPass, setNewPass] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const reset = () => {
+    setEditing(false);
+    setNewPass("");
+    setConfirm("");
+    setError("");
+    setShowPass(false);
+  };
+
+  const handleSave = async () => {
+    setError("");
+    if (newPass.length < 6) { setError("Mínimo 6 caracteres"); return; }
+    if (newPass !== confirm) { setError("Senhas não coincidem"); return; }
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ password: newPass }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({})) as { error?: string };
+        throw new Error(j.error ?? "Falha ao salvar");
+      }
+      setSaved(true);
+      setTimeout(() => { setSaved(false); reset(); }, 1200);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => setEditing(true)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-sky-300 transition-colors"
+      >
+        <KeyRound className="w-3 h-3" />
+        Trocar Senha
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 p-3 rounded-xl border border-sky-400/20 bg-sky-400/5 space-y-2">
+      <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300 flex items-center gap-1.5">
+        <KeyRound className="w-3 h-3" /> Nova senha para <strong>{username}</strong>
+      </p>
+      <div className="relative">
+        <input
+          type={showPass ? "text" : "password"}
+          value={newPass}
+          onChange={(e) => setNewPass(e.target.value)}
+          placeholder="Nova senha (mín. 6 caracteres)"
+          className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm pr-9 focus:outline-none focus:border-sky-400/50 transition-all"
+        />
+        <button
+          type="button"
+          onClick={() => setShowPass((v) => !v)}
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        >
+          {showPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+      <input
+        type={showPass ? "text" : "password"}
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        placeholder="Confirmar senha"
+        onKeyDown={(e) => { if (e.key === "Enter") void handleSave(); }}
+        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-400/50 transition-all"
+      />
+      {error && (
+        <p className="text-xs text-destructive flex items-center gap-1">
+          <X className="w-3 h-3" /> {error}
+        </p>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => void handleSave()}
+          disabled={saving || !newPass || !confirm}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-400/15 border border-sky-400/40 text-sky-300 text-xs font-bold uppercase tracking-widest hover:bg-sky-400/25 transition-colors disabled:opacity-50"
+        >
+          {saved ? <Check className="w-3 h-3" /> : <KeyRound className="w-3 h-3" />}
+          {saved ? "Salvo!" : saving ? "Salvando..." : "Confirmar"}
+        </button>
+        <button
+          onClick={reset}
+          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors uppercase tracking-widest"
+        >
+          Cancelar
+        </button>
+      </div>
     </div>
   );
 }
@@ -569,6 +677,7 @@ export default function Configuracoes() {
                                 refetchUsers();
                               }}
                             />
+                            <PasswordEditor username={u.username} />
                           </div>
                           <button
                             disabled={u.username === me?.username || deleteUser.isPending}
