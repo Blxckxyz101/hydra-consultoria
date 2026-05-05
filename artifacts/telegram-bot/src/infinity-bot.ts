@@ -438,24 +438,56 @@ async function queryIP(ip: string): Promise<{ fields: Record<string, string>[] }
   return { fields };
 }
 
-// ── Caption preview ───────────────────────────────────────────────────────────
-function buildCaption(tipo: string, dados: string, fields: Record<string, string>[], total?: number): string {
-  const parts: string[] = [
-    `✅ <b>Resultado encontrado</b>`, ``,
-    `<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>`,
-    `<code>◈</code> <b>Dado:</b> <code>${esc(dados)}</code>`,
+// ── Beautiful result message ──────────────────────────────────────────────────
+function buildResultMsg(
+  tipo: string,
+  dados: string,
+  fields: Record<string, string>[],
+  sections?: { name: string; items: string[] }[],
+): string {
+  const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const tipoInfo = TIPO_MAP.get(tipo);
+  const totalReg = sections?.reduce((a, s) => a + s.items.length, 0) ?? 0;
+
+  const lines: string[] = [
+    HDR,
+    "┃",
+    `┃  ✅ ${tipoInfo?.label ?? tipo.toUpperCase()} ENCONTRADO`,
+    DIV,
+    `┃  📌 <b>Dado:</b> <code>${esc(dados)}</code>`,
+    DIV,
   ];
-  if (fields.length > 0) parts.push(`<code>◈</code> <b>Campos:</b> ${fields.length}`);
-  if (total) parts.push(`<code>◈</code> <b>Registros:</b> ${total}`);
-  const preview = fields.slice(0, 5);
-  if (preview.length > 0) {
-    parts.push(``, `<b>Prévia:</b>`);
-    for (const f of preview) {
+
+  if (fields.length > 0) {
+    for (const f of fields.slice(0, 28)) {
       const [k, v] = Object.entries(f)[0] ?? ["", ""];
-      if (k) parts.push(`  <code>${esc(k)}</code>: <b>${esc(String(v).slice(0, 60))}</b>`);
+      if (!k) continue;
+      const val = esc(String(v).slice(0, 90));
+      lines.push(`┃ <b>${esc(k)}</b>: <code>${val}</code>`);
     }
+    if (fields.length > 28) lines.push(`┃ <i>+ ${fields.length - 28} campos no arquivo</i>`);
+  } else if (!sections || sections.length === 0) {
+    lines.push("┃  ⚠️ Nenhum campo encontrado.");
   }
-  return parts.join("\n").slice(0, 1024);
+
+  if (sections && sections.length > 0) {
+    lines.push(DIV);
+    for (const sec of sections.slice(0, 4)) {
+      lines.push(`┃  📂 <b>${esc(sec.name)}</b> (${sec.items.length})`);
+      sec.items.slice(0, 3).forEach(item =>
+        lines.push(`┃    • <code>${esc(item.slice(0, 65))}</code>`)
+      );
+      if (sec.items.length > 3) lines.push(`┃    <i>... +${sec.items.length - 3} registros</i>`);
+    }
+    if (sections.length > 4) lines.push(`┃  <i>+ ${sections.length - 4} seções no arquivo</i>`);
+  }
+
+  lines.push(DIV);
+  if (totalReg > 0) lines.push(`┃  📁 Total de registros: <b>${totalReg}</b>`);
+  lines.push(`┃  🕐 ${now}`);
+  lines.push(FTR);
+
+  return lines.join("\n").slice(0, 4096);
 }
 
 // ── Execute query and send result ─────────────────────────────────────────────
@@ -481,24 +513,43 @@ async function executeAndSend(
       fields = r.fields;
     } else {
       const r = await queryGeass(tipo, trimmedDados);
-      fields = r.fields; sections = r.sections.length > 0 ? r.sections : undefined; rawText = r.raw;
+      fields = r.fields;
+      sections = r.sections.length > 0 ? r.sections : undefined;
+      rawText = r.raw;
     }
 
     const totalRegistros = sections?.reduce((a, s) => a + s.items.length, 0) ?? 0;
-    const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
-    const caption = buildCaption(tipo, trimmedDados, fields, totalRegistros > 0 ? totalRegistros : undefined);
+    const resultMsg = buildResultMsg(tipo, trimmedDados, fields, sections);
 
     await telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
-    await telegram.sendDocument(
-      chatId,
-      { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
-      { caption, parse_mode: "HTML", ...buildResultKeyboard() },
-    );
+
+    // Send the beautiful inline result message
+    await telegram.sendMessage(chatId, resultMsg, {
+      parse_mode: "HTML",
+      ...buildResultKeyboard(),
+    });
+
+    // Attach the TXT file if there's a lot of data
+    const needsFile = fields.length > 28 || totalRegistros > 10;
+    if (needsFile) {
+      const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
+      await telegram.sendDocument(
+        chatId,
+        { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
+        { caption: "📎 Dados completos" },
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await telegram.editMessageText(
       chatId, loadMsgId, undefined,
-      `❌ <b>Erro na consulta de ${tipoInfo.label}</b>\n\n<code>${esc(msg.slice(0, 300))}</code>`,
+      [
+        HDR, "┃",
+        `┃  ❌ ERRO NA CONSULTA DE ${tipoInfo.label}`,
+        DIV,
+        `┃ <code>${esc(msg.slice(0, 300))}</code>`,
+        FTR,
+      ].join("\n"),
       { parse_mode: "HTML", ...buildResultKeyboard() },
     ).catch(() => {});
   }

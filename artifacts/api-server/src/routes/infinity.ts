@@ -2377,6 +2377,21 @@ router.put("/theme", requireAuth, (req, res) => {
   });
 });
 
+// ─── Notification image upload (base64 → temp URL) ───────────────────────────
+router.post("/notifications/upload", requireAuth, (req, res) => {
+  const user = req.infinityUser;
+  if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins" }); return; }
+  const { data, mimeType } = req.body as { data?: string; mimeType?: string };
+  if (!data || !mimeType) { res.status(400).json({ error: "data e mimeType obrigatórios" }); return; }
+  const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+  if (!allowed.includes(mimeType)) { res.status(400).json({ error: "Tipo de imagem inválido" }); return; }
+  const dataUri = `data:${mimeType};base64,${data}`;
+  const id = crypto.randomBytes(12).toString("hex");
+  const NOTIF_IMG_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+  fotoStore.set(id, { dataUri, expires: Date.now() + NOTIF_IMG_TTL });
+  res.json({ url: `/api/infinity/foto/${id}` });
+});
+
 // ─── Notification endpoints ──────────────────────────────────────────────────
 router.get("/notifications", requireAuth, (_req, res) => {
   res.json([...notifications].reverse());

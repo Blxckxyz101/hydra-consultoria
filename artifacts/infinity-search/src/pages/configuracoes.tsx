@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useInfinityMe,
@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2 } from "lucide-react";
 
 const ROLE_CONFIG = {
   admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
@@ -497,9 +497,47 @@ export default function Configuracoes() {
   const [notifTitle, setNotifTitle] = useState("");
   const [notifBody, setNotifBody] = useState("");
   const [notifImageUrl, setNotifImageUrl] = useState("");
+  const [notifImgUploading, setNotifImgUploading] = useState(false);
+  const [notifImgError, setNotifImgError] = useState("");
   const [notifSending, setNotifSending] = useState(false);
   const [notifSuccess, setNotifSuccess] = useState(false);
   const [notifError, setNotifError] = useState("");
+  const imgInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNotifImgError("");
+    setNotifImgUploading(true);
+    try {
+      const reader = new FileReader();
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const match = dataUri.match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+      if (!match) throw new Error("Formato inválido");
+      const [, mimeType, data] = match;
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/notifications/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ data, mimeType }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({})) as { error?: string };
+        throw new Error(j.error ?? "Falha ao fazer upload");
+      }
+      const { url } = await r.json() as { url: string };
+      setNotifImageUrl(url);
+    } catch (err) {
+      setNotifImgError(err instanceof Error ? err.message : "Erro no upload");
+    } finally {
+      setNotifImgUploading(false);
+      if (imgInputRef.current) imgInputRef.current.value = "";
+    }
+  };
 
   const loadNotifs = useCallback(async () => {
     if (!isAdmin) return;
@@ -701,32 +739,53 @@ export default function Configuracoes() {
                 maxLength={1000}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all resize-none"
               />
-              {/* Image URL field */}
-              <div className="relative">
-                <input
-                  value={notifImageUrl}
-                  onChange={e => setNotifImageUrl(e.target.value)}
-                  placeholder="URL da foto (opcional) — https://..."
-                  type="url"
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all pr-10"
-                />
+              {/* Image picker */}
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="hidden"
+                onChange={handleImagePick}
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => imgInputRef.current?.click()}
+                  disabled={notifImgUploading}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 text-xs font-semibold uppercase tracking-widest text-muted-foreground hover:text-foreground hover:border-white/25 transition-all disabled:opacity-50"
+                >
+                  {notifImgUploading
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Enviando...</>
+                    : <><ImagePlus className="w-3.5 h-3.5" /> Anexar Foto</>}
+                </button>
                 {notifImageUrl && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="flex items-center gap-2">
                     <img
                       src={notifImageUrl}
-                      alt=""
-                      className="w-6 h-6 rounded-md object-cover border border-white/20"
+                      alt="Preview"
+                      className="w-8 h-8 rounded-lg object-cover border border-white/20"
                       onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setNotifImageUrl("")}
+                      className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors"
+                      title="Remover foto"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
+                )}
+                {notifImgError && (
+                  <span className="text-xs text-destructive">{notifImgError}</span>
                 )}
               </div>
               {notifImageUrl && (
-                <div className="rounded-xl overflow-hidden border border-white/10 max-h-40">
+                <div className="rounded-xl overflow-hidden border border-white/10 max-h-48">
                   <img
                     src={notifImageUrl}
                     alt="Preview"
-                    className="w-full object-cover max-h-40"
+                    className="w-full object-cover max-h-48"
                     onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
                   />
                 </div>
