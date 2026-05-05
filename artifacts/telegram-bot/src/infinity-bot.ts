@@ -20,24 +20,13 @@ let   CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
   ? Number(process.env.INFINITY_CHANNEL_ID)
   : null;
 
-const MIN_GROUP_MEMBERS = 500;
-
-// ── Free groups — bypass size check ───────────────────────────────────────────
-// Env: INFINITY_FREE_GROUPS = comma-separated @usernames or numeric IDs
-const FREE_GROUP_ENTRIES = (process.env.INFINITY_FREE_GROUPS ?? "")
-  .split(",").map(s => s.trim()).filter(Boolean);
+// ── Único grupo permitido ──────────────────────────────────────────────────────
+const INFINITY_GROUP_ID = -1003795096082;
 
 // ── Access control ─────────────────────────────────────────────────────────────
 const ADMIN_USERNAMES  = new Set<string>(["blxckxyz", "xxmathexx", "pianco"]);
 const ADMIN_IDS        = new Set<number>();
 const verifiedUsers    = new Set<number>();
-const authorizedGroups = new Set<number>();
-
-// Pre-authorize numeric IDs from env immediately
-for (const entry of FREE_GROUP_ENTRIES) {
-  const n = Number(entry);
-  if (!isNaN(n) && n !== 0) authorizedGroups.add(n);
-}
 
 function isAdmin(userId: number, username?: string): boolean {
   if (ADMIN_IDS.has(userId)) return true;
@@ -138,20 +127,6 @@ async function checkChannelMembership(
   }
 }
 
-// ── Group member count ─────────────────────────────────────────────────────────
-async function checkGroupAuthorization(
-  telegram: Telegraf["telegram"],
-  chatId: number,
-): Promise<{ ok: boolean; count?: number }> {
-  if (authorizedGroups.has(chatId)) return { ok: true };
-  try {
-    const count = await telegram.getChatMembersCount(chatId);
-    if (count >= MIN_GROUP_MEMBERS) { authorizedGroups.add(chatId); return { ok: true, count }; }
-    return { ok: false, count };
-  } catch {
-    return { ok: false };
-  }
-}
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 function buildStartKeyboard() {
@@ -300,32 +275,16 @@ function buildSuporteMsg(): string {
   ].join("\n");
 }
 
-function buildGroupTooSmallMsg(count?: number): string {
-  return [
-    HDR,
-    "┃",
-    "┃ ⚠️ GRUPO MUITO PEQUENO",
-    DIV,
-    `┃ Membros: ${count ?? "?"}`,
-    `┃ Mínimo: <b>${MIN_GROUP_MEMBERS}</b>`,
-    "┃",
-    "┃ Adicione mais membros e",
-    "┃ tente novamente.",
-    FTR,
-  ].join("\n");
-}
-
 function buildPrivateMsg(): string {
   return [
     HDR,
     "┃",
-    "┃ 🤖 BOT EXCLUSIVO PARA GRUPOS",
+    "┃ 🤖 USE NO GRUPO INFINITY",
     DIV,
-    `┃ Adicione o bot ao seu grupo`,
-    `┃ (mínimo <b>${MIN_GROUP_MEMBERS} membros</b>).`,
+    `┃ Este bot funciona apenas no`,
+    `┃ grupo oficial do Infinity Search.`,
     "┃",
-    "┃ Precisa de ajuda? Use",
-    "┃ o suporte abaixo 👇🏻",
+    "┃ 💬 Entre em contato com o suporte.",
     FTR,
   ].join("\n");
 }
@@ -838,13 +797,9 @@ function buildPrivateQueryMsg(): string {
   ].join("\n");
 }
 
-function buildAddToGroupKeyboard(botUsername: string) {
-  const addUrl = botUsername
-    ? `https://t.me/${botUsername}?startgroup=true`
-    : SUPPORT_URL;
+function buildSupportKeyboardSimple() {
   return Markup.inlineKeyboard([
-    [Markup.button.url("➕ Adicionar ao Grupo", addUrl) as any],
-    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL) as any],
+    [Markup.button.url("💬 @Blxckxyz", SUPPORT_URL) as any, Markup.button.url("💬 @xxmathexx", SUPPORT_URL2) as any],
   ]);
 }
 
@@ -877,30 +832,30 @@ export function startInfinityBot(): void {
     const from = ctx.from;
     if (!chat || !from) return next();
 
-    // Private chats: allow freely — individual handlers block queries
+    // Private chats: allow freely
     if (chat.type === "private") return next();
 
     if (chat.type === "group" || chat.type === "supergroup") {
+      // Only operate in the official Infinity group
+      if (chat.id !== INFINITY_GROUP_ID) return;
+
+      // Admins bypass all checks
       if (isAdmin(from.id, from.username)) return next();
 
-      const groupAuth = await checkGroupAuthorization(bot.telegram, chat.id);
-      if (!groupAuth.ok) {
-        if ("message" in ctx) {
-          try { await ctx.deleteMessage(); } catch {}
-          await ctx.replyWithHTML(buildGroupTooSmallMsg(groupAuth.count));
-        } else if ("callback_query" in ctx) {
-          await (ctx as any).answerCbQuery(`❌ Grupo muito pequeno (mín. ${MIN_GROUP_MEMBERS} membros)`, { show_alert: true });
-        }
-        return;
-      }
+      // Only process commands and callback queries — ignore plain text, joins, service messages
+      const hasCommand = "message" in ctx && (ctx as any).message?.text?.startsWith("/");
+      const hasCallback = "callback_query" in ctx;
+      const hasPending = "message" in ctx && getPending(from.id) !== null;
+      if (!hasCommand && !hasCallback && !hasPending) return;
 
+      // Channel membership check
       if (!verifiedUsers.has(from.id)) {
         const ok = await checkChannelMembership(bot.telegram, from.id);
         if (!ok) {
-          if ("message" in ctx) {
+          if (hasCommand) {
             try { await ctx.deleteMessage(); } catch {}
             await ctx.replyWithHTML(buildNotAuthorizedMsg(), buildNotAuthorizedKeyboard());
-          } else if ("callback_query" in ctx) {
+          } else if (hasCallback) {
             await (ctx as any).answerCbQuery("❌ Entre no canal de atualizações primeiro!", { show_alert: true });
           }
           return;
@@ -912,46 +867,34 @@ export function startInfinityBot(): void {
     return next();
   });
 
-  // ── Bot added to group ────────────────────────────────────────────────────
+  // ── Bot added to group — só aceita o grupo Infinity ──────────────────────
   bot.on("my_chat_member", async (ctx) => {
     const update = ctx.update.my_chat_member;
     const chat = update.chat;
     const newStatus = update.new_chat_member.status;
     if (newStatus !== "member" && newStatus !== "administrator") return;
     if (chat.type !== "group" && chat.type !== "supergroup") return;
-    try {
-      const count = await bot.telegram.getChatMembersCount(chat.id);
-      if (count >= MIN_GROUP_MEMBERS) {
-        authorizedGroups.add(chat.id);
-        await bot.telegram.sendMessage(
-          chat.id,
-          [
-            HDR, "┃", "┃ ✅ BOT ATIVADO!", DIV,
-            `┃ Grupo com <b>${count}</b> membros ✅`,
-            "┃", "┃ Use /start para começar!", FTR,
-          ].join("\n"),
-          { parse_mode: "HTML", ...buildStartKeyboard() },
-        );
-      } else {
-        await bot.telegram.sendMessage(chat.id, buildGroupTooSmallMsg(count), { parse_mode: "HTML" });
-      }
-    } catch { /* ignore */ }
+
+    if (chat.id === INFINITY_GROUP_ID) {
+      // Grupo oficial — apenas confirma silenciosamente (sem spam)
+      return;
+    }
+
+    // Qualquer outro grupo — sai imediatamente sem enviar mensagem
+    try { await bot.telegram.leaveChat(chat.id); } catch { /* ignore */ }
   });
 
   // ── Admin commands ────────────────────────────────────────────────────────
   bot.command("liberar", async (ctx) => {
     if (!isAdmin(ctx.from.id, ctx.from.username)) return;
-    if (ctx.chat.type === "private") { await ctx.replyWithHTML("ℹ️ Use no grupo."); return; }
-    authorizedGroups.add(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(`✅ <b>Grupo liberado!</b> ID: <code>${ctx.chat.id}</code>`, buildStartKeyboard());
+    await ctx.replyWithHTML(`ℹ️ Bot opera apenas no grupo Infinity. ID fixo: <code>${INFINITY_GROUP_ID}</code>`);
   });
 
   bot.command("bloquear", async (ctx) => {
     if (!isAdmin(ctx.from.id, ctx.from.username)) return;
-    authorizedGroups.delete(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b> ID: <code>${ctx.chat.id}</code>`);
+    await ctx.replyWithHTML(`ℹ️ Bot opera apenas no grupo Infinity. ID fixo: <code>${INFINITY_GROUP_ID}</code>`);
   });
 
   bot.command("groupid", async (ctx) => {
@@ -981,7 +924,7 @@ export function startInfinityBot(): void {
       `📊 <b>Status</b>`,
       `Canal ID: <code>${CHANNEL_ID ?? "username: " + CHANNEL_USERNAME}</code>`,
       `Verificados: <b>${verifiedUsers.size}</b>`,
-      `Grupos: <b>${authorizedGroups.size}</b>`,
+      `Grupo: <code>${INFINITY_GROUP_ID}</code>`,
     ].join("\n"));
   });
 
@@ -1025,7 +968,7 @@ export function startInfinityBot(): void {
   async function handleDirectCommand(ctx: any, tipo: string): Promise<void> {
     // Block queries in private chat
     if (ctx.chat?.type === "private") {
-      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildAddToGroupKeyboard(botUsername));
+      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildSupportKeyboardSimple());
       return;
     }
     try { await ctx.deleteMessage(); } catch {}
@@ -1126,7 +1069,7 @@ export function startInfinityBot(): void {
     await ctx.answerCbQuery();
     // Block queries in private chat
     if (ctx.chat?.type === "private") {
-      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildAddToGroupKeyboard(botUsername));
+      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildSupportKeyboardSimple());
       return;
     }
     const tipo = (ctx.match as RegExpMatchArray)[1];
@@ -1169,17 +1112,7 @@ export function startInfinityBot(): void {
     console.log(`[InfinityBot] Username: @${botUsername}`);
   }).catch(() => {});
 
-  // Resolve @username entries in INFINITY_FREE_GROUPS
-  for (const entry of FREE_GROUP_ENTRIES) {
-    if (entry.startsWith("@")) {
-      bot.telegram.getChat(entry).then(chat => {
-        authorizedGroups.add(chat.id);
-        console.log(`[InfinityBot] Grupo free pré-autorizado: ${entry} → ${chat.id}`);
-      }).catch(e => {
-        console.warn(`[InfinityBot] Não foi possível resolver grupo free "${entry}": ${e instanceof Error ? e.message : e}`);
-      });
-    }
-  }
+  console.log(`[InfinityBot] Grupo Infinity: ${INFINITY_GROUP_ID}`);
 
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
   process.once("SIGINT",  () => bot.stop("SIGINT"));
