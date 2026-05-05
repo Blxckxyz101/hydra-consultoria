@@ -43,11 +43,10 @@ const LINKS = [
   },
   {
     label: "Atualizações",
-    desc: "Novidades do sistema",
-    url: "#updates",
+    desc: "Canal oficial de novidades",
+    url: "https://t.me/infinitysearchchannel",
     icon: "📢",
     color: "--color-chart-4",
-    anchor: true,
   },
 ];
 
@@ -169,9 +168,9 @@ export default function Suporte() {
         {LINKS.map((link, idx) => (
           <motion.a
             key={link.label}
-            href={link.anchor ? "#updates" : link.url}
-            target={link.anchor ? undefined : "_blank"}
-            rel={link.anchor ? undefined : "noopener noreferrer"}
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 * idx }}

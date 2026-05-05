@@ -10,6 +10,7 @@ const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? "https://infinityse
 const LINE  = "═".repeat(44);
 const LINE2 = "─".repeat(44);
 const AUTHOR = "blxckxyz";
+const BOT_NAME_HDR = "᯽ INFINITY SEARCH ᯽";
 
 // ── Channel — only updates channel required ────────────────────────────────────
 const CHANNEL_INVITE   = "https://t.me/infinitysearchchannel";
@@ -174,7 +175,7 @@ function buildNotAuthorizedKeyboard() {
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
-const HDR = "╭──── ᯽ \u{1D5DC}\u{1D5FB}\u{1D5D9}\u{1D5DC}\u{1D5DB}\u{1D5DC}\u{1D5E7}\u{1D5EC} \u{1D5E6}\u{1D5D8}\u{1D5D4}\u{1D5E5}\u{1D5D6}\u{1D5DB} ᯽ ────╮";
+const HDR = `╭──── ${BOT_NAME_HDR} ────╮`;
 const DIV = "┠────────────────────────────";
 const FTR = "╰────────────────────────────╯";
 
@@ -207,11 +208,11 @@ function buildConsultasMenuMsg(): string {
 
 function buildSuporteMsg(): string {
   return [
-    "╭──── ᯽ INFINITY SEARCH ᯽ ───────╮",
+    HDR,
     "┃",
     "┃ • SUPORTE DISPONÍVEL",
     DIV,
-    "┃ESCOLHA UM DOS ADMINS ABAIXO 👇🏻",
+    "┃ ESCOLHA UM DOS ADMINS ABAIXO 👇🏻",
     FTR,
   ].join("\n");
 }
@@ -766,7 +767,12 @@ export function startInfinityBot(): void {
     const args = text.split(" ").slice(1).join(" ").trim();
     const tipoInfo = TIPO_MAP.get(tipo)!;
     if (!args) {
-      const promptMsg = await ctx.replyWithHTML(buildPromptMsg(tipoInfo), Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "cancel")]]));
+      const promptMsg = await ctx.replyWithHTML(
+        buildPromptMsg(tipoInfo),
+        Markup.inlineKeyboard([
+          [Markup.button.callback("🔙 Voltar", "menu_consultas"), Markup.button.callback("❌ Cancelar", "cancel")],
+        ]),
+      );
       pendingQueries.set(ctx.from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat.id });
       return;
     }
