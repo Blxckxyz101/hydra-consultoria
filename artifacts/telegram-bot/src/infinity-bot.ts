@@ -493,6 +493,32 @@ async function executeAndSend(
   }
 }
 
+// ── Private query block message ───────────────────────────────────────────────
+function buildPrivateQueryMsg(): string {
+  return [
+    HDR,
+    "┃",
+    "┃ ⚠️ CONSULTAS APENAS EM GRUPOS",
+    DIV,
+    "┃ As consultas só podem ser",
+    "┃ realizadas dentro de um grupo.",
+    "┃",
+    "┃ Adicione o bot ao seu grupo",
+    "┃ e use por lá 👇🏻",
+    FTR,
+  ].join("\n");
+}
+
+function buildAddToGroupKeyboard(botUsername: string) {
+  const addUrl = botUsername
+    ? `https://t.me/${botUsername}?startgroup=true`
+    : SUPPORT_URL;
+  return Markup.inlineKeyboard([
+    [Markup.button.url("➕ Adicionar ao Grupo", addUrl) as any],
+    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL) as any],
+  ]);
+}
+
 // ── Bot ───────────────────────────────────────────────────────────────────────
 export function startInfinityBot(): void {
   if (!INFINITY_BOT_TOKEN) {
@@ -501,6 +527,7 @@ export function startInfinityBot(): void {
   }
 
   const bot = new Telegraf(INFINITY_BOT_TOKEN);
+  let botUsername = "";
 
   void bot.telegram.setMyCommands([
     { command: "start",     description: "🌐 Menu principal" },
@@ -521,14 +548,8 @@ export function startInfinityBot(): void {
     const from = ctx.from;
     if (!chat || !from) return next();
 
-    if (chat.type === "private") {
-      if ("message" in ctx) {
-        await ctx.replyWithHTML(buildPrivateMsg(), Markup.inlineKeyboard([
-          [Markup.button.url("💬 Suporte", SUPPORT_URL) as any],
-        ]));
-      }
-      return;
-    }
+    // Private chats: allow freely — individual handlers block queries
+    if (chat.type === "private") return next();
 
     if (chat.type === "group" || chat.type === "supergroup") {
       if (isAdmin(from.id, from.username)) return next();
@@ -673,6 +694,11 @@ export function startInfinityBot(): void {
 
   // ── Direct commands ───────────────────────────────────────────────────────
   async function handleDirectCommand(ctx: any, tipo: string): Promise<void> {
+    // Block queries in private chat
+    if (ctx.chat?.type === "private") {
+      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildAddToGroupKeyboard(botUsername));
+      return;
+    }
     try { await ctx.deleteMessage(); } catch {}
     const text: string = ctx.message?.text ?? "";
     const args = text.split(" ").slice(1).join(" ").trim();
@@ -723,6 +749,11 @@ export function startInfinityBot(): void {
 
   bot.action(/^q:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
+    // Block queries in private chat
+    if (ctx.chat?.type === "private") {
+      await ctx.replyWithHTML(buildPrivateQueryMsg(), buildAddToGroupKeyboard(botUsername));
+      return;
+    }
     const tipo = (ctx.match as RegExpMatchArray)[1];
     const tipoInfo = TIPO_MAP.get(tipo);
     if (!tipoInfo) return;
@@ -753,6 +784,12 @@ export function startInfinityBot(): void {
   // ── Launch ────────────────────────────────────────────────────────────────
   bot.launch({ allowedUpdates: ["message", "callback_query", "my_chat_member"] })
     .catch(err => console.error("[InfinityBot] launch error:", err));
+
+  // Fetch bot username for "add to group" links
+  bot.telegram.getMe().then(me => {
+    botUsername = me.username ?? "";
+    console.log(`[InfinityBot] Username: @${botUsername}`);
+  }).catch(() => {});
 
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
   process.once("SIGINT",  () => bot.stop("SIGINT"));
