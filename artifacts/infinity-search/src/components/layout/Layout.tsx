@@ -437,6 +437,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span>Suporte</span>
             <span className="ml-auto text-[9px] text-muted-foreground/50">@xxmathexx</span>
           </a>
+          <a
+            href="https://t.me/piancooz"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
+            onMouseEnter={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
+              el.style.color = "var(--color-primary)";
+              el.style.borderColor = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
+            }}
+            onMouseLeave={e => {
+              const el = e.currentTarget as HTMLElement;
+              el.style.background = "";
+              el.style.color = "";
+              el.style.borderColor = "";
+            }}
+          >
+            <MessageCircle className="w-4 h-4" />
+            <span>Suporte</span>
+            <span className="ml-auto text-[9px] text-muted-foreground/50">@piancooz</span>
+          </a>
         </div>
 
         <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">

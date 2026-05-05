@@ -5,6 +5,7 @@ const GEASS_API_BASE     = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL        = "https://t.me/Blxckxyz";
 const SUPPORT_URL2       = "https://t.me/xxmathexx";
+const SUPPORT_URL3       = "https://t.me/piancooz";
 const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? "https://infinitysearch.pro";
 
 const LINE  = "═".repeat(44);
@@ -175,8 +176,8 @@ function buildConsultasKeyboard() {
 
 function buildSuporteKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.url("👤 @Blxckxyz",  SUPPORT_URL)  as any],
-    [Markup.button.url("👤 @xxmathexx", SUPPORT_URL2) as any],
+    [Markup.button.url("👤 @Blxckxyz",  SUPPORT_URL)  as any, Markup.button.url("👤 @xxmathexx", SUPPORT_URL2) as any],
+    [Markup.button.url("👤 @piancooz",  SUPPORT_URL3) as any],
     [Markup.button.callback("🔙 Voltar", "home")],
   ]);
 }
@@ -256,7 +257,7 @@ function buildUpsellMsg(tipoLabel: string): string {
 function buildUpsellKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.url("🖥️ Acessar Painel Completo", PANEL_URL) as any],
-    [Markup.button.url("💬 Falar com Suporte", SUPPORT_URL) as any],
+    [Markup.button.url("💬 @Blxckxyz", SUPPORT_URL) as any, Markup.button.url("💬 @xxmathexx", SUPPORT_URL2) as any, Markup.button.url("💬 @piancooz", SUPPORT_URL3) as any],
     [Markup.button.callback("🔙 Voltar às Consultas", "menu_consultas")],
   ]);
 }
@@ -478,7 +479,7 @@ function buildResultTxt(
   lines.push(BORDER_MID);
   lines.push(txtLine());
   lines.push(txtLine("Infinity Search  ·  infinitysearch.pro"));
-  lines.push(txtLine("Suporte: @Blxckxyz  |  @xxmathexx"));
+  lines.push(txtLine("Suporte: @Blxckxyz  |  @xxmathexx  |  @piancooz"));
   lines.push(txtLine(`Canal: @infinitysearchchannel`));
   lines.push(txtLine());
   lines.push(BORDER_BOT);

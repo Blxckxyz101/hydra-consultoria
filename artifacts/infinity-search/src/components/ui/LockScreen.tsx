@@ -76,16 +76,38 @@ export function LockScreen() {
               Renovar acesso — @Blxckxyz
             </motion.a>
 
-            <motion.a
-              href="https://t.me/Blxckxyz"
-              target="_blank"
-              rel="noopener noreferrer"
-              whileHover={{ scale: 1.02 }}
-              className="flex items-center justify-center gap-2.5 w-full py-3.5 rounded-2xl bg-white/5 border border-white/10 text-sm text-muted-foreground hover:text-white hover:bg-white/10 transition-all"
-            >
-              <MessageCircle className="w-4 h-4" />
-              Falar com o suporte
-            </motion.a>
+            <div className="flex gap-2">
+              <motion.a
+                href="https://t.me/Blxckxyz"
+                target="_blank"
+                rel="noopener noreferrer"
+                whileHover={{ scale: 1.02 }}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-sm text-muted-foreground hover:text-white hover:bg-white/10 transition-all"
+              >
+                <MessageCircle className="w-4 h-4" />
+                @Blxckxyz
+              </motion.a>
+              <motion.a
+                href="https://t.me/xxmathexx"
+                target="_blank"
+                rel="noopener noreferrer"
+                whileHover={{ scale: 1.02 }}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-sm text-muted-foreground hover:text-white hover:bg-white/10 transition-all"
+              >
+                <MessageCircle className="w-4 h-4" />
+                @xxmathexx
+              </motion.a>
+              <motion.a
+                href="https://t.me/piancooz"
+                target="_blank"
+                rel="noopener noreferrer"
+                whileHover={{ scale: 1.02 }}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-white/5 border border-white/10 text-sm text-muted-foreground hover:text-white hover:bg-white/10 transition-all"
+              >
+                <MessageCircle className="w-4 h-4" />
+                @piancooz
+              </motion.a>
+            </div>
 
             <button
               onClick={handleLogout}

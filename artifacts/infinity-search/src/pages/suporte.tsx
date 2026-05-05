@@ -35,6 +35,13 @@ const LINKS = [
     color: "--color-chart-2",
   },
   {
+    label: "@piancooz",
+    desc: "Suporte auxiliar",
+    url: "https://t.me/piancooz",
+    icon: "💬",
+    color: "--color-chart-3",
+  },
+  {
     label: "Canal Free",
     desc: "Consultas gratuitas",
     url: "https://t.me/+7sBxmhOFPhJlYzcx",
