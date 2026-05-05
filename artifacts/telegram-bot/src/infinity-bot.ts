@@ -165,6 +165,7 @@ function buildResultKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍 Nova Consulta", "menu_consultas"), Markup.button.callback("🏠 Início", "home")],
     [Markup.button.url("💬 Suporte", SUPPORT_URL) as any, Markup.button.callback("🗑️ Apagar", "delete_result") as any],
+    [Markup.button.url("🖥️ Acessar Painel Pro ✨", PANEL_URL) as any],
   ]);
 }
 
@@ -779,11 +780,6 @@ async function executeAndSend(
       { caption, parse_mode: "HTML", ...buildResultKeyboard() },
     );
 
-    // Funnel A — upsell after every result
-    await telegram.sendMessage(chatId, buildFunnelMsg(), {
-      parse_mode: "HTML",
-      ...buildFunnelKeyboard(),
-    }).catch(() => {});
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
