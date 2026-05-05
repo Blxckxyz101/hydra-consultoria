@@ -753,6 +753,10 @@ function buildResultMsg(
   lines.push(DIV);
   if (totalReg > 0) lines.push(`┃  📁 Total de registros: <b>${totalReg}</b>`);
   lines.push(`┃  🕐 ${now}`);
+  lines.push(DIV);
+  lines.push("┃  💎 <b>QUER AINDA MAIS DADOS?</b>");
+  lines.push("┃  📸 Foto · 📊 Score · 💰 IRPF");
+  lines.push("┃  🔎 +20 tipos · ⚡ Acesso ilimitado");
   lines.push(FTR);
 
   return lines.join("\n").slice(0, 4096);
