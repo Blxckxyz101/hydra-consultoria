@@ -143,12 +143,13 @@ function buildStartKeyboard() {
 
 function buildConsultasKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("CPF",       "q:cpf"),      Markup.button.callback("CNPJ",     "q:cnpj")],
-    [Markup.button.callback("CEP",       "q:cep")],
-    [Markup.button.callback("NOME",      "q:nome"),     Markup.button.callback("TELEFONE", "q:telefone")],
-    [Markup.button.callback("PLACA",     "q:placa")],
-    [Markup.button.callback("BIN",       "q:bin"),      Markup.button.callback("IP",        "q:ip")],
-    [Markup.button.callback("🔄 Voltar", "home")],
+    [Markup.button.callback("CPF",           "q:cpf"),      Markup.button.callback("CNPJ",       "q:cnpj")],
+    [Markup.button.callback("NOME",          "q:nome"),     Markup.button.callback("TELEFONE",   "q:telefone")],
+    [Markup.button.callback("CEP",           "q:cep"),      Markup.button.callback("PLACA",      "q:placa")],
+    [Markup.button.callback("BIN",           "q:bin"),      Markup.button.callback("IP",         "q:ip")],
+    [Markup.button.callback("📸 FOTO 🔒",   "locked:foto"), Markup.button.callback("📊 SCORE 🔒","locked:score")],
+    [Markup.button.callback("💰 IRPF 🔒",   "locked:irpf"), Markup.button.callback("🧾 CHEQUE 🔒","locked:cheque")],
+    [Markup.button.callback("🔄 Voltar",    "home")],
   ]);
 }
 
@@ -202,8 +203,68 @@ function buildConsultasMenuMsg(): string {
     DIV,
     "┃ SELECIONE O TIPO DE CONSULTA",
     "┃ ABAIXO 👇🏻",
+    "┃",
+    "┃ 🔒 = Exclusivo no Painel Pro",
     FTR,
   ].join("\n");
+}
+
+function buildUpsellMsg(tipoLabel: string): string {
+  return [
+    HDR,
+    "┃",
+    `┃  🔒 ${tipoLabel} — PAINEL PRO`,
+    DIV,
+    "┃ Este tipo de consulta está",
+    "┃ disponível <b>apenas no Painel</b>.",
+    "┃",
+    "┃ No Painel Completo você tem:",
+    "┃  📸 Foto biométrica",
+    "┃  📋 Dados completos",
+    "┃  💰 IRPF e Renda",
+    "┃  📊 Score de crédito",
+    "┃  🧾 Cheque e histórico",
+    "┃  🔎 +20 tipos de consulta",
+    "┃  ⚡ Acesso ilimitado",
+    DIV,
+    "┃  👇 Garanta seu acesso agora",
+    FTR,
+  ].join("\n");
+}
+
+function buildUpsellKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("🖥️ Acessar Painel Completo", PANEL_URL) as any],
+    [Markup.button.url("💬 Falar com Suporte", SUPPORT_URL) as any],
+    [Markup.button.callback("🔙 Voltar às Consultas", "menu_consultas")],
+  ]);
+}
+
+function buildFunnelMsg(): string {
+  return [
+    HDR,
+    "┃",
+    "┃  💎 QUER AINDA MAIS DADOS?",
+    DIV,
+    "┃ No <b>Painel Infinity Pro</b>:",
+    "┃",
+    "┃  📸 Foto biométrica do alvo",
+    "┃  📋 Histórico completo",
+    "┃  📊 Score + IRPF + Renda",
+    "┃  🧾 Cheque e negativações",
+    "┃  🔎 +20 tipos de consulta",
+    "┃  ⚡ Acesso ilimitado 24h",
+    DIV,
+    "┃  👇 Garanta seu acesso agora",
+    FTR,
+  ].join("\n");
+}
+
+function buildFunnelKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.url("🖥️ Acessar Painel Pro", PANEL_URL) as any],
+    [Markup.button.url("📣 Canal de Novidades", CHANNEL_INVITE) as any],
+  ]);
 }
 
 function buildSuporteMsg(): string {
@@ -291,6 +352,29 @@ function buildLoadingMsg(tipo: TipoInfo, dados: string): string {
 }
 
 // ── TXT builder ───────────────────────────────────────────────────────────────
+const W = 52; // total width inside borders
+const BORDER_TOP    = `╔${"═".repeat(W)}╗`;
+const BORDER_BOT    = `╚${"═".repeat(W)}╝`;
+const BORDER_MID    = `╠${"═".repeat(W)}╣`;
+const BORDER_SEP    = `╟${"─".repeat(W)}╢`;
+const BORDER_SIDE   = "║";
+
+function txtLine(text = ""): string {
+  const pad = W - text.length;
+  const l = Math.floor(pad / 2);
+  const r = pad - l;
+  return `${BORDER_SIDE}${" ".repeat(l)}${text}${" ".repeat(Math.max(0, r))}${BORDER_SIDE}`;
+}
+
+function txtKV(key: string, value: string): string {
+  const keyW = 20;
+  const valW = W - keyW - 5; // "  KEY : VALUE  "
+  const k = key.slice(0, keyW).padEnd(keyW);
+  const v = String(value).slice(0, valW);
+  const content = `  ${k} : ${v}`;
+  return `${BORDER_SIDE}${content.padEnd(W)}${BORDER_SIDE}`;
+}
+
 function buildResultTxt(
   tipo: string,
   dados: string,
@@ -301,48 +385,82 @@ function buildResultTxt(
   const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   const lines: string[] = [];
 
-  lines.push(LINE);
-  lines.push(`       ∞  INFINITY SEARCH  ∞`);
-  lines.push(LINE);
-  lines.push(`  Base      : Infinity`);
-  lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
-  lines.push(`  Dado      : ${dados}`);
-  lines.push(`  Data      : ${now}`);
-  lines.push(LINE);
-  lines.push("");
+  // ── Header ─────────────────────────────────────────────────────────────────
+  lines.push(BORDER_TOP);
+  lines.push(txtLine());
+  lines.push(txtLine("∞  INFINITY SEARCH  ∞"));
+  lines.push(txtLine("Powered by Infinity Search Pro"));
+  lines.push(txtLine());
+  lines.push(BORDER_MID);
+  lines.push(txtLine());
+  lines.push(txtKV("Consulta", tipo.toUpperCase()));
+  lines.push(txtKV("Dado", dados));
+  lines.push(txtKV("Data", now));
+  lines.push(txtKV("Canal", "@infinitysearchchannel"));
+  lines.push(txtLine());
+  lines.push(BORDER_MID);
 
+  // ── Fields ─────────────────────────────────────────────────────────────────
   if (content.length > 0) {
-    const maxKey = Math.min(22, Math.max(...content.map(f => Object.keys(f)[0]?.length ?? 0)));
-    lines.push("DADOS ENCONTRADOS");
-    lines.push(LINE2);
+    lines.push(txtLine());
+    lines.push(txtLine("◆  DADOS ENCONTRADOS"));
+    lines.push(txtLine());
     for (const field of content) {
       const [k, v] = Object.entries(field)[0] ?? ["", ""];
-      if (k) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
+      if (k) lines.push(txtKV(k, String(v)));
     }
-    lines.push("");
+    lines.push(txtLine());
   }
 
+  // ── Sections ───────────────────────────────────────────────────────────────
   if (sections && sections.length > 0) {
     for (const sec of sections) {
-      lines.push(`${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`);
-      lines.push(LINE2);
-      sec.items.slice(0, 50).forEach((item, i) => lines.push(`  ${String(i + 1).padStart(3)}.  ${item}`));
-      lines.push("");
+      lines.push(BORDER_SEP);
+      lines.push(txtLine());
+      lines.push(txtLine(`◆  ${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`));
+      lines.push(txtLine());
+      sec.items.forEach((item, i) => {
+        const num = `  ${String(i + 1).padStart(3)}.  `;
+        const valW = W - num.length - 2;
+        const chunks: string[] = [];
+        let rest = item;
+        while (rest.length > 0) {
+          chunks.push(rest.slice(0, valW));
+          rest = rest.slice(valW);
+        }
+        chunks.forEach((chunk, ci) => {
+          const prefix = ci === 0 ? num : " ".repeat(num.length);
+          const content2 = `${prefix}${chunk}`;
+          lines.push(`${BORDER_SIDE}${content2.padEnd(W)}${BORDER_SIDE}`);
+        });
+      });
+      lines.push(txtLine());
     }
   }
 
+  // ── Raw fallback ───────────────────────────────────────────────────────────
   if (content.length === 0 && (!sections || sections.length === 0) && rawText) {
-    lines.push("RESPOSTA");
-    lines.push(LINE2);
-    lines.push(rawText.slice(0, 4000));
-    lines.push("");
+    lines.push(txtLine());
+    lines.push(txtLine("◆  RESPOSTA BRUTA"));
+    lines.push(txtLine());
+    const rawLines = rawText.slice(0, 3000).split(/\s{2,}|\n/);
+    for (const rl of rawLines) {
+      if (rl.trim()) {
+        const content3 = `  ${rl.trim()}`;
+        lines.push(`${BORDER_SIDE}${content3.slice(0, W).padEnd(W)}${BORDER_SIDE}`);
+      }
+    }
+    lines.push(txtLine());
   }
 
-  lines.push(LINE);
-  lines.push(`  Made by ${AUTHOR} | Infinity Search`);
-  lines.push(`  Suporte : @Blxckxyz`);
-  lines.push(`  Suporte : @xxmathexx`);
-  lines.push(LINE);
+  // ── Footer ─────────────────────────────────────────────────────────────────
+  lines.push(BORDER_MID);
+  lines.push(txtLine());
+  lines.push(txtLine("Infinity Search  ·  infinitysearch.pro"));
+  lines.push(txtLine("Suporte: @Blxckxyz  |  @xxmathexx"));
+  lines.push(txtLine(`Canal: @infinitysearchchannel`));
+  lines.push(txtLine());
+  lines.push(BORDER_BOT);
 
   return lines.join("\n");
 }
@@ -658,6 +776,20 @@ async function executeAndSend(
       ...buildResultKeyboard(),
     });
 
+    // Always send the beautiful .txt file
+    const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
+    await telegram.sendDocument(
+      chatId,
+      { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
+      { caption: `📎 <b>${tipoInfo.label}</b> — dados completos`, parse_mode: "HTML" },
+    ).catch(() => {});
+
+    // Funnel A — upsell after every result
+    await telegram.sendMessage(chatId, buildFunnelMsg(), {
+      parse_mode: "HTML",
+      ...buildFunnelKeyboard(),
+    }).catch(() => {});
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await telegram.editMessageText(
@@ -953,6 +1085,20 @@ export function startInfinityBot(): void {
     const from = ctx.from!;
     pendingQueries.delete(from.id);
     try { await ctx.deleteMessage(); } catch {}
+  });
+
+  // ── Funnel B — locked tipos ────────────────────────────────────────────────
+  const LOCKED_LABELS: Record<string, string> = {
+    foto: "FOTO BIOMÉTRICA",
+    score: "SCORE DE CRÉDITO",
+    irpf: "IRPF / RENDA",
+    cheque: "CHEQUE",
+  };
+  bot.action(/^locked:(.+)$/, async (ctx) => {
+    const key = (ctx.match as RegExpMatchArray)[1];
+    const label = LOCKED_LABELS[key] ?? key.toUpperCase();
+    await ctx.answerCbQuery("🔒 Disponível no Painel Pro!", { show_alert: false });
+    await ctx.replyWithHTML(buildUpsellMsg(label), buildUpsellKeyboard());
   });
 
   bot.action(/^q:(.+)$/, async (ctx) => {
