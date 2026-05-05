@@ -69,8 +69,28 @@ const TIPOS: TipoInfo[] = [
 const TIPO_MAP = new Map<string, TipoInfo>(TIPOS.map(t => [t.id, t]));
 
 // ── Session ───────────────────────────────────────────────────────────────────
-interface PendingQuery { tipo: string; promptMsgId: number; chatId: number }
+const PENDING_TTL_MS = 90_000; // 90 seconds — query expires if user doesn't respond
+interface PendingQuery { tipo: string; promptMsgId: number; chatId: number; expiresAt: number; timer: ReturnType<typeof setTimeout> }
 const pendingQueries = new Map<number, PendingQuery>();
+
+function setPending(userId: number, data: Omit<PendingQuery, "expiresAt" | "timer">): void {
+  const existing = pendingQueries.get(userId);
+  if (existing) clearTimeout(existing.timer);
+  const timer = setTimeout(() => pendingQueries.delete(userId), PENDING_TTL_MS);
+  pendingQueries.set(userId, { ...data, expiresAt: Date.now() + PENDING_TTL_MS, timer });
+}
+
+function getPending(userId: number): Omit<PendingQuery, "timer"> | undefined {
+  const p = pendingQueries.get(userId);
+  if (!p) return undefined;
+  if (Date.now() > p.expiresAt) { clearTimeout(p.timer); pendingQueries.delete(userId); return undefined; }
+  return p;
+}
+
+function deletePending(userId: number): void {
+  const p = pendingQueries.get(userId);
+  if (p) { clearTimeout(p.timer); pendingQueries.delete(userId); }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string): string {
@@ -974,7 +994,7 @@ export function startInfinityBot(): void {
     try { await ctx.deleteMessage(); } catch {}
     const from = ctx.from;
     const name = from.username ? `@${from.username}` : (from.first_name ?? "operador");
-    pendingQueries.delete(from.id);
+    deletePending(from.id);
     await sendBanner(ctx as any, buildHomeMsg(name, isAdmin(from.id, from.username)), buildStartKeyboard());
   });
 
@@ -1014,7 +1034,7 @@ export function startInfinityBot(): void {
           [Markup.button.callback("🔙 Voltar", "menu_consultas"), Markup.button.callback("❌ Cancelar", "cancel")],
         ]),
       );
-      pendingQueries.set(ctx.from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat.id });
+      setPending(ctx.from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat.id });
       return;
     }
     const loadMsg = await ctx.replyWithHTML(buildLoadingMsg(tipoInfo, args));
@@ -1034,7 +1054,7 @@ export function startInfinityBot(): void {
   bot.action("home", async (ctx) => {
     await ctx.answerCbQuery();
     const from = ctx.from!;
-    pendingQueries.delete(from.id);
+    deletePending(from.id);
     const name = from.username ? `@${from.username}` : (from.first_name ?? "operador");
     await ctx.replyWithHTML(buildHomeMsg(name, isAdmin(from.id, from.username)), buildStartKeyboard());
   });
@@ -1074,7 +1094,7 @@ export function startInfinityBot(): void {
   bot.action("cancel", async (ctx) => {
     await ctx.answerCbQuery("Cancelado");
     const from = ctx.from!;
-    pendingQueries.delete(from.id);
+    deletePending(from.id);
     try { await ctx.deleteMessage(); } catch {}
   });
 
@@ -1108,22 +1128,25 @@ export function startInfinityBot(): void {
     const tipoInfo = TIPO_MAP.get(tipo);
     if (!tipoInfo) return;
     const from = ctx.from!;
-    pendingQueries.delete(from.id);
+    deletePending(from.id);
     const promptMsg = await ctx.replyWithHTML(
       buildPromptMsg(tipoInfo),
       Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "cancel")]]),
     );
-    pendingQueries.set(from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat!.id });
+    setPending(from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat!.id });
   });
 
-  // ── Text: capture pending query ───────────────────────────────────────────
+  // ── Text: capture pending query only — ignore all other messages ──────────
   bot.on("text", async (ctx) => {
     const from = ctx.from;
-    const pending = pendingQueries.get(from.id);
+    if (!from) return;
+    // Only respond if this user has an active, non-expired pending query in this chat
+    const pending = getPending(from.id);
     if (!pending || pending.chatId !== ctx.chat.id) return;
     const dados = ctx.message.text.trim();
-    if (!dados || dados.startsWith("/")) return;
-    pendingQueries.delete(from.id);
+    // Ignore commands and bot mentions that aren't query data
+    if (!dados || dados.startsWith("/") || dados.startsWith("@")) return;
+    deletePending(from.id);
     try { await ctx.deleteMessage(); } catch {}
     const tipoInfo = TIPO_MAP.get(pending.tipo)!;
     const loadMsg = await ctx.replyWithHTML(buildLoadingMsg(tipoInfo, dados));
