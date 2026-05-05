@@ -368,22 +368,24 @@ export default function Consultas() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {!isAdmin && skylersTotal !== null && (
+          {skylersTotal !== null && (
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
-                skylersTotal >= skylersLimit
+                isAdmin
+                  ? "bg-primary/5 border-primary/20"
+                  : skylersTotal >= skylersLimit
                   ? "bg-rose-400/15 border-rose-400/40"
                   : skylersTotal >= skylersLimit * 0.8
                   ? "bg-amber-400/10 border-amber-400/30"
                   : "bg-sky-400/10 border-sky-400/20"
               }`}
-              title="Quota de consultas Skylers (total vitalício)"
+              title={isAdmin ? "Admins têm acesso ilimitado à Skylers" : "Quota de consultas Skylers (total vitalício)"}
             >
-              <Network className={`w-3 h-3 ${skylersTotal >= skylersLimit ? "text-rose-400" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-400" : "text-sky-400"}`} />
-              <span className={`text-[10px] uppercase tracking-widest font-semibold ${skylersTotal >= skylersLimit ? "text-rose-300" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-300" : "text-sky-300"}`}>
-                Skylers {skylersTotal}/{skylersLimit}
+              <Network className={`w-3 h-3 ${isAdmin ? "text-primary/60" : skylersTotal >= skylersLimit ? "text-rose-400" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-400" : "text-sky-400"}`} />
+              <span className={`text-[10px] uppercase tracking-widest font-semibold ${isAdmin ? "text-primary/60" : skylersTotal >= skylersLimit ? "text-rose-300" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-300" : "text-sky-300"}`}>
+                {isAdmin ? "Skylers ∞" : `Skylers ${skylersTotal}/${skylersLimit}`}
               </span>
             </motion.div>
           )}

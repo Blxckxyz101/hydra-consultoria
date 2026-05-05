@@ -406,12 +406,13 @@ function PinResetEditor({ username, onReset }: { username: string; onReset: () =
 }
 
 // ─── MyProfileSection ─────────────────────────────────────────────────────────
-function MyProfileSection({ me }: { me: { username: string; displayName?: string | null } | undefined }) {
+function MyProfileSection({ me }: { me: { username: string; displayName?: string | null; pinSet?: boolean } | undefined }) {
   const [displayName, setDisplayName] = useState(me?.displayName ?? "");
   const [dnSaving, setDnSaving] = useState(false);
   const [dnSaved, setDnSaved] = useState(false);
   const [dnErr, setDnErr] = useState("");
 
+  const [hasPinSet, setHasPinSet] = useState(me?.pinSet ?? false);
   const [curPin, setCurPin] = useState("");
   const [newPin1, setNewPin1] = useState("");
   const [newPin2, setNewPin2] = useState("");
@@ -421,6 +422,7 @@ function MyProfileSection({ me }: { me: { username: string; displayName?: string
   const [showPins, setShowPins] = useState(false);
 
   useEffect(() => { setDisplayName(me?.displayName ?? ""); }, [me?.displayName]);
+  useEffect(() => { setHasPinSet(me?.pinSet ?? false); }, [me?.pinSet]);
 
   const saveDisplayName = async () => {
     setDnSaving(true); setDnErr(""); setDnSaved(false);
@@ -438,22 +440,26 @@ function MyProfileSection({ me }: { me: { username: string; displayName?: string
     finally { setDnSaving(false); }
   };
 
-  const changePin = async () => {
+  const savePin = async () => {
     setPinErr(""); setPinSaved(false);
-    if (newPin1.length !== 4 || !/^\d{4}$/.test(newPin1)) { setPinErr("Novo PIN deve ter 4 dígitos."); return; }
+    if (!/^\d{4}$/.test(newPin1)) { setPinErr("PIN deve ter 4 dígitos numéricos."); return; }
     if (newPin1 !== newPin2) { setPinErr("PINs não coincidem."); return; }
+    if (hasPinSet && !curPin) { setPinErr("Informe o PIN atual."); return; }
     setPinSaving(true);
     try {
       const token = localStorage.getItem("infinity_token");
+      const body: Record<string, string> = { newPin: newPin1 };
+      if (hasPinSet) body["currentPin"] = curPin;
       const r = await fetch("/api/infinity/me/pin", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ currentPin: curPin, newPin: newPin1 }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
       setPinSaved(true);
+      setHasPinSet(true);
       setCurPin(""); setNewPin1(""); setNewPin2("");
-      setTimeout(() => setPinSaved(false), 2000);
+      setTimeout(() => setPinSaved(false), 2500);
     } catch (e) { setPinErr(e instanceof Error ? e.message : "Erro"); }
     finally { setPinSaving(false); }
   };
@@ -495,32 +501,50 @@ function MyProfileSection({ me }: { me: { username: string; displayName?: string
         {dnErr && <p className="text-xs text-destructive">{dnErr}</p>}
       </div>
 
-      {/* PIN change */}
-      <div className="space-y-2">
+      {/* PIN setup / change */}
+      <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Alterar PIN de acesso</label>
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+              {hasPinSet ? "Alterar PIN de acesso" : "Criar PIN de acesso"}
+            </label>
+            {!hasPinSet && (
+              <span className="text-[9px] uppercase tracking-widest text-amber-400 bg-amber-400/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full">
+                Não configurado
+              </span>
+            )}
+          </div>
           <button onClick={() => setShowPins(p => !p)} className="text-[10px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
             {showPins ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
             {showPins ? "Ocultar" : "Mostrar"}
           </button>
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          <input
-            type={showPins ? "text" : "password"}
-            inputMode="numeric"
-            maxLength={4}
-            value={curPin}
-            onChange={e => setCurPin(e.target.value.replace(/\D/g, ""))}
-            placeholder="PIN atual"
-            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
-          />
+
+        {!hasPinSet && (
+          <p className="text-[11px] text-amber-300/80 bg-amber-400/5 border border-amber-400/15 rounded-xl px-3 py-2">
+            Configure um PIN de 4 dígitos. Ele será exigido em todos os seus próximos logins.
+          </p>
+        )}
+
+        <div className={`grid gap-2 ${hasPinSet ? "grid-cols-3" : "grid-cols-2"}`}>
+          {hasPinSet && (
+            <input
+              type={showPins ? "text" : "password"}
+              inputMode="numeric"
+              maxLength={4}
+              value={curPin}
+              onChange={e => setCurPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="PIN atual"
+              className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
+            />
+          )}
           <input
             type={showPins ? "text" : "password"}
             inputMode="numeric"
             maxLength={4}
             value={newPin1}
             onChange={e => setNewPin1(e.target.value.replace(/\D/g, ""))}
-            placeholder="Novo PIN"
+            placeholder={hasPinSet ? "Novo PIN" : "PIN (4 dígitos)"}
             className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
           />
           <input
@@ -534,13 +558,13 @@ function MyProfileSection({ me }: { me: { username: string; displayName?: string
           />
         </div>
         <button
-          onClick={() => void changePin()}
-          disabled={pinSaving || !curPin || !newPin1 || !newPin2}
+          onClick={() => void savePin()}
+          disabled={pinSaving || !newPin1 || !newPin2 || (hasPinSet && !curPin)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-40"
           style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)", color: "var(--color-primary)" }}
         >
           <Lock className="w-3 h-3" />
-          {pinSaved ? "PIN alterado!" : pinSaving ? "Alterando..." : "Alterar PIN"}
+          {pinSaved ? (hasPinSet ? "PIN alterado!" : "PIN configurado!") : pinSaving ? "Salvando..." : hasPinSet ? "Alterar PIN" : "Criar PIN"}
         </button>
         {pinErr && <p className="text-xs text-destructive">{pinErr}</p>}
       </div>
@@ -799,7 +823,7 @@ export default function Configuracoes() {
       </motion.div>
 
       {/* Meu Perfil — visible to all users */}
-      <MyProfileSection me={me as { username: string; displayName?: string | null } | undefined} />
+      <MyProfileSection me={me as { username: string; displayName?: string | null; pinSet?: boolean } | undefined} />
 
       {!isAdmin ? (
         <motion.div

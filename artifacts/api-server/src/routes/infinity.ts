@@ -1262,7 +1262,17 @@ router.patch("/me/pin", requireAuth, async (req, res) => {
   const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
   const u = rows[0];
   if (!u) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
-  if (!u.accountPin) { res.status(400).json({ error: "PIN não configurado" }); return; }
+  if (!u.accountPin) {
+    // PIN ainda não configurado — permite definir direto sem verificar PIN atual
+    const pinHash = await bcrypt.hash(String(newPin), 10);
+    await db.update(infinityUsersTable).set({ accountPin: pinHash }).where(eq(infinityUsersTable.username, username));
+    res.json({ ok: true, pinCreated: true });
+    return;
+  }
+  if (!currentPin) {
+    res.status(400).json({ error: "currentPin obrigatório para alterar PIN" });
+    return;
+  }
   const ok = await bcrypt.compare(String(currentPin), u.accountPin);
   if (!ok) { res.status(401).json({ error: "PIN atual incorreto" }); return; }
   const pinHash = await bcrypt.hash(String(newPin), 10);
