@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaCh
 import { Link } from "wouter";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
 import { ExpiryBadge } from "@/components/ui/ExpiryBadge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const TIPO_LABEL: Record<string, string> = {
   cpf: "CPF", cpfbasico: "CPF Básico", cpffull: "CPF Full",
@@ -163,8 +164,16 @@ export default function Overview() {
 
   if (loading) {
     return (
-      <div className="py-24 flex items-center justify-center">
-        <InfinityLoader label="Sincronizando comando" />
+      <div className="space-y-6 sm:space-y-8">
+        <Skeleton className="h-72 rounded-3xl bg-white/5" />
+        <Skeleton className="h-10 rounded-2xl bg-white/5 w-48" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 rounded-2xl bg-white/5" />)}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Skeleton className="h-52 rounded-2xl bg-white/5" />
+          <Skeleton className="h-52 rounded-2xl bg-white/5" />
+        </div>
       </div>
     );
   }
@@ -190,10 +199,10 @@ export default function Overview() {
   const rateLimitColor = rateLimitPct >= 90 ? "text-rose-300" : rateLimitPct >= 70 ? "text-amber-300" : "text-emerald-300";
 
   const statCards = [
-    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300" },
-    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300" },
-    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300" },
-    { label: "Operadores", value: data.usuariosAtivos, icon: Users, hint: "contas ativas", color: "from-amber-500/30 to-orange-400/10", iconColor: "text-amber-300" },
+    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
+    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300", glowColor: "rgba(167,139,250,0.35)" },
+    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)" },
+    { label: "Operadores", value: data.usuariosAtivos, icon: Users, hint: "contas ativas", color: "from-amber-500/30 to-orange-400/10", iconColor: "text-amber-300", glowColor: "rgba(251,191,36,0.35)" },
   ];
 
   return (
@@ -324,17 +333,28 @@ export default function Overview() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 + idx * 0.07 }}
-            whileHover={{ y: -3 }}
-            className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${stat.color} p-4 sm:p-5 backdrop-blur-xl transition-all hover:border-white/20`}
+            whileHover={{ y: -4 }}
+            className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${stat.color} p-4 sm:p-5 backdrop-blur-xl transition-all duration-200 cursor-default`}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLElement).style.boxShadow = `0 0 40px -8px ${stat.glowColor}, 0 4px 20px -4px ${stat.glowColor}`;
+              (e.currentTarget as HTMLElement).style.borderColor = `${stat.glowColor.replace("0.35", "0.5")}`;
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLElement).style.boxShadow = "";
+              (e.currentTarget as HTMLElement).style.borderColor = "";
+            }}
           >
             <div className="absolute inset-0 bg-black/30" />
+            {/* Inner radial glow on hover */}
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none rounded-2xl"
+              style={{ background: `radial-gradient(ellipse at 50% 0%, ${stat.glowColor.replace("0.35","0.12")} 0%, transparent 70%)` }} />
             <div className="relative flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-[9px] sm:text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2 truncate">{stat.label}</p>
                 <p className="text-2xl sm:text-3xl font-bold">{stat.value.toLocaleString("pt-BR")}</p>
                 <p className="text-[10px] text-muted-foreground/70 mt-1">{stat.hint}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center ${stat.iconColor} group-hover:scale-110 transition-transform`}>
+              <div className={`w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center ${stat.iconColor} group-hover:scale-110 group-hover:border-white/20 transition-all duration-200`}>
                 <stat.icon className="w-5 h-5" />
               </div>
             </div>

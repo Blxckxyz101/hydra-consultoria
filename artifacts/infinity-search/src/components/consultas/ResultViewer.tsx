@@ -1,12 +1,13 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle, Copy, Check, Download, FileJson, Eye, EyeOff,
   Sparkles, FolderOpen, CheckCircle2, Star, FileText, Camera,
   IdCard, User, Phone, Mail, MapPin, Car, Building2, TrendingUp,
   Wallet, Scale, Calendar, CreditCard, Fingerprint, Heart,
   ShieldAlert, Hash, List, Briefcase, Database, ChevronDown,
-  ChevronUp, ExternalLink, Zap, type LucideIcon, Info,
+  ChevronUp, ExternalLink, Zap, type LucideIcon, Info, LayoutGrid, Rows3,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -105,7 +106,7 @@ type Props         = { tipo: string; query?: string; result: { success: boolean;
 function CopyButton({ text, label = "Copiar" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
-    <button type="button" onClick={() => { navigator.clipboard.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1200); }); }}
+    <button type="button" onClick={() => { navigator.clipboard.writeText(text).then(() => { setDone(true); toast.success("Copiado!"); setTimeout(() => setDone(false), 1200); }); }}
       className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">
       {done ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
       {done ? "Copiado" : label}
@@ -116,8 +117,8 @@ function CopyButton({ text, label = "Copiar" }: { text: string; label?: string }
 function InlineCopy({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   return (
-    <button type="button" onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1000); }); }}
-      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-white/10" title="Copiar">
+    <button type="button" onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(text).then(() => { setDone(true); toast.success("Copiado!"); setTimeout(() => setDone(false), 1000); }); }}
+      className="shrink-0 opacity-20 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-white/10" title="Copiar">
       {done ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
     </button>
   );
@@ -343,6 +344,7 @@ function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
 // ─── Main ResultViewer ────────────────────────────────────────────────────────
 export function ResultViewer({ tipo, query = "", result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
+  const [compact, setCompact] = useState(false);
   const queriedAt = useMemo(() => new Date(), []);
 
   const parsed: Parsed = useMemo(() => {
@@ -483,6 +485,13 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
             </button>
             <CopyButton text={exportText} label="Copiar" />
             <div className="w-px h-3 bg-white/10" />
+            <button onClick={() => setCompact(v => !v)}
+              className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors ${compact ? "text-primary" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+              title={compact ? "Modo detalhado" : "Modo compacto"}>
+              {compact ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
+              {compact ? "Detalhado" : "Compacto"}
+            </button>
+            <div className="w-px h-3 bg-white/10" />
             <button onClick={() => setShowRaw(v => !v)}
               className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/50 hover:text-muted-foreground transition-colors">
               {showRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
@@ -574,7 +583,7 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
                   backdropFilter: "blur(20px)",
                   boxShadow: `0 4px 24px ${accent.bg}, inset 0 1px 0 rgba(255,255,255,0.06)`,
                 }}
-                onClick={() => navigator.clipboard.writeText(f.value)}
+                onClick={() => { navigator.clipboard.writeText(f.value); toast.success("Copiado!"); }}
                 title="Clique para copiar"
               >
                 {/* Inner glow */}
@@ -620,37 +629,60 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
             <span className="text-[9px] text-muted-foreground/40 ml-1">· {otherFields.length} campos</span>
           </div>
 
-          {/* Field rows */}
-          <div className="divide-y divide-white/[0.03]">
-            {otherFields.map((f, i) => {
-              const Icon = getFieldIcon(f.key);
-              const accent = getFieldAccent(f.key);
-              const displayVal = formatValue(f.key, f.value);
-              return (
-                <motion.div key={`${f.key}-${i}`}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: Math.min(0.12 + i * 0.016, 0.45) }}
-                  className="group flex items-center gap-3.5 px-5 py-3.5 transition-all cursor-default"
-                  style={{ cursor: "default" }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.02)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
-                >
-                  {/* Icon */}
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: accent.bg, border: `1px solid ${accent.border}` }}>
-                    <Icon className={`w-3.5 h-3.5 ${accent.text}`} />
-                  </div>
-                  {/* Key + Value */}
-                  <div className="flex-1 min-w-0 flex items-center justify-between gap-4">
-                    <p className={`text-[9px] uppercase tracking-[0.22em] font-semibold ${accent.text} opacity-70 whitespace-nowrap shrink-0`}>{f.key}</p>
-                    <p className="text-[13px] font-medium break-all text-right text-white/85 truncate" title={displayVal}>{displayVal || "—"}</p>
-                  </div>
-                  <InlineCopy text={f.value} />
-                </motion.div>
-              );
-            })}
-          </div>
+          {/* Field rows — compact grid or detail rows */}
+          {compact ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 p-3">
+              {otherFields.map((f, i) => {
+                const accent = getFieldAccent(f.key);
+                const displayVal = formatValue(f.key, f.value);
+                return (
+                  <motion.div key={`${f.key}-${i}`}
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                    transition={{ delay: Math.min(0.04 + i * 0.01, 0.25) }}
+                    className="group relative flex flex-col gap-0.5 p-2.5 rounded-xl cursor-pointer transition-all"
+                    style={{ background: "rgba(0,0,0,0.3)", border: `1px solid rgba(255,255,255,0.05)` }}
+                    onClick={() => { navigator.clipboard.writeText(f.value); toast.success("Copiado!"); }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = accent.border; (e.currentTarget as HTMLElement).style.background = accent.bg; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.05)"; (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.3)"; }}
+                    title="Clique para copiar"
+                  >
+                    <p className={`text-[8px] uppercase tracking-widest font-semibold ${accent.text} opacity-60`}>{f.key}</p>
+                    <p className="text-[11px] font-semibold break-all text-white/85 leading-snug">{displayVal || "—"}</p>
+                    <Copy className="absolute top-2 right-2 w-2.5 h-2.5 opacity-0 group-hover:opacity-40 transition-opacity text-muted-foreground" />
+                  </motion.div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="divide-y divide-white/[0.03]">
+              {otherFields.map((f, i) => {
+                const Icon = getFieldIcon(f.key);
+                const accent = getFieldAccent(f.key);
+                const displayVal = formatValue(f.key, f.value);
+                return (
+                  <motion.div key={`${f.key}-${i}`}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: Math.min(0.12 + i * 0.016, 0.45) }}
+                    className="group flex items-center gap-3.5 px-5 py-3.5 transition-all cursor-default"
+                    style={{ cursor: "default" }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.02)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+                  >
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: accent.bg, border: `1px solid ${accent.border}` }}>
+                      <Icon className={`w-3.5 h-3.5 ${accent.text}`} />
+                    </div>
+                    <div className="flex-1 min-w-0 flex items-center justify-between gap-4">
+                      <p className={`text-[9px] uppercase tracking-[0.22em] font-semibold ${accent.text} opacity-70 whitespace-nowrap shrink-0`}>{f.key}</p>
+                      <p className="text-[13px] font-medium break-all text-right text-white/85 truncate" title={displayVal}>{displayVal || "—"}</p>
+                    </div>
+                    <InlineCopy text={f.value} />
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
       )}
 

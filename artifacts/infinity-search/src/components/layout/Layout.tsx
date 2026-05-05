@@ -1,11 +1,18 @@
 import { Link, useLocation } from "wouter";
 import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Database, IdCard } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
+
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { LockScreen } from "@/components/ui/LockScreen";
+
+function hashColor(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash) % 360}, 65%, 62%)`;
+}
 
 interface InfinityNotif {
   id: string;
@@ -245,6 +252,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   borderColor: "color-mix(in srgb, var(--color-primary) 30%, transparent)",
                   boxShadow: "0 0 25px -5px color-mix(in srgb, var(--color-primary) 35%, transparent)",
                 } : {}}
+                onMouseEnter={e => {
+                  if (!isActive) {
+                    (e.currentTarget as HTMLElement).style.boxShadow = "0 0 18px -6px color-mix(in srgb, var(--color-primary) 25%, transparent)";
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.boxShadow = "";
+                }}
               >
                 {isActive && (
                   <motion.div
@@ -257,7 +272,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   />
                 )}
                 <Icon
-                  className="w-4 h-4"
+                  className={`w-4 h-4 transition-all duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}
                   style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : {}}
                 />
                 <span className="font-medium text-sm flex-1">{item.label}</span>
@@ -274,13 +289,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             {/* Avatar with Discord-style status dot */}
             <div className="relative shrink-0">
               <div
-                className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-sm"
-                style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))" }}
+                className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center font-bold text-sm"
+                style={{
+                  background: profilePhoto ? "transparent" : hashColor(user?.username ?? "?"),
+                  color: "#000",
+                  boxShadow: `0 0 16px ${hashColor(user?.username ?? "?")}55`,
+                }}
               >
                 {profilePhoto ? (
                   <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  user?.username?.[0]?.toUpperCase() ?? "?"
+                  ((user as any)?.displayName ?? user?.username)?.[0]?.toUpperCase() ?? "?"
                 )}
               </div>
               <span
@@ -289,7 +308,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
               />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="font-semibold text-sm truncate">{user?.username}</div>
+              <div className="font-semibold text-sm truncate">{(user as any)?.displayName ?? user?.username}</div>
+              {(user as any)?.displayName && (
+                <div className="text-[8px] text-muted-foreground/30 font-mono truncate">@{user?.username}</div>
+              )}
               <div
                 className="text-[9px] uppercase tracking-[0.3em]"
                 style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}

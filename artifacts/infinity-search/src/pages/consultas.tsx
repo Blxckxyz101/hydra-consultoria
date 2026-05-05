@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Search, AlertTriangle, CheckCircle2, History, FileText,
   IdCard, Building2, Phone, User, CreditCard, Heart,
@@ -280,13 +281,19 @@ export default function Consultas() {
       const data = await r.json() as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
       if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
+        toast.error("Limite diário atingido.");
       } else if (base && base !== "credilink" && data.success && typeof data.data === "string") {
         setResult({ success: true, data: { fields: [], sections: [], raw: data.data } });
+        toast.success("Consulta concluída");
       } else {
         setResult(data);
+        if (data.success) toast.success("Consulta concluída");
+        else toast.error(data.error ?? "Sem dados para esta consulta");
       }
     } catch (err) {
-      setResult({ success: false, error: err instanceof Error ? err.message : "Falha na requisição", data: { fields: [], sections: [], raw: "" } });
+      const msg = err instanceof Error ? err.message : "Falha na requisição";
+      setResult({ success: false, error: msg, data: { fields: [], sections: [], raw: "" } });
+      toast.error(msg);
     } finally {
       setPending(false);
       queryClient.invalidateQueries({ queryKey: historyKey });
@@ -398,6 +405,64 @@ export default function Consultas() {
           </div>
         </div>
       </div>
+
+      {/* Skylers urgent warning */}
+      {!isAdmin && skylersTotal !== null && skylersTotal >= skylersLimit - 4 && skylersTotal < skylersLimit && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/8 backdrop-blur-xl px-4 py-3"
+        >
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <p className="text-xs text-amber-300/90 leading-relaxed">
+            <span className="font-bold">Atenção:</span> você tem apenas <span className="font-bold text-amber-200">{skylersLimit - skylersTotal}</span> consulta{skylersLimit - skylersTotal !== 1 ? "s" : ""} Skylers restante{skylersLimit - skylersTotal !== 1 ? "s" : ""}. Entre em contato com o suporte para ampliar seu limite.
+          </p>
+        </motion.div>
+      )}
+      {!isAdmin && skylersTotal !== null && skylersTotal >= skylersLimit && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/8 backdrop-blur-xl px-4 py-3"
+        >
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <p className="text-xs text-rose-300/90 leading-relaxed">
+            <span className="font-bold">Limite Skylers atingido.</span> Suas {skylersLimit} consultas vitalícias foram utilizadas. Contate o suporte para adquirir mais.
+          </p>
+        </motion.div>
+      )}
+
+      {/* Recentes */}
+      {history && history.length > 0 && (() => {
+        const seen = new Set<string>();
+        const recentes: Array<{ tipo: string; query: string }> = [];
+        for (const h of history) {
+          const key = `${h.tipo}:${h.query}`;
+          if (!seen.has(key) && recentes.length < 5) { seen.add(key); recentes.push({ tipo: h.tipo, query: h.query }); }
+        }
+        if (recentes.length === 0) return null;
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <History className="w-3 h-3 text-muted-foreground/40" />
+              <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40">Recentes</span>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {recentes.map((h) => (
+                <button
+                  key={`${h.tipo}:${h.query}`}
+                  onClick={() => repeatQuery(h.tipo, h.query)}
+                  className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/8 bg-white/4 hover:bg-primary/10 hover:border-primary/30 text-muted-foreground hover:text-primary transition-all text-[10px]"
+                >
+                  <span className="font-bold uppercase tracking-wide text-primary/50 group-hover:text-primary/80 transition-colors">{h.tipo}</span>
+                  <span className="text-muted-foreground/30">·</span>
+                  <span className="font-mono">{h.query.length > 16 ? h.query.slice(0, 16) + "…" : h.query}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Category pills */}
       <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
