@@ -350,35 +350,163 @@ function buildResultTxt(
 // ── Geass API ─────────────────────────────────────────────────────────────────
 interface GeassResult { fields: Record<string, string>[]; sections: { name: string; items: string[] }[]; raw: string }
 
-function parseGeassRaw(raw: string): GeassResult {
-  const fields: Record<string, string>[] = [];
-  const sections: { name: string; items: string[] }[] = [];
-  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-  let currentSection: { name: string; items: string[] } | null = null;
+// ── Full provider text parser (mirrors API server parseProviderText) ──────────
+const SEP = " \u23AF ";
+const PURE_KEY_RE = /^[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_]+$/;
+const LAST_WORD_RE = /\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$/;
+const KNOWN_MULTI = new Set([
+  "NOME MÃE","NOME PAI","NOME MAE","MUNICÍPIO DE NASCIMENTO","MUNICIPIO DE NASCIMENTO",
+  "TIPO SANGÚINEO","TIPO SANGUINEO","ESTADO CIVIL","STATUS NA RECEITA","HABILITADO PARA DIRIGIR",
+  "ANO MODELO","ANO FABRICACAO","ANO FABRICAÇÃO","PROPRIETARIO NOME","PROPRIETARIO CPF",
+  "MARCA MODELO","NUMERO CHASSI","DATA EMISSAO","DATA NASCIMENTO","DATA OBITO",
+  "NOME FANTASIA","RAZAO SOCIAL","SITUACAO CADASTRAL","NATUREZA JURIDICA","CAPITAL SOCIAL",
+  "DATA ABERTURA","ENDERECO COMPLETO","LOGRADOURO TIPO","TITULO ELEITOR","CLASSE SOCIAL",
+  "RECEBE INSS","NOME SOCIAL","RACA COR","TIPO LOGRADOURO","DATA EMISSAO RG",
+  "ORGAO EMISSOR","PAIS NASCIMENTO","PAIS RESIDENCIA","SITUACAO ESPECIAL","DATA SITUACAO",
+]);
 
-  for (const line of lines) {
-    if (/^[─═━\-─]{3,}$/.test(line)) continue;
-    const kvMatch = line.match(/^([A-ZÀ-Ü][A-ZÀ-Ü\s\/\-\.]+?)\s*[:：]\s*(.+)$/);
-    if (kvMatch && kvMatch[1] && kvMatch[2]) {
-      const key = kvMatch[1].trim().toUpperCase();
-      const val = kvMatch[2].trim();
-      if (key.length <= 40 && val.length > 0) { fields.push({ [key]: val }); currentSection = null; continue; }
-    }
-    if (/^[A-ZÁÉÍÓÚÀÃÂÊÔ\s]{4,}$/.test(line) && line.length < 50) {
-      currentSection = { name: line, items: [] };
-      sections.push(currentSection);
-      continue;
-    }
-    if (currentSection) currentSection.items.push(line);
+function extractTrailingKey(seg: string): { value: string; key: string } {
+  const t = seg.trim();
+  if (KNOWN_MULTI.has(t) || PURE_KEY_RE.test(t)) return { value: "", key: t };
+  for (const n of [3, 2]) {
+    const re = new RegExp(`^(.*?)\\s+((?:[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*\\s+){${n-1}}[A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_][A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9]*)$`);
+    const m = re.exec(t);
+    if (m && KNOWN_MULTI.has(m[2].trim())) return { value: m[1].trim(), key: m[2].trim() };
   }
-  return { fields, sections, raw };
+  const lm = LAST_WORD_RE.exec(t);
+  if (lm) return { value: t.slice(0, lm.index).trim(), key: lm[1].trim() };
+  return { value: t, key: "" };
+}
+
+function parseProviderText(raw: string): { fields: { key: string; value: string }[]; sections: { name: string; items: string[] }[] } {
+  const fields: { key: string; value: string }[] = [];
+  const sections: { name: string; items: string[] }[] = [];
+
+  // BASE N format
+  if (/\bBASE\s+\d+\b/i.test(raw)) {
+    const segs = raw.split(/\s*BASE\s+\d+\s*/i).filter(p => p.trim().includes(":"));
+    const items: string[] = [];
+    for (const seg of segs) {
+      const pairs: string[] = [];
+      const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(seg)) !== null) {
+        const k = m[1].trim(); const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
+        if (k && v) pairs.push(`${k}: ${v}`);
+      }
+      if (pairs.length > 0) items.push(pairs.join(" · "));
+    }
+    if (items.length > 0) sections.push({ name: "REGISTROS", items });
+    return { fields, sections };
+  }
+
+  // No ⎯ — try colon format
+  if (!raw.includes("\u23AF")) {
+    if (raw.includes(":")) {
+      const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(raw)) !== null) {
+        const k = m[1].trim(); const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
+        if (k.length >= 2 && v) fields.push({ key: k, value: v });
+      }
+    }
+    return { fields, sections };
+  }
+
+  // Section headers: "NAME: (N - Encontrados)"
+  const SEC_HDR = /([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Za-z ]{3,}):\s*\(\s*(\d+)\s*-\s*Encontrados?\s*\)/g;
+  const secBounds: Array<{ name: string; count: number; start: number; headerEnd: number }> = [];
+  let sm: RegExpExecArray | null;
+  while ((sm = SEC_HDR.exec(raw)) !== null) {
+    secBounds.push({ name: sm[1].trim().toUpperCase(), count: parseInt(sm[2]), start: sm.index, headerEnd: sm.index + sm[0].length });
+  }
+
+  // Fields (before first section)
+  const fieldsEnd = secBounds.length > 0 ? secBounds[0].start : raw.length;
+  const fieldsRaw = raw.slice(0, fieldsEnd);
+  if (fieldsRaw.includes("\u23AF")) {
+    const parts = fieldsRaw.split(SEP);
+    const firstEx = extractTrailingKey(parts[0]);
+    let curKey = firstEx.key || parts[0].trim();
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      if (i === parts.length - 1) {
+        const val = part.trim().replace(/\s*\u23AF\s*$/, "").replace(/\s+/g, " ").trim();
+        if (curKey && val && !PURE_KEY_RE.test(val)) fields.push({ key: curKey, value: val });
+        break;
+      }
+      const { value, key: nextKey } = extractTrailingKey(part);
+      const cleanVal = value.replace(/\s+/g, " ");
+      if (curKey && cleanVal) fields.push({ key: curKey, value: cleanVal });
+      curKey = nextKey;
+    }
+  }
+
+  // Parse sections
+  for (let si = 0; si < secBounds.length; si++) {
+    const sb = secBounds[si];
+    if (sb.count === 0) continue;
+    const contentEnd = si + 1 < secBounds.length ? secBounds[si + 1].start : raw.length;
+    const content = raw.slice(sb.headerEnd, contentEnd).trim();
+    if (!content) continue;
+    const items: string[] = [];
+    if (content.includes("•")) {
+      content.split("•").slice(1).forEach(b => {
+        const item = b.trim().replace(/\s+/g, " ").replace(/\s+[-–]\s*$/, "").trim();
+        if (item && !/\bNone\b/.test(item)) items.push(item);
+      });
+    } else if (content.includes("\u23AF")) {
+      const sub = content.replace(/\s*\u23AF\s*$/, "").split(SEP).map(s => s.trim()).filter(Boolean);
+      for (let j = 0; j + 1 < sub.length; j += 2) {
+        if (sub[j] && sub[j+1]) items.push(`${sub[j]}: ${sub[j+1]}`);
+        else if (sub[j]) items.push(sub[j]);
+      }
+      if (sub.length % 2 === 1 && sub[sub.length - 1]) items.push(sub[sub.length - 1]);
+    } else {
+      const plain = content.replace(/\s+/g, " ");
+      if (plain) items.push(plain);
+    }
+    if (items.length > 0) sections.push({ name: sb.name, items });
+  }
+
+  // INTERESSES PESSOAIS (special format)
+  const intIdx = raw.indexOf("INTERESSES PESSOAIS:");
+  if (intIdx !== -1) {
+    const intContent = raw.slice(intIdx + "INTERESSES PESSOAIS:".length);
+    const intItems = intContent.split(/\s*-\s+/).map(s => s.trim().replace(/\s+/g, " ")).filter(s => s.includes(":"));
+    const simItems = intItems.filter(s => /:\s*Sim\b/i.test(s));
+    const show = simItems.length > 0 ? simItems : intItems.slice(0, 10);
+    if (show.length > 0) sections.push({ name: "INTERESSES PESSOAIS", items: show });
+  }
+
+  // Filter junk values
+  const filtered = fields.filter(({ value: v }) => {
+    if (!v.trim()) return false;
+    if (/^R\$\s*$/.test(v)) return false;
+    if (/^ZONA:\s*SECAO:\s*$/.test(v)) return false;
+    if (/^None$/.test(v)) return false;
+    return true;
+  });
+
+  return { fields: filtered, sections };
+}
+
+function parseGeassRaw(raw: string): GeassResult {
+  const parsed = parseProviderText(raw);
+  return {
+    fields: parsed.fields.map(f => ({ [f.key]: f.value })),
+    sections: parsed.sections,
+    raw,
+  };
 }
 
 async function queryGeass(tipo: string, dados: string): Promise<GeassResult> {
   const url = `${GEASS_API_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(GEASS_API_KEY)}`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
   if (!resp.ok) throw new Error(`Provedor retornou HTTP ${resp.status}`);
-  const json = await resp.json() as { status?: string; resposta?: string; error?: string };
+  const text = await resp.text();
+  let json: { status?: string; resposta?: string; error?: string };
+  try { json = JSON.parse(text); } catch { throw new Error("Resposta inválida do provedor"); }
   if (json.status === "erro" || json.error) throw new Error(json.error ?? "Sem dados para este valor");
   if (!json.resposta || json.resposta.trim() === "") throw new Error("Sem dados encontrados");
   return parseGeassRaw(json.resposta);
