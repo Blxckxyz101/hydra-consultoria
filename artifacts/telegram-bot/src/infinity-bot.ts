@@ -584,18 +584,18 @@ function buildResultMsg(
     `┃  ✅ ${tipoInfo?.label ?? tipo.toUpperCase()} ENCONTRADO`,
     DIV,
     `┃  📌 <b>Dado:</b> <code>${esc(dados)}</code>`,
-    DIV,
   ];
 
   if (fields.length > 0) {
+    lines.push(DIV);
     for (const f of fields.slice(0, 28)) {
       const [k, v] = Object.entries(f)[0] ?? ["", ""];
       if (!k) continue;
       const val = esc(String(v).slice(0, 90));
       lines.push(`┃ <b>${esc(k)}</b>: <code>${val}</code>`);
     }
-    if (fields.length > 28) lines.push(`┃ <i>+ ${fields.length - 28} campos no arquivo</i>`);
   } else if (!sections || sections.length === 0) {
+    lines.push(DIV);
     lines.push("┃  ⚠️ Nenhum campo encontrado.");
   }
 
@@ -608,7 +608,7 @@ function buildResultMsg(
       );
       if (sec.items.length > 3) lines.push(`┃    <i>... +${sec.items.length - 3} registros</i>`);
     }
-    if (sections.length > 4) lines.push(`┃  <i>+ ${sections.length - 4} seções no arquivo</i>`);
+    if (sections.length > 4) lines.push(`┃  <i>+ ${sections.length - 4} seções</i>`);
   }
 
   lines.push(DIV);
@@ -658,16 +658,6 @@ async function executeAndSend(
       ...buildResultKeyboard(),
     });
 
-    // Attach the TXT file if there's a lot of data
-    const needsFile = fields.length > 28 || totalRegistros > 10;
-    if (needsFile) {
-      const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
-      await telegram.sendDocument(
-        chatId,
-        { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
-        { caption: "📎 Dados completos" },
-      );
-    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await telegram.editMessageText(
