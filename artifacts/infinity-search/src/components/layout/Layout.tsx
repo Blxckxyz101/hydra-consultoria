@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Database, IdCard } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/logo.png";
@@ -18,6 +18,7 @@ interface InfinityNotif {
   id: string;
   title: string;
   body: string;
+  imageUrl?: string;
   createdAt: string;
   authorName: string;
 }
@@ -28,6 +29,14 @@ function getSeenIds(): Set<string> {
 }
 function markAllSeen(ids: string[]) {
   try { localStorage.setItem(SEEN_KEY, JSON.stringify(ids)); } catch {}
+}
+
+const SUPORTE_SEEN_KEY = "infinity_suporte_seen_latest";
+function getSuporteSeenLatest(): string {
+  try { return localStorage.getItem(SUPORTE_SEEN_KEY) ?? ""; } catch { return ""; }
+}
+function markSuporteSeen(latestId: string) {
+  try { localStorage.setItem(SUPORTE_SEEN_KEY, latestId); } catch {}
 }
 
 function isAccountExpired(user: { role?: string; accountExpiresAt?: string | null } | undefined): boolean {
@@ -76,7 +85,7 @@ function NotifPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="max-h-72 overflow-y-auto divide-y divide-white/5">
+      <div className="max-h-80 overflow-y-auto divide-y divide-white/5">
         {loading ? (
           <div className="px-4 py-6 text-center text-xs text-muted-foreground animate-pulse">Carregando...</div>
         ) : notifs.length === 0 ? (
@@ -86,18 +95,41 @@ function NotifPanel({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           notifs.map(n => (
-            <div key={n.id} className="px-4 py-3 hover:bg-white/[0.03] transition-colors">
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <span className="text-xs font-semibold text-foreground leading-snug">{n.title}</span>
-                <span className="text-[9px] text-muted-foreground/50 shrink-0 mt-0.5">
-                  {new Date(n.createdAt).toLocaleDateString("pt-BR")}
-                </span>
+            <div key={n.id} className="hover:bg-white/[0.03] transition-colors">
+              {n.imageUrl && (
+                <div className="relative overflow-hidden" style={{ maxHeight: "160px" }}>
+                  <img
+                    src={n.imageUrl}
+                    alt=""
+                    className="w-full object-cover"
+                    style={{ maxHeight: "160px" }}
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/60 pointer-events-none" />
+                </div>
+              )}
+              <div className="px-4 py-3">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <span className="text-xs font-semibold text-foreground leading-snug">{n.title}</span>
+                  <span className="text-[9px] text-muted-foreground/50 shrink-0 mt-0.5">
+                    {new Date(n.createdAt).toLocaleDateString("pt-BR")}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
+                <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
-              <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
             </div>
           ))
         )}
+      </div>
+      <div className="px-4 py-2.5 border-t border-white/5 flex justify-center">
+        <a
+          href="/suporte"
+          className="text-[10px] uppercase tracking-[0.25em] hover:text-foreground transition-colors"
+          style={{ color: "var(--color-primary)" }}
+        >
+          Ver todas as novidades →
+        </a>
       </div>
     </motion.div>
   );
@@ -112,6 +144,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [profileStatus, setProfileStatus] = useState<string>(() => localStorage.getItem("infinity_profile_status") ?? "online");
   const [bellOpen, setBellOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [suporteNovo, setSuporteNovo] = useState(false);
   const bellDesktopRef = useRef<HTMLDivElement>(null);
   const bellMobileRef = useRef<HTMLDivElement>(null);
 
@@ -124,6 +157,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
       .then((data: InfinityNotif[]) => {
         const seen = getSeenIds();
         setUnreadCount(data.filter(n => !seen.has(n.id)).length);
+        // Suporte "novo" badge: check if latest notification is newer than last seen
+        if (data.length > 0) {
+          const latestId = data[0].id;
+          const seenLatest = getSuporteSeenLatest();
+          setSuporteNovo(latestId !== seenLatest);
+        }
       })
       .catch(() => {});
   }, []);
@@ -145,7 +184,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [bellOpen]);
 
-  useEffect(() => { setMobileOpen(false); }, [location]);
+  useEffect(() => {
+    setMobileOpen(false);
+    // Clear "novo" badge when user visits Suporte
+    if (location === "/suporte" && suporteNovo) {
+      // Find the latest notif id and mark seen
+      const token = localStorage.getItem("infinity_token");
+      fetch("/api/infinity/notifications", { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+        .then(r => r.json())
+        .then((data: InfinityNotif[]) => {
+          if (data.length > 0) markSuporteSeen(data[0].id);
+        })
+        .catch(() => {});
+      setSuporteNovo(false);
+    }
+  }, [location, suporteNovo]);
 
   useEffect(() => {
     const handler = () => {
@@ -176,6 +229,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
     { href: "/favoritos", label: "Favoritos", icon: Star },
     { href: "/bases", label: "Monitor de Bases", icon: Server },
+    { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
     { href: "/configuracoes", label: "Configurações", icon: Settings },
     { href: "/personalizar", label: "Personalizar", icon: Palette },
@@ -276,6 +330,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : {}}
                 />
                 <span className="font-medium text-sm flex-1">{item.label}</span>
+                {(item as any).badge && !isActive && (
+                  <span
+                    className="text-[8px] font-bold tracking-widest px-1.5 py-0.5 rounded-full text-black animate-pulse"
+                    style={{ background: "var(--color-primary)" }}
+                  >
+                    {(item as any).badge}
+                  </span>
+                )}
                 {isActive && <ChevronRight className="w-3 h-3" />}
               </Link>
             </motion.div>

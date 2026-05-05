@@ -1,25 +1,72 @@
 import { Telegraf, Markup } from "telegraf";
-import { message } from "telegraf/filters";
 
 const INFINITY_BOT_TOKEN = process.env.INFINITY_BOT_TOKEN ?? "";
-const GEASS_API_BASE = "http://149.56.18.68:25584/api/consulta";
-const GEASS_API_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
-const SUPPORT_URL = "https://t.me/Blxckxyz";
-const SUPPORT_URL2 = "https://t.me/xxmathexx";
-let BOT_BANNER_URL: string = process.env.INFINITY_BOT_BANNER_URL
-  ?? (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}/api/static/logo.png` : "");
+const GEASS_API_BASE     = "http://149.56.18.68:25584/api/consulta";
+const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero";
+const SUPPORT_URL        = "https://t.me/Blxckxyz";
+const SUPPORT_URL2       = "https://t.me/xxmathexx";
+let   BOT_BANNER_URL: string = process.env.INFINITY_BOT_BANNER_URL ?? "";
 
-/** Returns true if the URL looks like an animated GIF or MP4 */
-function isAnimatedBanner(url: string): boolean {
-  const lower = url.toLowerCase().split("?")[0];
-  return lower.endsWith(".gif") || lower.endsWith(".mp4") || lower.endsWith(".webm");
+const LINE   = "═".repeat(44);
+const LINE2  = "─".repeat(44);
+const AUTHOR = "blxckxyz";
+
+// ── Channels ──────────────────────────────────────────────────────────────────
+// Channel 1 — free queries access (private invite)
+const CHANNEL1_INVITE   = "https://t.me/+7sBxmhOFPhJlYzcx";
+let   CHANNEL1_ID: number | null = process.env.INFINITY_CHANNEL_ID
+  ? Number(process.env.INFINITY_CHANNEL_ID)
+  : null;
+
+// Channel 2 — updates/announcements channel (configure once link is available)
+const CHANNEL2_INVITE   = process.env.INFINITY_CHANNEL2_INVITE ?? "https://t.me/infinitysearchchannel";
+const CHANNEL2_USERNAME = process.env.INFINITY_CHANNEL2_USERNAME ?? "@infinitysearchchannel";
+
+const MIN_GROUP_MEMBERS = 500;
+
+// ── Access control ─────────────────────────────────────────────────────────────
+const ADMIN_USERNAMES  = new Set<string>(["blxckxyz", "xxmathexx", "pianco"]);
+const ADMIN_IDS        = new Set<number>();
+const verifiedUsers    = new Set<number>();    // channel-verified users
+const authorizedGroups = new Set<number>();    // groups with 500+ members
+
+function isAdmin(userId: number, username?: string): boolean {
+  if (ADMIN_IDS.has(userId)) return true;
+  if (username && ADMIN_USERNAMES.has(username.toLowerCase())) {
+    ADMIN_IDS.add(userId);
+    return true;
+  }
+  return false;
 }
 
-/**
- * Sends the bot banner with caption+keyboard.
- * Uses sendAnimation for GIF/MP4 banners, sendPhoto for static images.
- * Falls back to plain HTML reply if the media send fails.
- */
+// ── Query types ───────────────────────────────────────────────────────────────
+interface TipoInfo { id: string; label: string; example: string; prompt: string }
+
+const TIPOS: TipoInfo[] = [
+  { id: "cpf",      label: "🪪 CPF",      example: "12345678901",    prompt: "CPF (11 dígitos, apenas números)" },
+  { id: "cnpj",     label: "🏭 CNPJ",     example: "12345678000100", prompt: "CNPJ (14 dígitos, apenas números)" },
+  { id: "nome",     label: "👤 Nome",     example: "João Silva",     prompt: "nome completo da pessoa" },
+  { id: "telefone", label: "📞 Telefone", example: "11999887766",    prompt: "telefone com DDD (ex: 11999887766)" },
+  { id: "placa",    label: "🚗 Placa",    example: "ABC1D23",        prompt: "placa do veículo (ex: ABC1D23)" },
+  { id: "bin",      label: "💳 BIN",      example: "456789",         prompt: "primeiros 6 a 8 dígitos do cartão" },
+  { id: "ip",       label: "🌐 IP",       example: "8.8.8.8",       prompt: "endereço IP (ex: 8.8.8.8)" },
+];
+const TIPO_MAP = new Map<string, TipoInfo>(TIPOS.map(t => [t.id, t]));
+
+// ── Session (per-user pending type) ──────────────────────────────────────────
+interface PendingQuery { tipo: string; promptMsgId: number; chatId: number }
+const pendingQueries = new Map<number, PendingQuery>();
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+function isAnimatedBanner(url: string): boolean {
+  const l = url.toLowerCase().split("?")[0];
+  return l.endsWith(".gif") || l.endsWith(".mp4") || l.endsWith(".webm");
+}
+
 async function sendBanner(
   ctx: { replyWithAnimation: any; replyWithPhoto: any; replyWithHTML: any },
   caption: string,
@@ -37,64 +84,31 @@ async function sendBanner(
       .catch(() => (ctx.replyWithHTML as (t: string, e?: object) => Promise<any>)(caption, extra));
   }
 }
-const AUTHOR = "blxckxyz";
-const LINE = "═".repeat(40);
-const LINE2 = "─".repeat(40);
 
-// ── Access control ────────────────────────────────────────────────────────────
-// Channel 1 — private invite channel (paid/free access channel)
-const CHANNEL_INVITE = "https://t.me/+7sBxmhOFPhJlYzcx";
-// Numeric ID of channel 1 — set INFINITY_CHANNEL_ID env var
-let CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
-  ? Number(process.env.INFINITY_CHANNEL_ID)
-  : null;
-
-// Channel 2 — public announcements channel (required for all users)
-const CHANNEL2_INVITE = "https://t.me/infinitysearchchannel";
-const CHANNEL2_USERNAME = "@infinitysearchchannel";
-
-// Admin usernames (lowercase, no @)
-const ADMIN_USERNAMES = new Set(["blxckxyz", "xxmathexx"]);
-// Admin user IDs (more reliable than username)
-const ADMIN_IDS = new Set<number>();
-
-// Verified channel members (user IDs — persists in-memory)
-const verifiedUsers = new Set<number>();
-// Authorized group/supergroup chat IDs
-const authorizedGroups = new Set<number>();
-
-function isAdmin(userId: number, username?: string): boolean {
-  if (ADMIN_IDS.has(userId)) return true;
-  if (username && ADMIN_USERNAMES.has(username.toLowerCase())) {
-    ADMIN_IDS.add(userId); // cache for next time
-    return true;
-  }
-  return false;
-}
-
+// ── Channel membership check ──────────────────────────────────────────────────
 async function checkChannelMembership(
   telegram: Telegraf["telegram"],
-  userId: number
-): Promise<{ ok: boolean; missingChannel?: string }> {
-  // Check channel 1 (private invite channel)
-  if (CHANNEL_ID) {
+  userId: number,
+): Promise<{ ok: boolean; missingInvite?: string; label?: string }> {
+  // Channel 1 check (if ID is configured)
+  if (CHANNEL1_ID) {
     try {
-      const member = await telegram.getChatMember(CHANNEL_ID, userId);
-      if (!["member", "administrator", "creator"].includes(member.status)) {
-        return { ok: false, missingChannel: CHANNEL_INVITE };
+      const m = await telegram.getChatMember(CHANNEL1_ID, userId);
+      if (!["member", "administrator", "creator"].includes(m.status)) {
+        return { ok: false, missingInvite: CHANNEL1_INVITE, label: "Canal de Consultas Free" };
       }
     } catch {
-      return { ok: false, missingChannel: CHANNEL_INVITE };
+      return { ok: false, missingInvite: CHANNEL1_INVITE, label: "Canal de Consultas Free" };
     }
   }
-  // Check channel 2 (public announcements channel)
+  // Channel 2 check
   try {
-    const member2 = await telegram.getChatMember(CHANNEL2_USERNAME, userId);
-    if (!["member", "administrator", "creator"].includes(member2.status)) {
-      return { ok: false, missingChannel: CHANNEL2_INVITE };
+    const m2 = await telegram.getChatMember(CHANNEL2_USERNAME, userId);
+    if (!["member", "administrator", "creator"].includes(m2.status)) {
+      return { ok: false, missingInvite: CHANNEL2_INVITE, label: "Canal de Atualizações" };
     }
   } catch {
-    // If the bot is not in channel 2, skip this check (don't block users)
+    // If bot isn't in channel 2, skip check (don't block users)
   }
   return { ok: true };
 }
@@ -102,920 +116,457 @@ async function checkChannelMembership(
 async function isAuthorizedUser(
   telegram: Telegraf["telegram"],
   userId: number,
-  username?: string
+  username?: string,
 ): Promise<boolean> {
-  // Admins always allowed
   if (isAdmin(userId, username)) return true;
-  // Already verified
   if (verifiedUsers.has(userId)) return true;
-  // Check channel membership
   const { ok } = await checkChannelMembership(telegram, userId);
   if (ok) verifiedUsers.add(userId);
   return ok;
 }
 
-async function getUnauthorizedMessage(
+// ── Group member count check ──────────────────────────────────────────────────
+async function checkGroupAuthorization(
   telegram: Telegraf["telegram"],
-  userId: number
-): Promise<string> {
-  const { missingChannel } = await checkChannelMembership(telegram, userId);
-  const channelLink = missingChannel ?? CHANNEL_INVITE;
-  const isChannel2 = missingChannel === CHANNEL2_INVITE;
-  return (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ ❌ ACESSO NEGADO\n` +
-    `┠────────────────────────────\n` +
-    `┃ Para usar o bot, você deve\n` +
-    `┃ participar ${isChannel2 ? "do canal de avisos:" : "do canal de acesso:"}\n` +
-    `┃\n` +
-    `┃ 👉 ${channelLink}\n` +
-    `┃\n` +
-    `┃ Após entrar, clique em /start\n` +
-    `╰────────────────────────────╯`
-  );
-}
-
-// ── All tipos (flat list) ─────────────────────────────────────────────────────
-const TIPOS = [
-  // ── Geass / ambos ─────────────────────────────────────────────────────────
-  { id: "cpf",         label: "🪪 CPF",            prompt: "CPF (11 dígitos, só números)" },
-  { id: "nome",        label: "👤 Nome",            prompt: "nome completo da pessoa" },
-  { id: "telefone",    label: "📞 Telefone",        prompt: "telefone com DDD (ex: 11999887766)" },
-  { id: "email",       label: "📧 E-mail",          prompt: "endereço de e-mail" },
-  { id: "placa",       label: "🚗 Placa",           prompt: "placa do veículo (ex: ABC1D23)" },
-  { id: "cnpj",        label: "🏭 CNPJ",            prompt: "CNPJ (14 dígitos, só números)" },
-  { id: "cep",         label: "📍 CEP",             prompt: "CEP (8 dígitos, só números)" },
-  { id: "pix",         label: "💳 PIX",             prompt: "chave PIX (CPF, e-mail, telefone ou aleatória)" },
-  { id: "rg",          label: "🪪 RG",              prompt: "número do RG" },
-  { id: "mae",         label: "👩 Mãe",             prompt: "CPF da pessoa (busca mãe)" },
-  { id: "pai",         label: "👨 Pai",             prompt: "CPF da pessoa (busca pai)" },
-  { id: "parentes",    label: "👨‍👩‍👧 Parentes",     prompt: "CPF da pessoa" },
-  { id: "chassi",      label: "🔩 Chassi",          prompt: "número do chassi" },
-  { id: "renavam",     label: "📄 Renavam",         prompt: "número do Renavam" },
-  { id: "cnh",         label: "🪪 CNH",             prompt: "CPF do condutor" },
-  { id: "socios",      label: "🤝 Sócios",          prompt: "CNPJ da empresa" },
-  { id: "fucionarios", label: "👷 Funcionários",    prompt: "CNPJ da empresa" },
-  { id: "empregos",    label: "💼 Empregos",        prompt: "CPF da pessoa" },
-  { id: "cns",         label: "🏥 CNS",             prompt: "número do Cartão Nacional de Saúde" },
-  { id: "nis",         label: "💰 NIS/PIS",         prompt: "número do NIS ou PIS" },
-  { id: "obito",       label: "🕊️ Óbito",          prompt: "CPF da pessoa" },
-  { id: "vacinas",     label: "💉 Vacinas",         prompt: "CPF da pessoa" },
-  // ── Skylers exclusivos ────────────────────────────────────────────────────
-  { id: "cpfbasico",   label: "📋 CPF Básico",      prompt: "CPF (11 dígitos)" },
-  { id: "foto",        label: "📸 Foto CNH",        prompt: "CPF do condutor (11 dígitos)" },
-  { id: "titulo",      label: "🗳️ Título Eleitor",  prompt: "CPF (11 dígitos)" },
-  { id: "score",       label: "📊 Score",           prompt: "CPF (11 dígitos)" },
-  { id: "irpf",        label: "🧾 IRPF",            prompt: "CPF (11 dígitos)" },
-  { id: "beneficios",  label: "🎁 Benefícios",      prompt: "CPF (11 dígitos)" },
-  { id: "mandado",     label: "⚠️ Mandado",         prompt: "CPF (11 dígitos)" },
-  { id: "dividas",     label: "🏦 Dívidas",         prompt: "CPF (11 dígitos)" },
-  { id: "bens",        label: "⭐ Bens",            prompt: "CPF (11 dígitos)" },
-  { id: "processos",   label: "⚖️ Processos",       prompt: "CPF (11 dígitos)" },
-  { id: "spc",         label: "💳 SPC",             prompt: "CPF (11 dígitos)" },
-  { id: "iptu",        label: "🏠 IPTU",            prompt: "CPF (11 dígitos)" },
-  { id: "certidoes",   label: "📜 Certidões",       prompt: "CPF (11 dígitos)" },
-  { id: "cnhfull",     label: "🛡️ CNH Full",        prompt: "CPF do condutor (11 dígitos)" },
-  { id: "biometria",   label: "🫆 Biometria",        prompt: "CPF da pessoa (11 dígitos)" },
-  // Fotos por estado
-  { id: "fotoma",       label: "📸 Foto MA",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoce",       label: "📸 Foto CE",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotosp",       label: "📸 Foto SP",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotorj",       label: "📸 Foto RJ",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoms",       label: "📸 Foto MS",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotonc",       label: "📸 Foto Nacional",    prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoes",       label: "📸 Foto ES",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fototo",       label: "📸 Foto TO",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoro",       label: "📸 Foto RO",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotomapresos", label: "📸 Foto MA Presos",   prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotopi",       label: "📸 Foto PI",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotopr",       label: "📸 Foto PR",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotodf",       label: "📸 Foto DF",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoal",       label: "📸 Foto AL",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotogo",       label: "📸 Foto GO",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotopb",       label: "📸 Foto PB",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotope",       label: "📸 Foto PE",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotorn",       label: "📸 Foto RN",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotoba",       label: "📸 Foto BA",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "fotomg",       label: "📸 Foto MG",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "crlvtofoto",   label: "🖼️ CRLV TO (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
-  { id: "crlvmtfoto",   label: "🖼️ CRLV MT (Foto)",  prompt: "placa do veículo (ex: ABC1D23)" },
-  // CNH por estado
-  { id: "cnham",        label: "🪪 CNH AM",            prompt: "CPF do condutor (11 dígitos)" },
-  { id: "cnhnc",        label: "🪪 CNH Nacional",      prompt: "CPF do condutor (11 dígitos)" },
-  { id: "cnhrs",        label: "🪪 CNH RS",            prompt: "CPF do condutor (11 dígitos)" },
-  { id: "cnhrr",        label: "🪪 CNH RR",            prompt: "CPF do condutor (11 dígitos)" },
-  { id: "fotodetran",   label: "📸 Foto Detran",       prompt: "CPF da pessoa (11 dígitos)" },
-  // Jurídico
-  { id: "processo",     label: "⚖️ Processo",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "advogadooab",  label: "👨‍⚖️ Advogado OAB",   prompt: "número OAB" },
-  { id: "advogadooabuf",label: "👨‍⚖️ Advogado OAB/UF", prompt: "número OAB" },
-  { id: "advogadocpf",  label: "👨‍⚖️ Advogado CPF",   prompt: "CPF do advogado (11 dígitos)" },
-  { id: "oab",          label: "📋 OAB",               prompt: "número OAB" },
-  { id: "matricula",    label: "📄 Matrícula",         prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "cheque",       label: "🏦 Cheque",            prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "assessoria",   label: "🏢 Assessoria",        prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "registro",     label: "📝 Registro",          prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "nasc",         label: "🍼 Nascimento",        prompt: "CPF da pessoa (11 dígitos)" },
-  // Score / crédito
-  { id: "score2",       label: "📊 Score 2",           prompt: "CPF (11 dígitos)" },
-  // Catálogo
-  { id: "catcpf",       label: "📂 Catálogo CPF",      prompt: "CPF (11 dígitos)" },
-  { id: "catnumero",    label: "📂 Catálogo Número",   prompt: "número de telefone" },
-  // Outros
-  { id: "faculdades",   label: "🎓 Faculdades",        prompt: "CPF da pessoa (11 dígitos)" },
-  { id: "placafipe",    label: "🚗 Placa FIPE",        prompt: "placa do veículo (ex: ABC1D23)" },
-  { id: "placaserpro",  label: "🚗 Placa Serpro",      prompt: "placa do veículo (ex: ABC1D23)" },
-  { id: "vistoria",     label: "🔍 Vistoria",          prompt: "CPF da pessoa ou placa" },
-  // ── Social ────────────────────────────────────────────────────────────────
-  { id: "telegram",    label: "✈️ Telegram (Nick)",    prompt: "username do Telegram (sem @)" },
-  { id: "likes",       label: "❤️ Likes (Instagram)",  prompt: "ID do perfil no Instagram" },
-] as const;
-
-type TipoId = (typeof TIPOS)[number]["id"];
-
-// Tipos que vão direto para Skylers (sem seletor de base)
-const SKYLERS_ONLY_TIPOS = new Set<string>([
-  "cpfbasico", "foto", "biometria", "titulo", "score", "score2", "irpf", "beneficios",
-  "mandado", "dividas", "bens", "processos", "processo", "spc", "iptu", "certidoes", "cnhfull",
-  "advogadooab", "advogadooabuf", "advogadocpf", "oab", "matricula", "cheque",
-  "catcpf", "catnumero", "faculdades", "assessoria", "registro", "nasc",
-  "placafipe", "placaserpro", "vistoria",
-  // Social (Skylers)
-  "telegram", "likes",
-  // CNH por estado (Skylers)
-  "cnham", "cnhnc", "cnhrs", "cnhrr", "fotodetran",
-  // Fotos por estado
-  "fotoma","fotoce","fotosp","fotorj","fotoms","fotonc","fotoes","fototo","fotoro",
-  "fotomapresos","fotopi","fotopr","fotodf","fotoal","fotogo","fotopb","fotope",
-  "fotorn","fotoba","fotomg","crlvtofoto","crlvmtfoto",
-]);
-
-// ── Styled query prompts ───────────────────────────────────────────────────────
-const TIPO_PROMPT: Record<string, { title: string; lines: string[] }> = {
-  cpf:         { title: "CONSULTA DE CPF",           lines: ["DIGITE O CPF QUE DESEJA CONSULTAR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  nome:        { title: "CONSULTA POR NOME",          lines: ["DIGITE O NOME COMPLETO DA PESSOA"] },
-  telefone:    { title: "CONSULTA DE TELEFONE",       lines: ["DIGITE O TELEFONE COM DDD", "EX: 11999887766 (SEM ESPAÇOS)"] },
-  email:       { title: "CONSULTA DE E-MAIL",         lines: ["DIGITE O ENDEREÇO DE E-MAIL"] },
-  placa:       { title: "CONSULTA DE PLACA",          lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  cnpj:        { title: "CONSULTA DE CNPJ",           lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  cep:         { title: "CONSULTA DE CEP",            lines: ["DIGITE O CEP", "OBS: 8 DÍGITOS, APENAS NÚMEROS"] },
-  pix:         { title: "CONSULTA DE CHAVE PIX",      lines: ["DIGITE A CHAVE PIX", "OBS: CPF, E-MAIL, TELEFONE OU ALEATÓRIA"] },
-  rg:          { title: "CONSULTA DE RG",             lines: ["DIGITE O NÚMERO DO RG"] },
-  mae:         { title: "CONSULTA DE MÃE",            lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  pai:         { title: "CONSULTA DE PAI",            lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  parentes:    { title: "CONSULTA DE PARENTES",       lines: ["DIGITE O CPF DA PESSOA"] },
-  chassi:      { title: "CONSULTA DE CHASSI",         lines: ["DIGITE O NÚMERO DO CHASSI DO VEÍCULO"] },
-  renavam:     { title: "CONSULTA DE RENAVAM",        lines: ["DIGITE O NÚMERO DO RENAVAM DO VEÍCULO"] },
-  cnh:         { title: "CONSULTA DE CNH",            lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  socios:      { title: "CONSULTA DE SÓCIOS",         lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  fucionarios: { title: "CONSULTA DE FUNCIONÁRIOS",   lines: ["DIGITE O CNPJ DA EMPRESA", "OBS: 14 DÍGITOS, APENAS NÚMEROS"] },
-  empregos:    { title: "CONSULTA DE EMPREGOS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cns:         { title: "CONSULTA DE CNS",            lines: ["DIGITE O NÚMERO DO CARTÃO NACIONAL DE SAÚDE"] },
-  nis:         { title: "CONSULTA DE NIS/PIS",        lines: ["DIGITE O NÚMERO DO NIS OU PIS"] },
-  obito:       { title: "CONSULTA DE ÓBITO",          lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  vacinas:     { title: "CONSULTA DE VACINAS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  // ── Skylers exclusivos ────────────────────────────────────────────────────
-  cpfbasico:   { title: "CPF BÁSICO  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  foto:        { title: "FOTO CNH  ·  SKYLERS",       lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  titulo:      { title: "TÍTULO ELEITOR  ·  SKYLERS", lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  score:       { title: "SCORE DE CRÉDITO  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  irpf:        { title: "IRPF  ·  SKYLERS",           lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  beneficios:  { title: "BENEFÍCIOS  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: Bolsa Família, BPC, etc.", "11 DÍGITOS, APENAS NÚMEROS"] },
-  mandado:     { title: "MANDADO DE PRISÃO  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  dividas:     { title: "DÍVIDAS  ·  SKYLERS",        lines: ["DIGITE O CPF", "OBS: BACEN, FGTS, etc.", "11 DÍGITOS, APENAS NÚMEROS"] },
-  bens:        { title: "BENS PATRIMONIAIS  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  processos:   { title: "PROCESSOS JUDICIAIS  ·  SKYLERS",lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  spc:         { title: "SPC  ·  SKYLERS",            lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  iptu:        { title: "IPTU  ·  SKYLERS",           lines: ["DIGITE O CPF DO PROPRIETÁRIO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  certidoes:   { title: "CERTIDÕES  ·  SKYLERS",      lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cnhfull:       { title: "CNH COMPLETO  ·  SKYLERS",     lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  biometria:     { title: "BIOMETRIA  ·  SKYLERS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  // Fotos por estado
-  fotoma:        { title: "FOTO MA  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoce:        { title: "FOTO CE  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotosp:        { title: "FOTO SP  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotorj:        { title: "FOTO RJ  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoms:        { title: "FOTO MS  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotonc:        { title: "FOTO NACIONAL  ·  SKYLERS",    lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoes:        { title: "FOTO ES  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fototo:        { title: "FOTO TO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoro:        { title: "FOTO RO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotomapresos:  { title: "FOTO MA PRESOS  ·  SKYLERS",   lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotopi:        { title: "FOTO PI  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotopr:        { title: "FOTO PR  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotodf:        { title: "FOTO DF  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoal:        { title: "FOTO AL  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotogo:        { title: "FOTO GO  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotopb:        { title: "FOTO PB  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotope:        { title: "FOTO PE  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotorn:        { title: "FOTO RN  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotoba:        { title: "FOTO BA  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotomg:        { title: "FOTO MG  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  crlvtofoto:    { title: "CRLV TO (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  crlvmtfoto:    { title: "CRLV MT (FOTO)  ·  SKYLERS",   lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  // CNH por estado
-  cnham:         { title: "CNH AM  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cnhnc:         { title: "CNH NACIONAL  ·  SKYLERS",     lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cnhrs:         { title: "CNH RS  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cnhrr:         { title: "CNH RR  ·  SKYLERS",           lines: ["DIGITE O CPF DO CONDUTOR", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  fotodetran:    { title: "FOTO DETRAN  ·  SKYLERS",      lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  // Jurídico
-  processo:      { title: "PROCESSO  ·  SKYLERS",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  advogadooab:   { title: "ADVOGADO POR OAB  ·  SKYLERS", lines: ["DIGITE O NÚMERO OAB"] },
-  advogadooabuf: { title: "ADVOGADO OAB/UF  ·  SKYLERS",  lines: ["DIGITE O NÚMERO OAB"] },
-  advogadocpf:   { title: "ADVOGADO POR CPF  ·  SKYLERS", lines: ["DIGITE O CPF DO ADVOGADO", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  oab:           { title: "OAB  ·  SKYLERS",              lines: ["DIGITE O NÚMERO OAB"] },
-  matricula:     { title: "MATRÍCULA  ·  SKYLERS",        lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  cheque:        { title: "CHEQUE  ·  SKYLERS",           lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  assessoria:    { title: "ASSESSORIA  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  registro:      { title: "REGISTRO  ·  SKYLERS",         lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  nasc:          { title: "NASCIMENTO  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  // Score / crédito
-  score2:        { title: "SCORE 2  ·  SKYLERS",          lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  // Catálogo
-  catcpf:        { title: "CATÁLOGO CPF  ·  SKYLERS",     lines: ["DIGITE O CPF", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  catnumero:     { title: "CATÁLOGO NÚMERO  ·  SKYLERS",  lines: ["DIGITE O NÚMERO DE TELEFONE"] },
-  // Outros
-  faculdades:    { title: "FACULDADES  ·  SKYLERS",       lines: ["DIGITE O CPF DA PESSOA", "OBS: 11 DÍGITOS, APENAS NÚMEROS"] },
-  placafipe:     { title: "PLACA FIPE  ·  SKYLERS",       lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  placaserpro:   { title: "PLACA SERPRO  ·  SKYLERS",     lines: ["DIGITE A PLACA DO VEÍCULO", "EX: ABC1D23 (SEM HÍFEN)"] },
-  vistoria:      { title: "VISTORIA  ·  SKYLERS",         lines: ["DIGITE O CPF OU PLACA DO VEÍCULO"] },
-  // Social
-  telegram:      { title: "TELEGRAM (NICK)  ·  SKYLERS",  lines: ["DIGITE O USERNAME DO TELEGRAM", "OBS: SEM O @ (ex: username)"] },
-  likes:         { title: "LIKES INSTAGRAM  ·  SKYLERS",  lines: ["DIGITE O ID DO PERFIL NO INSTAGRAM"] },
-};
-
-function buildQueryPrompt(tipoId: string): string {
-  const p = TIPO_PROMPT[tipoId];
-  if (!p) {
-    const tipo = TIPOS.find((t) => t.id === tipoId);
-    return `Envie o <b>${tipo?.prompt ?? tipoId}</b>:`;
-  }
-  return (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ • ${p.title}\n` +
-    `┠────────────────────────────\n` +
-    p.lines.map((l) => `┃ ${l}`).join("\n") + "\n" +
-    `╰────────────────────────────╯`
-  );
-}
-
-// ── Session ───────────────────────────────────────────────────────────────────
-interface BotSession {
-  state: "idle" | "awaiting_query";
-  tipo?: string;
-  /** ID da mensagem de prompt (DIGITE O CPF...) para poder apagá-la após receber o dado */
-  promptMsgId?: number;
-  /** ID do chat em que o prompt foi enviado (pode diferir em grupos) */
-  promptChatId?: number;
-}
-const sessions = new Map<number, BotSession>();
-function getSession(userId: number): BotSession {
-  if (!sessions.has(userId)) sessions.set(userId, { state: "idle" });
-  return sessions.get(userId)!;
-}
-function resetSession(userId: number) {
-  sessions.set(userId, { state: "idle" });
-}
-
-// Internal API base (API server runs on port 8080 in the same container)
-const INTERNAL_API_BASE = "http://localhost:8080";
-const INTERNAL_KEY = "infinity-bot";
-
-// ── Tier system ────────────────────────────────────────────────────────────────
-const FREE_DAILY_LIMIT = 10;
-
-// Tipos que o free pode usar em grupos
-const FREE_TIPOS = new Set([
-  "cpf", "nome", "telefone", "email", "placa", "cnpj", "cep", "pix", "rg",
-]);
-
-// Usuários BLACK (admin-managed, in-memory)
-const PAID_USERS = new Set<number>();
-
-// Rastreador de consultas diárias: "userId:DD/MM/YYYY" → count
-const freeQueryTracker = new Map<string, number>();
-
-function isPaid(userId: number, username?: string): boolean {
-  return isAdmin(userId, username) || PAID_USERS.has(userId);
-}
-
-function getFreeKey(userId: number): string {
-  return `${userId}:${new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}`;
-}
-
-function getFreeUsed(userId: number): number {
-  return freeQueryTracker.get(getFreeKey(userId)) ?? 0;
-}
-
-function trackFreeQuery(userId: number): void {
-  const k = getFreeKey(userId);
-  freeQueryTracker.set(k, (freeQueryTracker.get(k) ?? 0) + 1);
-}
-
-function buildUpgradeKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.url("💎 CONTRATAR PLANO BLACK", SUPPORT_URL)],
-    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
-    [Markup.button.callback("↩ Voltar ao Menu", "home")],
-  ]);
-}
-
-function buildUpgradeTipoMsg(label: string): string {
-  return (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ 💎 MÓDULO EXCLUSIVO — BLACK\n` +
-    `┠────────────────────────────\n` +
-    `┃ • MÓDULO: <b>${label}</b>\n` +
-    `┃ • STATUS: 🔒 Requer plano BLACK\n` +
-    `┠────────────────────────────\n` +
-    `┃ ✅ PLANO BLACK INCLUI:\n` +
-    `┃  + Todos os módulos disponíveis\n` +
-    `┃  + Foto CNH, Biometria, Score...\n` +
-    `┃  + Sem limite de consultas\n` +
-    `┃  + Acesso via chat privado\n` +
-    `┃  + Painel web completo\n` +
-    `┠────────────────────────────\n` +
-    `┃ 👇 CLIQUE ABAIXO PARA CONTRATAR\n` +
-    `╰────────────────────────────╯`
-  );
-}
-
-function buildUpgradeLimitMsg(used: number): string {
-  return (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ ⚠️ LIMITE DIÁRIO ATINGIDO\n` +
-    `┠────────────────────────────\n` +
-    `┃ • USADAS: <b>${used}/${FREE_DAILY_LIMIT}</b> consultas hoje\n` +
-    `┃ • RENOVA: meia-noite (horário BRT)\n` +
-    `┠────────────────────────────\n` +
-    `┃ Com o plano <b>BLACK</b>:\n` +
-    `┃  + Consultas ilimitadas\n` +
-    `┃  + Todos os módulos\n` +
-    `┃  + Acesso pelo chat privado\n` +
-    `┠────────────────────────────\n` +
-    `┃ 👇 UPGRADE AGORA\n` +
-    `╰────────────────────────────╯`
-  );
-}
-
-function buildUpgradeDMMsg(): string {
-  return (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ 🔒 ACESSO PRIVADO — PLANO BLACK\n` +
-    `┠────────────────────────────\n` +
-    `┃ O chat privado é exclusivo para\n` +
-    `┃ assinantes do plano <b>BLACK</b>.\n` +
-    `┠────────────────────────────\n` +
-    `┃ ✅ PLANO BLACK INCLUI:\n` +
-    `┃  + Acesso total — todos os módulos\n` +
-    `┃  + Foto CNH · Biometria · Score\n` +
-    `┃  + IRPF · Mandado · SPC · Bens\n` +
-    `┃  + Consultas ilimitadas\n` +
-    `┃  + Painel web completo\n` +
-    `┠────────────────────────────\n` +
-    `┃ 👇 CONTRATE AGORA\n` +
-    `╰────────────────────────────╯`
-  );
-}
-
-
-// ── Parser ────────────────────────────────────────────────────────────────────
-function parseGeassResult(raw: string): { fields: [string, string][]; sections: { name: string; items: string[] }[] } {
-  const fields: [string, string][] = [];
-  const sections: { name: string; items: string[] }[] = [];
-
-  if (/\bBASE\s+\d+\b/i.test(raw)) {
-    const segs = raw.split(/\s*BASE\s+\d+\s*/i).filter((s) => s.includes(":"));
-    const items: string[] = [];
-    for (const seg of segs) {
-      const pairs: string[] = [];
-      const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(seg)) !== null) {
-        const k = m[1].trim(); const v = m[2].trim().replace(/`/g, "").replace(/\s+/g, " ");
-        if (k && v) pairs.push(`${k}: ${v}`);
-      }
-      if (pairs.length > 0) items.push(pairs.join(" | "));
+  chatId: number,
+): Promise<{ ok: boolean; count?: number }> {
+  if (authorizedGroups.has(chatId)) return { ok: true };
+  try {
+    const count = await telegram.getChatMembersCount(chatId);
+    if (count >= MIN_GROUP_MEMBERS) {
+      authorizedGroups.add(chatId);
+      return { ok: true, count };
     }
-    if (items.length > 0) sections.push({ name: "REGISTROS", items });
-    return { fields, sections };
+    return { ok: false, count };
+  } catch {
+    return { ok: false };
   }
-
-  const SEP = " \u23AF ";
-  if (raw.includes("\u23AF")) {
-    const parts = raw.split(SEP);
-    let currentKey = parts[0].match(/\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,})$/)?.[1] ?? "";
-    for (let i = 1; i < parts.length; i++) {
-      const part = parts[i];
-      if (part.includes("•")) {
-        const secMatch = /^([A-Za-záéíóúÁÉÍÓÚ_0-9 ]+):\s*\(\s*\d+\s*-\s*Encontrados?\s*\)/i.exec(part.trim());
-        if (secMatch) {
-          const bulletIdx = part.indexOf("•");
-          const items = part.slice(bulletIdx).split("•").map((s) => s.trim()).filter(Boolean);
-          sections.push({ name: secMatch[1].trim().toUpperCase(), items });
-          currentKey = items[items.length - 1]?.match(/\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,})$/)?.[1] ?? "";
-          continue;
-        }
-      }
-      if (i === parts.length - 1) { if (currentKey && part.trim()) fields.push([currentKey, part.trim()]); break; }
-      const nk = part.match(/^(.*?)\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,})*)$/);
-      if (nk) { if (currentKey && nk[1].trim()) fields.push([currentKey, nk[1].trim()]); currentKey = nk[2].trim(); }
-    }
-    return { fields, sections };
-  }
-
-  const re = /\b([A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*)\s*:\s*`?([^:\n]+?)(?=\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]{2,}(?:\s+[A-ZÁÉÍÓÚÃÕÂÊÔÇÑA-Z_]+)*\s*:|$)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw)) !== null) {
-    fields.push([m[1].trim(), m[2].trim().replace(/`/g, "").replace(/\s+/g, " ")]);
-  }
-  return { fields, sections };
-}
-
-// ── .txt formatter ────────────────────────────────────────────────────────────
-function formatResultTxt(tipo: string, dados: string, parsed: { fields: [string, string][]; sections: { name: string; items: string[] }[] }, raw: string): string {
-  const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-  const lines: string[] = [];
-  lines.push(LINE); lines.push(`       ∞  INFINITY SEARCH  ∞`); lines.push(LINE);
-  lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
-  lines.push(`  Dado      : ${dados}`);
-  lines.push(`  Data      : ${now}`);
-  lines.push(LINE); lines.push("");
-  if (parsed.fields.length > 0) {
-    lines.push("DADOS ENCONTRADOS"); lines.push(LINE2);
-    const maxKey = Math.min(22, Math.max(...parsed.fields.map(([k]) => k.length)));
-    for (const [k, v] of parsed.fields) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
-    lines.push("");
-  }
-  for (const sec of parsed.sections) {
-    lines.push(`${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`);
-    lines.push(LINE2);
-    sec.items.forEach((item, idx) => lines.push(`  ${String(idx + 1).padStart(3)}.  ${item}`));
-    lines.push("");
-  }
-  if (parsed.fields.length === 0 && parsed.sections.length === 0 && raw) {
-    lines.push("RESPOSTA BRUTA"); lines.push(LINE2); lines.push(raw.slice(0, 3000)); lines.push("");
-  }
-  lines.push(LINE);
-  lines.push(`  Made by ${AUTHOR} | Infinity Search`);
-  lines.push(`  Suporte : ${SUPPORT_URL}`);
-  lines.push(`  Suporte : ${SUPPORT_URL2}`);
-  lines.push(LINE);
-  return lines.join("\n");
-}
-
-// ── CPF sub-menu modules ───────────────────────────────────────────────────────
-// All tipos that accept CPF as input — shown in the CPF module selector
-const CPF_MODULE_TIPOS: string[] = [
-  "cpfbasico", "cpf", "empregos", "cnh", "cnhfull", "mae", "pai", "parentes",
-  "obito", "vacinas", "titulo", "score", "score2", "irpf", "beneficios",
-  "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes",
-  "faculdades", "nasc", "matricula", "assessoria", "registro", "catcpf",
-  "cheque", "biometria",
-];
-
-// Fotos sub-menu — all foto/* types (CPF input)
-const FOTOS_TIPOS: string[] = [
-  "foto", "fotonc", "fotodetran", "fotoma", "fotoce", "fotosp", "fotorj",
-  "fotoms", "fotoes", "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr",
-  "fotodf", "fotoal", "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg",
-];
-
-// Main keyboard tipos: skip individual foto/* and state-based CNH (they're in sub-menus)
-const MAIN_TIPOS_SKIP = new Set([
-  "foto", "fotoma", "fotoce", "fotosp", "fotorj", "fotoms", "fotonc", "fotoes",
-  "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr", "fotodf", "fotoal",
-  "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg", "crlvtofoto",
-  "crlvmtfoto", "fotodetran",
-  "cnham", "cnhnc", "cnhrs", "cnhrr",
-]);
-
-// ── Keyboard helpers ──────────────────────────────────────────────────────────
-/** Separator row — full-width label button (calls "noop" → just closes toast) */
-function sep(label: string) {
-  return [Markup.button.callback(label, "noop")];
-}
-/** Tipo button, with lock prefix in freeMode if tipo is not free */
-function tipoBtn(id: string, freeMode: boolean) {
-  const t = TIPOS.find(t => t.id === id);
-  if (!t) return Markup.button.callback(id, "noop");
-  const lock = freeMode && !FREE_TIPOS.has(id);
-  return Markup.button.callback(lock ? `🔒 ${t.label}` : t.label, `tipo:${id}`);
-}
-function row2(a: string, b: string | undefined, freeMode: boolean) {
-  return b ? [tipoBtn(a, freeMode), tipoBtn(b, freeMode)] : [tipoBtn(a, freeMode)];
 }
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
-function buildHomeKeyboard() {
+function buildMainKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔍 Nova Consulta", "consultar")],
-    [Markup.button.callback("🪪 CPF — Módulos", "cpf_menu"), Markup.button.callback("📸 Fotos", "fotos_menu")],
-    [Markup.button.callback("❓ Ajuda", "show_ajuda"), Markup.button.callback("💬 Suporte", "show_suporte")],
+    [Markup.button.callback("🪪 CPF",      "q:cpf"),       Markup.button.callback("🏭 CNPJ",      "q:cnpj")],
+    [Markup.button.callback("👤 Nome",     "q:nome"),      Markup.button.callback("📞 Telefone",  "q:telefone")],
+    [Markup.button.callback("🚗 Placa",    "q:placa"),     Markup.button.callback("💳 BIN",       "q:bin")],
+    [Markup.button.callback("🌐 IP",       "q:ip"),        Markup.button.callback("❓ Ajuda",      "show_help")],
+    [Markup.button.url("💬 @Blxckxyz", SUPPORT_URL) as any, Markup.button.url("💬 @xxmathexx", SUPPORT_URL2) as any],
   ]);
 }
 
-function buildSupportKeyboard() {
+function buildResultKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.url("💬 @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
-    [Markup.button.callback("↩ Voltar", "home")],
+    [Markup.button.callback("🔍 Nova Consulta", "home")],
+    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL) as any, Markup.button.url("💬 @xxmathexx", SUPPORT_URL2) as any],
   ]);
 }
 
-function buildTiposKeyboard(freeMode: boolean = false) {
-  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
-  const fm = freeMode;
-
-  rows.push([Markup.button.callback("🪪 CPF — Todos os módulos", "cpf_menu")]);
-  rows.push([Markup.button.callback("📸 FOTOS — Todos os estados", "fotos_menu")]);
-
-  rows.push(sep("━━━ 🔍 BUSCA BÁSICA ━━━━━━━━━━━━━"));
-  rows.push(row2("nome",       "rg",          fm));
-  rows.push(row2("telefone",   "email",        fm));
-  rows.push(row2("pix",        "cep",          fm));
-
-  rows.push(sep("━━━ 🚗 VEÍCULOS ━━━━━━━━━━━━━━━━━"));
-  rows.push(row2("placa",      "cnh",          fm));
-  rows.push(row2("chassi",     "renavam",      fm));
-  rows.push(row2("placafipe",  "placaserpro",  fm));
-  rows.push(row2("vistoria",   undefined,      fm));
-
-  rows.push(sep("━━━ 🏢 EMPRESARIAL ━━━━━━━━━━━━━━"));
-  rows.push(row2("cnpj",       "socios",       fm));
-  rows.push(row2("fucionarios","empregos",     fm));
-
-  rows.push(sep("━━━ 🏥 SAÚDE & FAMÍLIA ━━━━━━━━━━"));
-  rows.push(row2("mae",        "pai",          fm));
-  rows.push(row2("parentes",   "obito",        fm));
-  rows.push(row2("cns",        "nis",          fm));
-  rows.push(row2("vacinas",    undefined,      fm));
-
-  rows.push(sep("━━━ ⚖️ JURÍDICO ━━━━━━━━━━━━━━━━━"));
-  rows.push(row2("processo",     "advogadooab",    fm));
-  rows.push(row2("advogadooabuf","advogadocpf",    fm));
-  rows.push(row2("oab",          undefined,        fm));
-
-  rows.push(sep("━━━ 💎 SKYLERS BLACK ━━━━━━━━━━━━"));
-  rows.push(row2("cpfbasico",  "score",        fm));
-  rows.push(row2("score2",     "titulo",       fm));
-  rows.push(row2("irpf",       "beneficios",   fm));
-  rows.push(row2("mandado",    "dividas",      fm));
-  rows.push(row2("bens",       "processos",    fm));
-  rows.push(row2("spc",        "iptu",         fm));
-  rows.push(row2("certidoes",  "cnhfull",      fm));
-  rows.push(row2("biometria",  "cheque",       fm));
-  rows.push(row2("matricula",  "registro",     fm));
-  rows.push(row2("nasc",       "assessoria",   fm));
-  rows.push(row2("faculdades", "catcpf",       fm));
-  rows.push(row2("catnumero",  "telegram",     fm));
-  rows.push(row2("likes",      undefined,      fm));
-
-  if (freeMode) {
-    rows.push([Markup.button.url("💎 Contratar Plano BLACK", SUPPORT_URL)] as any);
-  }
-  rows.push([Markup.button.callback("↩ Voltar ao Menu", "home")]);
-  return Markup.inlineKeyboard(rows);
-}
-
-function buildCpfModuleKeyboard(freeMode: boolean = false) {
-  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
-  const fm = freeMode;
-
-  rows.push(sep("━━━ 👤 DADOS BÁSICOS ━━━━━━━━━━━━"));
-  rows.push(row2("cpf",        "cpfbasico",   fm));
-  rows.push(row2("mae",        "pai",          fm));
-  rows.push(row2("parentes",   "empregos",     fm));
-  rows.push(row2("nasc",       undefined,      fm));
-
-  rows.push(sep("━━━ 📄 DOCUMENTOS ━━━━━━━━━━━━━━━"));
-  rows.push(row2("cnh",        "cnhfull",      fm));
-  rows.push(row2("titulo",     "obito",        fm));
-  rows.push(row2("vacinas",    undefined,      fm));
-
-  rows.push(sep("━━━ 💰 FINANCEIRO ━━━━━━━━━━━━━━━"));
-  rows.push(row2("score",      "score2",       fm));
-  rows.push(row2("irpf",       "spc",          fm));
-  rows.push(row2("iptu",       "dividas",      fm));
-  rows.push(row2("bens",       undefined,      fm));
-
-  rows.push(sep("━━━ ⚖️ JUDICIAL ━━━━━━━━━━━━━━━━━"));
-  rows.push(row2("mandado",    "processos",    fm));
-  rows.push(row2("certidoes",  "cheque",       fm));
-  rows.push(row2("matricula",  "registro",     fm));
-  rows.push(row2("assessoria", undefined,      fm));
-
-  rows.push(sep("━━━ 🔍 OUTROS ━━━━━━━━━━━━━━━━━━━"));
-  rows.push(row2("beneficios", "biometria",    fm));
-  rows.push(row2("faculdades", "catcpf",       fm));
-
-  rows.push([Markup.button.callback("📸 FOTOS — Ver estados", "fotos_menu")]);
-  if (freeMode) {
-    rows.push([Markup.button.url("💎 Contratar Plano BLACK", SUPPORT_URL)] as any);
-  }
-  rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
-  return Markup.inlineKeyboard(rows);
-}
-
-function buildFotosKeyboard() {
-  const rows: ReturnType<typeof Markup.button.callback>[][] = [];
-  const fm = false;
-
-  rows.push(sep("━━━ 📸 FOTO CNH & DETRAN ━━━━━━━━"));
-  rows.push(row2("foto",       "fotodetran",   fm));
-
-  rows.push(sep("━━━ 📸 FOTOS — NACIONAL & ESTADOS"));
-  rows.push(row2("fotonc",     "fotoma",       fm));
-  rows.push(row2("fotoce",     "fotosp",       fm));
-  rows.push(row2("fotorj",     "fotomg",       fm));
-  rows.push(row2("fotoes",     "fotoba",       fm));
-  rows.push(row2("fotope",     "fotorn",       fm));
-  rows.push(row2("fotopb",     "fotoal",       fm));
-  rows.push(row2("fotodf",     "fotogo",       fm));
-  rows.push(row2("fotoms",     "fotopi",       fm));
-  rows.push(row2("fototo",     "fotoro",       fm));
-  rows.push(row2("fotopr",     "fotomapresos", fm));
-
-  rows.push(sep("━━━ 🖼️ CRLV — FOTO POR PLACA ━━━━"));
-  rows.push(row2("crlvtofoto", "crlvmtfoto",   fm));
-
-  rows.push(sep("━━━ 🪪 CNH POR ESTADO ━━━━━━━━━━━"));
-  rows.push(row2("cnham",      "cnhnc",         fm));
-  rows.push(row2("cnhrs",      "cnhrr",         fm));
-
-  rows.push([Markup.button.callback("↩ Voltar", "consultar"), Markup.button.callback("🏠 Menu", "home")]);
-  return Markup.inlineKeyboard(rows);
-}
-
-function resultKeyboard(chatId: number, msgId: number) {
+function buildNotAuthorizedKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔍 Nova Consulta", "consultar"), Markup.button.callback("🗑 Apagar", `del:${chatId}:${msgId}`)],
-    [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
+    [Markup.button.url("📢 Canal de Consultas Free", CHANNEL1_INVITE) as any],
+    [Markup.button.url("📣 Canal de Atualizações", CHANNEL2_INVITE) as any],
+    [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL) as any],
   ]);
 }
 
-// ── Not authorized reply ──────────────────────────────────────────────────────
-async function sendNotAuthorized(ctx: { telegram: Telegraf["telegram"]; from?: { id: number }; replyWithHTML: (t: string, extra?: object) => Promise<any> }) {
-  const userId = ctx.from?.id;
-  const msg = userId ? await getUnauthorizedMessage(ctx.telegram, userId) : (
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
+// ── Messages ──────────────────────────────────────────────────────────────────
+function buildHomeMsg(name: string, admin: boolean): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
     `┃\n` +
-    `┃ ❌ ACESSO NEGADO\n` +
-    `┠────────────────────────────\n` +
-    `┃ Para usar o bot, entre nos canais:\n` +
-    `┃\n` +
-    `┃ 1️⃣ ${CHANNEL_INVITE}\n` +
-    `┃ 2️⃣ ${CHANNEL2_INVITE}\n` +
-    `┃\n` +
-    `┃ Após entrar, clique em /start\n` +
-    `╰────────────────────────────╯`
-  );
-  await ctx.replyWithHTML(msg,
-    Markup.inlineKeyboard([
-      [Markup.button.url("📢 Canal de Acesso", CHANNEL_INVITE)],
-      [Markup.button.url("📣 Canal de Avisos", CHANNEL2_INVITE)] as any,
-      [Markup.button.url("💬 Suporte", SUPPORT_URL)] as any,
-    ])
+    `┃  Bem-vindo, <b>${esc(name)}</b>!\n` +
+    `┃  Status: ✅ Ativo${admin ? " · 👑 ADMIN" : ""}\n` +
+    `┠─────────────────────────────────\n` +
+    `┃  🪪 <b>CPF</b>       🏭 <b>CNPJ</b>\n` +
+    `┃  👤 <b>Nome</b>      📞 <b>Telefone</b>\n` +
+    `┃  🚗 <b>Placa</b>     💳 <b>BIN</b>\n` +
+    `┃  🌐 <b>IP</b>\n` +
+    `┠─────────────────────────────────\n` +
+    `┃  Escolha uma opção abaixo 👇🏻\n` +
+    `╰─────────────────────────────────╯`
   );
 }
 
-// ── Core query executor ───────────────────────────────────────────────────────
-async function executeQuery(
-  ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
-  tipo: string,
-  dados: string,
-  loadMsgId: number,
-) {
-  const chatId = ctx.chat.id;
-  try {
-    const url = `${GEASS_API_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(GEASS_API_KEY)}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(28000) });
-
-    if (!resp.ok) {
-      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
-        `❌ <b>Erro ${resp.status}</b>\n\nFalha ao consultar o provedor. Tente novamente.`,
-        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
-      return;
-    }
-
-    const json = await resp.json() as { status?: string; resposta?: string };
-
-    if (!json.resposta || json.status === "erro" || json.resposta.trim() === "") {
-      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
-        `⚠️ <b>Sem resultado</b>\n\n<code>${tipo.toUpperCase()}</code>: <code>${dados}</code>\n\nNenhum dado encontrado para este valor.`,
-        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
-      return;
-    }
-
-    const raw = json.resposta;
-    const parsed = parseGeassResult(raw);
-    const totalRegistros = parsed.sections.reduce((a, s) => a + s.items.length, 0);
-    const txtContent = formatResultTxt(tipo, dados, parsed, raw);
-
-    const summaryParts: string[] = [
-      `✅ <b>Resultado encontrado</b>`,
-      ``,
-      `<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>`,
-      `<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,
-    ];
-    if (parsed.fields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${parsed.fields.length}`);
-    if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
-
-    const preview = parsed.fields.slice(0, 6);
-    if (preview.length > 0) {
-      summaryParts.push(``, `<b>Prévia:</b>`);
-      for (const [k, v] of preview) summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
-    } else if (parsed.sections.length > 0 && parsed.sections[0].items.length > 0) {
-      summaryParts.push(``, `<b>Prévia (${parsed.sections[0].name}):</b>`);
-      parsed.sections[0].items.slice(0, 3).forEach(item => summaryParts.push(`  • ${item.slice(0, 80)}`));
-    }
-
-    await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
-
-    const filename = `infinity-${tipo}-${Date.now()}.txt`;
-    const sentDoc = await ctx.telegram.sendDocument(chatId,
-      { source: Buffer.from(txtContent, "utf-8"), filename },
-      {
-        caption: summaryParts.join("\n").slice(0, 1024),
-        parse_mode: "HTML",
-        ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]),
-      }
-    );
-
-    const kb = resultKeyboard(chatId, sentDoc.message_id);
-    await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
-
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
-      `❌ <b>Erro ao consultar:</b>\n<code>${msg.slice(0, 200)}</code>`,
-      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
-    ).catch(() => {});
-  }
+function buildGroupTooSmallMsg(count?: number): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+    `┃\n` +
+    `┃ ⚠️ <b>GRUPO MUITO PEQUENO</b>\n` +
+    `┠─────────────────────────────────\n` +
+    `┃ Este grupo tem ${count ? `<b>${count}</b>` : "poucos"} membros.\n` +
+    `┃ O bot requer um mínimo de\n` +
+    `┃ <b>${MIN_GROUP_MEMBERS} membros</b> para funcionar.\n` +
+    `┃\n` +
+    `┃ Adicione mais membros ao grupo\n` +
+    `┃ e tente novamente.\n` +
+    `╰─────────────────────────────────╯`
+  );
 }
 
-// ── Skylers query executor ────────────────────────────────────────────────────
-async function executeSkylersBotQuery(
-  ctx: { telegram: Telegraf["telegram"]; chat: { id: number } },
-  tipo: string,
-  dados: string,
-  loadMsgId: number,
-) {
-  const chatId = ctx.chat.id;
-  const tipoObj = TIPOS.find((t) => t.id === tipo);
-  const label = tipoObj?.label ?? tipo.toUpperCase();
+function buildPrivateMsg(): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+    `┃\n` +
+    `┃ 🤖 Bot exclusivo para grupos!\n` +
+    `┠─────────────────────────────────\n` +
+    `┃ Adicione o bot ao seu grupo\n` +
+    `┃ (mínimo <b>${MIN_GROUP_MEMBERS} membros</b>) e use por lá.\n` +
+    `┃\n` +
+    `┃ Precisa de ajuda? Fale com\n` +
+    `┃ nosso suporte abaixo 👇🏻\n` +
+    `╰─────────────────────────────────╯`
+  );
+}
 
-  try {
-    const r = await fetch(`${INTERNAL_API_BASE}/api/infinity/external/skylers`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Internal-Key": INTERNAL_KEY,
-      },
-      body: JSON.stringify({ tipo, dados }),
-      signal: AbortSignal.timeout(35_000),
-    });
+function buildNotAuthorizedMsg(label?: string): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+    `┃\n` +
+    `┃ ❌ <b>ACESSO NEGADO</b>\n` +
+    `┠─────────────────────────────────\n` +
+    `┃ Para usar o bot, entre nos\n` +
+    `┃ dois canais obrigatórios:\n` +
+    `┃\n` +
+    `┃ 1️⃣ Canal de Consultas Free\n` +
+    `┃ 2️⃣ Canal de Atualizações\n` +
+    `┃\n` +
+    `┃ ${label ? `❗ Você não está em: <b>${esc(label)}</b>\n┃\n` : ""}` +
+    `┃ Após entrar, use /start novamente.\n` +
+    `╰─────────────────────────────────╯`
+  );
+}
 
-    const json = await r.json() as { success: boolean; data?: unknown; error?: string };
+function buildPromptMsg(tipo: TipoInfo): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+    `┃\n` +
+    `┃ ${tipo.label.toUpperCase()}\n` +
+    `┠─────────────────────────────────\n` +
+    `┃ Digite o <b>${esc(tipo.prompt)}</b>\n` +
+    `┃\n` +
+    `┃ Ex: <code>${esc(tipo.example)}</code>\n` +
+    `┃\n` +
+    `┃ ⏳ Aguardando sua resposta...\n` +
+    `╰─────────────────────────────────╯`
+  );
+}
 
-    if (!json.success || !json.data) {
-      await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
-        `⚠️ <b>Sem resultado — ${label}</b>\n\n` +
-        `<code>${json.error ?? "Nenhum dado encontrado para este valor."}</code>`,
-        { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) });
-      return;
+function buildLoadingMsg(tipo: TipoInfo, dados: string): string {
+  return (
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+    `┃\n` +
+    `┃ ⏳ <b>CONSULTANDO...</b>\n` +
+    `┠─────────────────────────────────\n` +
+    `┃ Tipo: <code>${tipo.id.toUpperCase()}</code>\n` +
+    `┃ Dado: <code>${esc(dados)}</code>\n` +
+    `┃\n` +
+    `┃ Por favor, aguarde...\n` +
+    `╰─────────────────────────────────╯`
+  );
+}
+
+function buildHelpMsg(): string {
+  return [
+    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮`,
+    `┃`,
+    `┃ 📋 <b>CONSULTAS DISPONÍVEIS</b>`,
+    `┠─────────────────────────────────`,
+    `┃ 🪪 /cpf &lt;número&gt; — CPF`,
+    `┃ 🏭 /cnpj &lt;número&gt; — CNPJ`,
+    `┃ 👤 /nome &lt;nome&gt; — Nome`,
+    `┃ 📞 /telefone &lt;ddd+número&gt; — Telefone`,
+    `┃ 🚗 /placa &lt;placa&gt; — Veículo`,
+    `┃ 💳 /bin &lt;6-8 dígitos&gt; — Cartão`,
+    `┃ 🌐 /ip &lt;endereço&gt; — Geolocalização IP`,
+    `┠─────────────────────────────────`,
+    `┃ 💡 Você também pode usar o menu`,
+    `┃    interativo com /start`,
+    `┠─────────────────────────────────`,
+    `┃ <i>🔒 Bot exclusivo para grupos</i>`,
+    `┃ <i>📋 Mínimo ${MIN_GROUP_MEMBERS} membros por grupo</i>`,
+    `╰─────────────────────────────────╯`,
+  ].join("\n");
+}
+
+// ── TXT builder ───────────────────────────────────────────────────────────────
+function buildResultTxt(tipo: string, dados: string, content: Record<string, string>[], sections?: { name: string; items: string[] }[], rawText?: string): string {
+  const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const lines: string[] = [];
+
+  lines.push(LINE);
+  lines.push(`       ∞  INFINITY SEARCH  ∞`);
+  lines.push(LINE);
+  lines.push(`  Base      : Infinity`);
+  lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
+  lines.push(`  Dado      : ${dados}`);
+  lines.push(`  Data      : ${now}`);
+  lines.push(LINE);
+  lines.push("");
+
+  if (content.length > 0) {
+    const maxKey = Math.min(22, Math.max(...content.map(f => Object.keys(f)[0]?.length ?? 0)));
+    lines.push("DADOS ENCONTRADOS");
+    lines.push(LINE2);
+    for (const field of content) {
+      const [k, v] = Object.entries(field)[0] ?? ["", ""];
+      if (k) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
     }
+    lines.push("");
+  }
 
-    // data is a parsed { fields, sections, raw } object
-    type ParsedData = { fields: { key: string; value: string }[]; sections: { name: string; items: string[] }[]; raw: string };
-    const parsed = json.data as ParsedData;
-    const fields: [string, string][] = (parsed.fields ?? []).map((f) => [f.key, f.value]);
-    const sections = (parsed.sections ?? []).map((s) => ({ name: s.name, items: s.items }));
-    const raw = parsed.raw ?? "";
-
-    // Check for photo URL
-    const fotoField = fields.find(([k]) => k === "FOTO_URL");
-    const totalRegistros = sections.reduce((a, s) => a + s.items.length, 0);
-
-    const now = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-    const lines: string[] = [];
-    lines.push(LINE); lines.push(`       ∞  INFINITY SEARCH  ∞`); lines.push(LINE);
-    lines.push(`  Base      : Skylers`);
-    lines.push(`  Consulta  : ${tipo.toUpperCase()}`);
-    lines.push(`  Dado      : ${dados}`);
-    lines.push(`  Data      : ${now}`);
-    lines.push(LINE); lines.push("");
-
-    const displayFields = fields.filter(([k]) => k !== "FOTO_URL");
-    if (displayFields.length > 0) {
-      lines.push("DADOS ENCONTRADOS"); lines.push(LINE2);
-      const maxKey = Math.min(22, Math.max(...displayFields.map(([k]) => k.length)));
-      for (const [k, v] of displayFields) lines.push(`  ${k.padEnd(maxKey)} : ${v}`);
-      lines.push("");
-    }
-    if (fotoField) {
-      const isBase64 = fotoField[1].startsWith("data:image");
-      lines.push("FOTO"); lines.push(LINE2);
-      lines.push(isBase64 ? "  [imagem base64 — enviada como foto acima]" : `  URL: ${fotoField[1]}`);
-      lines.push("");
-    }
+  if (sections && sections.length > 0) {
     for (const sec of sections) {
       lines.push(`${sec.name}  (${sec.items.length} registro${sec.items.length !== 1 ? "s" : ""})`);
       lines.push(LINE2);
-      sec.items.forEach((item, idx) => lines.push(`  ${String(idx + 1).padStart(3)}.  ${item}`));
+      sec.items.slice(0, 50).forEach((item, i) => lines.push(`  ${String(i + 1).padStart(3)}.  ${item}`));
       lines.push("");
     }
-    if (displayFields.length === 0 && sections.length === 0 && raw) {
-      lines.push("RESPOSTA BRUTA"); lines.push(LINE2); lines.push(raw.slice(0, 3000)); lines.push("");
-    }
-    lines.push(LINE);
-    lines.push(`  Made by ${AUTHOR} | Infinity Search`);
-    lines.push(`  Suporte : ${SUPPORT_URL}`);
-    lines.push(`  Suporte : ${SUPPORT_URL2}`);
-    lines.push(LINE);
-    const txtContent = lines.join("\n");
+  }
 
-    const summaryParts: string[] = [
-      `✅ <b>Resultado encontrado — Skylers</b>`,
-      ``,
-      `<code>◈</code> <b>Módulo:</b> <code>${tipo.toUpperCase()}</code>`,
-      `<code>◈</code> <b>Dado:</b> <code>${dados}</code>`,
-    ];
-    if (displayFields.length > 0) summaryParts.push(`<code>◈</code> <b>Campos:</b> ${displayFields.length}`);
-    if (totalRegistros > 0) summaryParts.push(`<code>◈</code> <b>Registros:</b> ${totalRegistros}`);
-    if (fotoField) summaryParts.push(`<code>◈</code> <b>Foto:</b> enviada como imagem`);
+  if (content.length === 0 && (!sections || sections.length === 0) && rawText) {
+    lines.push("RESPOSTA");
+    lines.push(LINE2);
+    lines.push(rawText.slice(0, 4000));
+    lines.push("");
+  }
 
-    const preview = displayFields.slice(0, 5);
-    if (preview.length > 0) {
-      summaryParts.push(``, `<b>Prévia:</b>`);
-      for (const [k, v] of preview) summaryParts.push(`  <code>${k}</code>: <b>${v.slice(0, 60)}</b>`);
-    } else if (sections.length > 0 && sections[0].items.length > 0) {
-      summaryParts.push(``, `<b>Prévia (${sections[0].name}):</b>`);
-      sections[0].items.slice(0, 3).forEach((item) => summaryParts.push(`  • ${item.slice(0, 80)}`));
-    }
+  lines.push(LINE);
+  lines.push(`  Made by ${AUTHOR} | Infinity Search`);
+  lines.push(`  Suporte : @Blxckxyz`);
+  lines.push(`  Suporte : @xxmathexx`);
+  lines.push(LINE);
 
-    await ctx.telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+  return lines.join("\n");
+}
 
-    // ── Send photo (base64 data URI or HTTP URL) before the document ─────────
-    if (fotoField) {
-      const fotoVal = fotoField[1];
-      try {
-        if (fotoVal.startsWith("data:image")) {
-          // Base64 data URI → extract raw bytes and send as Buffer
-          const b64 = fotoVal.replace(/^data:image\/\w+;base64,/, "");
-          const buf = Buffer.from(b64, "base64");
-          if (buf.length > 100) {
-            await ctx.telegram.sendPhoto(chatId,
-              { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
-              { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
-            );
-          }
-        } else if (/^https?:\/\//i.test(fotoVal)) {
-          // HTTP URL — try direct send; on failure, download and send as buffer
-          try {
-            await ctx.telegram.sendPhoto(chatId, fotoVal,
-              { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
-            );
-          } catch {
-            // URL send failed — try downloading first
-            const imgRes = await fetch(fotoVal, { signal: AbortSignal.timeout(10_000) });
-            if (imgRes.ok) {
-              const buf = Buffer.from(await imgRes.arrayBuffer());
-              await ctx.telegram.sendPhoto(chatId,
-                { source: buf, filename: `foto-${tipo}-${Date.now()}.jpg` },
-                { caption: `📸 <b>Foto encontrada</b> · <code>${tipo.toUpperCase()}</code>`, parse_mode: "HTML" }
-              );
-            }
-          }
-        }
-      } catch {
-        // Non-fatal — photo send failed, document with data still goes out
+// ── Geass API query ───────────────────────────────────────────────────────────
+interface GeassResult {
+  fields: Record<string, string>[];
+  sections: { name: string; items: string[] }[];
+  raw: string;
+}
+
+function parseGeassRaw(raw: string): GeassResult {
+  const fields: Record<string, string>[] = [];
+  const sections: { name: string; items: string[] }[] = [];
+  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  let currentSection: { name: string; items: string[] } | null = null;
+
+  for (const line of lines) {
+    // Section headers (all caps, possibly with dashes)
+    if (/^[─═━\-─]{3,}$/.test(line)) continue;
+
+    const kvMatch = line.match(/^([A-ZÀ-Ü][A-ZÀ-Ü\s\/\-\.]+?)\s*[:：]\s*(.+)$/);
+    if (kvMatch && kvMatch[1] && kvMatch[2]) {
+      const key = kvMatch[1].trim().toUpperCase();
+      const val = kvMatch[2].trim();
+      if (key.length <= 40 && val.length > 0) {
+        fields.push({ [key]: val });
+        currentSection = null;
+        continue;
       }
     }
 
-    const filename = `skylers-${tipo}-${Date.now()}.txt`;
-    const sentDoc = await ctx.telegram.sendDocument(chatId,
-      { source: Buffer.from(txtContent, "utf-8"), filename },
+    if (/^[A-ZÁÉÍÓÚÀÃÂÊÔ\s]{4,}$/.test(line) && line.length < 50) {
+      currentSection = { name: line, items: [] };
+      sections.push(currentSection);
+      continue;
+    }
+
+    if (currentSection) {
+      currentSection.items.push(line);
+    }
+  }
+
+  return { fields, sections, raw };
+}
+
+async function queryGeass(tipo: string, dados: string): Promise<GeassResult> {
+  const url = `${GEASS_API_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(GEASS_API_KEY)}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!resp.ok) throw new Error(`Provedor retornou HTTP ${resp.status}`);
+  const json = await resp.json() as { status?: string; resposta?: string; error?: string };
+  if (json.status === "erro" || json.error) throw new Error(json.error ?? "Sem dados para este valor");
+  if (!json.resposta || json.resposta.trim() === "") throw new Error("Sem dados encontrados para este valor");
+  return parseGeassRaw(json.resposta);
+}
+
+// ── BIN lookup ────────────────────────────────────────────────────────────────
+interface BinResult { fields: Record<string, string>[] }
+
+async function queryBIN(bin: string): Promise<BinResult> {
+  const clean = bin.replace(/\D/g, "").slice(0, 8);
+  if (clean.length < 6) throw new Error("BIN deve ter ao menos 6 dígitos");
+
+  const resp = await fetch(`https://lookup.binlist.net/${clean}`, {
+    headers: { "Accept-Version": "3", "User-Agent": "Mozilla/5.0 InfinitySearch/1.0" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!resp.ok) throw new Error(`BIN não encontrado (${resp.status})`);
+
+  const d = await resp.json() as {
+    number?: { length?: number; luhn?: boolean };
+    scheme?: string;
+    type?: string;
+    brand?: string;
+    prepaid?: boolean;
+    country?: { name?: string; emoji?: string; currency?: string; latitude?: number; longitude?: number };
+    bank?: { name?: string; url?: string; phone?: string; city?: string };
+  };
+
+  const fields: Record<string, string>[] = [];
+  const add = (k: string, v: string | number | boolean | undefined | null) => {
+    if (v !== undefined && v !== null && String(v).trim() !== "") fields.push({ [k]: String(v) });
+  };
+
+  add("BIN",        clean);
+  add("ESQUEMA",    d.scheme?.toUpperCase());
+  add("TIPO",       d.type?.toUpperCase());
+  add("BRAND",      d.brand);
+  add("PRÉ-PAGO",   d.prepaid !== undefined ? (d.prepaid ? "SIM" : "NÃO") : undefined);
+  if (d.country) {
+    add("PAÍS",     `${d.country.emoji ?? ""} ${d.country.name ?? ""}`.trim());
+    add("MOEDA",    d.country.currency);
+  }
+  if (d.bank) {
+    add("BANCO",    d.bank.name);
+    add("CIDADE BANCO", d.bank.city);
+    add("SITE BANCO",   d.bank.url);
+    add("TELEFONE BANCO", d.bank.phone);
+  }
+  if (d.number) {
+    add("COMPRIMENTO CARTÃO", d.number.length);
+    add("VALIDAÇÃO LUHN",     d.number.luhn ? "SIM" : "NÃO");
+  }
+
+  return { fields };
+}
+
+// ── IP lookup ─────────────────────────────────────────────────────────────────
+interface IpResult { fields: Record<string, string>[] }
+
+async function queryIP(ip: string): Promise<IpResult> {
+  const clean = ip.trim();
+  if (!/^[\d.:a-fA-F]+$/.test(clean)) throw new Error("IP inválido");
+
+  const resp = await fetch(
+    `http://ip-api.com/json/${encodeURIComponent(clean)}?lang=pt-BR&fields=status,message,continent,country,countryCode,region,regionName,city,district,zip,lat,lon,timezone,offset,currency,isp,org,as,asname,reverse,mobile,proxy,hosting,query`,
+    { signal: AbortSignal.timeout(10000) },
+  );
+  if (!resp.ok) throw new Error(`Falha na consulta de IP (${resp.status})`);
+  const d = await resp.json() as {
+    status?: string; message?: string; query?: string;
+    country?: string; countryCode?: string; continent?: string;
+    region?: string; regionName?: string; city?: string; district?: string; zip?: string;
+    lat?: number; lon?: number; timezone?: string; offset?: number; currency?: string;
+    isp?: string; org?: string; as?: string; asname?: string; reverse?: string;
+    mobile?: boolean; proxy?: boolean; hosting?: boolean;
+  };
+
+  if (d.status !== "success") throw new Error(d.message ?? "IP não encontrado ou inválido");
+
+  const fields: Record<string, string>[] = [];
+  const add = (k: string, v: string | number | boolean | undefined | null) => {
+    if (v !== undefined && v !== null && String(v).trim() !== "" && String(v) !== "undefined") fields.push({ [k]: String(v) });
+  };
+
+  add("IP",           d.query);
+  add("CONTINENTE",   d.continent);
+  add("PAÍS",         `${d.country ?? ""} (${d.countryCode ?? ""})`.trim());
+  add("REGIÃO",       d.regionName);
+  add("CIDADE",       d.city);
+  add("BAIRRO",       d.district);
+  add("CEP",          d.zip);
+  add("LATITUDE",     d.lat);
+  add("LONGITUDE",    d.lon);
+  add("TIMEZONE",     d.timezone);
+  add("MOEDA",        d.currency);
+  add("ISP",          d.isp);
+  add("ORGANIZAÇÃO",  d.org);
+  add("AS",           d.as);
+  add("HOSTNAME",     d.reverse);
+  add("MOBILE",       d.mobile !== undefined ? (d.mobile ? "SIM" : "NÃO") : undefined);
+  add("PROXY/VPN",    d.proxy !== undefined ? (d.proxy ? "✅ SIM" : "❌ NÃO") : undefined);
+  add("HOSTING",      d.hosting !== undefined ? (d.hosting ? "SIM" : "NÃO") : undefined);
+
+  return { fields };
+}
+
+// ── Summary HTML (caption for .txt file) ─────────────────────────────────────
+function buildCaption(tipo: string, dados: string, fields: Record<string, string>[], total?: number): string {
+  const parts: string[] = [
+    `✅ <b>Resultado encontrado</b>`,
+    ``,
+    `<code>◈</code> <b>Tipo:</b> <code>${tipo.toUpperCase()}</code>`,
+    `<code>◈</code> <b>Dado:</b> <code>${esc(dados)}</code>`,
+  ];
+  if (fields.length > 0) parts.push(`<code>◈</code> <b>Campos:</b> ${fields.length}`);
+  if (total) parts.push(`<code>◈</code> <b>Registros:</b> ${total}`);
+
+  const preview = fields.slice(0, 5);
+  if (preview.length > 0) {
+    parts.push(``, `<b>Prévia:</b>`);
+    for (const f of preview) {
+      const [k, v] = Object.entries(f)[0] ?? ["", ""];
+      if (k) parts.push(`  <code>${esc(k)}</code>: <b>${esc(String(v).slice(0, 60))}</b>`);
+    }
+  }
+  return parts.join("\n").slice(0, 1024);
+}
+
+// ── Core: execute query and send result ───────────────────────────────────────
+async function executeAndSend(
+  telegram: Telegraf["telegram"],
+  chatId: number,
+  tipo: string,
+  dados: string,
+  loadMsgId: number,
+): Promise<void> {
+  const tipoInfo = TIPO_MAP.get(tipo)!;
+  const trimmedDados = dados.trim();
+
+  try {
+    let fields: Record<string, string>[] = [];
+    let sections: { name: string; items: string[] }[] | undefined;
+    let rawText: string | undefined;
+
+    if (tipo === "bin") {
+      const r = await queryBIN(trimmedDados);
+      fields = r.fields;
+    } else if (tipo === "ip") {
+      const r = await queryIP(trimmedDados);
+      fields = r.fields;
+    } else {
+      const r = await queryGeass(tipo, trimmedDados);
+      fields = r.fields;
+      sections = r.sections.length > 0 ? r.sections : undefined;
+      rawText = r.raw;
+    }
+
+    const totalRegistros = sections?.reduce((a, s) => a + s.items.length, 0) ?? 0;
+    const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
+    const caption = buildCaption(tipo, trimmedDados, fields, totalRegistros > 0 ? totalRegistros : undefined);
+
+    // Delete loading message
+    await telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
+
+    const sentDoc = await telegram.sendDocument(
+      chatId,
+      { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
       {
-        caption: summaryParts.join("\n").slice(0, 1024),
+        caption,
         parse_mode: "HTML",
-        ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]),
-      }
+        ...buildResultKeyboard(),
+      },
     );
-
-    const kb = resultKeyboard(chatId, sentDoc.message_id);
-    await ctx.telegram.editMessageReplyMarkup(chatId, sentDoc.message_id, undefined, kb.reply_markup).catch(() => {});
+    void sentDoc;
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await ctx.telegram.editMessageText(chatId, loadMsgId, undefined,
-      `❌ <b>Erro ao consultar ${label}:</b>\n<code>${msg.slice(0, 200)}</code>`,
-      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Nova Consulta", "consultar")]]) }
+    await telegram.editMessageText(
+      chatId, loadMsgId, undefined,
+      `❌ <b>Erro na consulta de ${tipoInfo.label}</b>\n\n<code>${esc(msg.slice(0, 300))}</code>`,
+      { parse_mode: "HTML", ...buildResultKeyboard() },
     ).catch(() => {});
   }
 }
@@ -1029,189 +580,159 @@ export function startInfinityBot(): void {
 
   const bot = new Telegraf(INFINITY_BOT_TOKEN);
 
-  // ── Register commands ──────────────────────────────────────────────────────
-  const USER_COMMANDS = [
-    { command: "start",      description: "🌐 Menu principal" },
-    { command: "consultar",  description: "🔍 Nova consulta OSINT" },
-    { command: "cpf",        description: "🪪 CPF — ver todos os módulos" },
-    { command: "nome",       description: "👤 Consultar por Nome" },
-    { command: "telefone",   description: "📞 Consultar Telefone" },
-    { command: "email",      description: "📧 Consultar E-mail" },
-    { command: "placa",      description: "🚗 Consultar Placa" },
-    { command: "cnpj",       description: "🏭 Consultar CNPJ" },
-    { command: "cep",        description: "📍 Consultar CEP" },
-    { command: "pix",        description: "💳 Consultar chave PIX" },
-    { command: "rg",         description: "🪪 Consultar RG" },
-    { command: "score",      description: "📊 Score de crédito (CPF)" },
-    { command: "cnh",        description: "🪪 CNH por CPF" },
-    { command: "fotos",      description: "📸 Fotos — ver todos os estados" },
-    { command: "score2",     description: "📊 Score 2 (CPF)" },
-    { command: "beneficios", description: "🎁 Benefícios (CPF)" },
-    { command: "mandado",    description: "⚠️ Mandado de prisão (CPF)" },
-    { command: "bens",       description: "⭐ Bens patrimoniais (CPF)" },
-    { command: "processos",  description: "⚖️ Processos judiciais (CPF)" },
-    { command: "titulo",     description: "🗳️ Título eleitor (CPF)" },
-    { command: "ajuda",      description: "❓ Ajuda e lista de comandos" },
-  ];
-  const ADMIN_COMMANDS = [
-    ...USER_COMMANDS,
-    { command: "groupid",     description: "🆔 Ver ID do grupo/chat atual" },
-    { command: "liberar",     description: "✅ Liberar bot neste grupo" },
-    { command: "bloquear",    description: "🔒 Bloquear bot neste grupo" },
-    { command: "channelid",   description: "📡 Capturar ID do canal" },
-    { command: "addadmin",    description: "👑 Adicionar admin por ID" },
-    { command: "status_bot",  description: "📊 Status do bot e grupos" },
-    { command: "addpago",     description: "💎 Adicionar usuário BLACK (ID)" },
-    { command: "removepago",  description: "❌ Remover usuário BLACK (ID)" },
-    { command: "listpagos",   description: "📋 Listar usuários BLACK" },
-    { command: "setbanner",   description: "🖼️ Trocar banner do /start (gif/jpg/png/mp4)" },
-    { command: "setperfil",   description: "🤖 Trocar foto de perfil do bot (jpg/png)" },
-  ];
-  void bot.telegram.setMyCommands(USER_COMMANDS).catch(() => {});
+  // Register user commands
+  void bot.telegram.setMyCommands([
+    { command: "start",     description: "🌐 Menu principal" },
+    { command: "cpf",       description: "🪪 Consultar CPF" },
+    { command: "cnpj",      description: "🏭 Consultar CNPJ" },
+    { command: "nome",      description: "👤 Consultar por Nome" },
+    { command: "telefone",  description: "📞 Consultar Telefone" },
+    { command: "placa",     description: "🚗 Consultar Placa" },
+    { command: "bin",       description: "💳 Consultar BIN de Cartão" },
+    { command: "ip",        description: "🌐 Consultar Geolocalização de IP" },
+    { command: "ajuda",     description: "❓ Lista de comandos" },
+  ]).catch(() => {});
 
-  function buildHomeText(from: { username?: string; first_name?: string; id: number }): string {
-    const name = from.username ? `@${from.username}` : (from.first_name || "usuário");
-    const admin = isAdmin(from.id, from.username);
-    const paid = isPaid(from.id, from.username);
-    const plano = admin ? "👑 ADMIN" : paid ? "💎 BLACK" : "🔓 FREE";
-    return (
-      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-      `┃\n` +
-      `┃  Bem-vindo, <b>${name}</b>!\n` +
-      `┃  Plano: <b>${plano}</b>  •  Status: ✅ Ativo\n` +
-      `┠────────────────────────────\n` +
-      `┃  🪪 <b>CPF</b> — 30+ módulos disponíveis\n` +
-      `┃  📸 <b>Fotos</b> — todos os estados\n` +
-      `┃  🔍 <b>Consultar</b> — menu completo\n` +
-      `┠────────────────────────────\n` +
-      `┃  Escolha uma opção abaixo 👇🏻\n` +
-      `╰────────────────────────────╯`
-    );
-  }
-
-  const TIPO_MENU_TEXT =
-    `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-    `┃\n` +
-    `┃ 🔍 CENTRAL DE CONSULTAS\n` +
-    `┠────────────────────────────\n` +
-    `┃ • 🪪 CPF → abre todos os módulos CPF\n` +
-    `┃ • 📸 FOTOS → fotos por estado\n` +
-    `┃ • Demais tipos organizados abaixo\n` +
-    `┠────────────────────────────\n` +
-    `┃ Selecione o módulo desejado 👇🏻\n` +
-    `╰────────────────────────────╯`;
-
-  // ── Middleware: group authorization check ──────────────────────────────────
+  // ── Middleware: group-only + group size + channel membership ─────────────────
   bot.use(async (ctx, next) => {
     const chat = ctx.chat;
-    if (!chat) return next();
+    const from = ctx.from;
+    if (!chat || !from) return next();
 
-    // In groups/supergroups: check group authorization
-    if (chat.type === "group" || chat.type === "supergroup") {
-      if (!authorizedGroups.has(chat.id)) {
-        // Only respond to admins trying to liberate; ignore everything else silently
-        const from = ctx.from;
-        if (from && isAdmin(from.id, from.username)) return next();
-        return; // ignore non-admin messages in unauthorized groups
+    // Private chats: show "group only" message (except for cb queries silently)
+    if (chat.type === "private") {
+      if ("message" in ctx) {
+        await ctx.replyWithHTML(buildPrivateMsg(), Markup.inlineKeyboard([
+          [Markup.button.url("💬 Suporte", SUPPORT_URL) as any],
+        ]));
       }
+      // Ignore callback_queries and other updates in private
+      return;
     }
 
-    // In private chats: check channel membership
-    if (chat.type === "private") {
-      const from = ctx.from;
-      if (!from) return next();
+    // Groups/supergroups
+    if (chat.type === "group" || chat.type === "supergroup") {
+      // Allow admin commands without full auth
       if (isAdmin(from.id, from.username)) return next();
 
-      const authorized = await isAuthorizedUser(bot.telegram, from.id, from.username);
-      if (!authorized) {
-        // Only send the not-authorized message for commands/messages, not callbacks (avoid spam)
-        if ("message" in ctx || "callback_query" in ctx) {
-          await sendNotAuthorized(ctx as any);
+      // Check group size
+      const groupAuth = await checkGroupAuthorization(bot.telegram, chat.id);
+      if (!groupAuth.ok) {
+        if ("message" in ctx) {
+          try { await ctx.deleteMessage(); } catch {}
+          await ctx.replyWithHTML(buildGroupTooSmallMsg(groupAuth.count));
+        } else if ("callback_query" in ctx) {
+          await (ctx as any).answerCbQuery("❌ Grupo muito pequeno (mín. " + MIN_GROUP_MEMBERS + " membros)", { show_alert: true });
         }
         return;
       }
+
+      // Check channel membership
+      const { ok, label } = await checkChannelMembership(bot.telegram, from.id);
+      if (!ok) {
+        if ("message" in ctx) {
+          try { await ctx.deleteMessage(); } catch {}
+          await ctx.replyWithHTML(buildNotAuthorizedMsg(label), buildNotAuthorizedKeyboard());
+        } else if ("callback_query" in ctx) {
+          await (ctx as any).answerCbQuery("❌ Entre nos canais obrigatórios primeiro!", { show_alert: true });
+        }
+        return;
+      }
+
+      verifiedUsers.add(from.id);
     }
 
     return next();
   });
 
-  // ── Admin-only commands ────────────────────────────────────────────────────
+  // ── When bot is added to a group ───────────────────────────────────────────
+  bot.on("my_chat_member", async (ctx) => {
+    const update = ctx.update.my_chat_member;
+    const chat = update.chat;
+    const newStatus = update.new_chat_member.status;
+    if (newStatus !== "member" && newStatus !== "administrator") return;
+    if (chat.type !== "group" && chat.type !== "supergroup") return;
 
-  // /liberar — authorize current group (admin only)
+    try {
+      const count = await bot.telegram.getChatMembersCount(chat.id);
+      if (count >= MIN_GROUP_MEMBERS) {
+        authorizedGroups.add(chat.id);
+        await bot.telegram.sendMessage(
+          chat.id,
+          `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ────────╮\n` +
+          `┃\n` +
+          `┃ ✅ <b>BOT ATIVADO!</b>\n` +
+          `┠─────────────────────────────────\n` +
+          `┃ Grupo com <b>${count}</b> membros — requisito\n` +
+          `┃ mínimo atendido ✅\n` +
+          `┃\n` +
+          `┃ Consultas: <b>CPF, CNPJ, Nome,</b>\n` +
+          `┃ <b>Telefone, Placa, BIN, IP</b>\n` +
+          `┃\n` +
+          `┃ Use /start para começar!\n` +
+          `╰─────────────────────────────────╯`,
+          { parse_mode: "HTML", ...buildMainKeyboard() },
+        );
+      } else {
+        await bot.telegram.sendMessage(
+          chat.id,
+          buildGroupTooSmallMsg(count),
+          { parse_mode: "HTML" },
+        );
+      }
+    } catch { /* ignore */ }
+  });
+
+  // ── Admin: /liberar — manually authorize group ─────────────────────────────
   bot.command("liberar", async (ctx) => {
     const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) {
-      await ctx.replyWithHTML("❌ <b>Sem permissão.</b> Apenas admins podem liberar grupos.");
+    if (!isAdmin(from.id, from.username)) {
+      await ctx.replyWithHTML("❌ Apenas admins podem usar este comando.");
       return;
     }
-    const chat = ctx.chat;
-    if (chat.type === "private") {
-      await ctx.replyWithHTML("ℹ️ Este comando funciona em grupos. Adicione o bot ao grupo e use /liberar lá.");
+    if (ctx.chat.type === "private") {
+      await ctx.replyWithHTML("ℹ️ Use este comando dentro do grupo.");
       return;
     }
-    authorizedGroups.add(chat.id);
+    authorizedGroups.add(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
     await ctx.replyWithHTML(
-      `✅ <b>Grupo liberado!</b>\n\n` +
-      `O bot está ativo neste grupo.\n` +
-      `ID: <code>${chat.id}</code>`,
-      Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]])
+      `✅ <b>Grupo liberado manualmente!</b>\nID: <code>${ctx.chat.id}</code>`,
+      buildMainKeyboard(),
     );
   });
 
-  // /bloquear — remove group authorization (admin only)
+  // /bloquear — remove group authorization
   bot.command("bloquear", async (ctx) => {
     const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) {
-      await ctx.replyWithHTML("❌ <b>Sem permissão.</b>");
-      return;
-    }
-    const chat = ctx.chat;
-    authorizedGroups.delete(chat.id);
+    if (!isAdmin(from.id, from.username)) return;
+    authorizedGroups.delete(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b>\nID: <code>${chat.id}</code>`);
+    await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b>\nID: <code>${ctx.chat.id}</code>`);
   });
 
-  // /groupid — show current chat ID (admin only, useful before /liberar)
+  // /groupid — show current chat ID
   bot.command("groupid", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    const chat = ctx.chat;
-    const tipo = chat.type === "private" ? "privado" : chat.type === "supergroup" ? "supergrupo" : chat.type;
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
     try { await ctx.deleteMessage(); } catch {}
     await ctx.replyWithHTML(
-      `🆔 <b>ID deste chat</b>\n\n` +
-      `ID: <code>${chat.id}</code>\n` +
-      `Tipo: <code>${tipo}</code>\n` +
-      `${"title" in chat && chat.title ? `Nome: <b>${chat.title}</b>\n` : ""}` +
-      `\n` +
-      `Use esse ID para liberar o bot:\n` +
-      `<code>/liberar</code> — neste grupo\n` +
-      `<code>/bloquear</code> — para remover acesso`,
-      Markup.inlineKeyboard(
-        chat.type !== "private"
-          ? [[Markup.button.callback("✅ Liberar agora", "admin_liberar")]]
-          : []
-      )
+      `🆔 <b>ID deste chat</b>\n\nID: <code>${ctx.chat.id}</code>\nTipo: <code>${ctx.chat.type}</code>`,
     );
   });
 
-  // /channelid — discover channel ID (admin only, use inside the channel)
+  // /channelid — set channel 1 ID
   bot.command("channelid", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    const chat = ctx.chat;
-    CHANNEL_ID = chat.id;
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
+    CHANNEL1_ID = ctx.chat.id;
     await ctx.replyWithHTML(
-      `📡 <b>Canal detectado!</b>\n\nID: <code>${chat.id}</code>\n\n` +
-      `Defina <code>INFINITY_CHANNEL_ID=${chat.id}</code> para persistir entre reinicializações.`
+      `📡 <b>Canal 1 configurado!</b>\n\nID: <code>${ctx.chat.id}</code>\n\n` +
+      `Defina <code>INFINITY_CHANNEL_ID=${ctx.chat.id}</code> para persistir.`,
     );
   });
 
-  // /addadmin — add admin by user ID (admin only)
+  // /addadmin — add admin
   bot.command("addadmin", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
     const args = ctx.message.text.split(" ").slice(1);
     const uid = Number(args[0]);
     if (!uid) { await ctx.replyWithHTML("Uso: <code>/addadmin 123456789</code>"); return; }
@@ -1220,612 +741,142 @@ export function startInfinityBot(): void {
     await ctx.replyWithHTML(`✅ <code>${uid}</code> adicionado como admin.`);
   });
 
-  // /status_bot — show access control status (admin only)
+  // /status_bot
   bot.command("status_bot", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
     await ctx.replyWithHTML([
       `📊 <b>Status do Bot</b>`,
       ``,
-      `Canal ID: <code>${CHANNEL_ID ?? "não configurado"}</code>`,
+      `Canal 1 ID: <code>${CHANNEL1_ID ?? "não configurado"}</code>`,
       `Usuários verificados: <b>${verifiedUsers.size}</b>`,
       `Grupos autorizados: <b>${authorizedGroups.size}</b>`,
       `IDs dos grupos: ${[...authorizedGroups].map(id => `<code>${id}</code>`).join(", ") || "nenhum"}`,
-      `Usuários BLACK: <b>${PAID_USERS.size}</b>`,
     ].join("\n"));
   });
 
-  // /addpago — adicionar usuário BLACK (admin only)
-  bot.command("addpago", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    const args = ctx.message.text.split(" ").slice(1);
-    const uid = Number(args[0]);
-    if (!uid) { await ctx.replyWithHTML("Uso: <code>/addpago 123456789</code>"); return; }
-    PAID_USERS.add(uid);
-    try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(
-      `✅ <b>Usuário BLACK adicionado</b>\nID: <code>${uid}</code>\nTotal: <b>${PAID_USERS.size}</b>`
-    );
-  });
-
-  // /removepago — remover usuário BLACK (admin only)
-  bot.command("removepago", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    const args = ctx.message.text.split(" ").slice(1);
-    const uid = Number(args[0]);
-    if (!uid) { await ctx.replyWithHTML("Uso: <code>/removepago 123456789</code>"); return; }
-    const existed = PAID_USERS.delete(uid);
-    try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(
-      existed
-        ? `🗑 <b>Usuário BLACK removido</b>\nID: <code>${uid}</code>\nTotal: <b>${PAID_USERS.size}</b>`
-        : `⚠️ ID <code>${uid}</code> não estava na lista BLACK.`
-    );
-  });
-
-  // /listpagos — listar todos os usuários BLACK (admin only)
-  bot.command("listpagos", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    const list = [...PAID_USERS];
-    await ctx.replyWithHTML(
-      list.length === 0
-        ? `📋 <b>Usuários BLACK</b>\n\nNenhum usuário cadastrado.`
-        : `📋 <b>Usuários BLACK</b> (${list.length})\n\n` + list.map(id => `• <code>${id}</code>`).join("\n")
-    );
-  });
-
-  // /setbanner — troca o banner do /start em runtime (admin only)
+  // /setbanner
   bot.command("setbanner", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
     try { await ctx.deleteMessage(); } catch {}
     const url = ctx.message.text.split(" ").slice(1).join(" ").trim();
     if (!url) {
-      const current = BOT_BANNER_URL || "nenhum";
-      await ctx.replyWithHTML(
-        `🖼️ <b>Banner atual</b>\n\n` +
-        `<code>${current}</code>\n\n` +
-        `Para trocar, envie:\n<code>/setbanner https://exemplo.com/banner.gif</code>\n\n` +
-        `✅ Suporta: <b>jpg, png, gif, mp4, webm</b>`,
-        Markup.inlineKeyboard([[Markup.button.callback("🏠 Menu", "home")]])
-      );
+      await ctx.replyWithHTML(`🖼️ <b>Banner atual:</b> <code>${BOT_BANNER_URL || "nenhum"}</code>\n\nUso: <code>/setbanner https://...</code>`);
       return;
     }
     BOT_BANNER_URL = url;
-    const tipo = isAnimatedBanner(url) ? "🎞️ GIF/Vídeo" : "🖼️ Imagem estática";
-    await ctx.replyWithHTML(
-      `✅ <b>Banner atualizado!</b>\n\n` +
-      `Tipo: <b>${tipo}</b>\n` +
-      `URL: <code>${url}</code>\n\n` +
-      `O próximo <code>/start</code> já vai usar o novo banner.`,
-      Markup.inlineKeyboard([[Markup.button.callback("🏠 Testar agora", "home")]])
-    );
+    await ctx.replyWithHTML(`✅ <b>Banner atualizado!</b>\n<code>${url}</code>`);
   });
 
-  // /setperfil — troca a foto de perfil do bot (admin only)
-  bot.command("setperfil", async (ctx) => {
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) return;
-    try { await ctx.deleteMessage(); } catch {}
-    const url = ctx.message.text.split(" ").slice(1).join(" ").trim();
-    if (!url) {
-      await ctx.replyWithHTML(
-        `🤖 <b>Foto de perfil do bot</b>\n\n` +
-        `Envie a URL de uma imagem (jpg ou png):\n` +
-        `<code>/setperfil https://exemplo.com/avatar.jpg</code>\n\n` +
-        `⚠️ O Telegram só aceita <b>imagens estáticas</b> (jpg/png) como foto de perfil.\n` +
-        `Para foto animada, use o @BotFather.`
-      );
-      return;
-    }
-    try {
-      const imgRes = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
-      const buf = Buffer.from(await imgRes.arrayBuffer());
-      await bot.telegram.setMyPhoto({ source: buf } as any);
-      await ctx.replyWithHTML(
-        `✅ <b>Foto de perfil atualizada!</b>\n\n` +
-        `URL: <code>${url}</code>`
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await ctx.replyWithHTML(
-        `❌ <b>Falha ao atualizar foto de perfil</b>\n\n` +
-        `<code>${msg.slice(0, 200)}</code>\n\n` +
-        `Dica: Use uma URL direta de imagem <b>jpg/png</b>.\n` +
-        `Para foto animada (GIF), configure pelo @BotFather.`
-      );
-    }
-  });
-
-  // ── /start ────────────────────────────────────────────────────────────────
+  // ── /start ─────────────────────────────────────────────────────────────────
   bot.command("start", async (ctx) => {
-    resetSession(ctx.from.id);
     try { await ctx.deleteMessage(); } catch {}
     const from = ctx.from;
-    const chat = ctx.chat;
-    const paid = isPaid(from.id, from.username);
-
-    if (isAdmin(from.id, from.username)) {
-      void bot.telegram.setMyCommands(ADMIN_COMMANDS, {
-        scope: { type: "chat", chat_id: from.id },
-      }).catch(() => {});
-    }
-
-    // DM: require BLACK tier
-    if (chat.type === "private" && !paid) {
-      await sendBanner(ctx, buildUpgradeDMMsg(), buildUpgradeKeyboard());
-      return;
-    }
-
-    await sendBanner(ctx, buildHomeText(from), buildHomeKeyboard());
+    const name = from.username ? `@${from.username}` : (from.first_name ?? "operador");
+    pendingQueries.delete(from.id);
+    await sendBanner(ctx as any, buildHomeMsg(name, isAdmin(from.id, from.username)), buildMainKeyboard());
   });
-
-  // ── /consultar ───────────────────────────────────────────────────────────
-  bot.command("consultar", async (ctx) => {
-    resetSession(ctx.from.id);
-    try { await ctx.deleteMessage(); } catch {}
-    const from = ctx.from;
-    const chat = ctx.chat;
-    const paid = isPaid(from.id, from.username);
-
-    // DM: require BLACK tier
-    if (chat.type === "private" && !paid) {
-      await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
-      return;
-    }
-
-    const freeMode = !paid && chat.type !== "private";
-    await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard(freeMode));
-  });
-
-  // ── /cpf — opens CPF module selector (or direct query if args provided) ─────
-  bot.command("cpf", async (ctx) => {
-    try { await ctx.deleteMessage(); } catch {}
-    const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
-    const from = ctx.from;
-    const chat = ctx.chat;
-    const paid = isPaid(from.id, from.username);
-
-    if (args) {
-      // /cpf 12345678901 — direct CPF Full query
-      resetSession(from.id);
-      const freeMode = !paid && chat.type !== "private";
-      if (freeMode) {
-        const used = getFreeUsed(from.id);
-        if (used >= FREE_DAILY_LIMIT) { await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard()); return; }
-        trackFreeQuery(from.id);
-      }
-      const loadMsg = await ctx.replyWithHTML(`⏳ <b>Consultando CPF Full...</b>\n<code>${args}</code>`);
-      await executeQuery(ctx, "cpf", args, loadMsg.message_id);
-    } else {
-      // No args — show CPF module selector
-      resetSession(from.id);
-      const freeMode = !paid && chat.type !== "private";
-      const CPF_MENU_TEXT =
-        `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-        `┃\n` +
-        `┃ • MÓDULOS DE CPF\n` +
-        `┃ • SELECIONE O TIPO DE CONSULTA\n` +
-        `┠────────────────────────────\n` +
-        `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
-        `╰────────────────────────────╯`;
-      await ctx.replyWithHTML(CPF_MENU_TEXT, buildCpfModuleKeyboard(freeMode));
-    }
-  });
-
-  // ── /fotos — opens fotos sub-menu ─────────────────────────────────────────
-  bot.command("fotos", async (ctx) => {
-    try { await ctx.deleteMessage(); } catch {}
-    resetSession(ctx.from.id);
-    const FOTOS_MENU_TEXT =
-      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-      `┃\n` +
-      `┃ • 📸 FOTOS POR ESTADO\n` +
-      `┃ • SELECIONE O ESTADO DESEJADO\n` +
-      `┠────────────────────────────\n` +
-      `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
-      `╰────────────────────────────╯`;
-    await ctx.replyWithHTML(FOTOS_MENU_TEXT, buildFotosKeyboard());
-  });
-
-  // ── Direct tipo commands (non-CPF) ────────────────────────────────────────
-  const DIRECT_COMMANDS: { cmd: string; tipoId: TipoId; executor?: "skylers" }[] = [
-    { cmd: "nome",       tipoId: "nome" },
-    { cmd: "telefone",   tipoId: "telefone" },
-    { cmd: "email",      tipoId: "email" },
-    { cmd: "placa",      tipoId: "placa" },
-    { cmd: "cnpj",       tipoId: "cnpj" },
-    { cmd: "cep",        tipoId: "cep" },
-    { cmd: "pix",        tipoId: "pix" },
-    { cmd: "rg",         tipoId: "rg" },
-    { cmd: "cnh",        tipoId: "cnh" },
-    // Skylers direct commands
-    { cmd: "score",      tipoId: "score",      executor: "skylers" },
-    { cmd: "score2",     tipoId: "score2",     executor: "skylers" },
-    { cmd: "beneficios", tipoId: "beneficios", executor: "skylers" },
-    { cmd: "mandado",    tipoId: "mandado",    executor: "skylers" },
-    { cmd: "bens",       tipoId: "bens",       executor: "skylers" },
-    { cmd: "processos",  tipoId: "processos",  executor: "skylers" },
-    { cmd: "titulo",     tipoId: "titulo",     executor: "skylers" },
-  ];
-
-  for (const { cmd, tipoId, executor } of DIRECT_COMMANDS) {
-    bot.command(cmd, async (ctx) => {
-      const args = ctx.message.text.split(" ").slice(1).join(" ").trim();
-      const tipo = TIPOS.find((t) => t.id === tipoId)!;
-      try { await ctx.deleteMessage(); } catch {}
-      const from = ctx.from;
-      const chat = ctx.chat;
-      const paid = isPaid(from.id, from.username);
-
-      // Skylers-only commands require BLACK in DM
-      if (executor === "skylers" && chat.type === "private" && !paid) {
-        await ctx.replyWithHTML(buildUpgradeDMMsg(), buildUpgradeKeyboard());
-        return;
-      }
-
-      if (args) {
-        resetSession(from.id);
-        const freeMode = !paid && chat.type !== "private";
-        if (freeMode) {
-          const used = getFreeUsed(from.id);
-          if (used >= FREE_DAILY_LIMIT) { await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard()); return; }
-          if (!FREE_TIPOS.has(tipoId)) { await ctx.replyWithHTML(buildUpgradeTipoMsg(tipo.label), buildUpgradeKeyboard()); return; }
-          trackFreeQuery(from.id);
-        }
-        const loadMsg = await ctx.replyWithHTML(
-          `⏳ <b>Consultando ${tipo.label}...</b>\n<code>${args}</code>`
-        );
-        if (executor === "skylers" || SKYLERS_ONLY_TIPOS.has(tipoId)) {
-          await executeSkylersBotQuery(ctx, tipoId, args, loadMsg.message_id);
-        } else {
-          await executeQuery(ctx, tipoId, args, loadMsg.message_id);
-        }
-      } else {
-        const session = getSession(from.id);
-        session.state = "awaiting_query";
-        session.tipo = tipoId;
-        const promptMsg = await ctx.replyWithHTML(
-          buildQueryPrompt(tipoId),
-          Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home_new")]]),
-        );
-        session.promptMsgId = promptMsg.message_id;
-        session.promptChatId = promptMsg.chat.id;
-      }
-    });
-  }
 
   // ── /ajuda ────────────────────────────────────────────────────────────────
   bot.command("ajuda", async (ctx) => {
     try { await ctx.deleteMessage(); } catch {}
-    const admin = isAdmin(ctx.from.id, ctx.from.username);
-    const lines = [
-      `❓ <b>INFINITY SEARCH — AJUDA</b>`,
-      `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`,
-      ``,
-      `<b>📁 Menus interativos:</b>`,
-      `<code>/consultar</code> — central de consultas (todos os módulos)`,
-      `<code>/cpf</code> — seletor de módulos CPF (30+ tipos)`,
-      `<code>/fotos</code> — fotos por estado`,
-      ``,
-      `<b>🔍 Comandos diretos:</b>`,
-      `<code>/cpf 12345678901</code> — consulta CPF Full`,
-      `<code>/nome João Silva</code> — busca por nome`,
-      `<code>/telefone 11999887766</code>`,
-      `<code>/placa ABC1D23</code>`,
-      `<code>/cnpj 12345678000195</code>`,
-      `<code>/email addr@mail.com</code>`,
-      `<code>/cep 01310100</code>`,
-      `<code>/pix chave-pix</code>`,
-      `<code>/rg 123456789</code>`,
-      `<code>/cnh 12345678901</code>`,
-      ``,
-      `<b>💎 Módulos Skylers (BLACK):</b>`,
-      `<code>/score</code> · <code>/score2</code> · <code>/titulo</code>`,
-      `<code>/beneficios</code> · <code>/mandado</code> · <code>/bens</code>`,
-      `<code>/processos</code>`,
-      ``,
-      `<b>🌐 Bases de dados:</b>`,
-      `∞ <b>Infinity Search</b> — OSINT completo`,
-      `🔵 <b>Skylers</b> — módulos exclusivos BLACK`,
-      ``,
-      `<b>🔑 Acesso:</b>`,
-      `Membros do canal têm acesso automático.`,
-      `Grupos precisam ser liberados por um admin.`,
-    ];
-
-    if (admin) {
-      lines.push(``);
-      lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
-      lines.push(`👑 <b>COMANDOS DE ADMIN</b>`);
-      lines.push(``);
-      lines.push(`<code>/groupid</code> — ver ID do grupo/chat atual`);
-      lines.push(`<code>/liberar</code> — liberar bot neste grupo`);
-      lines.push(`<code>/bloquear</code> — bloquear bot neste grupo`);
-      lines.push(`<code>/channelid</code> — capturar ID do canal`);
-      lines.push(`<code>/addadmin 123456</code> — promover usuário por ID`);
-      lines.push(`<code>/addpago 123456</code> — adicionar usuário BLACK`);
-      lines.push(`<code>/removepago 123456</code> — remover usuário BLACK`);
-      lines.push(`<code>/listpagos</code> — listar usuários BLACK`);
-      lines.push(`<code>/status_bot</code> — status de grupos e usuários`);
-      lines.push(``);
-      lines.push(`<b>🖼️ Personalização:</b>`);
-      lines.push(`<code>/setbanner &lt;url&gt;</code> — trocar banner do /start`);
-      lines.push(`  ✅ Suporta: gif · mp4 · webm · jpg · png`);
-      lines.push(`<code>/setperfil &lt;url&gt;</code> — trocar foto de perfil do bot`);
-      lines.push(`  ✅ Suporta: jpg · png (GIF animado → @BotFather)`);
-    }
-
-    lines.push(``);
-    lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
-    lines.push(`<i>Resultados entregues em arquivo .txt formatado</i>`);
-
-    await ctx.replyWithHTML(lines.join("\n"),
-      Markup.inlineKeyboard([
-        [Markup.button.callback("🪪 Módulos CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
-        [Markup.button.callback("🔍 Consultar Agora", "consultar")],
-        [Markup.button.url("💬 Suporte @Blxckxyz", SUPPORT_URL), Markup.button.url("💬 @xxmathexx", SUPPORT_URL2)] as any,
-      ]),
-    );
+    await ctx.replyWithHTML(buildHelpMsg(), Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "home")]]));
   });
 
-  // ── Callback: admin_liberar (from /groupid button) ───────────────────────
-  bot.action("admin_liberar", async (ctx) => {
-    await ctx.answerCbQuery();
-    const from = ctx.from;
-    if (!from || !isAdmin(from.id, from.username)) {
-      await ctx.answerCbQuery("❌ Apenas admins podem liberar grupos.");
+  // ── Direct query commands ──────────────────────────────────────────────────
+  async function handleDirectCommand(
+    ctx: any,
+    tipo: string,
+  ): Promise<void> {
+    try { await ctx.deleteMessage(); } catch {}
+    const text: string = ctx.message?.text ?? "";
+    const args = text.split(" ").slice(1).join(" ").trim();
+
+    if (!args) {
+      const tipoInfo = TIPO_MAP.get(tipo)!;
+      const promptMsg = await ctx.replyWithHTML(buildPromptMsg(tipoInfo), Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "cancel")]]));
+      pendingQueries.set(ctx.from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat.id });
       return;
     }
-    const chat = ctx.chat;
-    if (!chat || chat.type === "private") return;
-    authorizedGroups.add(chat.id);
-    await ctx.editMessageText(
-      `✅ <b>Grupo liberado!</b>\n\nID: <code>${chat.id}</code>\nO bot está ativo neste grupo.`,
-      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "consultar")]]) }
-    );
-  });
 
-  // ── Callback: noop (separator buttons — just close the toast) ────────────
-  bot.action("noop", async (ctx) => { await ctx.answerCbQuery(); });
+    const tipoInfo = TIPO_MAP.get(tipo)!;
+    const loadMsg = await ctx.replyWithHTML(buildLoadingMsg(tipoInfo, args));
+    await executeAndSend(bot.telegram, ctx.chat.id, tipo, args, loadMsg.message_id);
+  }
 
-  // ── Callback: home ────────────────────────────────────────────────────────
+  bot.command("cpf",      ctx => handleDirectCommand(ctx, "cpf"));
+  bot.command("cnpj",     ctx => handleDirectCommand(ctx, "cnpj"));
+  bot.command("nome",     ctx => handleDirectCommand(ctx, "nome"));
+  bot.command("telefone", ctx => handleDirectCommand(ctx, "telefone"));
+  bot.command("placa",    ctx => handleDirectCommand(ctx, "placa"));
+  bot.command("bin",      ctx => handleDirectCommand(ctx, "bin"));
+  bot.command("ip",       ctx => handleDirectCommand(ctx, "ip"));
+
+  // ── Callback actions ───────────────────────────────────────────────────────
   bot.action("home", async (ctx) => {
     await ctx.answerCbQuery();
-    resetSession(ctx.from.id);
-    await ctx.editMessageText(buildHomeText(ctx.from), { parse_mode: "HTML", ...buildHomeKeyboard() });
+    const from = ctx.from!;
+    pendingQueries.delete(from.id);
+    const name = from.username ? `@${from.username}` : (from.first_name ?? "operador");
+    await ctx.replyWithHTML(buildHomeMsg(name, isAdmin(from.id, from.username)), buildMainKeyboard());
   });
 
-  bot.action("home_new", async (ctx) => {
+  bot.action("show_help", async (ctx) => {
     await ctx.answerCbQuery();
-    resetSession(ctx.from.id);
-    await ctx.replyWithHTML(buildHomeText(ctx.from), buildHomeKeyboard());
+    await ctx.replyWithHTML(buildHelpMsg(), Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "home")]]));
   });
 
-  // ── Callback: consultar (open tipo list) ──────────────────────────────────
-  bot.action("consultar", async (ctx) => {
-    await ctx.answerCbQuery();
-    resetSession(ctx.from.id);
-    try {
-      await ctx.editMessageText(TIPO_MENU_TEXT, { parse_mode: "HTML", ...buildTiposKeyboard() });
-    } catch {
-      await ctx.replyWithHTML(TIPO_MENU_TEXT, buildTiposKeyboard());
-    }
+  bot.action("cancel", async (ctx) => {
+    await ctx.answerCbQuery("Cancelado");
+    const from = ctx.from!;
+    pendingQueries.delete(from.id);
+    try { await ctx.deleteMessage(); } catch {}
   });
 
-  // ── Callback: cpf_menu ────────────────────────────────────────────────────
-  bot.action("cpf_menu", async (ctx) => {
+  // q:<tipo> — interactive query selector
+  bot.action(/^q:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
-    resetSession(ctx.from.id);
+    const tipo = (ctx.match as RegExpMatchArray)[1];
+    const tipoInfo = TIPO_MAP.get(tipo);
+    if (!tipoInfo) return;
+    const from = ctx.from!;
+    pendingQueries.delete(from.id);
+    const promptMsg = await ctx.replyWithHTML(
+      buildPromptMsg(tipoInfo),
+      Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "cancel")]]),
+    );
+    pendingQueries.set(from.id, { tipo, promptMsgId: promptMsg.message_id, chatId: ctx.chat!.id });
+  });
+
+  // ── Text message handler: capture pending query input ─────────────────────
+  bot.on("text", async (ctx) => {
     const from = ctx.from;
-    const chat = ctx.chat;
-    const paid = isPaid(from.id, from.username);
-    const freeMode = !paid && chat?.type !== "private";
-    const CPF_MENU_TEXT =
-      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-      `┃\n` +
-      `┃ • MÓDULOS DE CPF\n` +
-      `┃ • SELECIONE O TIPO DE CONSULTA\n` +
-      `┠────────────────────────────\n` +
-      `┃ SELECIONE UMA OPÇÃO ABAIXO 👇🏻\n` +
-      `╰────────────────────────────╯`;
-    try {
-      await ctx.editMessageText(CPF_MENU_TEXT, { parse_mode: "HTML", ...buildCpfModuleKeyboard(freeMode) });
-    } catch {
-      await ctx.replyWithHTML(CPF_MENU_TEXT, buildCpfModuleKeyboard(freeMode));
-    }
-  });
-
-  // ── Callback: fotos_menu ──────────────────────────────────────────────────
-  bot.action("fotos_menu", async (ctx) => {
-    await ctx.answerCbQuery();
-    resetSession(ctx.from.id);
-    const FOTOS_MENU_TEXT =
-      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-      `┃\n` +
-      `┃ • 📸 FOTOS POR ESTADO\n` +
-      `┃ • CPF DE QUALQUER ESTADO — SKYLERS\n` +
-      `┠────────────────────────────\n` +
-      `┃ SELECIONE O ESTADO ABAIXO 👇🏻\n` +
-      `╰────────────────────────────╯`;
-    try {
-      await ctx.editMessageText(FOTOS_MENU_TEXT, { parse_mode: "HTML", ...buildFotosKeyboard() });
-    } catch {
-      await ctx.replyWithHTML(FOTOS_MENU_TEXT, buildFotosKeyboard());
-    }
-  });
-
-  // ── Callback: show ajuda ──────────────────────────────────────────────────
-  bot.action("show_ajuda", async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.replyWithHTML([
-      `❓ <b>Comandos rápidos:</b>`,
-      `<code>/cpf</code> — seletor de módulos CPF`,
-      `<code>/cpf 12345678901</code> — CPF Full direto`,
-      `<code>/fotos</code> — fotos por estado`,
-      `<code>/score</code> · <code>/beneficios</code> · <code>/mandado</code>`,
-      `<code>/bens</code> · <code>/processos</code> · <code>/titulo</code>`,
-      `<code>/telefone</code> · <code>/placa</code> · <code>/cnpj</code>`,
-      `<code>/email</code> · <code>/cep</code> · <code>/pix</code> · <code>/rg</code> · <code>/nome</code>`,
-      ``,
-      `<b>Acesso:</b> entre no canal para usar o bot.`,
-    ].join("\n"),
-      Markup.inlineKeyboard([
-        [Markup.button.callback("🪪 Módulos CPF", "cpf_menu"), Markup.button.callback("📸 FOTOS", "fotos_menu")],
-        [Markup.button.callback("🔍 Consultar", "consultar")],
-        [Markup.button.url("📢 Canal de Acesso", CHANNEL_INVITE)] as any,
-        [Markup.button.url("📣 Canal de Avisos", CHANNEL2_INVITE)] as any,
-      ]),
-    );
-  });
-
-  // ── Callback: suporte ─────────────────────────────────────────────────────
-  bot.action("show_suporte", async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.editMessageText(
-      `╭──── ᯽ <b>INFINITY SEARCH</b> ᯽ ───────╮\n` +
-      `┃\n` +
-      `┃ • SUPORTE DISPONÍVEL\n` +
-      `┠────────────────────────────\n` +
-      `┃ Escolha um dos admins abaixo 👇🏻\n` +
-      `╰────────────────────────────╯`,
-      { parse_mode: "HTML", ...buildSupportKeyboard() },
-    );
-  });
-
-  // ── Callback: tipo selection ───────────────────────────────────────────────
-  bot.action(/^tipo:(.+)$/, async (ctx) => {
-    await ctx.answerCbQuery();
-    const tipoId = ctx.match[1];
-    const tipo = TIPOS.find((t) => t.id === tipoId);
-    if (!tipo) return;
-    const from = ctx.from;
-    const chat = ctx.chat;
-    const paid = isPaid(from.id, from.username);
-
-    // In groups: check if tipo is free
-    if (chat?.type !== "private" && !paid && !FREE_TIPOS.has(tipoId)) {
-      await ctx.editMessageText(
-        buildUpgradeTipoMsg(tipo.label),
-        { parse_mode: "HTML", ...buildUpgradeKeyboard() }
-      );
-      return;
-    }
-
-    const session = getSession(from.id);
-    session.state = "awaiting_query";
-    session.tipo = tipoId;
-
-    // The prompt replaces the current keyboard message (via editMessageText).
-    // Store the message ID so we can delete it after the user sends their input.
-    const promptChatId = ctx.callbackQuery.message?.chat.id ?? chat?.id;
-    const promptMsgId = ctx.callbackQuery.message?.message_id;
-    session.promptMsgId = promptMsgId;
-    session.promptChatId = promptChatId;
-
-    await ctx.editMessageText(
-      buildQueryPrompt(tipoId),
-      { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.callback("❌ Cancelar", "home")]]) }
-    );
-  });
-
-  // ── Callback: delete message ───────────────────────────────────────────────
-  bot.action(/^del:(-?\d+):(\d+)$/, async (ctx) => {
-    await ctx.answerCbQuery("Mensagem apagada");
-    const chatId = parseInt(ctx.match[1]);
-    const msgId = parseInt(ctx.match[2]);
-    await ctx.telegram.deleteMessage(chatId, msgId).catch(() => {});
-  });
-
-  // ── Text handler — only active during awaiting_query flow ─────────────────
-  bot.on(message("text"), async (ctx) => {
-    // Ignore commands (handled above)
-    if (ctx.message.text.startsWith("/")) return;
-
-    const session = getSession(ctx.from.id);
-
-    // Only respond when waiting for query data — ignore all other text silently
-    if (session.state !== "awaiting_query" || !session.tipo) {
-      return;
-    }
+    const pending = pendingQueries.get(from.id);
+    if (!pending || pending.chatId !== ctx.chat.id) return;
 
     const dados = ctx.message.text.trim();
-    const tipo = session.tipo;
+    if (!dados || dados.startsWith("/")) return;
 
-    // Delete the user's input message (cleans up the chat)
+    pendingQueries.delete(from.id);
+
+    // Delete user's message
     try { await ctx.deleteMessage(); } catch {}
 
-    // Delete the prompt message (the "DIGITE O CPF..." message with ❌ Cancelar button)
-    const { promptMsgId, promptChatId } = session;
-    if (promptMsgId && promptChatId) {
-      try { await ctx.telegram.deleteMessage(promptChatId, promptMsgId); } catch {}
-    }
+    // Edit the prompt message to loading state
+    const tipoInfo = TIPO_MAP.get(pending.tipo)!;
+    const loadMsg = await ctx.replyWithHTML(buildLoadingMsg(tipoInfo, dados));
 
-    const fromId = ctx.from.id;
-    const chat = ctx.chat;
-    const paid = isPaid(fromId, ctx.from.username);
-    const freeMode = !paid && chat.type !== "private";
+    // Delete the old prompt
+    try { await bot.telegram.deleteMessage(pending.chatId, pending.promptMsgId); } catch {}
 
-    // Free users in groups: check daily limit before executing
-    if (freeMode) {
-      const used = getFreeUsed(fromId);
-      if (used >= FREE_DAILY_LIMIT) {
-        await ctx.replyWithHTML(buildUpgradeLimitMsg(used), buildUpgradeKeyboard());
-        return;
-      }
-    }
-
-    resetSession(fromId);
-    if (freeMode) trackFreeQuery(fromId);
-
-    const tipoObj = TIPOS.find((t) => t.id === tipo);
-
-    if (SKYLERS_ONLY_TIPOS.has(tipo)) {
-      const loadMsg = await ctx.replyWithHTML(
-        `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()} via Skylers...</b>\n<code>${dados}</code>`
-      );
-      await executeSkylersBotQuery(ctx, tipo, dados, loadMsg.message_id);
-    } else {
-      const loadMsg = await ctx.replyWithHTML(
-        `⏳ <b>Consultando ${tipoObj?.label ?? tipo.toUpperCase()}...</b>\n<code>${dados}</code>`
-      );
-      await executeQuery(ctx, tipo, dados, loadMsg.message_id);
-    }
-  });
-
-  // ── Listen for chat_member updates (auto-verify on channel join) ───────────
-  bot.on("chat_member", async (ctx) => {
-    const update = ctx.update.chat_member;
-    if (!update) return;
-    // If this update is from our channel, and user became a member
-    if (CHANNEL_ID && update.chat.id === CHANNEL_ID) {
-      const newStatus = update.new_chat_member.status;
-      const userId = update.new_chat_member.user.id;
-      if (["member", "administrator", "creator"].includes(newStatus)) {
-        verifiedUsers.add(userId);
-      } else {
-        // Left/kicked → remove from verified
-        verifiedUsers.delete(userId);
-      }
-    }
+    await executeAndSend(bot.telegram, ctx.chat.id, pending.tipo, dados, loadMsg.message_id);
   });
 
   // ── Launch ────────────────────────────────────────────────────────────────
-  bot.launch({ allowedUpdates: ["message", "callback_query", "chat_member", "my_chat_member"] }, () => {
-    console.log("🌐 Infinity Search Bot iniciado com sucesso!");
-  }).catch((err: unknown) => {
-    const msg = String((err as Error)?.message ?? err);
-    if (msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other")) {
-      console.warn("⚠️  InfinityBot: outra instância já está ativa.");
-    } else {
-      console.error("[InfinityBot] Erro ao iniciar:", err);
-    }
-  });
+  bot.launch({ allowedUpdates: ["message", "callback_query", "my_chat_member"] })
+    .catch(err => console.error("[InfinityBot] launch error:", err));
 
-  process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  process.once("SIGINT",  () => bot.stop("SIGINT"));
+
+  console.log("[InfinityBot] Bot iniciado com sucesso ✅");
 }

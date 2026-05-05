@@ -37,6 +37,7 @@ interface Notification {
   id: string;
   title: string;
   body: string;
+  imageUrl?: string;
   createdAt: string;
   authorName: string;
 }
@@ -2384,13 +2385,14 @@ router.get("/notifications", requireAuth, (_req, res) => {
 router.post("/notifications", requireAuth, (req, res) => {
   const user = req.infinityUser;
   if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem enviar novidades" }); return; }
-  const { title, body } = req.body as { title?: string; body?: string };
+  const { title, body, imageUrl } = req.body as { title?: string; body?: string; imageUrl?: string };
   if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e mensagem são obrigatórios" }); return; }
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, c => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#039;": "'" }[c] ?? c));
   const notif: Notification = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     title: stripHtml(title.trim()).slice(0, 120),
     body: stripHtml(body.trim()).slice(0, 1000),
+    imageUrl: imageUrl?.trim() || undefined,
     createdAt: new Date().toISOString(),
     authorName: user.username,
   };
