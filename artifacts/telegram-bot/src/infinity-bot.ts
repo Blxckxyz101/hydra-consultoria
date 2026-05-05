@@ -5,7 +5,7 @@ const GEASS_API_BASE     = "http://149.56.18.68:25584/api/consulta";
 const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL        = "https://t.me/Blxckxyz";
 const SUPPORT_URL2       = "https://t.me/xxmathexx";
-const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? `https://${process.env.REPLIT_DOMAINS?.split(",")[0] ?? ""}`;
+const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? "https://infinitysearch.pro";
 
 const LINE  = "═".repeat(44);
 const LINE2 = "─".repeat(44);
@@ -20,11 +20,22 @@ let   CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
 
 const MIN_GROUP_MEMBERS = 500;
 
+// ── Free groups — bypass size check ───────────────────────────────────────────
+// Env: INFINITY_FREE_GROUPS = comma-separated @usernames or numeric IDs
+const FREE_GROUP_ENTRIES = (process.env.INFINITY_FREE_GROUPS ?? "")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
 // ── Access control ─────────────────────────────────────────────────────────────
 const ADMIN_USERNAMES  = new Set<string>(["blxckxyz", "xxmathexx", "pianco"]);
 const ADMIN_IDS        = new Set<number>();
 const verifiedUsers    = new Set<number>();
 const authorizedGroups = new Set<number>();
+
+// Pre-authorize numeric IDs from env immediately
+for (const entry of FREE_GROUP_ENTRIES) {
+  const n = Number(entry);
+  if (!isNaN(n) && n !== 0) authorizedGroups.add(n);
+}
 
 function isAdmin(userId: number, username?: string): boolean {
   if (ADMIN_IDS.has(userId)) return true;
@@ -790,6 +801,18 @@ export function startInfinityBot(): void {
     botUsername = me.username ?? "";
     console.log(`[InfinityBot] Username: @${botUsername}`);
   }).catch(() => {});
+
+  // Resolve @username entries in INFINITY_FREE_GROUPS
+  for (const entry of FREE_GROUP_ENTRIES) {
+    if (entry.startsWith("@")) {
+      bot.telegram.getChat(entry).then(chat => {
+        authorizedGroups.add(chat.id);
+        console.log(`[InfinityBot] Grupo free pré-autorizado: ${entry} → ${chat.id}`);
+      }).catch(e => {
+        console.warn(`[InfinityBot] Não foi possível resolver grupo free "${entry}": ${e instanceof Error ? e.message : e}`);
+      });
+    }
+  }
 
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
   process.once("SIGINT",  () => bot.stop("SIGINT"));
