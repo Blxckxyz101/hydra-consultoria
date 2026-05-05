@@ -156,7 +156,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   crlvmtfoto:   "iseek-fotos---crlvmt",
 };
 
-const DAILY_RATE_LIMIT = 350;
+const DAILY_RATE_LIMIT = 2000;
 const PER_USER_DAILY_LIMIT = 100;
 
 let _globalDailyCache: { date: string; count: number } = { date: "", count: 0 };

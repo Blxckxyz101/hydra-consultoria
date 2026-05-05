@@ -197,13 +197,25 @@ export default function Overview() {
 
   const rateLimitPct = data.rateLimitMax > 0 ? (data.rateLimitHoje / data.rateLimitMax) * 100 : 0;
   const rateLimitColor = rateLimitPct >= 90 ? "text-rose-300" : rateLimitPct >= 70 ? "text-amber-300" : "text-emerald-300";
+  const mySuccessRate = data.recentes.length > 0
+    ? Math.round((data.recentes.filter((r) => r.success).length / data.recentes.length) * 100)
+    : 0;
 
-  const statCards = [
-    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
+  const adminStatCards = [
+    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "minhas consultas", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
     { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300", glowColor: "rgba(167,139,250,0.35)" },
     { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)" },
-    { label: "Operadores", value: data.usuariosAtivos, icon: Users, hint: "contas ativas", color: "from-amber-500/30 to-orange-400/10", iconColor: "text-amber-300", glowColor: "rgba(251,191,36,0.35)" },
+    { label: "Operadores Ativos", value: data.usuariosAtivos, icon: Users, hint: "contas na plataforma", color: "from-amber-500/30 to-orange-400/10", iconColor: "text-amber-300", glowColor: "rgba(251,191,36,0.35)" },
   ];
+
+  const clientStatCards = [
+    { label: "Minhas Consultas", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
+    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300", glowColor: "rgba(167,139,250,0.35)" },
+    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)" },
+    { label: "Taxa de Sucesso", value: mySuccessRate, icon: TrendingUp, hint: "no período selecionado", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)", suffix: "%" },
+  ];
+
+  const statCards = isAdmin ? adminStatCards : clientStatCards;
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -351,7 +363,7 @@ export default function Overview() {
             <div className="relative flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-[9px] sm:text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2 truncate">{stat.label}</p>
-                <p className="text-2xl sm:text-3xl font-bold">{stat.value.toLocaleString("pt-BR")}</p>
+                <p className="text-2xl sm:text-3xl font-bold">{stat.value.toLocaleString("pt-BR")}{(stat as { suffix?: string }).suffix ?? ""}</p>
                 <p className="text-[10px] text-muted-foreground/70 mt-1">{stat.hint}</p>
               </div>
               <div className={`w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center ${stat.iconColor} group-hover:scale-110 group-hover:border-white/20 transition-all duration-200`}>
@@ -362,34 +374,37 @@ export default function Overview() {
         ))}
       </div>
 
-      {/* Rate limit bar */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.25 }}
-        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-4 sm:p-5"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Gauge className="w-4 h-4 text-primary" />
-            <span className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Cota Diária Global</span>
+      {/* Rate limit bar — admin only */}
+      {isAdmin && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-4 sm:p-5"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-primary" />
+              <span className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Cota Diária Global</span>
+              <span className="text-[9px] uppercase tracking-widest text-muted-foreground bg-white/5 border border-white/10 px-2 py-0.5 rounded-md">Admin</span>
+            </div>
+            <span className={`text-sm font-bold ${rateLimitColor}`}>
+              {data.rateLimitHoje.toLocaleString("pt-BR")} <span className="text-muted-foreground font-normal text-xs">/ {data.rateLimitMax.toLocaleString("pt-BR")}</span>
+            </span>
           </div>
-          <span className={`text-sm font-bold ${rateLimitColor}`}>
-            {data.rateLimitHoje} <span className="text-muted-foreground font-normal text-xs">/ {data.rateLimitMax}</span>
-          </span>
-        </div>
-        <div className="h-2 rounded-full bg-white/5 overflow-hidden">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.min(rateLimitPct, 100)}%` }}
-            transition={{ duration: 1, ease: "easeOut" }}
-            className={`h-full rounded-full ${rateLimitPct >= 90 ? "bg-rose-400" : rateLimitPct >= 70 ? "bg-amber-400" : "bg-emerald-400"}`}
-          />
-        </div>
-        <p className="text-[10px] text-muted-foreground/60 mt-2">
-          {data.rateLimitMax - data.rateLimitHoje} consultas restantes hoje · Reinicia à meia-noite
-        </p>
-      </motion.div>
+          <div className="h-2 rounded-full bg-white/5 overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.min(rateLimitPct, 100)}%` }}
+              transition={{ duration: 1, ease: "easeOut" }}
+              className={`h-full rounded-full ${rateLimitPct >= 90 ? "bg-rose-400" : rateLimitPct >= 70 ? "bg-amber-400" : "bg-emerald-400"}`}
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 mt-2">
+            {(data.rateLimitMax - data.rateLimitHoje).toLocaleString("pt-BR")} consultas restantes hoje · Reinicia à meia-noite
+          </p>
+        </motion.div>
+      )}
 
       {/* Heatmap with period filter */}
       <motion.div
@@ -400,7 +415,7 @@ export default function Overview() {
       >
         <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
           <div>
-            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-foreground">Atividade · {period} dias</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-foreground">{isAdmin ? "Atividade da Plataforma" : "Minha Atividade"} · {period} dias</h2>
             <p className="text-[10px] text-muted-foreground mt-1">Cada quadrado é um dia. Mais escuro = mais consultas.</p>
           </div>
           <div className="flex items-center gap-2">
@@ -582,7 +597,7 @@ export default function Overview() {
         className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
       >
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.3em]">Atividade Recente</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.3em]">{isAdmin ? "Atividade Recente" : "Minhas Consultas Recentes"}</h2>
           <Link href="/consultas" className="text-[10px] uppercase tracking-widest text-primary hover:text-primary/80 flex items-center gap-1">
             Ver todas <ArrowUpRight className="w-3 h-3" />
           </Link>
@@ -591,7 +606,7 @@ export default function Overview() {
           <div className="text-xs text-muted-foreground text-center py-8">Nenhuma consulta registrada ainda.</div>
         ) : (
           <div className="space-y-2">
-            {data.recentes.slice(0, 10).map((item, i) => (
+            {data.recentes.slice(0, isAdmin ? 10 : 8).map((item, i) => (
               <motion.div
                 key={item.id}
                 initial={{ opacity: 0, x: -10 }}
@@ -606,7 +621,9 @@ export default function Overview() {
                   <div className="min-w-0">
                     <div className="font-mono text-sm truncate">{item.query}</div>
                     <div className="text-[10px] text-muted-foreground uppercase tracking-widest">
-                      {item.username} · {new Date(item.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      {isAdmin && <span>{item.username} · </span>}
+                      {new Date(item.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      {!isAdmin && <span className="ml-1 text-primary/50 font-semibold">{TIPO_LABEL[item.tipo] ?? item.tipo}</span>}
                     </div>
                   </div>
                 </div>
