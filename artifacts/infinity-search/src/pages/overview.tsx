@@ -45,7 +45,7 @@ const TIPO_LABEL: Record<string, string> = {
 };
 
 const TIPO_GRADIENT: Record<string, string> = {
-  cpf: "from-sky-400 to-cyan-300",
+  cpf: "from-primary to-primary",
   cnpj: "from-violet-400 to-fuchsia-300",
   telefone: "from-emerald-400 to-teal-300",
   sipni: "from-amber-400 to-orange-300",
@@ -202,17 +202,17 @@ export default function Overview() {
     : 0;
 
   const adminStatCards = [
-    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "minhas consultas", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
-    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300", glowColor: "rgba(167,139,250,0.35)" },
-    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)" },
-    { label: "Operadores Ativos", value: data.usuariosAtivos, icon: Users, hint: "contas na plataforma", color: "from-amber-500/30 to-orange-400/10", iconColor: "text-amber-300", glowColor: "rgba(251,191,36,0.35)" },
+    { label: "Consultas Totais", value: data.totalConsultas, icon: Activity, hint: "minhas consultas", chartVar: "--color-chart-1" },
+    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", chartVar: "--color-chart-2" },
+    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", chartVar: "--color-chart-4" },
+    { label: "Operadores Ativos", value: data.usuariosAtivos, icon: Users, hint: "contas na plataforma", chartVar: "--color-chart-5" },
   ];
 
   const clientStatCards = [
-    { label: "Minhas Consultas", value: data.totalConsultas, icon: Activity, hint: "histórico completo", color: "from-sky-500/30 to-cyan-400/10", iconColor: "text-sky-300", glowColor: "rgba(56,189,248,0.35)" },
-    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", color: "from-violet-500/30 to-fuchsia-400/10", iconColor: "text-violet-300", glowColor: "rgba(167,139,250,0.35)" },
-    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)" },
-    { label: "Taxa de Sucesso", value: mySuccessRate, icon: TrendingUp, hint: "no período selecionado", color: "from-emerald-500/30 to-teal-400/10", iconColor: "text-emerald-300", glowColor: "rgba(52,211,153,0.35)", suffix: "%" },
+    { label: "Minhas Consultas", value: data.totalConsultas, icon: Activity, hint: "histórico completo", chartVar: "--color-chart-1" },
+    { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", chartVar: "--color-chart-2" },
+    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", chartVar: "--color-chart-4" },
+    { label: "Taxa de Sucesso", value: mySuccessRate, icon: TrendingUp, hint: "no período selecionado", chartVar: "--color-chart-3", suffix: "%" },
   ];
 
   const statCards = isAdmin ? adminStatCards : clientStatCards;
@@ -223,18 +223,23 @@ export default function Overview() {
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-sky-500/15 via-cyan-400/5 to-violet-500/10 backdrop-blur-2xl"
+        className="relative overflow-hidden rounded-3xl backdrop-blur-2xl"
+        style={{
+          border: "1px solid color-mix(in srgb, var(--color-primary) 22%, transparent)",
+          background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 10%, transparent) 0%, color-mix(in srgb, var(--color-chart-2) 5%, transparent) 100%)",
+        }}
       >
         <div className="relative h-32 sm:h-40 w-full overflow-hidden rounded-t-3xl">
           {profileBanner ? (
             <img src={profileBanner} alt="banner" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full bg-gradient-to-r from-sky-600/40 via-cyan-500/30 to-violet-600/40" />
+            <div className="w-full h-full" style={{ background: "linear-gradient(to right, color-mix(in srgb, var(--color-primary) 35%, transparent), color-mix(in srgb, var(--color-chart-2) 25%, transparent), color-mix(in srgb, var(--color-primary) 30%, transparent))" }} />
           )}
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60" />
           <motion.div
             aria-hidden
-            className="absolute -top-10 -right-10 w-56 h-56 rounded-full bg-sky-400/25 blur-3xl"
+            className="absolute -top-10 -right-10 w-56 h-56 rounded-full blur-3xl"
+            style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)" }}
             animate={{ scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] }}
             transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
           />
@@ -242,7 +247,11 @@ export default function Overview() {
 
         <div className="relative px-6 sm:px-10 -mt-10 mb-2 flex items-end gap-4">
           <div className="relative shrink-0">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-[#06091a] overflow-hidden bg-gradient-to-br from-sky-500 to-cyan-400 flex items-center justify-center text-black font-bold text-2xl shadow-[0_0_30px_rgba(56,189,248,0.4)]">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-[#06091a] overflow-hidden flex items-center justify-center text-black font-bold text-2xl"
+              style={{
+                background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, var(--color-chart-2)))",
+                boxShadow: "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)",
+              }}>
               {profilePhoto ? (
                 <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" />
               ) : (
@@ -267,7 +276,7 @@ export default function Overview() {
                 <Sparkles className="w-3 h-3" /> Centro de Comando
               </div>
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">
-                {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.displayName ?? me?.username ?? "operador"}</span>
+                {greet}, <span style={{ background: "linear-gradient(to right, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, var(--color-chart-2)))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>{me?.displayName ?? me?.username ?? "operador"}</span>
               </h1>
               <p className="mt-2 text-sm sm:text-base text-muted-foreground max-w-xl">
                 {data.consultasHoje > 0
@@ -283,7 +292,13 @@ export default function Overview() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link
                   href="/consultas"
-                  className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-400 to-cyan-300 text-black font-semibold text-xs uppercase tracking-widest shadow-[0_0_30px_rgba(56,189,248,0.4)] hover:shadow-[0_0_40px_rgba(56,189,248,0.7)] transition-all"
+                  className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-black font-semibold text-xs uppercase tracking-widest transition-all"
+                  style={{
+                    background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 75%, white))",
+                    boxShadow: "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)",
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 45px color-mix(in srgb, var(--color-primary) 65%, transparent)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)"; }}
                 >
                   Nova consulta <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                 </Link>
@@ -291,7 +306,7 @@ export default function Overview() {
                   href="/ia"
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-foreground text-xs uppercase tracking-widest hover:bg-white/10 transition-all"
                 >
-                  <Zap className="w-3.5 h-3.5 text-violet-300" /> Conversar com a IA
+                  <Zap className="w-3.5 h-3.5 text-primary" /> Conversar com a IA
                 </Link>
               </div>
             </div>
@@ -300,8 +315,8 @@ export default function Overview() {
               <div className="text-right">
                 <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-1">Tendência</div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-2xl font-bold text-emerald-300">{successRate}%</span>
-                  <TrendingUp className="w-4 h-4 text-emerald-300" />
+                  <span className="text-2xl font-bold text-primary">{successRate}%</span>
+                  <TrendingUp className="w-4 h-4 text-primary" />
                 </div>
                 <div className="text-[10px] text-muted-foreground">taxa de sucesso</div>
               </div>
@@ -310,11 +325,11 @@ export default function Overview() {
                   <AreaChart data={trend}>
                     <defs>
                       <linearGradient id="hero-spark" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity={0.7} />
-                        <stop offset="100%" stopColor="rgb(56,189,248)" stopOpacity={0} />
+                        <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.7} />
+                        <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <Area type="monotone" dataKey="v" stroke="rgb(56,189,248)" strokeWidth={2} fill="url(#hero-spark)" />
+                    <Area type="monotone" dataKey="v" stroke="var(--color-primary)" strokeWidth={2} fill="url(#hero-spark)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -346,27 +361,37 @@ export default function Overview() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 + idx * 0.07 }}
             whileHover={{ y: -4 }}
-            className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${stat.color} p-4 sm:p-5 backdrop-blur-xl transition-all duration-200 cursor-default`}
+            className="group relative overflow-hidden rounded-2xl p-4 sm:p-5 backdrop-blur-xl transition-all duration-200 cursor-default"
+            style={{
+              background: `linear-gradient(135deg, color-mix(in srgb, var(${stat.chartVar}) 18%, transparent) 0%, color-mix(in srgb, var(${stat.chartVar}) 5%, transparent) 100%)`,
+              border: `1px solid color-mix(in srgb, var(${stat.chartVar}) 22%, transparent)`,
+            }}
             onMouseEnter={e => {
-              (e.currentTarget as HTMLElement).style.boxShadow = `0 0 40px -8px ${stat.glowColor}, 0 4px 20px -4px ${stat.glowColor}`;
-              (e.currentTarget as HTMLElement).style.borderColor = `${stat.glowColor.replace("0.35", "0.5")}`;
+              const el = e.currentTarget as HTMLElement;
+              el.style.boxShadow = `0 0 40px -8px color-mix(in srgb, var(${stat.chartVar}) 45%, transparent), 0 4px 20px -4px color-mix(in srgb, var(${stat.chartVar}) 25%, transparent)`;
+              el.style.borderColor = `color-mix(in srgb, var(${stat.chartVar}) 45%, transparent)`;
             }}
             onMouseLeave={e => {
-              (e.currentTarget as HTMLElement).style.boxShadow = "";
-              (e.currentTarget as HTMLElement).style.borderColor = "";
+              const el = e.currentTarget as HTMLElement;
+              el.style.boxShadow = "";
+              el.style.borderColor = "";
             }}
           >
             <div className="absolute inset-0 bg-black/30" />
-            {/* Inner radial glow on hover */}
             <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none rounded-2xl"
-              style={{ background: `radial-gradient(ellipse at 50% 0%, ${stat.glowColor.replace("0.35","0.12")} 0%, transparent 70%)` }} />
+              style={{ background: `radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(${stat.chartVar}) 15%, transparent) 0%, transparent 70%)` }} />
             <div className="relative flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-[9px] sm:text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-2 truncate">{stat.label}</p>
                 <p className="text-2xl sm:text-3xl font-bold">{stat.value.toLocaleString("pt-BR")}{(stat as { suffix?: string }).suffix ?? ""}</p>
                 <p className="text-[10px] text-muted-foreground/70 mt-1">{stat.hint}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center ${stat.iconColor} group-hover:scale-110 group-hover:border-white/20 transition-all duration-200`}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-all duration-200"
+                style={{
+                  background: `color-mix(in srgb, var(${stat.chartVar}) 12%, transparent)`,
+                  border: `1px solid color-mix(in srgb, var(${stat.chartVar}) 25%, transparent)`,
+                  color: `var(${stat.chartVar})`,
+                }}>
                 <stat.icon className="w-5 h-5" />
               </div>
             </div>
@@ -437,7 +462,7 @@ export default function Overview() {
         <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-muted-foreground mb-3 justify-end">
           <span>menos</span>
           {[0, 0.25, 0.5, 0.75, 1].map((v, i) => (
-            <div key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `rgba(56,189,248,${0.1 + v * 0.6})` }} />
+            <div key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: `color-mix(in srgb, var(--color-primary) ${Math.round((0.1 + v * 0.6) * 100)}%, transparent)` }} />
           ))}
           <span>mais</span>
         </div>
@@ -451,9 +476,11 @@ export default function Overview() {
                 className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-sm cursor-help"
                 style={{
                   backgroundColor: d.count > 0
-                    ? `rgba(56,189,248,${0.2 + intensity * 0.7})`
+                    ? `color-mix(in srgb, var(--color-primary) ${Math.round(20 + intensity * 65)}%, transparent)`
                     : "rgba(255,255,255,0.04)",
-                  border: d.count > 0 ? "1px solid rgba(56,189,248,0.3)" : "1px solid rgba(255,255,255,0.04)",
+                  border: d.count > 0
+                    ? "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)"
+                    : "1px solid rgba(255,255,255,0.04)",
                 }}
                 title={`${d.date.toLocaleDateString("pt-BR")} — ${d.count} consulta${d.count === 1 ? "" : "s"}`}
               />
@@ -510,15 +537,15 @@ export default function Overview() {
               <BarChart data={trend}>
                 <defs>
                   <linearGradient id="bar-grad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="rgb(56,189,248)" stopOpacity={0.95} />
-                    <stop offset="100%" stopColor="rgb(139,92,246)" stopOpacity={0.6} />
+                    <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.95} />
+                    <stop offset="100%" stopColor="var(--color-chart-2)" stopOpacity={0.6} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="day" stroke="rgba(255,255,255,0.5)" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis stroke="rgba(255,255,255,0.5)" fontSize={10} tickLine={false} axisLine={false} />
                 <Tooltip
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                  contentStyle={{ backgroundColor: "rgba(10,15,25,0.95)", border: "1px solid rgba(56,189,248,0.3)", borderRadius: 12, backdropFilter: "blur(12px)" }}
+                  contentStyle={{ backgroundColor: "rgba(10,15,25,0.95)", border: "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)", borderRadius: 12, backdropFilter: "blur(12px)" }}
                 />
                 <Bar dataKey="v" name="Consultas" fill="url(#bar-grad)" radius={[8, 8, 0, 0]} />
               </BarChart>
@@ -565,7 +592,8 @@ export default function Overview() {
                   ) : (
                     <span className="text-xs font-bold text-muted-foreground w-6 text-center shrink-0">{i + 1}</span>
                   )}
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-500/40 to-cyan-400/20 border border-white/10 flex items-center justify-center text-xs font-bold shrink-0">
+                  <div className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-xs font-bold shrink-0"
+                    style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 35%, transparent), color-mix(in srgb, var(--color-primary) 12%, transparent))" }}>
                     {op.username[0]?.toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
