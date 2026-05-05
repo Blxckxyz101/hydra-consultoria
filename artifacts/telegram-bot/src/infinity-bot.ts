@@ -842,26 +842,11 @@ export function startInfinityBot(): void {
       // Admins bypass all checks
       if (isAdmin(from.id, from.username)) return next();
 
-      // Only process commands and callback queries — ignore plain text, joins, service messages
+      // Only process commands, callbacks and pending query responses — ignore everything else
       const hasCommand = "message" in ctx && (ctx as any).message?.text?.startsWith("/");
       const hasCallback = "callback_query" in ctx;
       const hasPending = "message" in ctx && getPending(from.id) !== null;
       if (!hasCommand && !hasCallback && !hasPending) return;
-
-      // Channel membership check
-      if (!verifiedUsers.has(from.id)) {
-        const ok = await checkChannelMembership(bot.telegram, from.id);
-        if (!ok) {
-          if (hasCommand) {
-            try { await ctx.deleteMessage(); } catch {}
-            await ctx.replyWithHTML(buildNotAuthorizedMsg(), buildNotAuthorizedKeyboard());
-          } else if (hasCallback) {
-            await (ctx as any).answerCbQuery("❌ Entre no canal de atualizações primeiro!", { show_alert: true });
-          }
-          return;
-        }
-        verifiedUsers.add(from.id);
-      }
     }
 
     return next();
