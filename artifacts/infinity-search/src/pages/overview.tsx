@@ -246,7 +246,7 @@ export default function Overview() {
                 <Sparkles className="w-3 h-3" /> Centro de Comando
               </div>
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">
-                {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.username ?? "operador"}</span>
+                {greet}, <span className="bg-gradient-to-r from-sky-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent">{me?.displayName ?? me?.username ?? "operador"}</span>
               </h1>
               <p className="mt-2 text-sm sm:text-base text-muted-foreground max-w-xl">
                 {data.consultasHoje > 0
@@ -300,6 +300,20 @@ export default function Overview() {
             </div>
           </div>
         </div>
+      </motion.div>
+
+      {/* Security notice */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className="flex items-start gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/8 backdrop-blur-xl px-4 py-3.5"
+      >
+        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-rose-300/90 leading-relaxed">
+          <span className="font-bold uppercase tracking-wide">Aviso importante — </span>
+          É estritamente proibido compartilhar o acesso da sua conta com terceiros. Qualquer identificação de uso indevido — incluindo compartilhamento de credenciais, acesso simultâneo de IPs distintos, uso de bots ou automações não autorizadas — resultará em medidas imediatas contra a conta.
+        </p>
       </motion.div>
 
       {/* Stat cards */}
