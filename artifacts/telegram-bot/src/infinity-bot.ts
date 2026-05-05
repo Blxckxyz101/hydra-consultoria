@@ -133,11 +133,11 @@ async function checkGroupAuthorization(
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 function buildStartKeyboard() {
-  const rows: any[] = [
+  return Markup.inlineKeyboard([
     [Markup.button.callback("🔍 Consultas", "menu_consultas"), Markup.button.callback("💬 Suporte", "menu_suporte")],
+    [Markup.button.callback("❓ Ajuda", "show_help")],
     [Markup.button.url("🖥️ Completo", PANEL_URL) as any],
-  ];
-  return Markup.inlineKeyboard(rows);
+  ]);
 }
 
 function buildConsultasKeyboard() {
@@ -749,6 +749,28 @@ export function startInfinityBot(): void {
   bot.action("menu_suporte", async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.replyWithHTML(buildSuporteMsg(), buildSuporteKeyboard());
+  });
+
+  bot.action("show_help", async (ctx) => {
+    await ctx.answerCbQuery();
+    const lines = [
+      HDR, "┃", "┃ • COMANDOS DISPONÍVEIS", DIV,
+      "┃ /cpf — Consultar CPF",
+      "┃ /cnpj — Consultar CNPJ",
+      "┃ /cep — Consultar CEP",
+      "┃ /nome — Busca por Nome",
+      "┃ /telefone — Consultar Telefone",
+      "┃ /placa — Consultar Placa",
+      "┃ /bin — Consultar BIN",
+      "┃ /ip — Localizar IP",
+      DIV,
+      "┃ 💡 Também use os botões em",
+      "┃ /start para consultar.",
+      FTR,
+    ];
+    await ctx.replyWithHTML(lines.join("\n"), Markup.inlineKeyboard([
+      [Markup.button.callback("🔍 Consultar", "menu_consultas"), Markup.button.callback("🏠 Início", "home")],
+    ]));
   });
 
   bot.action("cancel", async (ctx) => {
