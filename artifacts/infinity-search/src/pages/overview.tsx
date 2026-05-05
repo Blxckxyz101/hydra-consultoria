@@ -361,6 +361,67 @@ export default function Overview() {
         </div>
       </motion.div>
 
+      {/* Latest Updates — TOP of page */}
+      {latestNotifs.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.06 }}
+          className="rounded-2xl border backdrop-blur-2xl overflow-hidden"
+          style={{ borderColor: "color-mix(in srgb, var(--color-primary) 25%, transparent)", background: "color-mix(in srgb, var(--color-primary) 5%, rgba(0,0,0,0.35))" }}
+        >
+          <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: "color-mix(in srgb, var(--color-primary) 15%, transparent)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "color-mix(in srgb, var(--color-primary) 18%, transparent)" }}>
+                <Bell className="w-3.5 h-3.5" style={{ color: "var(--color-primary)" }} />
+              </div>
+              <span className="text-xs font-bold uppercase tracking-[0.3em]">Novidades da Plataforma</span>
+              <span className="text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded-full text-black animate-pulse" style={{ background: "var(--color-primary)" }}>
+                NOVO
+              </span>
+            </div>
+            <Link
+              href="/suporte"
+              className="text-[10px] uppercase tracking-widest flex items-center gap-1 hover:opacity-80 transition-opacity"
+              style={{ color: "var(--color-primary)" }}
+            >
+              Ver todas <ArrowUpRight className="w-3 h-3" />
+            </Link>
+          </div>
+
+          <div className="divide-y" style={{ borderColor: "color-mix(in srgb, var(--color-primary) 8%, transparent)" }}>
+            {latestNotifs.map((n, i) => (
+              <motion.div
+                key={n.id}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.08 + i * 0.05 }}
+                className="flex gap-3 px-5 py-3.5 hover:bg-white/[0.02] transition-colors"
+              >
+                {n.imageUrl ? (
+                  <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-white/10 mt-0.5">
+                    <img src={n.imageUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }} />
+                  </div>
+                ) : (
+                  <div className="shrink-0 w-12 h-12 rounded-lg flex items-center justify-center mt-0.5" style={{ background: "color-mix(in srgb, var(--color-primary) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 15%, transparent)" }}>
+                    <Sparkles className="w-5 h-5" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }} />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-semibold text-sm text-foreground leading-snug line-clamp-1">{n.title}</span>
+                    <span className="text-[9px] text-muted-foreground/50 shrink-0 whitespace-nowrap mt-0.5">
+                      {new Date(n.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mt-0.5">{n.body}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
       {/* Security notice */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
@@ -692,95 +753,6 @@ export default function Overview() {
           </div>
         )}
       </motion.div>
-
-      {/* Latest Updates section */}
-      {latestNotifs.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
-        >
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-2">
-              <div
-                className="w-8 h-8 rounded-xl flex items-center justify-center"
-                style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
-              >
-                <Bell className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-[0.3em]">Últimas Atualizações</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Novidades e mudanças da plataforma</p>
-              </div>
-            </div>
-            <Link
-              href="/suporte"
-              className="text-[10px] uppercase tracking-widest flex items-center gap-1 hover:opacity-80 transition-opacity"
-              style={{ color: "var(--color-primary)" }}
-            >
-              Ver todas <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {latestNotifs.map((n, i) => (
-              <motion.div
-                key={n.id}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.62 + i * 0.06 }}
-                className="group flex gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] hover:border-white/10 transition-all overflow-hidden"
-              >
-                {/* Image thumbnail */}
-                {n.imageUrl && (
-                  <div className="shrink-0 w-16 h-16 rounded-lg overflow-hidden border border-white/10">
-                    <img
-                      src={n.imageUrl}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
-                    />
-                  </div>
-                )}
-                {!n.imageUrl && (
-                  <div
-                    className="shrink-0 w-16 h-16 rounded-lg flex items-center justify-center"
-                    style={{ background: "color-mix(in srgb, var(--color-primary) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 15%, transparent)" }}
-                  >
-                    <Sparkles className="w-6 h-6" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }} />
-                  </div>
-                )}
-                {n.imageUrl && (
-                  <div
-                    className="shrink-0 hidden"
-                    style={{ background: "color-mix(in srgb, var(--color-primary) 8%, transparent)" }}
-                  />
-                )}
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2 mb-1.5">
-                    <span className="font-semibold text-sm text-foreground leading-snug line-clamp-1">{n.title}</span>
-                    <span className="text-[9px] text-muted-foreground/50 shrink-0 whitespace-nowrap mt-0.5">
-                      {new Date(n.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{n.body}</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span
-                      className="text-[9px] uppercase tracking-[0.3em] px-2 py-0.5 rounded-full"
-                      style={{ color: "color-mix(in srgb, var(--color-primary) 80%, transparent)", background: "color-mix(in srgb, var(--color-primary) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)" }}
-                    >
-                      {n.imageUrl ? <><ImageIcon className="w-2.5 h-2.5 inline mr-1" />Com foto</> : "Atualização"}
-                    </span>
-                    <span className="text-[9px] text-muted-foreground/40">por {n.authorName}</span>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-      )}
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-4">
         Made by blxckxyz · Infinity Search

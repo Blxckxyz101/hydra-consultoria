@@ -409,6 +409,7 @@ interface InfinityNotif {
   id: string;
   title: string;
   body: string;
+  imageUrl?: string;
   createdAt: string;
   authorName: string;
 }
@@ -495,6 +496,7 @@ export default function Configuracoes() {
   const [notifs, setNotifs] = useState<InfinityNotif[]>([]);
   const [notifTitle, setNotifTitle] = useState("");
   const [notifBody, setNotifBody] = useState("");
+  const [notifImageUrl, setNotifImageUrl] = useState("");
   const [notifSending, setNotifSending] = useState(false);
   const [notifSuccess, setNotifSuccess] = useState(false);
   const [notifError, setNotifError] = useState("");
@@ -522,7 +524,7 @@ export default function Configuracoes() {
       const r = await fetch("/api/infinity/notifications", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ title: notifTitle.trim(), body: notifBody.trim() }),
+        body: JSON.stringify({ title: notifTitle.trim(), body: notifBody.trim(), imageUrl: notifImageUrl.trim() || undefined }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as { error?: string };
@@ -530,6 +532,7 @@ export default function Configuracoes() {
       }
       setNotifTitle("");
       setNotifBody("");
+      setNotifImageUrl("");
       setNotifSuccess(true);
       setTimeout(() => setNotifSuccess(false), 2500);
       await loadNotifs();
@@ -698,6 +701,36 @@ export default function Configuracoes() {
                 maxLength={1000}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all resize-none"
               />
+              {/* Image URL field */}
+              <div className="relative">
+                <input
+                  value={notifImageUrl}
+                  onChange={e => setNotifImageUrl(e.target.value)}
+                  placeholder="URL da foto (opcional) — https://..."
+                  type="url"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary/50 transition-all pr-10"
+                />
+                {notifImageUrl && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <img
+                      src={notifImageUrl}
+                      alt=""
+                      className="w-6 h-6 rounded-md object-cover border border-white/20"
+                      onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                    />
+                  </div>
+                )}
+              </div>
+              {notifImageUrl && (
+                <div className="rounded-xl overflow-hidden border border-white/10 max-h-40">
+                  <img
+                    src={notifImageUrl}
+                    alt="Preview"
+                    className="w-full object-cover max-h-40"
+                    onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+                  />
+                </div>
+              )}
               <div className="flex items-center gap-3">
                 <button
                   type="submit"
@@ -743,25 +776,40 @@ export default function Configuracoes() {
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: 8 }}
                         transition={{ delay: i * 0.03 }}
-                        className="rounded-xl border border-white/5 bg-black/20 p-4 flex items-start gap-3"
+                        className="rounded-xl border border-white/5 bg-black/20 overflow-hidden"
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-semibold text-foreground truncate">{n.title}</span>
-                            <span className="text-[9px] text-muted-foreground/50 shrink-0">
-                              {new Date(n.createdAt).toLocaleString("pt-BR")}
-                            </span>
+                        {n.imageUrl && (
+                          <div className="relative overflow-hidden" style={{ maxHeight: "120px" }}>
+                            <img
+                              src={n.imageUrl}
+                              alt=""
+                              className="w-full object-cover"
+                              style={{ maxHeight: "120px" }}
+                              onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = "none"; }}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/50 pointer-events-none" />
+                            <span className="absolute bottom-1.5 right-2 text-[9px] uppercase tracking-wider text-white/60 bg-black/40 backdrop-blur-sm rounded px-1.5 py-0.5">foto</span>
                           </div>
-                          <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
-                          <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
+                        )}
+                        <div className="p-4 flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-semibold text-foreground truncate">{n.title}</span>
+                              <span className="text-[9px] text-muted-foreground/50 shrink-0">
+                                {new Date(n.createdAt).toLocaleString("pt-BR")}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-wrap">{n.body}</p>
+                            <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-wider">por {n.authorName}</p>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteNotif(n.id)}
+                            className="shrink-0 p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/30"
+                            title="Remover"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleDeleteNotif(n.id)}
-                          className="shrink-0 p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/30"
-                          title="Remover"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </motion.div>
                     ))}
                   </AnimatePresence>
