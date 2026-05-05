@@ -164,7 +164,7 @@ function buildSuporteKeyboard() {
 function buildResultKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔍 Nova Consulta", "menu_consultas"), Markup.button.callback("🏠 Início", "home")],
-    [Markup.button.url("💬 Suporte", SUPPORT_URL) as any],
+    [Markup.button.url("💬 Suporte", SUPPORT_URL) as any, Markup.button.callback("🗑️ Apagar", "delete_result") as any],
   ]);
 }
 
@@ -770,19 +770,14 @@ async function executeAndSend(
 
     await telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
 
-    // Send the beautiful inline result message
-    await telegram.sendMessage(chatId, resultMsg, {
-      parse_mode: "HTML",
-      ...buildResultKeyboard(),
-    });
-
-    // Always send the beautiful .txt file
+    // Send .txt with the result box as caption — tudo numa mensagem só
     const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
+    const caption = resultMsg.length <= 1024 ? resultMsg : resultMsg.slice(0, 1020) + "\n...";
     await telegram.sendDocument(
       chatId,
       { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
-      { caption: `📎 <b>${tipoInfo.label}</b> — dados completos`, parse_mode: "HTML" },
-    ).catch(() => {});
+      { caption, parse_mode: "HTML", ...buildResultKeyboard() },
+    );
 
     // Funnel A — upsell after every result
     await telegram.sendMessage(chatId, buildFunnelMsg(), {
@@ -1084,6 +1079,11 @@ export function startInfinityBot(): void {
     await ctx.answerCbQuery("Cancelado");
     const from = ctx.from!;
     pendingQueries.delete(from.id);
+    try { await ctx.deleteMessage(); } catch {}
+  });
+
+  bot.action("delete_result", async (ctx) => {
+    await ctx.answerCbQuery("Apagado!");
     try { await ctx.deleteMessage(); } catch {}
   });
 

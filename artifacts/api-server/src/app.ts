@@ -71,9 +71,9 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true, limit: "2mb" }));
-app.use(express.text({ type: ["text/plain", "text/csv"], limit: "2mb" }));
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+app.use(express.text({ type: ["text/plain", "text/csv"], limit: "15mb" }));
 
 app.use(generalLimiter);
 app.use(apiKeyMiddleware);
