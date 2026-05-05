@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw } from "lucide-react";
 
 const ROLE_CONFIG = {
   admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
@@ -302,6 +302,252 @@ function RoleEditor({ username, currentRole, isMe, onSaved }: { username: string
   );
 }
 
+// ─── DisplayNameEditor ────────────────────────────────────────────────────────
+function DisplayNameEditor({ username, currentName, onSaved }: { username: string; currentName: string | null; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(currentName ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setSaving(true); setErr("");
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ displayName: val.trim() || null }),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
+      setSaved(true);
+      setTimeout(() => { setSaved(false); setEditing(false); onSaved(); }, 900);
+    } catch (e) { setErr(e instanceof Error ? e.message : "Erro"); }
+    finally { setSaving(false); }
+  };
+
+  if (!editing) {
+    return (
+      <button onClick={() => { setVal(currentName ?? ""); setEditing(true); }} className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary transition-colors">
+        <Pencil className="w-2.5 h-2.5" />
+        {currentName ? currentName : "Sem nome"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 mt-1">
+      <div className="flex items-center gap-1.5">
+        <input
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          maxLength={50}
+          className="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-primary/50 transition-colors w-32"
+          placeholder="Nome de perfil"
+          onKeyDown={e => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEditing(false); }}
+          autoFocus
+        />
+        <button onClick={() => void save()} disabled={saving} className={`p-1.5 rounded-lg border transition-colors ${saved ? "border-emerald-400/40 text-emerald-400" : "border-white/10 text-muted-foreground hover:text-primary hover:border-primary/30"} disabled:opacity-50`}>
+          <Check className="w-2.5 h-2.5" />
+        </button>
+        <button onClick={() => setEditing(false)} className="p-1.5 rounded-lg border border-white/10 text-muted-foreground hover:text-foreground transition-colors">
+          <X className="w-2.5 h-2.5" />
+        </button>
+      </div>
+      {err && <span className="text-[9px] text-destructive">{err}</span>}
+    </div>
+  );
+}
+
+// ─── PinResetEditor ───────────────────────────────────────────────────────────
+function PinResetEditor({ username, onReset }: { username: string; onReset: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState("");
+
+  const reset = async () => {
+    setResetting(true); setErr("");
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}/reset-pin`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error();
+      setDone(true);
+      setTimeout(() => { setDone(false); setConfirming(false); onReset(); }, 1200);
+    } catch { setErr("Erro ao resetar PIN"); }
+    finally { setResetting(false); }
+  };
+
+  if (!confirming) {
+    return (
+      <button onClick={() => setConfirming(true)} className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-amber-300 transition-colors">
+        <RotateCcw className="w-2.5 h-2.5" /> Resetar PIN
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5">
+        <span className="text-[9px] text-amber-300 uppercase tracking-widest">Confirmar?</span>
+        <button onClick={() => void reset()} disabled={resetting} className={`p-1.5 rounded-lg border transition-colors text-[9px] px-2 ${done ? "border-emerald-400/40 text-emerald-400" : "border-amber-400/30 text-amber-300 hover:bg-amber-400/10"} disabled:opacity-50`}>
+          {done ? <Check className="w-2.5 h-2.5" /> : "OK"}
+        </button>
+        <button onClick={() => setConfirming(false)} className="p-1.5 rounded-lg border border-white/10 text-muted-foreground hover:text-foreground transition-colors text-[9px] px-2">
+          Não
+        </button>
+      </div>
+      {err && <span className="text-[9px] text-destructive">{err}</span>}
+    </div>
+  );
+}
+
+// ─── MyProfileSection ─────────────────────────────────────────────────────────
+function MyProfileSection({ me }: { me: { username: string; displayName?: string | null } | undefined }) {
+  const [displayName, setDisplayName] = useState(me?.displayName ?? "");
+  const [dnSaving, setDnSaving] = useState(false);
+  const [dnSaved, setDnSaved] = useState(false);
+  const [dnErr, setDnErr] = useState("");
+
+  const [curPin, setCurPin] = useState("");
+  const [newPin1, setNewPin1] = useState("");
+  const [newPin2, setNewPin2] = useState("");
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinSaved, setPinSaved] = useState(false);
+  const [pinErr, setPinErr] = useState("");
+  const [showPins, setShowPins] = useState(false);
+
+  useEffect(() => { setDisplayName(me?.displayName ?? ""); }, [me?.displayName]);
+
+  const saveDisplayName = async () => {
+    setDnSaving(true); setDnErr(""); setDnSaved(false);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/me/display-name", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ displayName: displayName.trim() || null }),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
+      setDnSaved(true);
+      setTimeout(() => setDnSaved(false), 2000);
+    } catch (e) { setDnErr(e instanceof Error ? e.message : "Erro"); }
+    finally { setDnSaving(false); }
+  };
+
+  const changePin = async () => {
+    setPinErr(""); setPinSaved(false);
+    if (newPin1.length !== 4 || !/^\d{4}$/.test(newPin1)) { setPinErr("Novo PIN deve ter 4 dígitos."); return; }
+    if (newPin1 !== newPin2) { setPinErr("PINs não coincidem."); return; }
+    setPinSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/me/pin", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPin: curPin, newPin: newPin1 }),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
+      setPinSaved(true);
+      setCurPin(""); setNewPin1(""); setNewPin2("");
+      setTimeout(() => setPinSaved(false), 2000);
+    } catch (e) { setPinErr(e instanceof Error ? e.message : "Erro"); }
+    finally { setPinSaving(false); }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.05 }}
+      className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-6"
+    >
+      <div className="flex items-center gap-2">
+        <UserIcon className="w-4 h-4 text-primary" />
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Meu Perfil</h2>
+      </div>
+
+      {/* Display name */}
+      <div className="space-y-2">
+        <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Nome de exibição</label>
+        <div className="flex items-center gap-2">
+          <input
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            maxLength={50}
+            placeholder="Como você quer ser chamado..."
+            className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-all"
+            onKeyDown={e => { if (e.key === "Enter") void saveDisplayName(); }}
+          />
+          <button
+            onClick={() => void saveDisplayName()}
+            disabled={dnSaving}
+            className="px-4 py-2.5 rounded-xl border font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50"
+            style={{ borderColor: "var(--color-primary)", color: "var(--color-primary)" }}
+          >
+            {dnSaved ? <Check className="w-3.5 h-3.5" /> : dnSaving ? "..." : "Salvar"}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">Exibido na tela inicial em vez do nome de usuário.</p>
+        {dnErr && <p className="text-xs text-destructive">{dnErr}</p>}
+      </div>
+
+      {/* PIN change */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Alterar PIN de acesso</label>
+          <button onClick={() => setShowPins(p => !p)} className="text-[10px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+            {showPins ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            {showPins ? "Ocultar" : "Mostrar"}
+          </button>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <input
+            type={showPins ? "text" : "password"}
+            inputMode="numeric"
+            maxLength={4}
+            value={curPin}
+            onChange={e => setCurPin(e.target.value.replace(/\D/g, ""))}
+            placeholder="PIN atual"
+            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
+          />
+          <input
+            type={showPins ? "text" : "password"}
+            inputMode="numeric"
+            maxLength={4}
+            value={newPin1}
+            onChange={e => setNewPin1(e.target.value.replace(/\D/g, ""))}
+            placeholder="Novo PIN"
+            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
+          />
+          <input
+            type={showPins ? "text" : "password"}
+            inputMode="numeric"
+            maxLength={4}
+            value={newPin2}
+            onChange={e => setNewPin2(e.target.value.replace(/\D/g, ""))}
+            placeholder="Confirmar"
+            className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-all tracking-[0.4em]"
+          />
+        </div>
+        <button
+          onClick={() => void changePin()}
+          disabled={pinSaving || !curPin || !newPin1 || !newPin2}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-40"
+          style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)", color: "var(--color-primary)" }}
+        >
+          <Lock className="w-3 h-3" />
+          {pinSaved ? "PIN alterado!" : pinSaving ? "Alterando..." : "Alterar PIN"}
+        </button>
+        {pinErr && <p className="text-xs text-destructive">{pinErr}</p>}
+      </div>
+    </motion.div>
+  );
+}
+
 interface InfinityNotif {
   id: string;
   title: string;
@@ -551,6 +797,9 @@ export default function Configuracoes() {
           </button>
         </div>
       </motion.div>
+
+      {/* Meu Perfil — visible to all users */}
+      <MyProfileSection me={me as { username: string; displayName?: string | null } | undefined} />
 
       {!isAdmin ? (
         <motion.div
@@ -941,6 +1190,15 @@ export default function Configuracoes() {
                               }}
                             />
                             <PasswordEditor username={u.username} />
+                            <DisplayNameEditor
+                              username={u.username}
+                              currentName={(u as any).displayName ?? null}
+                              onSaved={() => { queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() }); refetchUsers(); }}
+                            />
+                            <PinResetEditor
+                              username={u.username}
+                              onReset={() => { queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() }); }}
+                            />
                             <div className="mt-1.5 pt-1.5 border-t border-white/5">
                               <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Cargo</p>
                               <RoleEditor

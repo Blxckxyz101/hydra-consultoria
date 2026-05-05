@@ -6,6 +6,8 @@ export const infinityUsersTable = pgTable("infinity_users", {
   username:         text("username").primaryKey(),
   passwordHash:     text("password_hash").notNull(),
   role:             text("role").notNull().default("user"),
+  displayName:      text("display_name"),
+  accountPin:       text("account_pin"),
   createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt:      timestamp("last_login_at", { withTimezone: true }),
   accountExpiresAt: timestamp("account_expires_at", { withTimezone: true }),
@@ -28,6 +30,7 @@ export const infinityConsultasTable = pgTable(
     username:  text("username").notNull(),
     success:   boolean("success").notNull().default(false),
     result:    jsonb("result"),
+    skylers:   boolean("skylers").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

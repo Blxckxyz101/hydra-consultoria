@@ -197,6 +197,40 @@ function bumpCaches(username: string): void {
   if (u?.date === today) _userDailyCache.set(username, { date: today, count: u.count + 1 });
 }
 
+async function getUserSkylersTotal(username: string): Promise<number> {
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(and(eq(infinityConsultasTable.username, username), eq(infinityConsultasTable.skylers, true)));
+  return row?.c ?? 0;
+}
+
+const SKYLERS_TOTAL_LIMIT = 25;
+
+// ─── Temp tokens for 2-step PIN login ───────────────────────────────────────
+interface TempToken { username: string; step: "setup-pin" | "verify-pin"; expiresAt: number }
+const _tempTokens = new Map<string, TempToken>();
+
+function cleanTempTokens(): void {
+  const now = Date.now();
+  for (const [k, v] of _tempTokens) { if (v.expiresAt < now) _tempTokens.delete(k); }
+}
+
+function createTempToken(username: string, step: "setup-pin" | "verify-pin"): string {
+  cleanTempTokens();
+  const token = crypto.randomBytes(32).toString("hex");
+  _tempTokens.set(token, { username, step, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return token;
+}
+
+function consumeTempToken(token: string, expectedStep: "setup-pin" | "verify-pin"): string | null {
+  cleanTempTokens();
+  const t = _tempTokens.get(token);
+  if (!t || t.expiresAt < Date.now() || t.step !== expectedStep) return null;
+  _tempTokens.delete(token);
+  return t.username;
+}
+
 const SUPPORTED_TIPOS = new Set([
   "nome", "cpf", "pix", "nis", "cns", "placa", "chassi", "telefone",
   "mae", "pai", "parentes", "cep", "frota", "cnpj", "fucionarios", "funcionarios",
@@ -218,10 +252,12 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null }) {
+function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null }) {
   return {
     username: row.username,
+    displayName: row.displayName ?? null,
     role: row.role,
+    pinSet: !!row.accountPin,
     createdAt: row.createdAt.toISOString(),
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     accountExpiresAt: row.accountExpiresAt ? row.accountExpiresAt.toISOString() : null,
@@ -230,7 +266,7 @@ function serializeUser(row: { username: string; role: string; createdAt: Date; l
 }
 
 async function logConsulta(args: {
-  tipo: string; query: string; username: string; success: boolean; result: unknown;
+  tipo: string; query: string; username: string; success: boolean; result: unknown; skylers?: boolean;
 }): Promise<void> {
   try {
     await db.insert(infinityConsultasTable).values({
@@ -239,6 +275,7 @@ async function logConsulta(args: {
       username: args.username,
       success: args.success,
       result: args.result as object,
+      skylers: args.skylers ?? false,
     });
   } catch {
     /* swallow */
@@ -1121,12 +1158,60 @@ router.post("/login", loginLimiter, async (req, res) => {
     res.status(401).json({ error: "Credenciais inválidas" });
     return;
   }
-  const { token } = await createSession(u.username);
-  await db.update(infinityUsersTable).set({ lastLoginAt: new Date() }).where(eq(infinityUsersTable.username, u.username));
-  res.json({
-    token,
-    user: serializeUser({ ...u, lastLoginAt: new Date() }),
-  });
+  const step: "setup-pin" | "verify-pin" = u.accountPin ? "verify-pin" : "setup-pin";
+  const tempToken = createTempToken(u.username, step);
+  res.json({ step, tempToken });
+});
+
+router.post("/setup-pin", loginLimiter, async (req, res) => {
+  const { tempToken, pin } = req.body ?? {};
+  if (!tempToken || !pin) {
+    res.status(400).json({ error: "tempToken e pin obrigatórios" });
+    return;
+  }
+  if (!/^\d{4}$/.test(String(pin))) {
+    res.status(400).json({ error: "PIN deve ter exatamente 4 dígitos numéricos" });
+    return;
+  }
+  const username = consumeTempToken(String(tempToken), "setup-pin");
+  if (!username) {
+    res.status(401).json({ error: "Token inválido ou expirado. Faça login novamente." });
+    return;
+  }
+  const pinHash = await bcrypt.hash(String(pin), 10);
+  await db.update(infinityUsersTable)
+    .set({ accountPin: pinHash, lastLoginAt: new Date() })
+    .where(eq(infinityUsersTable.username, username));
+  const { token } = await createSession(username);
+  const [updated] = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+  res.json({ token, user: serializeUser({ ...updated!, lastLoginAt: new Date() }) });
+});
+
+router.post("/verify-pin", loginLimiter, async (req, res) => {
+  const { tempToken, pin } = req.body ?? {};
+  if (!tempToken || !pin) {
+    res.status(400).json({ error: "tempToken e pin obrigatórios" });
+    return;
+  }
+  const username = consumeTempToken(String(tempToken), "verify-pin");
+  if (!username) {
+    res.status(401).json({ error: "Token inválido ou expirado. Faça login novamente." });
+    return;
+  }
+  const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+  const u = rows[0];
+  if (!u || !u.accountPin) {
+    res.status(401).json({ error: "Conta sem PIN configurado" });
+    return;
+  }
+  const ok = await bcrypt.compare(String(pin), u.accountPin);
+  if (!ok) {
+    res.status(401).json({ error: "PIN incorreto" });
+    return;
+  }
+  await db.update(infinityUsersTable).set({ lastLoginAt: new Date() }).where(eq(infinityUsersTable.username, username));
+  const { token } = await createSession(username);
+  res.json({ token, user: serializeUser({ ...u, lastLoginAt: new Date() }) });
 });
 
 router.post("/logout", async (req, res) => {
@@ -1143,7 +1228,46 @@ router.get("/me", requireAuth, async (req, res) => {
     res.status(401).json({ error: "Usuário não encontrado" });
     return;
   }
-  res.json(serializeUser(u));
+  const skylersTotal = await getUserSkylersTotal(username);
+  res.json({ ...serializeUser(u), skylersTotal, skylersLimit: SKYLERS_TOTAL_LIMIT });
+});
+
+router.patch("/me/display-name", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const { displayName } = req.body ?? {};
+  const val = displayName !== undefined ? String(displayName).trim().slice(0, 50) || null : undefined;
+  if (val === undefined) {
+    res.status(400).json({ error: "displayName obrigatório" });
+    return;
+  }
+  const [updated] = await db
+    .update(infinityUsersTable)
+    .set({ displayName: val })
+    .where(eq(infinityUsersTable.username, username))
+    .returning();
+  res.json(serializeUser(updated!));
+});
+
+router.patch("/me/pin", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const { currentPin, newPin } = req.body ?? {};
+  if (!currentPin || !newPin) {
+    res.status(400).json({ error: "currentPin e newPin obrigatórios" });
+    return;
+  }
+  if (!/^\d{4}$/.test(String(newPin))) {
+    res.status(400).json({ error: "newPin deve ter exatamente 4 dígitos numéricos" });
+    return;
+  }
+  const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+  const u = rows[0];
+  if (!u) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+  if (!u.accountPin) { res.status(400).json({ error: "PIN não configurado" }); return; }
+  const ok = await bcrypt.compare(String(currentPin), u.accountPin);
+  if (!ok) { res.status(401).json({ error: "PIN atual incorreto" }); return; }
+  const pinHash = await bcrypt.hash(String(newPin), 10);
+  await db.update(infinityUsersTable).set({ accountPin: pinHash }).where(eq(infinityUsersTable.username, username));
+  res.json({ ok: true });
 });
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -1297,15 +1421,27 @@ router.delete("/users/:username", requireAdmin, async (req, res) => {
   res.status(204).end();
 });
 
+router.post("/users/:username/reset-pin", requireAdmin, async (req, res) => {
+  const target = String(req.params.username);
+  const [updated] = await db
+    .update(infinityUsersTable)
+    .set({ accountPin: null })
+    .where(eq(infinityUsersTable.username, target))
+    .returning();
+  if (!updated) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+  res.json({ ok: true });
+});
+
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password } = req.body ?? {};
+  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password, displayName } = req.body ?? {};
 
   const updateData: Partial<{
     accountExpiresAt: Date | null;
     queryDailyLimit: number | null;
     role: string;
     passwordHash: string;
+    displayName: string | null;
   }> = {};
 
   if (action === "revoke") {
@@ -1332,6 +1468,10 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
 
   if (password && String(password).length >= 6) {
     updateData.passwordHash = await bcrypt.hash(String(password), 10);
+  }
+
+  if (displayName !== undefined) {
+    updateData.displayName = String(displayName).trim().slice(0, 50) || null;
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -1523,9 +1663,10 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const isAdmin  = req.infinityUser!.role === "admin";
 
   if (!isAdmin) {
-    const [globalCount, userCount] = await Promise.all([
+    const [globalCount, userCount, skylersTotal] = await Promise.all([
       getGlobalDailyCount(),
       getUserDailyCount(username),
+      getUserSkylersTotal(username),
     ]);
 
     if (globalCount >= DAILY_RATE_LIMIT) {
@@ -1547,6 +1688,17 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
       });
       return;
     }
+
+    if (skylersTotal >= SKYLERS_TOTAL_LIMIT) {
+      res.status(429).json({
+        success: false,
+        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas Skylers atingido.`,
+        rateLimited: true,
+        skylersLimited: true,
+        limitInfo: { used: skylersTotal, limit: SKYLERS_TOTAL_LIMIT },
+      });
+      return;
+    }
   }
 
   const ctrl = new AbortController();
@@ -1565,7 +1717,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
   bumpCaches(username);
-  await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data });
+  await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true });
 
   res.json({ success, data, error: provider.error ?? null });
 });
@@ -1992,6 +2144,19 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
 
   // ── Skylers external proxy ───────────────────────────────────────────────
   if (source === "skylers") {
+    if (req.infinityUser && req.infinityUser.role !== "admin") {
+      const skylersTotal = await getUserSkylersTotal(req.infinityUser.username);
+      if (skylersTotal >= SKYLERS_TOTAL_LIMIT) {
+        res.status(429).json({
+          success: false,
+          error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas Skylers atingido.`,
+          rateLimited: true,
+          skylersLimited: true,
+          limitInfo: { used: skylersTotal, limit: SKYLERS_TOTAL_LIMIT },
+        });
+        return;
+      }
+    }
     const tipoLower = tipo.toLowerCase() as "telegram" | "likes" | string;
     const isSpecialEndpoint = tipoLower === "telegram" || tipoLower === "likes";
     const modulo = isSpecialEndpoint ? "" : TIPO_TO_SKYLERS[tipoLower];
@@ -2019,6 +2184,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
         username: req.infinityUser.username,
         success,
         result: provider.parsed ?? {},
+        skylers: true,
       });
     }
     if (success) {

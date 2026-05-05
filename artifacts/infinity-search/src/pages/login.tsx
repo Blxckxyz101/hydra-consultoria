@@ -1,28 +1,96 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useInfinityLogin } from "@workspace/api-client-react";
 import logoUrl from "@/assets/logo.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
-import { motion } from "framer-motion";
-import { LogIn, KeyRound, UserRound, ShieldAlert } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
+
+type Step = "credentials" | "setup-pin" | "verify-pin";
 
 export default function Login() {
   const [, setLocation] = useLocation();
+  const [step, setStep] = useState<Step>("credentials");
+  const [tempToken, setTempToken] = useState("");
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
-  const loginMutation = useInfinityLogin();
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setPending(true);
     try {
-      const data = await loginMutation.mutateAsync({ data: { username, password } });
-      localStorage.setItem("infinity_token", data.token);
+      const r = await fetch("/api/infinity/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await r.json() as { step?: string; tempToken?: string; error?: string };
+      if (!r.ok) {
+        setError(data.error ?? "Credenciais inválidas");
+        return;
+      }
+      setTempToken(data.tempToken ?? "");
+      setStep((data.step as Step) ?? "verify-pin");
+    } catch {
+      setError("Falha na conexão");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleSetupPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!/^\d{4}$/.test(pin)) { setError("PIN deve ter exatamente 4 dígitos numéricos"); return; }
+    if (pin !== confirmPin) { setError("Os PINs não coincidem"); return; }
+    setPending(true);
+    try {
+      const r = await fetch("/api/infinity/setup-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempToken, pin }),
+      });
+      const data = await r.json() as { token?: string; error?: string };
+      if (!r.ok) {
+        setError(data.error ?? "Erro ao configurar PIN");
+        return;
+      }
+      localStorage.setItem("infinity_token", data.token ?? "");
       setLocation("/");
-    } catch (err: any) {
-      setError(err?.data?.error || err.message || "Credenciais inválidas");
+    } catch {
+      setError("Falha na conexão");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleVerifyPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (!/^\d{4}$/.test(pin)) { setError("PIN deve ter exatamente 4 dígitos numéricos"); return; }
+    setPending(true);
+    try {
+      const r = await fetch("/api/infinity/verify-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempToken, pin }),
+      });
+      const data = await r.json() as { token?: string; error?: string };
+      if (!r.ok) {
+        setError(data.error ?? "PIN incorreto");
+        return;
+      }
+      localStorage.setItem("infinity_token", data.token ?? "");
+      setLocation("/");
+    } catch {
+      setError("Falha na conexão");
+    } finally {
+      setPending(false);
     }
   };
 
@@ -37,7 +105,6 @@ export default function Login() {
         className="w-full max-w-md relative z-10"
       >
         <div className="rounded-3xl border border-white/10 bg-black/30 backdrop-blur-2xl shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7),0_0_60px_-20px_rgba(56,189,248,0.4)] overflow-hidden">
-          {/* Top accent line */}
           <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
 
           <div className="px-10 pt-10 pb-8">
@@ -69,65 +136,205 @@ export default function Login() {
                 transition={{ delay: 0.35 }}
                 className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-3"
               >
-                <ShieldAlert className="w-3 h-3" />
-                Acesso Restrito
+                {step === "credentials" && <><ShieldAlert className="w-3 h-3" /> Acesso Restrito</>}
+                {step === "setup-pin" && <><Lock className="w-3 h-3" /> Criar PIN de Acesso</>}
+                {step === "verify-pin" && <><ShieldCheck className="w-3 h-3" /> Verificação PIN</>}
               </motion.div>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {error && (
-                <motion.div
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2"
+            <AnimatePresence mode="wait">
+              {step === "credentials" && (
+                <motion.form
+                  key="credentials"
+                  initial={{ opacity: 0, x: -16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 16 }}
+                  onSubmit={handleCredentials}
+                  className="space-y-5"
                 >
-                  <ShieldAlert className="w-4 h-4 shrink-0" />
-                  {error}
-                </motion.div>
+                  {error && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2"
+                    >
+                      <ShieldAlert className="w-4 h-4 shrink-0" />
+                      {error}
+                    </motion.div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                      <UserRound className="w-3 h-3" /> Usuário
+                    </label>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="username"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
+                      placeholder="Digite seu usuário"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                      <KeyRound className="w-3 h-3" /> Senha
+                    </label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="current-password"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
+                      placeholder="Digite sua senha"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={pending}
+                    className="w-full relative group bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-4 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    {pending ? "Verificando..." : "Entrar"}
+                  </button>
+                </motion.form>
               )}
 
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
-                  <UserRound className="w-3 h-3" /> Usuário
-                </label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
-                  placeholder="Digite seu usuário"
-                  required
-                />
-              </div>
+              {step === "setup-pin" && (
+                <motion.form
+                  key="setup-pin"
+                  initial={{ opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -16 }}
+                  onSubmit={handleSetupPin}
+                  className="space-y-5"
+                >
+                  <div className="px-4 py-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-300 text-sm">
+                    <p className="font-semibold text-[11px] uppercase tracking-widest mb-1">Primeiro acesso</p>
+                    <p className="text-[11px] text-muted-foreground">Crie um PIN de 4 dígitos para proteger sua conta. Ele será solicitado a cada login.</p>
+                  </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
-                  <KeyRound className="w-3 h-3" /> Senha
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40"
-                  placeholder="Digite sua senha"
-                  required
-                />
-              </div>
+                  {error && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2"
+                    >
+                      <ShieldAlert className="w-4 h-4 shrink-0" />
+                      {error}
+                    </motion.div>
+                  )}
 
-              <button
-                type="submit"
-                disabled={loginMutation.isPending}
-                className="w-full relative group bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-4 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
-              >
-                <LogIn className="w-4 h-4" />
-                {loginMutation.isPending ? "Autenticando..." : "Iniciar Sessão"}
-              </button>
-            </form>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                      <Lock className="w-3 h-3" /> Novo PIN (4 dígitos)
+                    </label>
+                    <input
+                      type="password"
+                      value={pin}
+                      onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      inputMode="numeric"
+                      maxLength={4}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground font-mono tracking-[0.5em] text-center text-xl focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40 placeholder:tracking-normal"
+                      placeholder="••••"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                      <Lock className="w-3 h-3" /> Confirmar PIN
+                    </label>
+                    <input
+                      type="password"
+                      value={confirmPin}
+                      onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      inputMode="numeric"
+                      maxLength={4}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground font-mono tracking-[0.5em] text-center text-xl focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40 placeholder:tracking-normal"
+                      placeholder="••••"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={pending || pin.length !== 4 || confirmPin.length !== 4}
+                    className="w-full relative group bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-4 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
+                  >
+                    <Lock className="w-4 h-4" />
+                    {pending ? "Configurando..." : "Criar PIN e Entrar"}
+                  </button>
+                </motion.form>
+              )}
+
+              {step === "verify-pin" && (
+                <motion.form
+                  key="verify-pin"
+                  initial={{ opacity: 0, x: 16 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -16 }}
+                  onSubmit={handleVerifyPin}
+                  className="space-y-5"
+                >
+                  <div className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-muted-foreground text-sm">
+                    <p className="text-[11px]">Olá <strong className="text-foreground">{username}</strong>! Insira seu PIN de 4 dígitos para continuar.</p>
+                  </div>
+
+                  {error && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2"
+                    >
+                      <ShieldAlert className="w-4 h-4 shrink-0" />
+                      {error}
+                    </motion.div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-2">
+                      <Lock className="w-3 h-3" /> PIN de Acesso
+                    </label>
+                    <input
+                      type="password"
+                      value={pin}
+                      onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      inputMode="numeric"
+                      maxLength={4}
+                      autoFocus
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3.5 text-foreground font-mono tracking-[0.5em] text-center text-xl focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/40 placeholder:tracking-normal"
+                      placeholder="••••"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={pending || pin.length !== 4}
+                    className="w-full relative group bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold uppercase tracking-[0.3em] text-xs py-4 rounded-xl hover:shadow-[0_0_30px_rgba(56,189,248,0.6)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    {pending ? "Verificando..." : "Confirmar PIN"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setStep("credentials"); setPin(""); setError(""); }}
+                    className="w-full text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    ← Voltar ao início
+                  </button>
+                </motion.form>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="px-10 py-5 border-t border-white/5 bg-black/20 space-y-3">

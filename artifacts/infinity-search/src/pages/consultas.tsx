@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -214,6 +214,22 @@ export default function Consultas() {
   const [cpfFullQuery, setCpfFullQuery] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
+  const [skylersTotal, setSkylersTotal] = useState<number | null>(null);
+  const [skylersLimit, setSkylersLimit] = useState<number>(25);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then((d: { skylersTotal?: number; skylersLimit?: number; role?: string }) => {
+        setSkylersTotal(d.skylersTotal ?? 0);
+        setSkylersLimit(d.skylersLimit ?? 25);
+        setIsAdmin(d.role === "admin");
+      })
+      .catch(() => {});
+  }, []);
+
   const historyKey = ["infinity-history", 20] as const;
   const { data: history } = useQuery<Historico>({
     queryKey: historyKey,
@@ -274,6 +290,15 @@ export default function Consultas() {
     } finally {
       setPending(false);
       queryClient.invalidateQueries({ queryKey: historyKey });
+      const t2 = localStorage.getItem("infinity_token");
+      fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${t2}` } })
+        .then(r => r.json())
+        .then((d: { skylersTotal?: number; skylersLimit?: number; role?: string }) => {
+          setSkylersTotal(d.skylersTotal ?? 0);
+          setSkylersLimit(d.skylersLimit ?? 25);
+          setIsAdmin(d.role === "admin");
+        })
+        .catch(() => {});
     }
   };
 
@@ -342,12 +367,33 @@ export default function Consultas() {
             {TABS.length} módulos · Geass + Skylers API conectados
           </p>
         </div>
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
-          <div className="relative">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+        <div className="flex items-center gap-2 flex-wrap">
+          {!isAdmin && skylersTotal !== null && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
+                skylersTotal >= skylersLimit
+                  ? "bg-rose-400/15 border-rose-400/40"
+                  : skylersTotal >= skylersLimit * 0.8
+                  ? "bg-amber-400/10 border-amber-400/30"
+                  : "bg-sky-400/10 border-sky-400/20"
+              }`}
+              title="Quota de consultas Skylers (total vitalício)"
+            >
+              <Network className={`w-3 h-3 ${skylersTotal >= skylersLimit ? "text-rose-400" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-400" : "text-sky-400"}`} />
+              <span className={`text-[10px] uppercase tracking-widest font-semibold ${skylersTotal >= skylersLimit ? "text-rose-300" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-300" : "text-sky-300"}`}>
+                Skylers {skylersTotal}/{skylersLimit}
+              </span>
+            </motion.div>
+          )}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
+            <div className="relative">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            </div>
+            <span className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold">Online</span>
           </div>
-          <span className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold">Online</span>
         </div>
       </div>
 

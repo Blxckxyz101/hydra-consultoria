@@ -75,8 +75,11 @@ type OverviewData = {
 
 type MeData = {
   username: string;
+  displayName?: string | null;
   role: string;
   accountExpiresAt?: string | null;
+  skylersTotal?: number;
+  skylersLimit?: number;
 };
 
 function buildHeatmap(recentes: RecentItem[], days: number) {
@@ -228,7 +231,10 @@ export default function Overview() {
             <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] shadow" />
           </div>
           <div className="pb-2 min-w-0">
-            <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.username ?? "operador"}</div>
+            <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.displayName ?? me?.username ?? "operador"}</div>
+            {me?.displayName && (
+              <div className="text-[10px] text-muted-foreground/60 font-mono truncate">@{me?.username}</div>
+            )}
             <div className="text-[10px] uppercase tracking-[0.35em] text-primary/70">{me?.role === "vip" ? "VIP" : me?.role ?? "user"}</div>
           </div>
         </div>
