@@ -1,8 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, Trash2, Save, CheckCircle2,
-  User as UserIcon, FileText, Circle,
+  User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil,
 } from "lucide-react";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
@@ -65,6 +65,72 @@ export default function Perfil() {
 
   const photoRef  = useRef<HTMLInputElement>(null);
   const bannerRef = useRef<HTMLInputElement>(null);
+
+  // ── Display Name ──────────────────────────────────────────────────────────
+  const [displayName, setDisplayName] = useState("");
+  const [dnSaving, setDnSaving] = useState(false);
+  const [dnSaved, setDnSaved] = useState(false);
+  const [dnErr, setDnErr] = useState("");
+
+  // ── PIN ───────────────────────────────────────────────────────────────────
+  const [hasPinSet, setHasPinSet] = useState(false);
+  const [curPin, setCurPin] = useState("");
+  const [newPin1, setNewPin1] = useState("");
+  const [newPin2, setNewPin2] = useState("");
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinSaved, setPinSaved] = useState(false);
+  const [pinErr, setPinErr] = useState("");
+  const [showPins, setShowPins] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then((d: { displayName?: string | null; pinSet?: boolean }) => {
+        setDisplayName(d.displayName ?? "");
+        setHasPinSet(d.pinSet ?? false);
+      })
+      .catch(() => {});
+  }, []);
+
+  const saveDisplayName = async () => {
+    setDnSaving(true); setDnErr(""); setDnSaved(false);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/me/display-name", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ displayName: displayName.trim() || null }),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
+      setDnSaved(true);
+      setTimeout(() => setDnSaved(false), 2000);
+    } catch (e) { setDnErr(e instanceof Error ? e.message : "Erro"); }
+    finally { setDnSaving(false); }
+  };
+
+  const savePin = async () => {
+    setPinErr(""); setPinSaved(false);
+    if (!/^\d{4}$/.test(newPin1)) { setPinErr("PIN deve ter 4 dígitos numéricos."); return; }
+    if (newPin1 !== newPin2) { setPinErr("PINs não coincidem."); return; }
+    if (hasPinSet && !curPin) { setPinErr("Informe o PIN atual."); return; }
+    setPinSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const body: Record<string, string> = { newPin: newPin1 };
+      if (hasPinSet) body["currentPin"] = curPin;
+      const r = await fetch("/api/infinity/me/pin", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Erro"); }
+      setPinSaved(true); setHasPinSet(true);
+      setCurPin(""); setNewPin1(""); setNewPin2("");
+      setTimeout(() => setPinSaved(false), 2500);
+    } catch (e) { setPinErr(e instanceof Error ? e.message : "Erro"); }
+    finally { setPinSaving(false); }
+  };
 
   const readFile = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -185,7 +251,12 @@ export default function Perfil() {
 
             {/* Name + status */}
             <div className="pb-2 min-w-0 flex-1">
-              <div className="font-bold text-lg tracking-wide text-white">{user?.username}</div>
+              <div className="font-bold text-lg tracking-wide text-white">
+                {displayName || user?.username}
+              </div>
+              {displayName && (
+                <div className="text-[10px] text-white/30 font-mono">@{user?.username}</div>
+              )}
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "var(--color-primary)" }}>
                   {user?.role}
@@ -266,6 +337,121 @@ export default function Perfil() {
           />
           <p className="text-[9px] text-muted-foreground/30 mt-1 text-right">{statusMsg.length}/80</p>
         </div>
+      </motion.div>
+
+      {/* ── Nome de exibição ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.11 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-3"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center gap-2">
+          <Pencil className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Nome de exibição</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            maxLength={50}
+            placeholder="Como você quer ser chamado..."
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
+            onKeyDown={e => { if (e.key === "Enter") void saveDisplayName(); }}
+          />
+          <button
+            onClick={() => void saveDisplayName()}
+            disabled={dnSaving}
+            className="px-4 py-2.5 rounded-xl border font-bold text-xs uppercase tracking-widest transition-all disabled:opacity-50 shrink-0"
+            style={{ borderColor: "var(--color-primary)", color: "var(--color-primary)" }}
+          >
+            {dnSaved ? <Check className="w-3.5 h-3.5" /> : dnSaving ? "..." : "Salvar"}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest">Exibido na visão geral em vez do nome de usuário</p>
+        {dnErr && <p className="text-xs text-destructive">{dnErr}</p>}
+      </motion.div>
+
+      {/* ── PIN de acesso ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.13 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+              {hasPinSet ? "PIN de acesso" : "Criar PIN de acesso"}
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {!hasPinSet && (
+              <span className="text-[9px] uppercase tracking-widest text-amber-400 bg-amber-400/10 border border-amber-400/30 px-1.5 py-0.5 rounded-full">
+                Não configurado
+              </span>
+            )}
+            <button onClick={() => setShowPins(p => !p)} className="text-[10px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+              {showPins ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {showPins ? "Ocultar" : "Mostrar"}
+            </button>
+          </div>
+        </div>
+
+        {!hasPinSet && (
+          <p className="text-[11px] text-amber-300/80 bg-amber-400/5 border border-amber-400/15 rounded-xl px-3 py-2">
+            Configure um PIN de 4 dígitos — será exigido em todos os seus próximos logins.
+          </p>
+        )}
+
+        <div className={`grid gap-2 ${hasPinSet ? "grid-cols-3" : "grid-cols-2"}`}>
+          {hasPinSet && (
+            <input
+              type={showPins ? "text" : "password"}
+              inputMode="numeric"
+              maxLength={4}
+              value={curPin}
+              onChange={e => setCurPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="PIN atual"
+              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-colors tracking-[0.4em]"
+            />
+          )}
+          <input
+            type={showPins ? "text" : "password"}
+            inputMode="numeric"
+            maxLength={4}
+            value={newPin1}
+            onChange={e => setNewPin1(e.target.value.replace(/\D/g, ""))}
+            placeholder={hasPinSet ? "Novo PIN" : "PIN (4 dígitos)"}
+            className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-colors tracking-[0.4em]"
+          />
+          <input
+            type={showPins ? "text" : "password"}
+            inputMode="numeric"
+            maxLength={4}
+            value={newPin2}
+            onChange={e => setNewPin2(e.target.value.replace(/\D/g, ""))}
+            placeholder="Confirmar"
+            className="bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-center focus:outline-none focus:border-primary/50 transition-colors tracking-[0.4em]"
+          />
+        </div>
+        <button
+          onClick={() => void savePin()}
+          disabled={pinSaving || !newPin1 || !newPin2 || (hasPinSet && !curPin)}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold uppercase tracking-widest text-sm transition-all disabled:opacity-40"
+          style={{
+            background: pinSaved ? "#22c55e" : "color-mix(in srgb, var(--color-primary) 20%, transparent)",
+            border: `1px solid ${pinSaved ? "#22c55e60" : "color-mix(in srgb, var(--color-primary) 40%, transparent)"}`,
+            color: pinSaved ? "#fff" : "var(--color-primary)",
+          }}
+        >
+          <Lock className="w-3.5 h-3.5" />
+          {pinSaved ? (hasPinSet ? "PIN alterado com sucesso!" : "PIN configurado!") : pinSaving ? "Salvando..." : hasPinSet ? "Alterar PIN" : "Criar PIN"}
+        </button>
+        {pinErr && <p className="text-xs text-destructive">{pinErr}</p>}
       </motion.div>
 
       {/* ── Bio ── */}
