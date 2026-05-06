@@ -9,6 +9,14 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { apiKeyMiddleware } from "./middlewares/apiKey.js";
 import { generalLimiter } from "./middlewares/rateLimit.js";
+import {
+  requestTimeoutMiddleware,
+  botDetectionMiddleware,
+  abuseTrackerMiddleware,
+  slowDownMiddleware,
+  getBanList,
+  unbanIp,
+} from "./middlewares/ddos.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,8 +96,22 @@ app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 app.use(express.text({ type: ["text/plain", "text/csv"], limit: "15mb" }));
 
-app.use(generalLimiter);
+// ── DDoS / Botnet protection (ordered by cost: cheapest checks first) ────────
+app.use(requestTimeoutMiddleware);   // drop slow connections (anti-slowloris)
+app.use(abuseTrackerMiddleware);     // ban IPs that repeatedly hit rate limits
+app.use(botDetectionMiddleware);     // block known scanners/tools by UA
+app.use(slowDownMiddleware);         // progressive delay before hard block
+app.use(generalLimiter);            // hard cap: 300 req/min per IP
 app.use(apiKeyMiddleware);
+
+// ── Admin: ban management ─────────────────────────────────────────────────────
+app.get("/api/admin/bans", (_req, res) => {
+  res.json(getBanList());
+});
+app.delete("/api/admin/bans/:ip", (req, res) => {
+  const removed = unbanIp(decodeURIComponent(req.params.ip));
+  res.json({ removed });
+});
 
 // Serve static assets (logo, banners) publicly — no auth required
 // __dirname in compiled code = artifacts/api-server/dist/ → ../public resolves correctly

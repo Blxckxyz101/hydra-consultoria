@@ -21,11 +21,11 @@ const ip = (req: import("express").Request) => {
 
 export const generalLimiter = rateLimit({
   windowMs:        60_000,
-  max:             1500,
+  max:             300,        // reduced from 1500 — 300 req/min is still plenty for real users
   standardHeaders: true,
   legacyHeaders:   false,
   keyGenerator:    ip,
-  message:         { error: "Too many requests — by order of Lelouch vi Britannia, slow down." },
+  message:         { error: "Too many requests — slow down." },
   skip: (req) =>
     req.path === "/api/health"  ||
     req.path === "/api/events"  ||
