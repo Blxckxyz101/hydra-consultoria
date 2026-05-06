@@ -8,7 +8,7 @@ import {
   Camera, Fingerprint, Home, GitBranch, LayoutList, StretchHorizontal,
   Download, Network,
 } from "lucide-react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { generateLaudoPDF } from "./LaudoPDF";
 import { ConnectionGraph } from "./ConnectionGraph";
@@ -845,6 +845,34 @@ function EmploymentTimeline({ employments }: { employments: Employment[] }) {
   );
 }
 
+// ─── Map helpers ──────────────────────────────────────────────────────────────
+const MARKER_PALETTE = [
+  { fill: "#7c3aed", stroke: "#a855f7", glow: "rgba(124,58,237,0.55)" },
+  { fill: "#2563eb", stroke: "#60a5fa", glow: "rgba(37,99,235,0.55)" },
+  { fill: "#059669", stroke: "#34d399", glow: "rgba(5,150,105,0.55)" },
+  { fill: "#b45309", stroke: "#fbbf24", glow: "rgba(180,83,9,0.55)" },
+  { fill: "#be123c", stroke: "#fb7185", glow: "rgba(190,18,60,0.55)" },
+  { fill: "#0e7490", stroke: "#22d3ee", glow: "rgba(14,116,144,0.55)" },
+  { fill: "#4f46e5", stroke: "#818cf8", glow: "rgba(79,70,229,0.55)" },
+  { fill: "#7c3aed", stroke: "#a855f7", glow: "rgba(124,58,237,0.55)" },
+];
+function markerColor(idx: number) { return MARKER_PALETTE[idx % MARKER_PALETTE.length]; }
+
+function MapBoundsAdjuster({ points }: { points: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length === 0) return;
+    if (points.length === 1) { map.setView(points[0], 14, { animate: false }); return; }
+    const lats = points.map(p => p[0]);
+    const lngs = points.map(p => p[1]);
+    const sw: [number, number] = [Math.min(...lats), Math.min(...lngs)];
+    const ne: [number, number] = [Math.max(...lats), Math.max(...lngs)];
+    map.fitBounds([sw, ne], { padding: [52, 52], maxZoom: 13, animate: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points.length]);
+  return null;
+}
+
 // ─── Person Node ──────────────────────────────────────────────────────────────
 function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo }: {
   nome?: string; cpf?: string; nasc?: string; photo?: string; loading?: boolean;
@@ -1055,17 +1083,35 @@ export function CpfFullPanel({ cpf }: Props) {
     if (!addrs.length) return;
     let cancelled = false;
     (async () => {
-      const result: Address[] = [];
-      for (const addr of addrs.slice(0, 8)) {
-        if (cancelled) break;
-        if (!addr.logradouro && !addr.cep) { result.push(addr); continue; }
-        const q = [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf, "Brasil"].filter(Boolean).join(", ");
+      const geocodeAddr = async (q: string): Promise<{ lat: number; lng: number } | null> => {
         try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, { headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" } });
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=br`,
+            { headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" } }
+          );
           const data = await r.json() as { lat: string; lon: string }[];
-          result.push(data[0] ? { ...addr, lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : addr);
-        } catch { result.push(addr); }
-        await new Promise(res => setTimeout(res, 500));
+          if (data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        } catch { /* ignore */ }
+        return null;
+      };
+      const result: Address[] = [];
+      for (const addr of addrs.slice(0, 15)) {
+        if (cancelled) break;
+        if (!addr.logradouro && !addr.cep && !addr.cidade) { result.push(addr); continue; }
+        // Try full address first, fall back to city+UF, then CEP only
+        const queries = [
+          [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf, "Brasil"].filter(Boolean).join(", "),
+          [addr.cidade, addr.uf, "Brasil"].filter(Boolean).join(", "),
+          addr.cep ? `${addr.cep}, Brasil` : "",
+        ].filter(Boolean);
+        let geo: { lat: number; lng: number } | null = null;
+        for (const q of queries) {
+          geo = await geocodeAddr(q);
+          if (geo) break;
+          await new Promise(res => setTimeout(res, 300));
+        }
+        result.push(geo ? { ...addr, lat: geo.lat, lng: geo.lng } : addr);
+        await new Promise(res => setTimeout(res, 400));
       }
       if (!cancelled) setGeoAddr(result);
     })();
@@ -1134,7 +1180,6 @@ export function CpfFullPanel({ cpf }: Props) {
   const score2Val = gf(scoreFields2,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
 
   const geocoded  = geoAddr.filter(a => a.lat && a.lng);
-  const center: [number,number] = geocoded[0] ? [geocoded[0].lat!, geocoded[0].lng!] : [-14.235, -51.925];
   const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
 
   const hasIdentity  = !!(identity.nome || identity.rg);
@@ -1300,42 +1345,130 @@ export function CpfFullPanel({ cpf }: Props) {
               {/* Endereços + Mapa */}
               {addresses.length > 0 && (
                 <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length} delay={0.18}>
-                  <div className="rounded-2xl overflow-hidden mb-4" style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <div className="relative h-[300px]">
-                      <MapContainer center={center} zoom={geocoded.length > 0 ? 7 : 4} className="h-full w-full z-10" style={{ background: "#0c0e1c" }}>
-                        <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>'
-                          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-                        {geocoded.map((addr, i) => (
-                          <CircleMarker key={i} center={[addr.lat!, addr.lng!]} radius={12} pathOptions={{ fillColor: "#7c3aed", color: "#a855f7", weight: 2, fillOpacity: 0.9 }}>
-                            <Tooltip permanent direction="top" offset={[0, -14]}>
-                              <div style={{ background: "rgba(9,9,15,0.92)", border: "1px solid rgba(168,85,247,0.4)", borderRadius: 8, padding: "4px 8px", color: "#fff", fontSize: 10, fontWeight: 700, whiteSpace: "nowrap", maxWidth: 220 }}>
-                                <span style={{ color: "#a855f7", marginRight: 5 }}>◉ {i+1}</span>
-                                {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.cidade ? ` — ${addr.cidade}` : ""}
-                              </div>
-                            </Tooltip>
-                            <Popup>
-                              <div className="text-xs space-y-1 min-w-[180px]">
-                                <p className="font-bold text-gray-800">{addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}</p>
-                                {addr.complemento && addr.complemento !== "Não Informado" && <p className="text-gray-500">{addr.complemento}</p>}
-                                {addr.bairro && <p className="text-gray-600">{addr.bairro}</p>}
-                                <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" — ")}</p>
-                                {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
-                                <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.cidade,addr.uf].filter(Boolean).join(","))}`}
-                                  target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1"><MapPin className="w-3 h-3" /> Google Maps</a>
-                              </div>
-                            </Popup>
-                          </CircleMarker>
-                        ))}
+                  {/* ── Map ─────────────────────────────────────────────────── */}
+                  <div className="rounded-2xl overflow-hidden mb-5" style={{ border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 4px 32px rgba(0,0,0,0.45)" }}>
+                    <div className="relative" style={{ height: 400 }}>
+                      <MapContainer
+                        center={[-14.235, -51.925]} zoom={4}
+                        className="h-full w-full"
+                        style={{ background: "#080a14", zIndex: 10 }}
+                        zoomControl={false}
+                      >
+                        <TileLayer
+                          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+                          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                        />
+                        <MapBoundsAdjuster points={geocoded.map(a => [a.lat!, a.lng!] as [number,number])} />
+                        {geocoded.map((addr, i) => {
+                          const mc = markerColor(i);
+                          const shortLabel = [addr.logradouro, addr.numero].filter(Boolean).join(", ")
+                            || addr.cidade || `Endereço ${i + 1}`;
+                          const city = [addr.cidade, addr.uf].filter(Boolean).join(" – ");
+                          return (
+                            <CircleMarker
+                              key={i}
+                              center={[addr.lat!, addr.lng!]}
+                              radius={i === 0 ? 13 : 10}
+                              pathOptions={{
+                                fillColor: mc.fill,
+                                color: mc.stroke,
+                                weight: 2.5,
+                                fillOpacity: 0.92,
+                              }}
+                            >
+                              <Tooltip permanent direction="top" offset={[0, -(i === 0 ? 17 : 14)]}>
+                                <div style={{
+                                  background: "rgba(8,10,20,0.95)",
+                                  border: `1px solid ${mc.stroke}55`,
+                                  borderRadius: 8, padding: "3px 8px",
+                                  color: "#fff", fontSize: 10, fontWeight: 700,
+                                  whiteSpace: "nowrap", maxWidth: 240,
+                                  boxShadow: `0 0 10px ${mc.glow}`,
+                                }}>
+                                  <span style={{ color: mc.stroke, marginRight: 5, fontWeight: 900 }}>
+                                    {i + 1}
+                                  </span>
+                                  {shortLabel.length > 34 ? shortLabel.slice(0, 34) + "…" : shortLabel}
+                                  {city && <span style={{ color: "rgba(255,255,255,0.42)", marginLeft: 4 }}>· {city}</span>}
+                                </div>
+                              </Tooltip>
+                              <Popup>
+                                <div style={{ minWidth: 200, fontFamily: "inherit" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                                    <span style={{ background: mc.fill, color: "#fff", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, flexShrink: 0 }}>{i + 1}</span>
+                                    <strong style={{ fontSize: 12 }}>{shortLabel || `Endereço ${i + 1}`}</strong>
+                                  </div>
+                                  {addr.complemento && addr.complemento !== "Não Informado" && <p style={{ margin: "2px 0", fontSize: 11, color: "#555" }}>{addr.complemento}</p>}
+                                  {addr.bairro && <p style={{ margin: "2px 0", fontSize: 11, color: "#444" }}>{addr.bairro}</p>}
+                                  {city && <p style={{ margin: "2px 0", fontSize: 11, color: "#333" }}>{city}</p>}
+                                  {addr.cep && <p style={{ margin: "2px 0", fontSize: 10, color: "#777" }}>CEP {addr.cep}</p>}
+                                  <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro, addr.numero, addr.cidade, addr.uf].filter(Boolean).join(", "))}`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, color: mc.fill, fontWeight: 700, fontSize: 11, textDecoration: "none" }}
+                                  >
+                                    ↗ Google Maps
+                                  </a>
+                                </div>
+                              </Popup>
+                            </CircleMarker>
+                          );
+                        })}
                       </MapContainer>
-                      <div className="absolute top-3 left-3 z-[1000] flex items-center gap-2 pointer-events-none px-3 py-2 rounded-xl" style={{ background: "rgba(9,9,15,0.9)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.1)" }}>
-                        <MapPin className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
-                        <span className="text-[10px] font-semibold text-white">Mapa de Endereços</span>
-                        {geocodingInProgress
-                          ? <><Loader2 className="w-3 h-3 animate-spin text-primary/60" /><span className="text-[9px] text-white/30">Geocodificando…</span></>
-                          : <span className="text-[9px] text-white/30">{geocoded.length} marcados</span>}
+
+                      {/* Top-left overlay */}
+                      <div className="absolute top-3 left-3 z-[1000] pointer-events-none flex flex-col gap-2">
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
+                          style={{ background: "rgba(8,10,20,0.92)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.09)" }}>
+                          <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--color-primary)" }} />
+                          <span className="text-[10px] font-bold text-white tracking-wide">Mapa de Endereços</span>
+                          {geocodingInProgress
+                            ? <span className="flex items-center gap-1.5 text-[9px] text-white/40"><Loader2 className="w-3 h-3 animate-spin" /> geocodificando…</span>
+                            : geocoded.length > 0
+                              ? <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full" style={{ background: "rgba(124,58,237,0.2)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.3)" }}>{geocoded.length}/{addresses.length} marcados</span>
+                              : null
+                          }
+                        </div>
                       </div>
+
+                      {/* Legend overlay bottom-right */}
+                      {geocoded.length > 0 && (
+                        <div className="absolute bottom-3 right-3 z-[1000] pointer-events-none max-w-[200px]">
+                          <div className="rounded-xl px-3 py-2.5 flex flex-col gap-1.5"
+                            style={{ background: "rgba(8,10,20,0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                            {geocoded.slice(0, 6).map((addr, i) => {
+                              const mc = markerColor(i);
+                              return (
+                                <div key={i} className="flex items-center gap-2 min-w-0">
+                                  <span className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[8px] font-black"
+                                    style={{ background: mc.fill, color: "#fff", boxShadow: `0 0 6px ${mc.glow}` }}>{i + 1}</span>
+                                  <span className="text-[9px] text-white/60 truncate">
+                                    {addr.cidade || addr.logradouro || `Endereço ${i + 1}`}{addr.uf ? `, ${addr.uf}` : ""}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                            {geocoded.length > 6 && (
+                              <span className="text-[8px] text-white/25 text-center mt-0.5">+{geocoded.length - 6} mais</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* No coords yet placeholder */}
+                      {!geocodingInProgress && geocoded.length === 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center z-[1000] pointer-events-none">
+                          <div className="flex flex-col items-center gap-2 px-5 py-4 rounded-2xl"
+                            style={{ background: "rgba(8,10,20,0.88)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                            <MapPin className="w-5 h-5 text-white/20" />
+                            <p className="text-[10px] text-white/30">Coordenadas não encontradas</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* ── Address list ──────────────────────────────────────────── */}
                   <div className={viewMode === "compact" ? "divide-y divide-white/5" : "space-y-2"}>
                     {addresses.map((a, i) => <AddressCard key={i} addr={a} idx={i} />)}
                   </div>
