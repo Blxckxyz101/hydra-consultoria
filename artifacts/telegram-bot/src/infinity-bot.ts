@@ -20,13 +20,13 @@ let   CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
   ? Number(process.env.INFINITY_CHANNEL_ID)
   : null;
 
-// ── Único grupo permitido ──────────────────────────────────────────────────────
-const INFINITY_GROUP_ID = -1003795096082;
+// ── Grupos autorizados (grupo Infinity pré-carregado) ─────────────────────────
+const INFINITY_GROUP_ID  = -1003795096082;
+const authorizedGroups   = new Set<number>([INFINITY_GROUP_ID]);
 
 // ── Access control ─────────────────────────────────────────────────────────────
-const ADMIN_USERNAMES  = new Set<string>(["blxckxyz", "xxmathexx", "pianco"]);
+const ADMIN_USERNAMES  = new Set<string>(["blxckxyz", "xxmathexx", "pianco", "piancooz"]);
 const ADMIN_IDS        = new Set<number>();
-const verifiedUsers    = new Set<number>();
 
 function isAdmin(userId: number, username?: string): boolean {
   if (ADMIN_IDS.has(userId)) return true;
@@ -755,14 +755,17 @@ async function executeAndSend(
 
     await telegram.deleteMessage(chatId, loadMsgId).catch(() => {});
 
-    // Send .txt with the result box as caption — tudo numa mensagem só
     const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
-    const caption = resultMsg.length <= 1024 ? resultMsg : resultMsg.slice(0, 1020) + "\n...";
+
+    // Envia o .txt como documento (sem caption)
     await telegram.sendDocument(
       chatId,
       { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
-      { caption, parse_mode: "HTML", ...buildResultKeyboard() },
     );
+
+    // Envia o resultado como blockquote (visual de citação do Telegram)
+    const blockText = `<blockquote>${resultMsg.slice(0, 4096)}</blockquote>`;
+    await telegram.sendMessage(chatId, blockText, { parse_mode: "HTML", ...buildResultKeyboard() });
 
 
   } catch (err) {
@@ -824,6 +827,12 @@ export function startInfinityBot(): void {
     { command: "bin",       description: "Consultar BIN de Cartão" },
     { command: "ip",        description: "Consultar IP" },
     { command: "ajuda",     description: "❓ Lista de comandos" },
+    { command: "setgroup",  description: "🔐 [Admin] Liberar grupo atual" },
+    { command: "groupid",   description: "🆔 [Admin] Ver ID do grupo" },
+    { command: "liberar",   description: "✅ [Admin] Liberar grupo" },
+    { command: "bloquear",  description: "🔒 [Admin] Bloquear grupo" },
+    { command: "addadmin",  description: "👤 [Admin] Adicionar admin por ID" },
+    { command: "status_bot", description: "📊 [Admin] Status do bot" },
   ]).catch(() => {});
 
   // ── Middleware ────────────────────────────────────────────────────────────
@@ -836,13 +845,13 @@ export function startInfinityBot(): void {
     if (chat.type === "private") return next();
 
     if (chat.type === "group" || chat.type === "supergroup") {
-      // Only operate in the official Infinity group
-      if (chat.id !== INFINITY_GROUP_ID) return;
+      // Só opera em grupos autorizados — silenciosamente ignora os demais
+      if (!authorizedGroups.has(chat.id)) return;
 
-      // Admins bypass all checks
+      // Admins passam direto
       if (isAdmin(from.id, from.username)) return next();
 
-      // Only process commands, callbacks and pending query responses — ignore everything else
+      // Processa apenas comandos, callbacks e respostas de consulta pendente
       const hasCommand = "message" in ctx && (ctx as any).message?.text?.startsWith("/");
       const hasCallback = "callback_query" in ctx;
       const hasPending = "message" in ctx && getPending(from.id) !== null;
@@ -852,34 +861,39 @@ export function startInfinityBot(): void {
     return next();
   });
 
-  // ── Bot added to group — só aceita o grupo Infinity ──────────────────────
+  // ── Bot adicionado a grupo — aguarda /setgroup do admin ──────────────────
   bot.on("my_chat_member", async (ctx) => {
     const update = ctx.update.my_chat_member;
     const chat = update.chat;
     const newStatus = update.new_chat_member.status;
     if (newStatus !== "member" && newStatus !== "administrator") return;
     if (chat.type !== "group" && chat.type !== "supergroup") return;
-
-    if (chat.id === INFINITY_GROUP_ID) {
-      // Grupo oficial — apenas confirma silenciosamente (sem spam)
-      return;
-    }
-
-    // Qualquer outro grupo — sai imediatamente sem enviar mensagem
-    try { await bot.telegram.leaveChat(chat.id); } catch { /* ignore */ }
+    // Não faz nada ao ser adicionado — admin precisa usar /setgroup para liberar
   });
 
   // ── Admin commands ────────────────────────────────────────────────────────
+  bot.command("setgroup", async (ctx) => {
+    if (!isAdmin(ctx.from.id, ctx.from.username)) return;
+    if (ctx.chat.type === "private") { await ctx.replyWithHTML("ℹ️ Use dentro do grupo que deseja liberar."); return; }
+    authorizedGroups.add(ctx.chat.id);
+    try { await ctx.deleteMessage(); } catch {}
+    await ctx.replyWithHTML(`✅ <b>Grupo liberado!</b>\nID: <code>${ctx.chat.id}</code>`);
+  });
+
   bot.command("liberar", async (ctx) => {
     if (!isAdmin(ctx.from.id, ctx.from.username)) return;
+    if (ctx.chat.type === "private") { await ctx.replyWithHTML("ℹ️ Use dentro do grupo que deseja liberar."); return; }
+    authorizedGroups.add(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(`ℹ️ Bot opera apenas no grupo Infinity. ID fixo: <code>${INFINITY_GROUP_ID}</code>`);
+    await ctx.replyWithHTML(`✅ <b>Grupo liberado!</b>\nID: <code>${ctx.chat.id}</code>`);
   });
 
   bot.command("bloquear", async (ctx) => {
     if (!isAdmin(ctx.from.id, ctx.from.username)) return;
+    if (ctx.chat.type === "private") { await ctx.replyWithHTML("ℹ️ Use dentro do grupo."); return; }
+    authorizedGroups.delete(ctx.chat.id);
     try { await ctx.deleteMessage(); } catch {}
-    await ctx.replyWithHTML(`ℹ️ Bot opera apenas no grupo Infinity. ID fixo: <code>${INFINITY_GROUP_ID}</code>`);
+    await ctx.replyWithHTML(`🔒 <b>Grupo bloqueado.</b>\nID: <code>${ctx.chat.id}</code>`);
   });
 
   bot.command("groupid", async (ctx) => {
@@ -909,7 +923,7 @@ export function startInfinityBot(): void {
       `📊 <b>Status</b>`,
       `Canal ID: <code>${CHANNEL_ID ?? "username: " + CHANNEL_USERNAME}</code>`,
       `Verificados: <b>${verifiedUsers.size}</b>`,
-      `Grupo: <code>${INFINITY_GROUP_ID}</code>`,
+      `Grupos liberados: <b>${authorizedGroups.size}</b> (<code>${[...authorizedGroups].join(", ")}</code>)`,
     ].join("\n"));
   });
 
@@ -934,6 +948,7 @@ export function startInfinityBot(): void {
   // ── /ajuda ────────────────────────────────────────────────────────────────
   bot.command("ajuda", async (ctx) => {
     try { await ctx.deleteMessage(); } catch {}
+    const admin = isAdmin(ctx.from.id, ctx.from.username);
     const lines = [
       HDR, "┃", "┃ • COMANDOS DISPONÍVEIS", DIV,
       "┃ /cpf — Consultar CPF",
@@ -944,6 +959,15 @@ export function startInfinityBot(): void {
       "┃ /placa — Consultar Placa",
       "┃ /bin — Consultar BIN",
       "┃ /ip — Localizar IP",
+      ...(admin ? [
+        DIV,
+        "┃ 🔐 <b>ADMIN</b>",
+        "┃ /setgroup — Liberar grupo atual",
+        "┃ /groupid — Ver ID do grupo",
+        "┃ /bloquear — Bloquear grupo",
+        "┃ /addadmin — Adicionar admin por ID",
+        "┃ /status_bot — Status do bot",
+      ] : []),
       DIV, "┃ Use /start para o menu.", FTR,
     ];
     await ctx.replyWithHTML(lines.join("\n"), Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "menu_consultas")]]));
@@ -989,21 +1013,29 @@ export function startInfinityBot(): void {
     const from = ctx.from!;
     deletePending(from.id);
     const name = from.username ? `@${from.username}` : (from.first_name ?? "operador");
-    await ctx.replyWithHTML(buildHomeMsg(name, isAdmin(from.id, from.username)), buildStartKeyboard());
+    try {
+      await ctx.editMessageText(buildHomeMsg(name, isAdmin(from.id, from.username)), { parse_mode: "HTML", ...buildStartKeyboard() });
+    } catch { await ctx.replyWithHTML(buildHomeMsg(name, isAdmin(from.id, from.username)), buildStartKeyboard()); }
   });
 
   bot.action("menu_consultas", async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.replyWithHTML(buildConsultasMenuMsg(), buildConsultasKeyboard());
+    try {
+      await ctx.editMessageText(buildConsultasMenuMsg(), { parse_mode: "HTML", ...buildConsultasKeyboard() });
+    } catch { await ctx.replyWithHTML(buildConsultasMenuMsg(), buildConsultasKeyboard()); }
   });
 
   bot.action("menu_suporte", async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.replyWithHTML(buildSuporteMsg(), buildSuporteKeyboard());
+    try {
+      await ctx.editMessageText(buildSuporteMsg(), { parse_mode: "HTML", ...buildSuporteKeyboard() });
+    } catch { await ctx.replyWithHTML(buildSuporteMsg(), buildSuporteKeyboard()); }
   });
 
   bot.action("show_help", async (ctx) => {
     await ctx.answerCbQuery();
+    const from = ctx.from!;
+    const admin = isAdmin(from.id, from.username);
     const lines = [
       HDR, "┃", "┃ • COMANDOS DISPONÍVEIS", DIV,
       "┃ /cpf — Consultar CPF",
@@ -1014,14 +1046,23 @@ export function startInfinityBot(): void {
       "┃ /placa — Consultar Placa",
       "┃ /bin — Consultar BIN",
       "┃ /ip — Localizar IP",
+      ...(admin ? [
+        DIV,
+        "┃ 🔐 <b>ADMIN</b>",
+        "┃ /setgroup — Liberar grupo atual",
+        "┃ /groupid — Ver ID do grupo",
+        "┃ /bloquear — Bloquear grupo",
+        "┃ /addadmin — Adicionar admin",
+        "┃ /status_bot — Status do bot",
+      ] : []),
       DIV,
-      "┃ 💡 Também use os botões em",
-      "┃ /start para consultar.",
+      "┃ 💡 Use os botões em /start.",
       FTR,
     ];
-    await ctx.replyWithHTML(lines.join("\n"), Markup.inlineKeyboard([
-      [Markup.button.callback("🔍 Consultar", "menu_consultas"), Markup.button.callback("🏠 Início", "home")],
-    ]));
+    const kb = Markup.inlineKeyboard([[Markup.button.callback("🔍 Consultar", "menu_consultas"), Markup.button.callback("🏠 Início", "home")]]);
+    try {
+      await ctx.editMessageText(lines.join("\n"), { parse_mode: "HTML", ...kb });
+    } catch { await ctx.replyWithHTML(lines.join("\n"), kb); }
   });
 
   bot.action("cancel", async (ctx) => {
