@@ -845,11 +845,11 @@ export function startInfinityBot(): void {
     if (chat.type === "private") return next();
 
     if (chat.type === "group" || chat.type === "supergroup") {
-      // Só opera em grupos autorizados — silenciosamente ignora os demais
-      if (!authorizedGroups.has(chat.id)) return;
-
-      // Admins passam direto
+      // Admins passam direto em QUALQUER grupo (inclusive para poder usar /setgroup)
       if (isAdmin(from.id, from.username)) return next();
+
+      // Usuários comuns: só opera em grupos autorizados
+      if (!authorizedGroups.has(chat.id)) return;
 
       // Processa apenas comandos, callbacks e respostas de consulta pendente
       const hasCommand = "message" in ctx && (ctx as any).message?.text?.startsWith("/");
@@ -922,7 +922,6 @@ export function startInfinityBot(): void {
     await ctx.replyWithHTML([
       `📊 <b>Status</b>`,
       `Canal ID: <code>${CHANNEL_ID ?? "username: " + CHANNEL_USERNAME}</code>`,
-      `Verificados: <b>${verifiedUsers.size}</b>`,
       `Grupos liberados: <b>${authorizedGroups.size}</b> (<code>${[...authorizedGroups].join(", ")}</code>)`,
     ].join("\n"));
   });
