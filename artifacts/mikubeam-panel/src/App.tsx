@@ -1432,8 +1432,8 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar") ?? "attack"
+  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar" | "api">(() =>
+    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar" | "api") ?? "attack"
   );
 
   /* ── SKYNETchat Login ── */
@@ -3848,6 +3848,13 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               📢 Redes
             </button>
             <button
+              className={`lb-page-tab ${activePage === "api" ? "lb-page-tab--active" : ""}`}
+              onClick={() => setActivePage("api")}
+              style={activePage === "api" ? {} : { color: "#f0c040" }}
+            >
+              🌟 API
+            </button>
+            <button
               className={`lb-page-tab ${activePage === "infinity" ? "lb-page-tab--active" : ""}`}
               onClick={() => setActivePage("infinity")}
             >
@@ -6076,6 +6083,119 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
             REDES SOCIAIS — MASS REPORTER
         ══════════════════════════════════════════════ */}
         {activePage === "redes" && <SocialDashboard base={BASE} />}
+
+        {/* ══════════════════════════════════════════════
+            SKYLERS API — DIVULGAÇÃO
+        ══════════════════════════════════════════════ */}
+        {activePage === "api" && (
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center",
+            padding: "40px 20px", minHeight: 500, gap: 32,
+          }}>
+            {/* Hero */}
+            <div style={{
+              background: "linear-gradient(135deg, rgba(20,10,40,0.95) 0%, rgba(40,15,15,0.95) 100%)",
+              border: "1.5px solid rgba(240,192,64,0.45)",
+              borderRadius: 20, padding: "40px 36px", maxWidth: 680, width: "100%",
+              boxShadow: "0 0 60px rgba(240,192,64,0.12), 0 4px 40px rgba(0,0,0,0.6)",
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 52, marginBottom: 8 }}>🌟</div>
+              <h1 style={{
+                fontFamily: "'Cinzel', serif", fontSize: 28, fontWeight: 800,
+                background: "linear-gradient(90deg, #f0c040, #ffecaa, #f0c040)",
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                margin: "0 0 6px",
+              }}>
+                SKYLERS APIs
+              </h1>
+              <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: "0 0 28px", letterSpacing: 2, textTransform: "uppercase" }}>
+                A plataforma de APIs mais exclusiva do mercado
+              </p>
+
+              <p style={{ color: "rgba(255,255,255,0.85)", fontSize: 15.5, lineHeight: 1.75, margin: "0 0 32px" }}>
+                Quer ter as <strong style={{ color: "#f0c040" }}>melhores APIs do mercado</strong> integradas nos seus sistemas?<br />
+                Com a <strong style={{ color: "#f0c040" }}>Skylers API</strong> você acessa dados exclusivos com alta disponibilidade,
+                resposta ultrarrápida e cobertura nacional — tudo pronto para integrar.
+              </p>
+
+              {/* Feature cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 32 }}>
+                {[
+                  { icon: "📸", label: "Foto Nacional", desc: "Foto vinculada ao CPF diretamente da base nacional" },
+                  { icon: "🪪", label: "Foto CNH", desc: "Imagem da CNH com dados do condutor" },
+                  { icon: "⚡", label: "Alta Performance", desc: "Respostas em milissegundos, uptime garantido" },
+                  { icon: "🔐", label: "20+ Endpoints", desc: "CPF, CNPJ, placa, telefone, e muito mais" },
+                  { icon: "💎", label: "Preços Incríveis", desc: "Planos acessíveis para qualquer volume de requisições" },
+                  { icon: "♾️", label: "Requisições Ilimitadas", desc: "Planos customizados para alto volume — sem limite" },
+                ].map(f => (
+                  <div key={f.label} style={{
+                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(240,192,64,0.18)",
+                    borderRadius: 12, padding: "14px 16px", textAlign: "left",
+                  }}>
+                    <div style={{ fontSize: 22, marginBottom: 6 }}>{f.icon}</div>
+                    <div style={{ color: "#f0c040", fontWeight: 700, fontSize: 13, marginBottom: 3 }}>{f.label} ✔️</div>
+                    <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11.5, lineHeight: 1.5 }}>{f.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* CTA */}
+              <div style={{
+                background: "rgba(240,192,64,0.07)", border: "1px solid rgba(240,192,64,0.3)",
+                borderRadius: 14, padding: "20px 24px", marginBottom: 24,
+              }}>
+                <p style={{ color: "rgba(255,255,255,0.9)", fontSize: 14.5, margin: "0 0 6px", lineHeight: 1.7 }}>
+                  Compre pelo nosso <strong style={{ color: "#f0c040" }}>robô oficial</strong> ou fale com o{" "}
+                  <strong style={{ color: "#f0c040" }}>suporte</strong> para pacotes personalizados com mais requisições.
+                </p>
+                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, margin: 0 }}>
+                  ⭐ Planos flexíveis · Entrega imediata · Suporte dedicado
+                </p>
+              </div>
+
+              {/* Buttons */}
+              <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+                <a
+                  href="https://t.me/SkylersApisBot"
+                  target="_blank" rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    background: "linear-gradient(135deg, #f0c040, #c8952a)",
+                    color: "#1a0a00", fontWeight: 800, fontSize: 14,
+                    padding: "13px 28px", borderRadius: 10, textDecoration: "none",
+                    boxShadow: "0 4px 20px rgba(240,192,64,0.35)",
+                    transition: "opacity .2s",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.85")}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                >
+                  🤖 @SkylersApisBot
+                </a>
+                <a
+                  href="https://t.me/SkylersSuporte"
+                  target="_blank" rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    background: "rgba(240,192,64,0.1)", border: "1.5px solid rgba(240,192,64,0.5)",
+                    color: "#f0c040", fontWeight: 700, fontSize: 14,
+                    padding: "13px 28px", borderRadius: 10, textDecoration: "none",
+                    transition: "opacity .2s",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = "0.75")}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+                >
+                  💬 @SkylersSuporte
+                </a>
+              </div>
+            </div>
+
+            {/* Badge footer */}
+            <p style={{ color: "rgba(255,255,255,0.2)", fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase" }}>
+              🌟 Skylers APIs · Exclusividade · Performance · Cobertura Nacional
+            </p>
+          </div>
+        )}
 
         {activePage === "attack" && <>
 
