@@ -43,10 +43,33 @@ interface SavedConfig {
   pinnedList?: Array<{ host: string; port: number; username?: string; password?: string }>;
 }
 
+// ── Env-var sentinel helpers — never store real credentials on disk ───────────
+// Passwords that match a known env var are stored as "__env:VAR_NAME__"
+// and resolved back to the env var value when loaded.
+const ENV_SENTINELS: Array<{ name: string; value: () => string | undefined }> = [
+  { name: "WEBSHARE_PROXY_PASS", value: () => process.env.WEBSHARE_PROXY_PASS },
+  { name: "RESIDENTIAL_PASS",    value: () => process.env.RESIDENTIAL_PASS },
+];
+
+function maskPassword(pass: string | undefined): string | undefined {
+  if (!pass) return pass;
+  for (const s of ENV_SENTINELS) {
+    const v = s.value();
+    if (v && pass === v) return `__env:${s.name}__`;
+  }
+  return pass;
+}
+
+function resolvePassword(pass: string | undefined): string | undefined {
+  if (!pass) return pass;
+  const m = /^__env:([A-Z0-9_]+)__$/.exec(pass);
+  if (m) return process.env[m[1]] ?? pass;
+  return pass;
+}
+
 function saveConfig(): void {
   try {
     fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-    // Save all unique authenticated pinned proxies (not just residentialCreds single-slot)
     const seen = new Set<string>();
     const pinnedList = pinnedProxies
       .filter(p => p.username && p.password)
@@ -56,8 +79,11 @@ function saveConfig(): void {
         seen.add(k);
         return true;
       })
-      .map(p => ({ host: p.host, port: p.port, username: p.username, password: p.password }));
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ residential: residentialCreds, pinnedList }, null, 2));
+      .map(p => ({ host: p.host, port: p.port, username: p.username, password: maskPassword(p.password) }));
+    const residentialMasked = residentialCreds
+      ? { ...residentialCreds, password: maskPassword(residentialCreds.password) ?? "" }
+      : null;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ residential: residentialMasked, pinnedList }, null, 2));
   } catch { /* non-fatal */ }
 }
 
@@ -65,28 +91,27 @@ function loadConfig(): void {
   try {
     const raw = fs.readFileSync(CONFIG_FILE, "utf8");
     const cfg = JSON.parse(raw) as SavedConfig;
-    // Restore full pinned proxy list if present
     if (cfg.pinnedList && cfg.pinnedList.length > 0) {
       pinnedProxies = cfg.pinnedList.map((p, i) => ({
         host: p.host, port: p.port, responseMs: i + 1, type: "http" as const,
-        username: p.username, password: p.password,
+        username: p.username, password: resolvePassword(p.password),
       }));
       proxyCache = [...pinnedProxies];
       lastFetch = Date.now();
       console.log(`[PROXIES] Restored ${pinnedProxies.length} pinned proxies from config`);
     } else if (cfg.residential) {
-      // Legacy: single residential config
-      residentialCreds = cfg.residential;
+      const pass = resolvePassword(cfg.residential.password);
+      residentialCreds = { ...cfg.residential, password: pass ?? cfg.residential.password };
       pinnedProxies = Array.from({ length: cfg.residential.count }, (_, i) => ({
         host: cfg.residential!.host, port: cfg.residential!.port,
         responseMs: i + 1, type: "http" as const,
-        username: cfg.residential!.username, password: cfg.residential!.password,
+        username: cfg.residential!.username, password: pass,
       }));
       proxyCache = [...pinnedProxies];
       lastFetch = Date.now();
       console.log(`[PROXIES] Restored ${cfg.residential.count} residential slots from legacy config (${cfg.residential.host})`);
     }
-    if (cfg.residential) residentialCreds = cfg.residential;
+    if (cfg.residential) residentialCreds = { ...cfg.residential, password: resolvePassword(cfg.residential.password) ?? cfg.residential.password };
   } catch { /* no saved config */ }
 }
 

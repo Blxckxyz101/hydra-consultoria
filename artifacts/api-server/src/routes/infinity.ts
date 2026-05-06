@@ -1138,10 +1138,41 @@ async function callSkylers(
 
 
 // ─── auth ──────────────────────────────────────────────────────────────────
+// Per-username brute-force lockout (in-memory, complements IP rate limiter)
+const loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+const MAX_LOGIN_FAILURES = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
+
+function isUserLocked(uname: string): boolean {
+  const entry = loginFailures.get(uname.toLowerCase());
+  if (!entry) return false;
+  if (entry.lockedUntil > Date.now()) return true;
+  loginFailures.delete(uname.toLowerCase());
+  return false;
+}
+
+function recordLoginFailure(uname: string): void {
+  const key = uname.toLowerCase();
+  const entry = loginFailures.get(key) ?? { count: 0, lockedUntil: 0 };
+  entry.count++;
+  if (entry.count >= MAX_LOGIN_FAILURES) {
+    entry.lockedUntil = Date.now() + LOCKOUT_MS;
+  }
+  loginFailures.set(key, entry);
+}
+
+function clearLoginFailures(uname: string): void {
+  loginFailures.delete(uname.toLowerCase());
+}
+
 router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body ?? {};
   if (!username || !password) {
     res.status(400).json({ error: "username e password obrigatórios" });
+    return;
+  }
+  if (isUserLocked(String(username))) {
+    res.status(429).json({ error: "Conta temporariamente bloqueada por muitas tentativas. Aguarde 15 minutos." });
     return;
   }
   const rows = await db
@@ -1151,14 +1182,17 @@ router.post("/login", loginLimiter, async (req, res) => {
     .limit(1);
   const u = rows[0];
   if (!u) {
+    recordLoginFailure(String(username));
     res.status(401).json({ error: "Credenciais inválidas" });
     return;
   }
   const ok = await bcrypt.compare(String(password), u.passwordHash);
   if (!ok) {
+    recordLoginFailure(u.username);
     res.status(401).json({ error: "Credenciais inválidas" });
     return;
   }
+  clearLoginFailures(u.username);
   const step: "setup-pin" | "verify-pin" = u.accountPin ? "verify-pin" : "setup-pin";
   const tempToken = createTempToken(u.username, step);
   res.json({ step, tempToken });
