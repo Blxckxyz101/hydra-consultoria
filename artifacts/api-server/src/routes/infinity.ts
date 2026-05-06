@@ -198,12 +198,31 @@ function bumpCaches(username: string): void {
   if (u?.date === today) _userDailyCache.set(username, { date: today, count: u.count + 1 });
 }
 
-async function getUserSkylersTotal(username: string): Promise<number> {
+const _userSkylersCache = new Map<string, { date: string; count: number }>();
+
+function bumpSkylersCaches(username: string): void {
+  const today = new Date().toISOString().slice(0, 10);
+  const u = _userSkylersCache.get(username);
+  if (u?.date === today) _userSkylersCache.set(username, { date: today, count: u.count + 1 });
+  else _userSkylersCache.set(username, { date: today, count: 1 });
+}
+
+async function getUserSkylersDaily(username: string): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const cached = _userSkylersCache.get(username);
+  if (cached?.date === today) return cached.count;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const [row] = await db
     .select({ c: sql<number>`count(*)::int` })
     .from(infinityConsultasTable)
-    .where(and(eq(infinityConsultasTable.username, username), eq(infinityConsultasTable.skylers, true)));
-  return row?.c ?? 0;
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      eq(infinityConsultasTable.skylers, true),
+      gte(infinityConsultasTable.createdAt, todayStart),
+    ));
+  const count = row?.c ?? 0;
+  _userSkylersCache.set(username, { date: today, count });
+  return count;
 }
 
 const SKYLERS_TOTAL_LIMIT = 25;
@@ -1263,7 +1282,7 @@ router.get("/me", requireAuth, async (req, res) => {
     res.status(401).json({ error: "Usuário não encontrado" });
     return;
   }
-  const skylersTotal = await getUserSkylersTotal(username);
+  const skylersTotal = await getUserSkylersDaily(username);
   res.json({ ...serializeUser(u), skylersTotal, skylersLimit: SKYLERS_TOTAL_LIMIT });
 });
 
@@ -1711,7 +1730,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
     const [globalCount, userCount, skylersTotal] = await Promise.all([
       getGlobalDailyCount(),
       getUserDailyCount(username),
-      getUserSkylersTotal(username),
+      getUserSkylersDaily(username),
     ]);
 
     if (globalCount >= DAILY_RATE_LIMIT) {
@@ -1762,6 +1781,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
   bumpCaches(username);
+  bumpSkylersCaches(username);
   await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true });
 
   res.json({ success, data, error: provider.error ?? null });
@@ -2193,7 +2213,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   // ── Skylers external proxy ───────────────────────────────────────────────
   if (source === "skylers") {
     if (req.infinityUser && req.infinityUser.role !== "admin") {
-      const skylersTotal = await getUserSkylersTotal(req.infinityUser.username);
+      const skylersTotal = await getUserSkylersDaily(req.infinityUser.username);
       if (skylersTotal >= SKYLERS_TOTAL_LIMIT) {
         res.status(429).json({
           success: false,
@@ -2226,6 +2246,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const rawText = provider.parsed?.raw ?? "";
     if (req.infinityUser && !skipLog) {
       bumpCaches(req.infinityUser.username);
+      bumpSkylersCaches(req.infinityUser.username);
       await logConsulta({
         tipo: `skylers:${modulo}`,
         query: dadosStr,
@@ -2253,6 +2274,7 @@ router.post("/log-cpffull", requireAuth, async (req, res) => {
   const query = String(cpf ?? "").replace(/\D/g, "").slice(0, 11) || "unknown";
   await logConsulta({ tipo: "cpffull", query, username, success: true, result: { fields: [], sections: [], raw: "" } });
   bumpCaches(username);
+  bumpSkylersCaches(username);
   res.json({ ok: true });
 });
 

@@ -388,7 +388,7 @@ export default function Consultas() {
                   ? "bg-amber-400/10 border-amber-400/30"
                   : "bg-sky-400/10 border-sky-400/20"
               }`}
-              title={isAdmin ? "Admins têm acesso ilimitado à Skylers" : "Quota de consultas Skylers (total vitalício)"}
+              title={isAdmin ? "Admins têm acesso ilimitado à Skylers" : "Quota diária Skylers — reseta à meia-noite"}
             >
               <Network className={`w-3 h-3 ${isAdmin ? "text-primary/60" : skylersTotal >= skylersLimit ? "text-rose-400" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-400" : "text-sky-400"}`} />
               <span className={`text-[10px] uppercase tracking-widest font-semibold ${isAdmin ? "text-primary/60" : skylersTotal >= skylersLimit ? "text-rose-300" : skylersTotal >= skylersLimit * 0.8 ? "text-amber-300" : "text-sky-300"}`}>
