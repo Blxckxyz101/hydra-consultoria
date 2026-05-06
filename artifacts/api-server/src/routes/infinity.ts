@@ -1092,7 +1092,9 @@ function parseSkylers(data: unknown): Parsed {
       const s = String(v).trim();
       if (s && !JUNK_VALUES.has(s)) {
         // Check if this field itself is a base64 photo (or already a data URI)
-        if (!fotoUrl.value && BASE64_PHOTO_KEYS.test(k)) {
+        // Also catches keys that don't match BASE64_PHOTO_KEYS (e.g. "dados", "imagem_cnhh") by
+        // trying toDataUri on any long string value.
+        if (!fotoUrl.value && (BASE64_PHOTO_KEYS.test(k) || s.length > 500)) {
           const uri = toDataUri(s);
           if (uri) {
             fotoUrl.value = uri;
@@ -1103,6 +1105,16 @@ function parseSkylers(data: unknown): Parsed {
         if (isTokenLikeValue(s)) continue;
         result.fields.push({ key: humanizeKey(k), value: s });
       }
+    }
+  }
+
+  // Last-resort scan: check all top-level string values for base64/data-URI images.
+  // This catches photo data stored under unusual key names that didn't match earlier patterns.
+  if (!fotoUrl.value) {
+    for (const [, sv] of Object.entries(d)) {
+      if (typeof sv !== "string" || sv.length < 500) continue;
+      const uri = toDataUri(sv);
+      if (uri) { fotoUrl.value = uri; break; }
     }
   }
 

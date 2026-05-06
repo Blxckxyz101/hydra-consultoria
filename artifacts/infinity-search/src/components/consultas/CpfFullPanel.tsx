@@ -368,13 +368,20 @@ function extractPhotoFromResult(res: ModuleResult): string | null {
     if (raw.trim().startsWith("data:image")) return raw.trim();
     if (trimmed.length > 500 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 200))) return `data:image/jpeg;base64,${trimmed}`;
   }
-  // Priority 3: scan only photo-related field keys
+    // Priority 3: scan only photo-related field keys
   for (const [k, v] of res.data.fields) {
     if (!v || !/FOTO|URL_FOTO|IMAGEM|BASE64|BIOMETRIA/i.test(k)) continue;
     if (v.trim().startsWith("data:image")) return v.trim();
     if (/^https?:\/\//.test(v.trim())) return v.trim();
     const clean = v.replace(/\s/g, "");
     if (clean.length > 200 && /^[A-Za-z0-9+/=]+$/.test(clean.slice(0, 100))) return `data:image/jpeg;base64,${clean}`;
+  }
+  // Priority 4: scan ALL field values for any long base64/data-URI (last resort)
+  for (const [, v] of res.data.fields) {
+    if (!v || v.length < 500) continue;
+    if (v.trim().startsWith("data:image")) return v.trim();
+    const clean = v.replace(/\s/g, "");
+    if (clean.length > 500 && /^[A-Za-z0-9+/=]{500,}$/.test(clean.slice(0, 600))) return `data:image/jpeg;base64,${clean}`;
   }
   return null;
 }
@@ -921,12 +928,12 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           </>
         )}
 
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2 min-w-0">
           {siblings.length > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="flex gap-4">
-                {siblings.slice(0, 4).map((s, i) => (
-                  <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.08 }}>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex gap-3 overflow-x-auto max-w-[260px] sm:max-w-[340px] pb-1 scrollbar-none">
+                {siblings.map((s, i) => (
+                  <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.06 }} className="shrink-0">
                     <PersonNode nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
                       label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"} {...np(s)} />
                   </motion.div>
@@ -969,22 +976,6 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           </>
         )}
 
-        {siblings.length > 4 && (
-          <>
-            <div className="h-px bg-white/5 mt-8 mb-5" />
-            <p className="text-[8px] uppercase tracking-widest text-white/20 mb-5 font-bold text-center">
-              Todos os Irmãos/Irmãs ({siblings.length})
-            </p>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-5">
-              {siblings.map((s, i) => (
-                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.04 * i }} className="flex flex-col items-center gap-1">
-                  <PersonNode nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
-                    label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"} {...np(s)} />
-                </motion.div>
-              ))}
-            </div>
-          </>
-        )}
 
         {outros.length > 0 && (
           <>
@@ -1088,13 +1079,44 @@ export function CpfFullPanel({ cpf }: Props) {
     setRelPhotosLoading(new Set(cpfsToFetch));
     void Promise.allSettled(
       cpfsToFetch.map(async (relCpf) => {
-        const res = await fetchModule("foto", relCpf, true, true);
-        const ph = res.data ? extractPhotoFromResult(res) : null;
+        // Try fotocnh first, then a few state fotos for relatives
+        let ph: string | null = null;
+        for (const tipo of ["foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
+          const res = await fetchModule(tipo, relCpf, true, true);
+          ph = res.data ? extractPhotoFromResult(res) : null;
+          if (ph) break;
+        }
         setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
         if (ph) setRelPhotos(prev => ({ ...prev, [relCpf]: ph }));
       })
     );
   }, [done]);
+
+  // ── Foto cascade: try additional photo sources if main foto module returned nothing ─
+  useEffect(() => {
+    if (!done) return;
+    const currentPhoto = extractPhoto(finalResultsRef.current);
+    if (currentPhoto) return; // already have a photo
+    const clean = cpf.replace(/\D/g, "");
+    if (clean.length !== 11) return;
+    let cancelled = false;
+    (async () => {
+      for (const tipo of ["biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotonc", "fotorn", "fotogo", "fotopb", "fotope", "fotoal", "fotodf", "fototo"]) {
+        if (cancelled) break;
+        const res = await fetchModule(tipo, clean, true, true);
+        const ph = res.data ? extractPhotoFromResult(res) : null;
+        if (ph) {
+          // Inject the found photo into the foto module result so it shows in the panel
+          setMResults(prev => ({
+            ...prev,
+            foto: { status: "done", data: { fields: [["FOTO_URL", ph]], sections: [], raw: "" } },
+          }));
+          break;
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [done, cpf]);
 
   // ── Derived (memoized to prevent flickering on incremental module loads) ──
   const identity    = useMemo(() => buildIdentity(mResults),              [mResults]);
