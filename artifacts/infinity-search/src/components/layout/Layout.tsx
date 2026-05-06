@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/logo.png";
@@ -225,6 +225,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/", label: "Visão Geral", icon: Activity },
     { href: "/consultas", label: "Consultas", icon: Search },
+    { href: "/skylers", label: "🌟 API", icon: Zap },
     { href: "/ia", label: "Assistente IA", icon: Bot },
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
     { href: "/favoritos", label: "Favoritos", icon: Star },

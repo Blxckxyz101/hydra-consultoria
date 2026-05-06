@@ -131,35 +131,8 @@ function getSmartMethod(baseMethod: string, nodeIdx: number): string {
 /* ── Built-in presets ── */
 const PRESETS: Preset[] = [
   { label: "Absolutum ∞",    method: "geass-absolutum",     packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "☠"  },
-  { label: "Geass Override", method: "geass-override",      packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "👁"  },
   { label: "Geass Ultima",   method: "geass-ultima",        packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🔱"  },
   { label: "Origin Bypass",  method: "origin-bypass",       packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🎯"  },
-  { label: "DNS NS Flood",   method: "dns-ns-flood",        packetSize: 512, duration: 300, delay: 0, threads: 6, icon: "💀"  },
-  { label: "Bypass Storm",   method: "bypass-storm",        packetSize: 512, duration: 300, delay: 0, threads: 8, icon: "🌪"  },
-  { label: "Nginx Killer",   method: "http2-continuation",  packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "💀"  },
-  { label: "CF Bypass",      method: "waf-bypass",          packetSize: 512, duration: 300, delay: 0, threads: 6, icon: "🌐"  },
-  { label: "DNS Torture",    method: "dns-amp",             packetSize: 64,  duration: 180, delay: 0, threads: 4, icon: "📛"  },
-  { label: "H2 RST Burst",   method: "h2-rst-burst",        packetSize: 512, duration: 120, delay: 0, threads: 6, icon: "⚡"  },
-  { label: "Pipeline Flood", method: "http-pipeline",       packetSize: 512, duration: 120, delay: 0, threads: 6, icon: "🚇"  },
-  { label: "H2 Storm",       method: "h2-settings-storm",   packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🌊"  },
-  { label: "HPACK Bomb",     method: "hpack-bomb",          packetSize: 512, duration: 180, delay: 0, threads: 6, icon: "🧨"  },
-  { label: "Conn Flood",     method: "conn-flood",          packetSize: 64,  duration: 300, delay: 0, threads: 6, icon: "🔌"  },
-  { label: "Slowloris",      method: "slowloris",           packetSize: 32,  duration: 300, delay: 0, threads: 6, icon: "🥷"  },
-  { label: "UDP Hammer",     method: "udp-flood",           packetSize: 1024,duration: 180, delay: 0, threads: 4, icon: "💥"  },
-  { label: "NTP Nuclear",    method: "ntp-amp",             packetSize: 46,  duration: 120, delay: 0, threads: 4, icon: "☢️"  },
-  { label: "HTTP Flood",     method: "http-flood",          packetSize: 64,  duration: 120, delay: 0, threads: 6, icon: "🌊"  },
-  { label: "CLDAP Flood",    method: "cldap-amp",           packetSize: 62,  duration: 120, delay: 0, threads: 3, icon: "📂"  },
-  { label: "TLS Exhaust",    method: "tls-session-exhaust", packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🔒"  },
-  { label: "Cache Bust",     method: "cache-buster",        packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "💨"  },
-  { label: "Vercel Nuke",    method: "vercel-flood",        packetSize: 512, duration: 180, delay: 0, threads: 6, icon: "▲"   },
-  { label: "Dep Bomb",       method: "h2-dep-bomb",         packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "💣"  },
-  { label: "Data Exhaust",   method: "h2-data-flood",       packetSize: 64,  duration: 180, delay: 0, threads: 6, icon: "🌊"  },
-  { label: "H2 Storm 6V",    method: "h2-storm",            packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "⚡"  },
-  { label: "Rapid Reset",    method: "rapid-reset",         packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "💥"  },
-  { label: "WS Bomb",        method: "ws-compression-bomb", packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "💣"  },
-  { label: "GOAWAY Loop",    method: "h2-goaway-loop",      packetSize: 64,  duration: 180, delay: 0, threads: 5, icon: "🔄"  },
-  { label: "SSE Exhaust",    method: "sse-exhaust",         packetSize: 64,  duration: 300, delay: 0, threads: 4, icon: "📡"  },
-  { label: "H3 QUIC RST",   method: "h3-rapid-reset",      packetSize: 64,  duration: 300, delay: 0, threads: 8, icon: "⚡"  },
 ];
 
 /* ── Log counter ── */
@@ -1432,9 +1405,10 @@ function Panel() {
   const [nodeHealth, setNodeHealth] = useState<NodeHealth[]>([]);
 
   /* Active page */
-  const [activePage, setActivePage] = useState<"attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar" | "api">(() =>
-    (localStorage.getItem("lb-active-page") as "attack" | "checker" | "dns" | "discord" | "nitro" | "sky" | "whatsapp" | "redes" | "infinity" | "wallboard" | "personalizar" | "api") ?? "attack"
-  );
+  const [activePage, setActivePage] = useState<"attack" | "checker">(() => {
+    const saved = localStorage.getItem("lb-active-page");
+    return (saved === "attack" || saved === "checker") ? saved : "attack";
+  });
 
   /* ── SKYNETchat Login ── */
   const [skyCode,      setSkyCode]      = useState("872140801116");
@@ -3754,29 +3728,6 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
               ⚔ Ataque
             </button>
             <button
-              className={`lb-page-tab ${activePage === "nitro" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("nitro")}
-            >
-              🎁 Nitro Gen
-              {nitroRunning && activePage !== "nitro" && (
-                <span style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  marginLeft: 6, padding: "1px 7px", borderRadius: 10,
-                  background: nitroValid > 0 ? "rgba(46,204,113,0.2)" : "rgba(155,89,182,0.2)",
-                  border: `1px solid ${nitroValid > 0 ? "rgba(46,204,113,0.5)" : "rgba(155,89,182,0.5)"}`,
-                  fontSize: 10, fontWeight: 600, color: nitroValid > 0 ? "#2ecc71" : "#9b59b6",
-                }}>
-                  <span style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: nitroValid > 0 ? "#2ecc71" : "#9b59b6",
-                    animation: "lb-pulse 1.4s ease-in-out infinite",
-                    flexShrink: 0,
-                  }} />
-                  {nitroValid > 0 ? `${nitroValid} HIT` : "LIVE"}
-                </span>
-              )}
-            </button>
-            <button
               className={`lb-page-tab ${activePage === "checker" ? "lb-page-tab--active" : ""}`}
               onClick={() => setActivePage("checker")}
             >
@@ -3798,96 +3749,6 @@ interface OriginResult { domain: string; isCloudflare: boolean; originIPs: strin
                   {credRunning ? "RODANDO" : "BG"}
                 </span>
               )}
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "dns" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("dns")}
-            >
-              🌐 DNS Recon
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "discord" ? "lb-page-tab--active" : ""}`}
-              onClick={() => {
-                setActivePage("discord");
-                if (discordGuilds.length === 0 && !discordLoading) {
-                  setDiscordLoading(true);
-                  setDiscordError("");
-                  Promise.all([
-                    fetch(`${BASE}/api/discord/guilds`).then(r => r.json()),
-                    fetch(`${BASE}/api/discord/invite-link`).then(r => r.json()),
-                  ]).then(([gData, iData]) => {
-                    const gd = gData as { guilds?: DiscordGuild[]; error?: string };
-                    const id = iData as { url?: string; applicationId?: string };
-                    if (gd.guilds) setDiscordGuilds(gd.guilds);
-                    else setDiscordError(gd.error ?? "Erro ao carregar servidores");
-                    if (id.url) setDiscordInviteUrl(id.url);
-                    if (id.applicationId) setDiscordAppId(id.applicationId);
-                    setDiscordLoading(false);
-                  }).catch(err => { setDiscordError(String(err)); setDiscordLoading(false); });
-                }
-              }}
-            >
-              🤖 Discord
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "sky" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("sky")}
-            >
-              🌐 SKY Login
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "whatsapp" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("whatsapp")}
-            >
-              🚩 WhatsApp
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "redes" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("redes")}
-            >
-              📢 Redes
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "api" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("api")}
-              style={activePage === "api" ? {} : { color: "#f0c040" }}
-            >
-              🌟 API
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "infinity" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("infinity")}
-            >
-              ∞ Infinity Users
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "wallboard" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("wallboard")}
-            >
-              👁 Wallboard
-              {isRunning && activePage !== "wallboard" && (
-                <span style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  marginLeft: 6, padding: "1px 7px", borderRadius: 10,
-                  background: "rgba(155,89,182,0.2)",
-                  border: "1px solid rgba(155,89,182,0.5)",
-                  fontSize: 10, fontWeight: 600, color: "#9b59b6",
-                }}>
-                  <span style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: "#9b59b6",
-                    animation: "lb-pulse 1.4s ease-in-out infinite",
-                    flexShrink: 0,
-                  }} />
-                  LIVE
-                </span>
-              )}
-            </button>
-            <button
-              className={`lb-page-tab ${activePage === "personalizar" ? "lb-page-tab--active" : ""}`}
-              onClick={() => setActivePage("personalizar")}
-            >
-              🎨 Personalizar
             </button>
           </div>
         </header>
