@@ -39,7 +39,7 @@ type RelCat      = "pai" | "mae" | "conjuge" | "filho" | "filha" | "irmao" | "ir
 const MODULES = [
   { tipo: "cpf",        label: "CPF",           skylers: false },
   { tipo: "cpfbasico",  label: "CPF Básico",     skylers: true  },
-  { tipo: "foto",       label: "Foto",           skylers: true  },
+  { tipo: "fotonc",     label: "Foto",           skylers: true  },
   { tipo: "parentes",   label: "Parentes",       skylers: false },
   { tipo: "empregos",   label: "Empregos",       skylers: false },
   { tipo: "cnh",        label: "CNH",            skylers: false },
@@ -386,8 +386,10 @@ function extractPhotoFromResult(res: ModuleResult): string | null {
   return null;
 }
 function extractPhoto(results: Record<string, ModuleResult>): string | null {
-  const fotoRes = results["foto"];
-  if (fotoRes?.data) { const p = extractPhotoFromResult(fotoRes); if (p) return p; }
+  for (const key of ["fotonc", "foto"]) {
+    const r = results[key];
+    if (r?.data) { const p = extractPhotoFromResult(r); if (p) return p; }
+  }
   for (const key of ["cpfbasico", "cpf"]) {
     const res = results[key];
     if (!res?.data) continue;
@@ -1079,9 +1081,9 @@ export function CpfFullPanel({ cpf }: Props) {
     setRelPhotosLoading(new Set(cpfsToFetch));
     void Promise.allSettled(
       cpfsToFetch.map(async (relCpf) => {
-        // Try fotocnh first, then a few state fotos for relatives
+        // Try foto nacional first, then fotocnh and state fotos for relatives
         let ph: string | null = null;
-        for (const tipo of ["foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
+        for (const tipo of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
           const res = await fetchModule(tipo, relCpf, true, true);
           ph = res.data ? extractPhotoFromResult(res) : null;
           if (ph) break;
@@ -1101,15 +1103,15 @@ export function CpfFullPanel({ cpf }: Props) {
     if (clean.length !== 11) return;
     let cancelled = false;
     (async () => {
-      for (const tipo of ["biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotonc", "fotorn", "fotogo", "fotopb", "fotope", "fotoal", "fotodf", "fototo"]) {
+      for (const tipo of ["foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotogo", "fotopb", "fotope", "fotoal", "fotodf", "fototo"]) {
         if (cancelled) break;
         const res = await fetchModule(tipo, clean, true, true);
         const ph = res.data ? extractPhotoFromResult(res) : null;
         if (ph) {
-          // Inject the found photo into the foto module result so it shows in the panel
+          // Inject the found photo into the fotonc module result so it shows in the panel
           setMResults(prev => ({
             ...prev,
-            foto: { status: "done", data: { fields: [["FOTO_URL", ph]], sections: [], raw: "" } },
+            fotonc: { status: "done", data: { fields: [["FOTO_URL", ph]], sections: [], raw: "" } },
           }));
           break;
         }
