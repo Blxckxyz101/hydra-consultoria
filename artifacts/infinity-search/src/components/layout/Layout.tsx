@@ -230,7 +230,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
     { href: "/favoritos", label: "Favoritos", icon: Star },
     { href: "/bases", label: "Monitor de Bases", icon: Server },
-    { href: "/planos", label: "Planos & PIX", icon: CreditCard },
+    { href: "/planos", label: "Planos", icon: CreditCard },
     { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
     { href: "/configuracoes", label: "Configurações", icon: Settings },
