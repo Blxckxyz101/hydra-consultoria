@@ -199,12 +199,20 @@ function bumpCaches(username: string): void {
 }
 
 const _userSkylersCache = new Map<string, { date: string; count: number }>();
+const _userSkylersTipoCache = new Map<string, Map<string, { date: string; count: number }>>();
 
-function bumpSkylersCaches(username: string): void {
+function bumpSkylersTipoCache(username: string, tipoKey: string): void {
   const today = new Date().toISOString().slice(0, 10);
-  const u = _userSkylersCache.get(username);
-  if (u?.date === today) _userSkylersCache.set(username, { date: today, count: u.count + 1 });
+  // bump total (for badge)
+  const total = _userSkylersCache.get(username);
+  if (total?.date === today) _userSkylersCache.set(username, { date: today, count: total.count + 1 });
   else _userSkylersCache.set(username, { date: today, count: 1 });
+  // bump per-tipo (for gate)
+  if (!_userSkylersTipoCache.has(username)) _userSkylersTipoCache.set(username, new Map());
+  const tipoMap = _userSkylersTipoCache.get(username)!;
+  const t = tipoMap.get(tipoKey);
+  if (t?.date === today) tipoMap.set(tipoKey, { date: today, count: t.count + 1 });
+  else tipoMap.set(tipoKey, { date: today, count: 1 });
 }
 
 async function getUserSkylersDaily(username: string): Promise<number> {
@@ -222,6 +230,26 @@ async function getUserSkylersDaily(username: string): Promise<number> {
     ));
   const count = row?.c ?? 0;
   _userSkylersCache.set(username, { date: today, count });
+  return count;
+}
+
+async function getUserSkylersDailyByTipo(username: string, tipoKey: string): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const tipoMap = _userSkylersTipoCache.get(username);
+  const cached = tipoMap?.get(tipoKey);
+  if (cached?.date === today) return cached.count;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      eq(infinityConsultasTable.tipo, tipoKey),
+      gte(infinityConsultasTable.createdAt, todayStart),
+    ));
+  const count = row?.c ?? 0;
+  if (!_userSkylersTipoCache.has(username)) _userSkylersTipoCache.set(username, new Map());
+  _userSkylersTipoCache.get(username)!.set(tipoKey, { date: today, count });
   return count;
 }
 
@@ -1726,11 +1754,13 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const username = req.infinityUser!.username;
   const isAdmin  = req.infinityUser!.role === "admin";
 
+  const tipoKey = `skylers:${ep ?? modulo ?? "unknown"}`;
+
   if (!isAdmin) {
-    const [globalCount, userCount, skylersTotal] = await Promise.all([
+    const [globalCount, userCount, skylersTipoCount] = await Promise.all([
       getGlobalDailyCount(),
       getUserDailyCount(username),
-      getUserSkylersDaily(username),
+      getUserSkylersDailyByTipo(username, tipoKey),
     ]);
 
     if (globalCount >= DAILY_RATE_LIMIT) {
@@ -1753,13 +1783,13 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
       return;
     }
 
-    if (skylersTotal >= SKYLERS_TOTAL_LIMIT) {
+    if (skylersTipoCount >= SKYLERS_TOTAL_LIMIT) {
       res.status(429).json({
         success: false,
-        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas Skylers atingido.`,
+        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas '${ep ?? modulo}' Skylers atingido hoje.`,
         rateLimited: true,
         skylersLimited: true,
-        limitInfo: { used: skylersTotal, limit: SKYLERS_TOTAL_LIMIT },
+        limitInfo: { used: skylersTipoCount, limit: SKYLERS_TOTAL_LIMIT },
       });
       return;
     }
@@ -1781,7 +1811,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
   bumpCaches(username);
-  bumpSkylersCaches(username);
+  bumpSkylersTipoCache(username, tipoKey);
   await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true });
 
   res.json({ success, data, error: provider.error ?? null });
@@ -2212,25 +2242,26 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
 
   // ── Skylers external proxy ───────────────────────────────────────────────
   if (source === "skylers") {
-    if (req.infinityUser && req.infinityUser.role !== "admin") {
-      const skylersTotal = await getUserSkylersDaily(req.infinityUser.username);
-      if (skylersTotal >= SKYLERS_TOTAL_LIMIT) {
-        res.status(429).json({
-          success: false,
-          error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas Skylers atingido.`,
-          rateLimited: true,
-          skylersLimited: true,
-          limitInfo: { used: skylersTotal, limit: SKYLERS_TOTAL_LIMIT },
-        });
-        return;
-      }
-    }
     const tipoLower = tipo.toLowerCase() as "telegram" | "likes" | string;
     const isSpecialEndpoint = tipoLower === "telegram" || tipoLower === "likes";
     const modulo = isSpecialEndpoint ? "" : TIPO_TO_SKYLERS[tipoLower];
+    const extTipoKey = isSpecialEndpoint ? `skylers:${tipoLower}` : `skylers:${modulo}`;
     if (!isSpecialEndpoint && !modulo) {
       res.json({ success: false, error: `Tipo '${tipo}' não mapeado na Skylers API.`, data: "" });
       return;
+    }
+    if (!skipLog && req.infinityUser && req.infinityUser.role !== "admin") {
+      const skylersTipoCount = await getUserSkylersDailyByTipo(req.infinityUser.username, extTipoKey);
+      if (skylersTipoCount >= SKYLERS_TOTAL_LIMIT) {
+        res.status(429).json({
+          success: false,
+          error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas '${tipo}' Skylers atingido hoje.`,
+          rateLimited: true,
+          skylersLimited: true,
+          limitInfo: { used: skylersTipoCount, limit: SKYLERS_TOTAL_LIMIT },
+        });
+        return;
+      }
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 25_000);
@@ -2246,7 +2277,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const rawText = provider.parsed?.raw ?? "";
     if (req.infinityUser && !skipLog) {
       bumpCaches(req.infinityUser.username);
-      bumpSkylersCaches(req.infinityUser.username);
+      bumpSkylersTipoCache(req.infinityUser.username, extTipoKey);
       await logConsulta({
         tipo: `skylers:${modulo}`,
         query: dadosStr,
@@ -2271,10 +2302,24 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
 router.post("/log-cpffull", requireAuth, async (req, res) => {
   const { cpf } = req.body ?? {};
   const username = req.infinityUser!.username;
+  const isAdmin = req.infinityUser!.role === "admin";
+  if (!isAdmin) {
+    const cpfFullCount = await getUserSkylersDailyByTipo(username, "cpffull");
+    if (cpfFullCount >= SKYLERS_TOTAL_LIMIT) {
+      res.status(429).json({
+        success: false,
+        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas CPF Full Skylers atingido hoje.`,
+        rateLimited: true,
+        skylersLimited: true,
+        limitInfo: { used: cpfFullCount, limit: SKYLERS_TOTAL_LIMIT },
+      });
+      return;
+    }
+  }
   const query = String(cpf ?? "").replace(/\D/g, "").slice(0, 11) || "unknown";
   await logConsulta({ tipo: "cpffull", query, username, success: true, result: { fields: [], sections: [], raw: "" } });
   bumpCaches(username);
-  bumpSkylersCaches(username);
+  bumpSkylersTipoCache(username, "cpffull");
   res.json({ ok: true });
 });
 
