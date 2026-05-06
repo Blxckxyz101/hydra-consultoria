@@ -757,15 +757,16 @@ async function executeAndSend(
 
     const txt = buildResultTxt(tipo, trimmedDados, fields, sections, rawText);
 
-    // Envia o .txt como documento (sem caption)
+    // Caption com blockquote — limite 1024 chars para documentos
+    const inner = resultMsg.length <= 1018 ? resultMsg : resultMsg.slice(0, 1014) + "\n...";
+    const caption = `<blockquote>${inner}</blockquote>`;
+
+    // Envia .txt + resultado em blockquote numa única mensagem
     await telegram.sendDocument(
       chatId,
       { source: Buffer.from(txt, "utf-8"), filename: `infinity-${tipo}-${Date.now()}.txt` },
+      { caption, parse_mode: "HTML", ...buildResultKeyboard() },
     );
-
-    // Envia o resultado como blockquote (visual de citação do Telegram)
-    const blockText = `<blockquote>${resultMsg.slice(0, 4096)}</blockquote>`;
-    await telegram.sendMessage(chatId, blockText, { parse_mode: "HTML", ...buildResultKeyboard() });
 
 
   } catch (err) {
