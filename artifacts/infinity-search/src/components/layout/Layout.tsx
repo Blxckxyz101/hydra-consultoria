@@ -225,7 +225,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/", label: "Visão Geral", icon: Activity },
     { href: "/consultas", label: "Consultas", icon: Search },
-    { href: "/skylers", label: "🌟 API", icon: Zap },
+    { href: "/api-promo", label: "🌟 API", icon: Zap },
     { href: "/ia", label: "Assistente IA", icon: Bot },
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
     { href: "/favoritos", label: "Favoritos", icon: Star },

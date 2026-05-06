@@ -1,4 +1,5 @@
 import { Switch, Route } from "wouter";
+import SkylersPromo from "./pages/skylers-promo";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { Layout } from "@/components/layout/Layout";
 import { TermsGuard } from "@/components/ui/TermsGuard";
@@ -49,6 +50,7 @@ function Router() {
               <Route path="/configuracoes" component={Configuracoes} />
               <Route path="/personalizar" component={Personalizar} />
               <Route path="/skylers" component={Skylers} />
+              <Route path="/api-promo" component={SkylersPromo} />
               <Route path="/suporte" component={Suporte} />
               <Route component={NotFound} />
             </Switch>
