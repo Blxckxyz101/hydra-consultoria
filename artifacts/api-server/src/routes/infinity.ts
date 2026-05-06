@@ -1808,7 +1808,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   }
 
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 25_000);
+  const timer = setTimeout(() => ctrl.abort(), 8_500);
 
   const provider = await callSkylers(
     String(modulo ?? ""),
@@ -1826,7 +1826,9 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   bumpSkylersTipoCache(username, tipoKey);
   await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true });
 
-  res.json({ success, data, error: provider.error ?? null });
+  if (!res.headersSent) {
+    res.json({ success, data, error: provider.error ?? null });
+  }
 });
 
 // ─── consultas universal ───────────────────────────────────────────────────
@@ -2276,7 +2278,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       }
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25_000);
+    const timer = setTimeout(() => ctrl.abort(), 8_500);
     const provider = await callSkylers(
       modulo,
       dadosStr,
@@ -2299,10 +2301,12 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
         skylers: true,
       });
     }
-    if (success) {
-      res.json({ success: true, data: provider.parsed });
-    } else {
-      res.json({ success: false, error: provider.error ?? "Sem resultado", data: rawText });
+    if (!res.headersSent) {
+      if (success) {
+        res.json({ success: true, data: provider.parsed });
+      } else {
+        res.json({ success: false, error: provider.error ?? "Sem resultado", data: rawText });
+      }
     }
     return;
   }
