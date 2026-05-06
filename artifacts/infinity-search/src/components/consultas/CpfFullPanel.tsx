@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User, Phone, MapPin, Users, Briefcase, IdCard,
@@ -128,14 +128,14 @@ function categorizeRel(rel: Relative): RelCat {
 }
 
 // ─── Fetch module ─────────────────────────────────────────────────────────────
-async function fetchModule(tipo: string, dados: string, skylers: boolean): Promise<ModuleResult> {
+async function fetchModule(tipo: string, dados: string, skylers: boolean, skipLog = false): Promise<ModuleResult> {
   const token = localStorage.getItem("infinity_token");
   try {
     const endpoint = skylers ? "/api/infinity/external/skylers" : `/api/infinity/consultas/${tipo}`;
     const r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ tipo, dados }),
+      body: JSON.stringify({ tipo, dados, skipLog }),
     });
     const json = await r.json() as { success: boolean; data?: unknown; error?: string };
     let parsed: ParsedData | undefined;
@@ -352,15 +352,22 @@ function buildRelatives(res?: ModuleResult): Relative[] {
 // ─── Extract photo ────────────────────────────────────────────────────────────
 function extractPhotoFromResult(res: ModuleResult): string | null {
   if (!res?.data) return null;
+  // Priority 1: look for FOTO_URL key specifically (set by parseSkylers)
+  const fotoField = res.data.fields.find(([k]) => k === "FOTO_URL");
+  if (fotoField?.[1]) {
+    const v = fotoField[1].trim();
+    if (v) return v.startsWith("data:") ? v : /^https?:\/\//.test(v) ? v : `data:image/jpeg;base64,${v.replace(/\s/g, "")}`;
+  }
+  // Priority 2: raw field (only if it looks like a pure data URI or URL)
   const raw = res.data.raw ?? "";
   if (raw) {
     const trimmed = raw.trim().replace(/\s/g, "");
     if (raw.trim().startsWith("data:image")) return raw.trim();
-    if (/^https?:\/\//.test(raw.trim())) return raw.trim();
     if (trimmed.length > 500 && /^[A-Za-z0-9+/=]+$/.test(trimmed.slice(0, 200))) return `data:image/jpeg;base64,${trimmed}`;
   }
-  for (const [, v] of res.data.fields) {
-    if (!v) continue;
+  // Priority 3: scan only photo-related field keys
+  for (const [k, v] of res.data.fields) {
+    if (!v || !/FOTO|URL_FOTO|IMAGEM|BASE64|BIOMETRIA/i.test(k)) continue;
     if (v.trim().startsWith("data:image")) return v.trim();
     if (/^https?:\/\//.test(v.trim())) return v.trim();
     const clean = v.replace(/\s/g, "");
@@ -728,7 +735,7 @@ function AddressCard({ addr, idx }: { addr: Address; idx: number }) {
           {addr.logradouro}{addr.numero ? `, ${addr.numero}` : ""}{addr.complemento && addr.complemento !== "Não Informado" ? ` — ${addr.complemento}` : ""}
         </p>
         <p className="text-[12px] text-white/55 mt-0.5">{[addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(" · ")}{addr.cep ? ` · CEP ${addr.cep}` : ""}</p>
-        {addr.lat && <p className="text-[9px] mt-0.5" style={{ color: "color-mix(in srgb, var(--color-primary) 45%, transparent)" }}>📍 {addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
+        {addr.lat && <p className="text-[9px] mt-0.5" style={{ color: "color-mix(in srgb, var(--color-primary) 45%, transparent)" }}>{addr.lat.toFixed(4)}, {addr.lng?.toFixed(4)}</p>}
       </div>
       <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold transition-all hover:brightness-110 whitespace-nowrap shrink-0"
@@ -1011,9 +1018,16 @@ export function CpfFullPanel({ cpf }: Props) {
     setMResults({}); setGeoAddr([]); setRelPhotos({}); setRelPhotosLoading(new Set());
     finalResultsRef.current = {};
     const accumulated: Record<string, ModuleResult> = {};
+    // Log the whole CPF Full as a single consulta entry
+    const _tok = localStorage.getItem("infinity_token");
+    fetch("/api/infinity/log-cpffull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${_tok}` },
+      body: JSON.stringify({ cpf: clean }),
+    }).catch(() => {});
     void Promise.allSettled(
       MODULES.map(async ({ tipo, skylers }) => {
-        const res = await fetchModule(tipo, clean, skylers);
+        const res = await fetchModule(tipo, clean, skylers, true);
         if (runRef.current !== id) return;
         accumulated[tipo] = res;
         setMStates(p => ({ ...p, [tipo]: res.status }));
@@ -1060,7 +1074,7 @@ export function CpfFullPanel({ cpf }: Props) {
     setRelPhotosLoading(new Set(cpfsToFetch));
     void Promise.allSettled(
       cpfsToFetch.map(async (relCpf) => {
-        const res = await fetchModule("foto", relCpf, true);
+        const res = await fetchModule("foto", relCpf, true, true);
         const ph = res.data ? extractPhotoFromResult(res) : null;
         setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
         if (ph) setRelPhotos(prev => ({ ...prev, [relCpf]: ph }));
@@ -1068,13 +1082,13 @@ export function CpfFullPanel({ cpf }: Props) {
     );
   }, [done]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const identity    = buildIdentity(mResults);
-  const phones      = buildPhones(mResults);
-  const addresses   = buildAddresses(mResults);
-  const employments = buildEmployments(mResults["empregos"]);
-  const relatives   = buildRelatives(mResults["parentes"]);
-  const photo       = extractPhoto(mResults);
+  // ── Derived (memoized to prevent flickering on incremental module loads) ──
+  const identity    = useMemo(() => buildIdentity(mResults),              [mResults]);
+  const phones      = useMemo(() => buildPhones(mResults),                [mResults]);
+  const addresses   = useMemo(() => buildAddresses(mResults),             [mResults]);
+  const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
+  const relatives   = useMemo(() => buildRelatives(mResults["parentes"]),  [mResults]);
+  const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
 
   const scoreFields1 = mResults["score"]?.data?.fields ?? [];
   const scoreFields2 = mResults["score2"]?.data?.fields ?? [];
@@ -1226,7 +1240,7 @@ export function CpfFullPanel({ cpf }: Props) {
                                 <p className="text-gray-600">{[addr.cidade, addr.uf].filter(Boolean).join(" — ")}</p>
                                 {addr.cep && <p className="text-gray-500">CEP: {addr.cep}</p>}
                                 <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([addr.logradouro,addr.numero,addr.cidade,addr.uf].filter(Boolean).join(","))}`}
-                                  target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1">📍 Google Maps</a>
+                                  target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-violet-600 font-bold hover:underline mt-1"><MapPin className="w-3 h-3" /> Google Maps</a>
                               </div>
                             </Popup>
                           </CircleMarker>

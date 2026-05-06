@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ShieldCheck, AlertTriangle, ExternalLink, X } from "lucide-react";
+import { ShieldCheck, AlertTriangle, ExternalLink, X, CreditCard, Zap, Shield, Eye, Lock, BanIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import logoUrl from "@/assets/logo.png";
 
 const LS_KEY = "infinity_terms_v1";
@@ -9,34 +10,34 @@ function hasAccepted() {
   try { return localStorage.getItem(LS_KEY) === "accepted"; } catch { return false; }
 }
 
-const TERMS = [
+const TERMS: { Icon: LucideIcon; title: string; text: string }[] = [
   {
-    icon: "💳",
+    Icon: CreditCard,
     title: "Sem reembolso",
     text: "Todas as assinaturas e pagamentos são definitivos e não reembolsáveis, independente do motivo.",
   },
   {
-    icon: "⚡",
+    Icon: Zap,
     title: "Sem responsabilidade por instabilidades",
     text: "O Infinity Search não se responsabiliza por interrupções, lentidão, indisponibilidade ou perda de dados causados por falhas técnicas, ataques ou manutenção.",
   },
   {
-    icon: "🛡️",
+    Icon: Shield,
     title: "Sem responsabilidade por atos de terceiros",
     text: "O Infinity Search não se responsabiliza por ações, danos ou prejuízos causados por terceiros com dados obtidos pela plataforma.",
   },
   {
-    icon: "🕵️",
+    Icon: Eye,
     title: "Uso legal e exclusivo do usuário",
     text: "O usuário declara que utilizará as consultas exclusivamente para fins lícitos. O uso indevido é de inteira responsabilidade do usuário, eximindo totalmente o Infinity Search.",
   },
   {
-    icon: "🔒",
+    Icon: Lock,
     title: "Conformidade com a LGPD",
     text: "As consultas são realizadas em bases de dados de acesso público ou fontes legalmente autorizadas. O usuário se compromete a tratar os dados obtidos conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018).",
   },
   {
-    icon: "📵",
+    Icon: BanIcon,
     title: "Vedação de compartilhamento",
     text: "É proibido revender, compartilhar ou redistribuir o acesso à plataforma. Infrações resultam em encerramento imediato da conta sem reembolso.",
   },
@@ -98,7 +99,9 @@ export function TermsGuard({ children }: { children: React.ReactNode }) {
                 transition={{ delay: i * 0.06, duration: 0.3 }}
                 className="flex gap-4 p-4 rounded-2xl bg-white/3 border border-white/6 hover:bg-white/5 transition-colors"
               >
-                <div className="text-2xl shrink-0 mt-0.5">{term.icon}</div>
+                <div className="shrink-0 mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center bg-sky-500/10">
+                  <term.Icon className="w-4 h-4 text-sky-400" />
+                </div>
                 <div>
                   <div className="text-sm font-semibold text-white mb-1">{term.title}</div>
                   <div className="text-xs text-muted-foreground leading-relaxed">{term.text}</div>

@@ -1,9 +1,18 @@
 import { motion } from "framer-motion";
+import { Camera, CreditCard, Zap, Gem, Lock, Infinity, Bot, MessageCircle, Star } from "lucide-react";
+
+const FEATURES = [
+  { Icon: Camera,   label: "Foto Nacional",   check: true },
+  { Icon: CreditCard, label: "Foto CNH",      check: true },
+  { Icon: Zap,      label: "Alta Performance", check: true },
+  { Icon: Gem,      label: "Preços Incríveis", check: true },
+  { Icon: Lock,     label: "+20 Tipos de API", check: true },
+  { Icon: Infinity, label: "E muito mais!",    check: false },
+];
 
 export default function SkylersPromo() {
   return (
     <div className="flex flex-col items-center py-10 px-4 gap-10">
-      {/* Hero card */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -15,8 +24,12 @@ export default function SkylersPromo() {
         <div className="h-1 w-full" style={{ background: "linear-gradient(90deg, transparent, var(--color-primary), transparent)" }} />
 
         <div className="p-8 sm:p-10 text-center">
-          {/* Star burst */}
-          <div className="text-5xl mb-4">🌟</div>
+          {/* Icon burst */}
+          <div className="flex justify-center mb-4">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }}>
+              <Star className="w-8 h-8" style={{ color: "var(--color-primary)" }} />
+            </div>
+          </div>
 
           <h1
             className="text-3xl sm:text-4xl font-black tracking-[0.15em] uppercase mb-2"
@@ -46,25 +59,18 @@ export default function SkylersPromo() {
 
           {/* Feature chips */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
-            {[
-              { icon: "📸", label: "Foto Nacional", check: true },
-              { icon: "🪪", label: "Foto CNH", check: true },
-              { icon: "⚡", label: "Alta Performance", check: true },
-              { icon: "💎", label: "Preços Incríveis", check: true },
-              { icon: "🔐", label: "+20 Tipos de API", check: true },
-              { icon: "♾️", label: "E muito mais!", check: false },
-            ].map((f) => (
+            {FEATURES.map(({ Icon, label, check }) => (
               <div
-                key={f.label}
+                key={label}
                 className="flex items-center gap-2.5 rounded-xl border px-3 py-3"
                 style={{
                   background: "color-mix(in srgb, var(--color-primary) 5%, transparent)",
                   borderColor: "color-mix(in srgb, var(--color-primary) 20%, transparent)",
                 }}
               >
-                <span className="text-lg shrink-0">{f.icon}</span>
+                <Icon className="w-4 h-4 shrink-0" style={{ color: "var(--color-primary)" }} />
                 <span className="text-xs font-semibold text-foreground/80 leading-tight">
-                  {f.label} {f.check && <span style={{ color: "var(--color-primary)" }}>✔️</span>}
+                  {label}{check && <span style={{ color: "var(--color-primary)" }}> ✓</span>}
                 </span>
               </div>
             ))}
@@ -74,8 +80,7 @@ export default function SkylersPromo() {
           <div className="rounded-xl border border-white/8 bg-white/[0.03] px-5 py-4 mb-8 text-sm text-muted-foreground leading-relaxed">
             Compre pelo nosso{" "}
             <span className="font-bold text-foreground">robô oficial</span> ou pelo{" "}
-            <span className="font-bold text-foreground">suporte</span> caso queira mais requisições.{" "}
-            <span style={{ color: "var(--color-primary)" }}>⭐</span>
+            <span className="font-bold text-foreground">suporte</span> caso queira mais requisições.
           </div>
 
           {/* CTA Buttons */}
@@ -91,7 +96,8 @@ export default function SkylersPromo() {
                 boxShadow: "0 4px 24px -4px color-mix(in srgb, var(--color-primary) 50%, transparent)",
               }}
             >
-              🤖 @SkylersApisBot
+              <Bot className="w-4 h-4" />
+              @SkylersApisBot
             </a>
             <a
               href="https://t.me/SkylersSuporte"
@@ -104,7 +110,8 @@ export default function SkylersPromo() {
                 background: "color-mix(in srgb, var(--color-primary) 8%, transparent)",
               }}
             >
-              💬 @SkylersSuporte
+              <MessageCircle className="w-4 h-4" />
+              @SkylersSuporte
             </a>
           </div>
         </div>
@@ -114,7 +121,7 @@ export default function SkylersPromo() {
           className="px-8 py-3 border-t border-white/5 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.35em]"
           style={{ color: "color-mix(in srgb, var(--color-primary) 45%, transparent)" }}
         >
-          <span>🌟</span>
+          <Star className="w-3 h-3" />
           <span>Skylers APIs · Exclusividade · Performance · Cobertura Nacional</span>
         </div>
       </motion.div>

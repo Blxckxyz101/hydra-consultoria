@@ -1779,6 +1779,7 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     res.status(400).json({ error: "Campo 'dados' obrigatório" });
     return;
   }
+  const skipLog = req.body?.skipLog === true;
 
   const username = req.infinityUser!.username;
   const isAdmin  = req.infinityUser!.role === "admin";
@@ -1870,8 +1871,10 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const success = provider.ok && !!provider.parsed;
   const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
 
-  await logConsulta({ tipo, query: dados, username, success, result: data });
-  bumpCaches(username);
+  if (!skipLog) {
+    await logConsulta({ tipo, query: dados, username, success, result: data });
+    bumpCaches(username);
+  }
 
   res.json({
     success,
@@ -2175,7 +2178,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     return;
   }
 
-  const { tipo, dados } = req.body as { tipo?: string; dados?: string };
+  const { tipo, dados, skipLog } = req.body as { tipo?: string; dados?: string; skipLog?: boolean };
   if (!tipo || !dados) {
     res.status(400).json({ success: false, error: "Parâmetros 'tipo' e 'dados' são obrigatórios." });
     return;
@@ -2221,7 +2224,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const success = provider.ok && !!provider.parsed;
     // Serialize parsed result as compact string for the base-selector "raw" display
     const rawText = provider.parsed?.raw ?? "";
-    if (req.infinityUser) {
+    if (req.infinityUser && !skipLog) {
       bumpCaches(req.infinityUser.username);
       await logConsulta({
         tipo: `skylers:${modulo}`,
@@ -2241,6 +2244,16 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   }
 
   res.status(400).json({ success: false, error: "Fonte inválida." });
+});
+
+// ─── CPF Full single-entry logger ──────────────────────────────────────────
+router.post("/log-cpffull", requireAuth, async (req, res) => {
+  const { cpf } = req.body ?? {};
+  const username = req.infinityUser!.username;
+  const query = String(cpf ?? "").replace(/\D/g, "").slice(0, 11) || "unknown";
+  await logConsulta({ tipo: "cpffull", query, username, success: true, result: { fields: [], sections: [], raw: "" } });
+  bumpCaches(username);
+  res.json({ ok: true });
 });
 
 // ─── Panel PIN session auth ─────────────────────────────────────────────────

@@ -254,7 +254,7 @@ export default function IA() {
     let assistantMsgAdded = false;
 
     const addErrorMsg = (err: string) => {
-      const errContent = `⚠️ ${err}`;
+      const errContent = `Erro: ${err}`;
       if (!assistantMsgAdded) {
         assistantMsgAdded = true;
         updateSession(currentId, (s) => ({
