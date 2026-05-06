@@ -849,8 +849,14 @@ export function startInfinityBot(): void {
       // Admins passam direto em QUALQUER grupo (inclusive para poder usar /setgroup)
       if (isAdmin(from.id, from.username)) return next();
 
-      // Usuários comuns: só opera em grupos autorizados
-      if (!authorizedGroups.has(chat.id)) return;
+      // Auto-autoriza grupos com 500+ membros
+      if (!authorizedGroups.has(chat.id)) {
+        try {
+          const count = await bot.telegram.getChatMembersCount(chat.id);
+          if (count >= 500) authorizedGroups.add(chat.id);
+          else return;
+        } catch { return; }
+      }
 
       // Processa apenas comandos, callbacks e respostas de consulta pendente
       const hasCommand = "message" in ctx && (ctx as any).message?.text?.startsWith("/");
