@@ -20,6 +20,7 @@ import whatsappRouter from "./whatsapp";
 import socialRouter    from "./social";
 import usersRouter     from "./users";
 import infinityRouter  from "./infinity";
+import infinityPaymentsRouter from "./infinity-payments";
 
 const router: IRouter = Router();
 
@@ -44,5 +45,6 @@ router.use("/whatsapp", whatsappRouter);
 router.use("/social",  socialRouter);
 router.use("/users",   usersRouter);
 router.use("/infinity", infinityRouter);
+router.use("/infinity", infinityPaymentsRouter);
 
 export default router;

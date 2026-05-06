@@ -338,6 +338,15 @@ export default function Login() {
           </div>
 
           <div className="px-10 py-5 border-t border-white/5 bg-black/20 space-y-3">
+            {step === "credentials" && (
+              <a
+                href="/planos"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/30 text-primary hover:bg-primary/15 hover:border-primary/50 transition-all text-xs font-bold uppercase tracking-[0.25em]"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x={1} y={4} width={22} height={16} rx={2}/><line x1={1} y1={10} x2={23} y2={10}/></svg>
+                Assinar um plano via PIX
+              </a>
+            )}
             <div className="flex gap-2">
               <a
                 href="https://t.me/Blxckxyz"
