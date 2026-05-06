@@ -6,9 +6,12 @@ import {
   Loader2, MessageCircle, Scale, Building2, Award, Gift,
   AlertTriangle, Receipt, Star, ChevronDown, ChevronUp, Copy, Check,
   Camera, Fingerprint, Home, GitBranch, LayoutList, StretchHorizontal,
+  Download, Network,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { generateLaudoPDF } from "./LaudoPDF";
+import { ConnectionGraph } from "./ConnectionGraph";
 
 // ─── View mode context ────────────────────────────────────────────────────────
 const ViewModeCtx = createContext<"compact" | "expanded">("expanded");
@@ -922,20 +925,12 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           {siblings.length > 0 && (
             <div className="flex items-center gap-2">
               <div className="flex gap-4">
-                {siblings.slice(0, 3).map((s, i) => (
+                {siblings.slice(0, 4).map((s, i) => (
                   <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 + i * 0.08 }}>
                     <PersonNode nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
                       label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"} {...np(s)} />
                   </motion.div>
                 ))}
-                {siblings.length > 3 && (
-                  <div className="flex flex-col items-center justify-center">
-                    <div className="w-[52px] h-[64px] rounded-xl flex items-center justify-center" style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)" }}>
-                      <span className="text-[11px] text-white/30 font-bold">+{siblings.length - 3}</span>
-                    </div>
-                    <p className="text-[8px] text-white/20 mt-1">mais</p>
-                  </div>
-                )}
               </div>
               <HConnector />
             </div>
@@ -974,6 +969,23 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           </>
         )}
 
+        {siblings.length > 4 && (
+          <>
+            <div className="h-px bg-white/5 mt-8 mb-5" />
+            <p className="text-[8px] uppercase tracking-widest text-white/20 mb-5 font-bold text-center">
+              Todos os Irmãos/Irmãs ({siblings.length})
+            </p>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-5">
+              {siblings.map((s, i) => (
+                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.04 * i }} className="flex flex-col items-center gap-1">
+                  <PersonNode nome={s.nome} cpf={s.cpf} nasc={s.nasc} sexo={s.sexo}
+                    label={/irma|irmã/i.test(s.relacao) || s.sexo?.toLowerCase() === "f" ? "Irmã" : "Irmão"} {...np(s)} />
+                </motion.div>
+              ))}
+            </div>
+          </>
+        )}
+
         {outros.length > 0 && (
           <>
             <div className="h-px bg-white/5 mt-8 mb-6" />
@@ -1004,6 +1016,8 @@ export function CpfFullPanel({ cpf }: Props) {
   const [relPhotos, setRelPhotos]       = useState<Record<string, string>>({});
   const [relPhotosLoading, setRelPhotosLoading] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<"compact" | "expanded">("expanded");
+  const [showGraph, setShowGraph]       = useState(false);
+  const [exportingPDF, setExportingPDF] = useState(false);
 
   const finalResultsRef = useRef<Record<string, ModuleResult>>({});
   const runRef = useRef(0);
@@ -1137,14 +1151,41 @@ export function CpfFullPanel({ cpf }: Props) {
                 <div className="flex items-center gap-2">
                   {running && <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />}
                   {done && (
-                    <button onClick={() => setViewMode(v => v === "expanded" ? "compact" : "expanded")}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all"
-                      style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.55)" }}
-                      title={viewMode === "expanded" ? "Mudar para modo compacto" : "Mudar para modo expandido"}>
-                      {viewMode === "expanded"
-                        ? <><LayoutList className="w-3 h-3" /> Compacto</>
-                        : <><StretchHorizontal className="w-3 h-3" /> Expandido</>}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setExportingPDF(true);
+                          generateLaudoPDF({ cpf, identity, phones, addresses, employments, relatives, photo, relPhotos, score1, score2Val, mResults })
+                            .finally(() => setExportingPDF(false));
+                        }}
+                        disabled={exportingPDF}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all disabled:opacity-50"
+                        style={{ border: "1px solid rgba(56,189,248,0.3)", background: "rgba(56,189,248,0.08)", color: "rgba(56,189,248,0.9)" }}
+                        title="Exportar Laudo Pericial em PDF">
+                        {exportingPDF ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                        {exportingPDF ? "Gerando…" : "Laudo PDF"}
+                      </button>
+                      <button
+                        onClick={() => setShowGraph(v => !v)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all"
+                        style={{
+                          border: `1px solid ${showGraph ? "rgba(245,158,11,0.45)" : "rgba(255,255,255,0.1)"}`,
+                          background: showGraph ? "rgba(245,158,11,0.1)" : "rgba(255,255,255,0.06)",
+                          color: showGraph ? "rgba(245,158,11,0.95)" : "rgba(255,255,255,0.55)",
+                        }}
+                        title={showGraph ? "Ocultar grafo" : "Visualizar grafo de conexões"}>
+                        <Network className="w-3 h-3" />
+                        {showGraph ? "Ocultar Grafo" : "Ver Grafo"}
+                      </button>
+                      <button onClick={() => setViewMode(v => v === "expanded" ? "compact" : "expanded")}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold transition-all"
+                        style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.55)" }}
+                        title={viewMode === "expanded" ? "Mudar para modo compacto" : "Mudar para modo expandido"}>
+                        {viewMode === "expanded"
+                          ? <><LayoutList className="w-3 h-3" /> Compacto</>
+                          : <><StretchHorizontal className="w-3 h-3" /> Expandido</>}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1178,6 +1219,22 @@ export function CpfFullPanel({ cpf }: Props) {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.2 }}
               className="space-y-4">
+
+              {/* Grafo de Conexões */}
+              {showGraph && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.35 }}>
+                  <SectionHeader icon={Network} title="Grafo de Conexões" />
+                  <ConnectionGraph
+                    identity={identity}
+                    phones={phones}
+                    addresses={addresses}
+                    employments={employments}
+                    relatives={relatives}
+                    mainPhoto={photo}
+                    relPhotos={relPhotos}
+                  />
+                </motion.div>
+              )}
 
               {/* Hero Photo — FIRST, full-width, prominent */}
               {photo && (
