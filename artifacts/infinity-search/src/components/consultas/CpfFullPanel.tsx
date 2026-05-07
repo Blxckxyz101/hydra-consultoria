@@ -379,12 +379,44 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
     const entries2 = raw.split(/\bNOME[\s:·]+/i);
     for (let i = 1; i < entries2.length; i++) {
       const chunk = entries2[i].slice(0, 300);
-      const nome = chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]?.trim() ?? "";
+      const nome = (chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]
+        ?.replace(/\s+[A-Z]{3,}(?:\s*[\u23AF\-].*)?\s*$/, "")
+        ?.trim()) ?? "";
       const cpf  = chunk.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
       const nasc = chunk.match(/(?:NASC|NASCIMENTO|DATA_NASC)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
       const sexo = chunk.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
       if (nome || cpf) addRel({ nome, cpf, nasc, sexo, relacao: fallbackRelacao });
     }
+  }
+  function parseGeassParentes(raw: string): boolean {
+    // Geass API format: "(N) PARENTES ENCONTRADOS PARA O CPF - XXXXXXXXXX CPF PARENTE ⎯ NOME PARENTE ⎯ [NAME] PARENTESCO ⎯ [MAE/PAI/...]"
+    // Each relative: NOME PARENTE ⎯ [name ending before PARENTESCO] PARENTESCO ⎯ [relac]
+    const SEP = "\u23AF";
+    // Try rich format: CPF PARENTE ⎯ [cpf] ⎯ NOME PARENTE ⎯ [name] ... PARENTESCO ⎯ [relac]
+    const reRich = new RegExp(
+      `CPF\\s+PARENTE\\s*${SEP}\\s*([\\d./-]*)\\s*${SEP}\\s*NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s+PARENTESCO\\s*${SEP}\\s*([A-Z]+)`,
+      "gi"
+    );
+    let m: RegExpExecArray | null;
+    let added = false;
+    while ((m = reRich.exec(raw)) !== null) {
+      const cpf  = m[1].replace(/\D/g, "");
+      const nome = m[2].trim();
+      const relac = m[3].trim();
+      addRel({ cpf: cpf.length === 11 ? cpf : "", nome, relacao: relac });
+      added = true;
+    }
+    if (added) return true;
+    // Fallback: just NOME PARENTE ⎯ [name] ... PARENTESCO ⎯ [relac] (no CPF)
+    const reSimple = new RegExp(
+      `NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s+PARENTESCO\\s*${SEP}\\s*([A-Z]+)`,
+      "gi"
+    );
+    while ((m = reSimple.exec(raw)) !== null) {
+      addRel({ nome: m[1].trim(), relacao: m[2].trim() });
+      added = true;
+    }
+    return added;
   }
   function extractSingleRecord(res: ModuleResult, relacao: string) {
     // For mae/pai modules: the response is a person record — extract as one relative entry
@@ -439,7 +471,12 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
         addRel(cur);
       }
     }
-    if (relatives.length === startLen && res.data!.raw) scanRaw(res.data!.raw, forcedRelacao);
+    if (relatives.length === startLen && res.data!.raw) {
+      // Geass "(N) PARENTES ENCONTRADOS" format: structured parser takes priority over scanRaw
+      const usedGeass = /PARENTES\s+ENCONTRADOS/i.test(res.data!.raw) && parseGeassParentes(res.data!.raw);
+      // Fallback: generic scanRaw (only when Geass format not found/matched)
+      if (!usedGeass) scanRaw(res.data!.raw, forcedRelacao);
+    }
     if (relatives.length === startLen && res.data!.fields.length > 0) {
       const cpf = gf(res.data!.fields,"CPF","CPFREL"); const nome = gf(res.data!.fields,"NOME","NOMERELACIONADO");
       const nasc = gf(res.data!.fields,"NASC","NASCIMENTO","DATANASCIMENTO");
