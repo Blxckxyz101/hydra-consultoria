@@ -397,31 +397,34 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
     }
   }
   function parseGeassParentes(raw: string): boolean {
-    // Geass API format: "(N) PARENTES ENCONTRADOS PARA O CPF - XXXXXXXXXX CPF PARENTE ⎯ NOME PARENTE ⎯ [NAME] PARENTESCO ⎯ [MAE/PAI/...]"
-    // Each relative: NOME PARENTE ⎯ [name ending before PARENTESCO] PARENTESCO ⎯ [relac]
+    // Geass API format: "(N) PARENTES ENCONTRADOS PARA O CPF - XXXXXXXXXX"
+    // Each entry:  CPF PARENTE ⎯ 12345678901 ⎯ NOME PARENTE ⎯ NOME AQUI ⎯ PARENTESCO ⎯ PAI
+    // The separator ⎯ (U+23AF) appears BEFORE "PARENTESCO", so we must match it explicitly.
+    // BUG HISTORY: using \s+PARENTESCO instead of \s*⎯\s*PARENTESCO caused the regex
+    // to never match — the ⎯ before PARENTESCO is not whitespace and breaks the pattern.
     const SEP = "\u23AF";
-    // Try rich format: CPF PARENTE ⎯ [cpf] ⎯ NOME PARENTE ⎯ [name] ... PARENTESCO ⎯ [relac]
+    // Rich format: CPF PARENTE ⎯ [cpf] ⎯ NOME PARENTE ⎯ [name] ⎯ PARENTESCO ⎯ [relac]
     const reRich = new RegExp(
-      `CPF\\s+PARENTE\\s*${SEP}\\s*([\\d./-]*)\\s*${SEP}\\s*NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s+PARENTESCO\\s*${SEP}\\s*([A-Z]+)`,
+      `CPF\\s+PARENTE\\s*${SEP}\\s*([\\d.\\-/]*)\\s*${SEP}\\s*NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s*${SEP}\\s*PARENTESCO\\s*${SEP}\\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ]+)`,
       "gi"
     );
     let m: RegExpExecArray | null;
     let added = false;
     while ((m = reRich.exec(raw)) !== null) {
-      const cpf  = m[1].replace(/\D/g, "");
-      const nome = m[2].trim();
-      const relac = m[3].trim();
+      const cpf   = m[1].replace(/\D/g, "");
+      const nome  = m[2].trim();
+      const relac = m[3].trim().toUpperCase();
       addRel({ cpf: cpf.length === 11 ? cpf : "", nome, relacao: relac });
       added = true;
     }
     if (added) return true;
-    // Fallback: just NOME PARENTE ⎯ [name] ... PARENTESCO ⎯ [relac] (no CPF)
+    // Simple fallback: NOME PARENTE ⎯ [name] ⎯ PARENTESCO ⎯ [relac]  (no CPF field)
     const reSimple = new RegExp(
-      `NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s+PARENTESCO\\s*${SEP}\\s*([A-Z]+)`,
+      `NOME\\s+PARENTE\\s*${SEP}\\s*([^${SEP}]+?)\\s*${SEP}\\s*PARENTESCO\\s*${SEP}\\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ]+)`,
       "gi"
     );
     while ((m = reSimple.exec(raw)) !== null) {
-      addRel({ nome: m[1].trim(), relacao: m[2].trim() });
+      addRel({ nome: m[1].trim(), relacao: m[2].trim().toUpperCase() });
       added = true;
     }
     return added;
@@ -1506,9 +1509,17 @@ export function CpfFullPanel({ cpf }: Props) {
   const phones      = useMemo(() => buildPhones(mResults),                [mResults]);
   const addresses   = useMemo(() => buildAddresses(mResults),             [mResults]);
   const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
-  const relatives   = useMemo(() => buildRelatives(
-    [mResults["parentes"]],
-  ), [mResults]);
+  const relatives   = useMemo(() => {
+    const rels = buildRelatives([mResults["parentes"]]);
+    // Never show the subject themselves as a relative node
+    const subCpf  = cpf.replace(/\D/g, "");
+    const subNome = (identity.nome || "").toUpperCase().trim();
+    return rels.filter(r => {
+      if (subCpf  && r.cpf  && r.cpf  === subCpf)  return false;
+      if (subNome && r.nome && r.nome.toUpperCase().trim() === subNome) return false;
+      return true;
+    });
+  }, [mResults, cpf, identity]);
   const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
   // Enrich identity with mae/pai names found in the relatives list when CPF modules lack them
   const identityFull = useMemo(() => {
