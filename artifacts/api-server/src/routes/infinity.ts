@@ -2333,9 +2333,24 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
 });
 
 // ─── CPF Full single-entry logger ──────────────────────────────────────────
+// Dedup cache: key = `${username}:${cpf}`, value = timestamp of last log
+const _cpfFullDedup = new Map<string, number>();
+setInterval(() => {
+  const cutoff = Date.now() - 10_000;
+  for (const [k, ts] of _cpfFullDedup.entries()) if (ts < cutoff) _cpfFullDedup.delete(k);
+}, 30_000);
+
 router.post("/log-cpffull", requireAuth, async (req, res) => {
   const { cpf } = req.body ?? {};
   const username = req.infinityUser!.username;
+  const dedupKey = `${username}:${String(cpf ?? "").replace(/\D/g, "").slice(0, 11)}`;
+  const lastLogged = _cpfFullDedup.get(dedupKey) ?? 0;
+  if (Date.now() - lastLogged < 5_000) {
+    // Duplicate within 5s (React StrictMode double-fire) — acknowledge but skip DB write
+    res.json({ ok: true, deduped: true });
+    return;
+  }
+  _cpfFullDedup.set(dedupKey, Date.now());
   const isAdmin = req.infinityUser!.role === "admin";
   if (!isAdmin) {
     const cpfFullCount = await getUserSkylersDailyByTipo(username, "cpffull");

@@ -1331,6 +1331,9 @@ export function CpfFullPanel({ cpf }: Props) {
 
   const finalResultsRef = useRef<Record<string, ModuleResult>>({});
   const runRef = useRef(0);
+  // Tracks the last CPF for which log-cpffull was sent — prevents React StrictMode
+  // from firing the effect twice and double-counting the query.
+  const loggedCpfRef = useRef<string | null>(null);
 
   // ── Fetch modules ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1342,13 +1345,18 @@ export function CpfFullPanel({ cpf }: Props) {
     setMResults({}); setGeoAddr([]); setRelPhotos({}); setRelPhotosLoading(new Set());
     finalResultsRef.current = {};
     const accumulated: Record<string, ModuleResult> = {};
-    // Log the whole CPF Full as a single consulta entry
-    const _tok = localStorage.getItem("infinity_token");
-    fetch("/api/infinity/log-cpffull", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${_tok}` },
-      body: JSON.stringify({ cpf: clean }),
-    }).catch(() => {});
+    // Log the whole CPF Full as a single consulta entry.
+    // Guard against React StrictMode double-fire: only send if this CPF hasn't been
+    // logged yet in this component's lifetime.
+    if (loggedCpfRef.current !== clean) {
+      loggedCpfRef.current = clean;
+      const _tok = localStorage.getItem("infinity_token");
+      fetch("/api/infinity/log-cpffull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${_tok}` },
+        body: JSON.stringify({ cpf: clean }),
+      }).catch(() => {});
+    }
     void Promise.allSettled(
       MODULES.map(async ({ tipo, skylers }) => {
         const res = await fetchModule(tipo, clean, skylers, true);
