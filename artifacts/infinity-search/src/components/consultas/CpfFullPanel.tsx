@@ -408,13 +408,18 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
       );
       if (isFullRecord) {
         for (const item of items) {
-          const cpf  = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
-          const nome = (item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
-                    || item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1])?.trim() ?? "";
-          const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
-          const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
+          const cpf    = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
+          const nome   = (item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
+                      || item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1])?.trim() ?? "";
+          const nasc   = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+          const sexo   = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
           const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
-          if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: forcedRelacao || sec.name, origem });
+          // Extract relationship type from PARENTESCO / TIPO_RELAC / RELACAO fields
+          const relac  = item.match(/PARENTESCO[\s:·]+([A-Z]+)/i)?.[1]
+                      ?? item.match(/TIPO[_\s]?RELAC\w*[\s:·]+([A-Z]+)/i)?.[1]
+                      ?? item.match(/RELAC\w*[\s:·]+([A-Z]+)/i)?.[1]
+                      ?? "";
+          if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: relac || forcedRelacao || sec.name, origem });
         }
       } else {
         let cur: Partial<Relative> = { relacao: forcedRelacao || sec.name };
