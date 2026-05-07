@@ -203,7 +203,10 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
                 gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
                 rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
   const isValidParent = (v: string, subj: string) =>
-    v.length >= 5 && !/^https?:\/\//i.test(v) && v.toUpperCase() !== subj.toUpperCase();
+    v.length >= 5 &&
+    !/^https?:\/\//i.test(v) &&
+    v.toUpperCase() !== subj.toUpperCase() &&
+    !/\b(NAO\s+ENCONTRADO|NÃO\s+ENCONTRADO|NAO\s+CONSTA|NÃO\s+CONSTA|SEM\s+INFORMACAO|SEM\s+INFORMAÇÃO|NAO\s+INFORMADO|NÃO\s+INFORMADO|DESCONHECIDO|NAO\s+DECLARADO|NÃO\s+DECLARADO|CONSTAM\s+COMO|CONSTA\s+COMO|NAO\s+CADASTRADO|NÃO\s+CADASTRADO)\b/i.test(v);
   // Resolve nome early for validation (use fields directly to avoid circular call)
   const nomeForVal = (gfExact(f,"NOME","NOME COMPLETO","NOMECOMPLETO") || "").toUpperCase();
   const mae = isValidParent(rawMae, nomeForVal) ? rawMae : "";
@@ -432,6 +435,17 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
   }
   function processSource(res: ModuleResult, forcedRelacao?: string) {
     const startLen = relatives.length;
+    const rawText  = res.data!.raw;
+
+    // ── Geass "(N) PARENTES ENCONTRADOS" — always runs FIRST, before section loop ──
+    // This format uses ⎯-delimited fields (not section headers) so the API server
+    // produces sections=[] for it. Running the parser here (not inside the
+    // sections-empty guard) means it also wins when a non-standard Geass response
+    // accidentally creates sections, preventing the section loop from emitting garbled entries.
+    if (rawText && /PARENTES\s+ENCONTRADOS/i.test(rawText)) {
+      if (parseGeassParentes(rawText)) return; // structured parse succeeded → done
+    }
+
     for (const sec of res.data!.sections) {
       const items = sec.items;
       if (!items.length) continue;
@@ -471,11 +485,11 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
         addRel(cur);
       }
     }
-    if (relatives.length === startLen && res.data!.raw) {
-      // Geass "(N) PARENTES ENCONTRADOS" format: structured parser takes priority over scanRaw
-      const usedGeass = /PARENTES\s+ENCONTRADOS/i.test(res.data!.raw) && parseGeassParentes(res.data!.raw);
-      // Fallback: generic scanRaw (only when Geass format not found/matched)
-      if (!usedGeass) scanRaw(res.data!.raw, forcedRelacao);
+    // scanRaw is the last resort — skip it when the raw looks like a Geass parentes
+    // response (parseGeassParentes already ran above and returned false, meaning 0 matches;
+    // scanRaw on that format produces garbled entries via the NOME split heuristic).
+    if (relatives.length === startLen && rawText && !/PARENTES\s+ENCONTRADOS/i.test(rawText)) {
+      scanRaw(rawText, forcedRelacao);
     }
     if (relatives.length === startLen && res.data!.fields.length > 0) {
       const cpf = gf(res.data!.fields,"CPF","CPFREL"); const nome = gf(res.data!.fields,"NOME","NOMERELACIONADO");
