@@ -342,17 +342,24 @@ function buildEmployments(r?: ModuleResult): Employment[] {
 // represents a single parent — we override the relação field accordingly.
 function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Relative[] {
   const relatives: Relative[] = []; const seen = new Set<string>();
-  // Strip relacao prefix injected into name by some APIs: "MÃE — NADINE ..." → "NADINE ..."
-  function cleanNome(n: string): string {
-    return n.replace(/^(M[ÃA]E|PAI|IRM[ÃA][OS]?|FILH[OA]S?|C[OÔ]NJUGE|PARENTE|RELACIONADO)\s*[-—]\s*/i, "").trim();
-  }
+  // Some APIs embed the relation type as a prefix in the name field: "MÃE — NADINE SANTOS"
+  // We extract it to set relacao and strip it from nome so names render clean.
+  const REL_PREFIX = /^(M[ÃA]E|PAI|IRM[ÃA][OS]?|FILH[OA]S?|C[OÔ]NJUGE|PARENTE|RELACIONADO)\s*[-—]\s*/i;
   function addRel(r: Partial<Relative>) {
-    const nome = cleanNome(r.nome || "");
-    // Reject URLs and empty names
-    if (/^https?:\/\//i.test(nome)) return;
+    const raw = (r.nome || "").trim();
+    const prefixMatch = raw.match(REL_PREFIX);
+    const nome     = prefixMatch ? raw.slice(prefixMatch[0].length).trim() : raw;
+    const prefixRel = prefixMatch
+      ? prefixMatch[1].toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      : "";
+    // Use prefix as relacao only when current relacao is generic/absent
+    const isGeneric = !r.relacao || /^(PARENTE|RELACIONADO|OUTROS?)$/i.test(r.relacao);
+    const relacao   = (prefixRel && isGeneric) ? prefixRel : (r.relacao || prefixRel || "");
+    // Reject URLs, very short or empty names
+    if (!nome || nome.length < 3 || /^https?:\/\//i.test(nome)) return;
     const key = (r.cpf || nome || "").toLowerCase().trim();
     if (!key || seen.has(key)) return; seen.add(key);
-    relatives.push({ cpf: r.cpf||"", nome, nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
+    relatives.push({ cpf: r.cpf||"", nome, nasc: r.nasc||"", sexo: r.sexo||"", relacao, origem: r.origem||"" });
   }
   function scanRaw(raw: string, fallbackRelacao?: string) {
     const entries2 = raw.split(/\bNOME[\s:·]+/i);
@@ -1432,6 +1439,18 @@ export function CpfFullPanel({ cpf }: Props) {
     [mResults["cpfbasico"]],
   ), [mResults]);
   const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
+  // Enrich identity with mae/pai names found in the relatives list when CPF modules lack them
+  const identityFull = useMemo(() => {
+    if (identity.mae && identity.pai) return identity;
+    const id = { ...identity };
+    for (const r of relatives) {
+      const cat = categorizeRel(r);
+      if (!id.mae && cat === "mae" && r.nome) id.mae = r.nome;
+      if (!id.pai && cat === "pai" && r.nome) id.pai = r.nome;
+      if (id.mae && id.pai) break;
+    }
+    return id;
+  }, [identity, relatives]);
 
   const scoreFields1 = mResults["score"]?.data?.fields ?? [];
   const scoreFields2 = mResults["score2"]?.data?.fields ?? [];
@@ -1445,7 +1464,7 @@ export function CpfFullPanel({ cpf }: Props) {
   const hasCNH       = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
   const hasObito     = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
   const hasLegal     = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
-  const hasParentes  = relatives.length > 0 || identity.mae || identity.pai || mResults["parentes"]?.status === "done";
+  const hasParentes  = relatives.length > 0 || identityFull.mae || identityFull.pai || mResults["parentes"]?.status === "done";
   const extras       = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)
@@ -1576,7 +1595,7 @@ export function CpfFullPanel({ cpf }: Props) {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.42, delay: 0.06, ease: [0.23, 1, 0.32, 1] }}>
                   <SectionHeader icon={IdCard} title="Carteira de Identidade" />
-                  <IdentityCard id={identity} photo={photo} />
+                  <IdentityCard id={identityFull} photo={photo} />
                 </motion.div>
               )}
 
@@ -1592,8 +1611,8 @@ export function CpfFullPanel({ cpf }: Props) {
               {/* Árvore Genealógica */}
               {hasParentes && (
                 <CollapsibleSection icon={GitBranch} title="Árvore Genealógica" count={relatives.length > 0 ? relatives.length : undefined} delay={0.14}>
-                  <FamilyTree relatives={relatives} photos={relPhotos} loadingPhotos={relPhotosLoading} identity={identity} mainPhoto={photo} />
-                  {relatives.length === 0 && !identity.mae && !identity.pai && mResults["parentes"]?.data?.raw && (
+                  <FamilyTree relatives={relatives} photos={relPhotos} loadingPhotos={relPhotosLoading} identity={identityFull} mainPhoto={photo} />
+                  {relatives.length === 0 && !identityFull.mae && !identityFull.pai && mResults["parentes"]?.data?.raw && (
                     <div className="mt-3 rounded-xl p-4" style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)" }}>
                       <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-64 overflow-y-auto">{mResults["parentes"].data.raw}</pre>
                     </div>
