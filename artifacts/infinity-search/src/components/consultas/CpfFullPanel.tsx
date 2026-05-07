@@ -77,6 +77,15 @@ function gf(fields: [string, string][], ...keys: string[]): string {
   }
   return "";
 }
+/** Exact-match only — prevents "NOME" from matching "NOMEMAE", "MUNICIPIONASCIMENTO" from matching "NASCIMENTO", etc. */
+function gfExact(fields: [string, string][], ...keys: string[]): string {
+  for (const key of keys) {
+    const ku = key.toUpperCase().replace(/[_\-\s]/g, "");
+    const found = fields.find(([fk]) => fk.toUpperCase().replace(/[_\-\s]/g, "") === ku);
+    if (found?.[1]?.trim()) return found[1].trim();
+  }
+  return "";
+}
 
 function rxv(raw: string, ...keys: string[]): string {
   for (const key of keys) {
@@ -173,23 +182,44 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const sources = ["cpf", "cpfbasico", "titulo", "cnh"];
   const f = mergeFields(sources.map(k => results[k]));
   const raw = mergeRaw(sources.map(k => results[k]));
-  const nome              = gf(f,"NOME","NOME COMPLETO","NOMECOMPLETO")                     || rxv(raw,"NOME COMPLETO","NOME");
-  const cpfVal            = gf(f,"CPF","NUMERO CPF","NUMEROCPF")                            || rxv(raw,"CPF");
-  const rg                = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE")             || rxv(raw,"RG","IDENTIDADE");
-  const mae               = gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1")       || rxv(raw,"NOME DA MÃE","NOMEMAE","MAE","FILIACAO 1");
-  const pai               = gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2")       || rxv(raw,"NOME DO PAI","NOMEPAI","PAI","FILIACAO 2");
-  const naturalidade      = gf(f,"MUNICIPIO NASCIMENTO","NATURALIDADE","CIDADE NASCIMENTO") || rxv(raw,"NATURALIDADE","MUNICIPIO.*NASC");
-  const dataNascimento    = gf(f,"DATA NASCIMENTO","DATANASCIMENTO","DT NASCIMENTO","NASCIMENTO") || rxv(raw,"DATA.*NASC","NASCIMENTO");
-  const sexo              = gf(f,"SEXO","GENERO","GÊNERO")                                  || rxv(raw,"SEXO","GÊNERO");
-  const estadoCivil       = gf(f,"ESTADO CIVIL","ESTADOCIVIL")                              || rxv(raw,"ESTADO CIVIL");
-  const orgaoEmissor      = gf(f,"ORGAO EMISSOR","ORGAOEMISSOR","ÓRGÃO EMISSOR")            || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
-  const dataEmissao       = gf(f,"DATA EMISSAO","DATAEMISSAO","DATA EMISSÃO")               || rxv(raw,"DATA.*EMIS");
-  const situacaoCadastral = gf(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
-  const tipoSanguineo     = gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE")                 || rxv(raw,"SANGUE","TIPO SANG");
-  const tituloEleitor     = gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO")                 || rxv(raw,"TITULO.*ELEITOR");
-  const pis               = gf(f,"PIS","NIS","PIS PASEP","PISPASEP")                        || rxv(raw,"PIS","NIS");
-  const nis               = gf(f,"NIS","PIS","NUMERONIS")                                   || rxv(raw,"NIS");
-  const email             = gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL")                          || rxv(raw,"EMAIL","E-MAIL");
+
+  // ── NOME: exact match FIRST to avoid "NOME" matching "NOMEMAE" / "NOMEPAI"
+  const nome =
+    gfExact(f, "NOME", "NOME COMPLETO", "NOMECOMPLETO", "NOME DO CONTRIBUINTE", "NOMECONTRIBUINTE") ||
+    gf(f, "NOME COMPLETO", "NOMECOMPLETO", "NOME DO CONTRIBUINTE", "NOMECONTRIBUINTE") ||
+    rxv(raw, "NOME COMPLETO", "NOME DO CONTRIBUINTE");
+
+  const cpfVal = gfExact(f, "CPF", "NUMERO CPF", "NUMEROCPF") || gf(f, "CPF", "NUMEROCPF") || rxv(raw, "CPF");
+  const rg     = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE") || rxv(raw,"RG","IDENTIDADE");
+
+  const mae = gfExact(f,"NOME MAE","NOMEMAE","MAE","FILIACAO1","FILIACAO 1") ||
+              gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1") ||
+              rxv(raw,"NOME DA MÃE","NOME MAE","NOMEMAE","MAE","FILIACAO 1");
+  const pai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2") ||
+              gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
+              rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
+
+  // ── NATURALIDADE: exact match FIRST to avoid "MUNICIPIONASCIMENTO" matching "NASCIMENTO" date field
+  const naturalidade =
+    gfExact(f,"NATURALIDADE","MUNICIPIO NASCIMENTO","MUNICIPIODENASCIMENTO","MUNICIPIO DE NASCIMENTO","CIDADE NASCIMENTO","CIDADENASCIMENTO") ||
+    rxv(raw,"NATURALIDADE","MUNICIPIO DE NASCIMENTO");
+
+  // ── DATA NASCIMENTO: exact match FIRST so we don't accidentally grab naturalidade
+  const dataNascimento =
+    gfExact(f,"DATA NASCIMENTO","DATANASCIMENTO","DT NASCIMENTO","DTNASCIMENTO","NASCIMENTO","DATA NASC","DATANASC") ||
+    gf(f,"DATA NASCIMENTO","DATANASCIMENTO","DT NASCIMENTO") ||
+    rxv(raw,"DATA.*NASC","NASCIMENTO");
+
+  const sexo          = gfExact(f,"SEXO","GENERO") || gf(f,"SEXO","GENERO","GÊNERO") || rxv(raw,"SEXO","GÊNERO");
+  const estadoCivil   = gfExact(f,"ESTADO CIVIL","ESTADOCIVIL") || gf(f,"ESTADO CIVIL","ESTADOCIVIL") || rxv(raw,"ESTADO CIVIL");
+  const orgaoEmissor  = gfExact(f,"ORGAO EMISSOR","ORGAOEMISSOR") || gf(f,"ORGAO EMISSOR","ORGAOEMISSOR","ÓRGÃO EMISSOR") || rxv(raw,"ORGAO EMISSOR","ÓRGÃO EMISSOR");
+  const dataEmissao   = gfExact(f,"DATA EMISSAO","DATAEMISSAO","DATA EMISSÃO","DATAEMISSÃO") || gf(f,"DATA EMISSAO","DATAEMISSAO") || rxv(raw,"DATA.*EMIS");
+  const situacaoCadastral = gfExact(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA") || gf(f,"SITUACAO CADASTRAL","SITUACAOCADASTRAL","STATUS RECEITA","STATUS") || rxv(raw,"SITUACAO","STATUS");
+  const tipoSanguineo = gfExact(f,"TIPO SANGUINEO","TIPOSANGUINEO") || gf(f,"TIPO SANGUINEO","TIPOSANGUINEO","SANGUE") || rxv(raw,"SANGUE","TIPO SANG");
+  const tituloEleitor = gfExact(f,"TITULO ELEITOR","TITULOELEITOR") || gf(f,"TITULO ELEITOR","TITULOELEITOR","TÍTULO") || rxv(raw,"TITULO.*ELEITOR");
+  const pis           = gfExact(f,"PIS","PISPASEP","PIS PASEP") || gf(f,"PIS","PIS PASEP","PISPASEP") || rxv(raw,"PIS");
+  const nis           = gfExact(f,"NIS","NUMERONIS") || gf(f,"NIS","NUMERONIS") || rxv(raw,"NIS");
+  const email         = gfExact(f,"EMAIL","E-MAIL","ENDERECOEMAIL") || gf(f,"EMAIL","E-MAIL","ENDERECOEMAIL") || rxv(raw,"EMAIL","E-MAIL");
   const addr = buildAddresses(results)[0];
   const enderecoPrincipal = addr
     ? [addr.logradouro, addr.numero, addr.bairro, addr.cidade, addr.uf].filter(Boolean).join(", ")
@@ -989,12 +1019,16 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
         {parents.length > 0 && (
           <>
             <div className="flex items-end justify-center gap-10">
-              {parents.map((p, i) => (
-                <motion.div key={i} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-                  <PersonNode nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label}
-                    photo={p.rel ? np(p.rel).photo : undefined} loading={p.rel ? np(p.rel).loading : false} />
-                </motion.div>
-              ))}
+              {parents.map((p, i) => {
+                // For parents with CPF: use np(). For parents with name-only: look up by lowercase name key.
+                const pPhoto = p.rel ? np(p.rel).photo : (photos[p.nome.toLowerCase()] ?? undefined);
+                const pLoading = p.rel ? np(p.rel).loading : (p.nome ? loadingPhotos.has(p.nome.toLowerCase()) : false);
+                return (
+                  <motion.div key={i} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
+                    <PersonNode nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label} photo={pPhoto} loading={pLoading} />
+                  </motion.div>
+                );
+              })}
             </div>
             <Connector h={32} />
           </>
@@ -1184,23 +1218,76 @@ export function CpfFullPanel({ cpf }: Props) {
   // ── Relative photos ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!done) return;
-    const rels = buildRelatives(finalResultsRef.current["parentes"]);
-    const cpfsToFetch = rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf);
-    if (!cpfsToFetch.length) return;
-    setRelPhotosLoading(new Set(cpfsToFetch));
-    void Promise.allSettled(
-      cpfsToFetch.map(async (relCpf) => {
-        // Try foto nacional first, then fotocnh and state fotos for relatives
-        let ph: string | null = null;
-        for (const tipo of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
-          const res = await fetchModule(tipo, relCpf, true, true);
-          ph = res.data ? extractPhotoFromResult(res) : null;
-          if (ph) break;
-        }
-        setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
-        if (ph) setRelPhotos(prev => ({ ...prev, [relCpf]: ph }));
-      })
-    );
+    let cancelled = false;
+
+    (async () => {
+      const acc = finalResultsRef.current;
+      const rels = buildRelatives(acc["parentes"]);
+
+      // CPFs already known from the parentes result
+      const cpfSet = new Set(rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf));
+
+      // For parents that don't have CPF in the parentes list, look them up by name
+      // Keys for relPhotos will be CPF (if found) or lowercase name (fallback)
+      const parentNamesToResolve: { name: string; key: string }[] = [];
+      const maeInRels = rels.some(r => categorizeRel(r) === "mae" && r.cpf.length === 11);
+      const paiInRels = rels.some(r => categorizeRel(r) === "pai" && r.cpf.length === 11);
+      const identityNow = buildIdentity(acc);
+      if (!maeInRels && identityNow.mae) {
+        parentNamesToResolve.push({ name: identityNow.mae, key: identityNow.mae.toLowerCase() });
+      }
+      if (!paiInRels && identityNow.pai) {
+        parentNamesToResolve.push({ name: identityNow.pai, key: identityNow.pai.toLowerCase() });
+      }
+
+      // Resolve parent names → CPFs using the nome API
+      const nameKeyMap: Record<string, string> = {}; // cpf/name-key → relPhotos key
+      for (const { name, key } of parentNamesToResolve) {
+        if (cancelled) return;
+        try {
+          const res = await fetchModule("nome", name, false, true);
+          if (res.data) {
+            const resolvedCpf = (gfExact(res.data.fields, "CPF") || gf(res.data.fields, "CPF", "NUMEROCPF"))
+              ?.replace(/\D/g, "");
+            if (resolvedCpf && resolvedCpf.length === 11) {
+              cpfSet.add(resolvedCpf);
+              nameKeyMap[resolvedCpf] = key; // after photo fetch, also store under name key
+            } else {
+              // Can't resolve CPF — mark name key as loading anyway so tree shows spinner
+              nameKeyMap[key] = key;
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (!cpfSet.size) return;
+      setRelPhotosLoading(new Set(cpfSet));
+
+      await Promise.allSettled(
+        [...cpfSet].map(async (relCpf) => {
+          let ph: string | null = null;
+          for (const tipo of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
+            if (cancelled) break;
+            const res = await fetchModule(tipo, relCpf, true, true);
+            ph = res.data ? extractPhotoFromResult(res) : null;
+            if (ph) break;
+          }
+          if (cancelled) return;
+          setRelPhotosLoading(prev => { const n = new Set(prev); n.delete(relCpf); return n; });
+          if (ph) {
+            setRelPhotos(prev => {
+              const next = { ...prev, [relCpf]: ph! };
+              // Also store under the name key so FamilyTree can find it for CPF-less parents
+              const nameKey = nameKeyMap[relCpf];
+              if (nameKey) next[nameKey] = ph!;
+              return next;
+            });
+          }
+        })
+      );
+    })();
+
+    return () => { cancelled = true; };
   }, [done]);
 
   // ── Foto cascade: try additional photo sources if main foto module returned nothing ─
