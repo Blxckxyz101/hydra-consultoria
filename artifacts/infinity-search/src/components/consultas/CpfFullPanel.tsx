@@ -328,11 +328,10 @@ function buildEmployments(r?: ModuleResult): Employment[] {
 }
 
 // ─── Build relatives ──────────────────────────────────────────────────────────
-function buildRelatives(res?: ModuleResult): Relative[] {
-  if (!res?.data) return [];
+function buildRelatives(...sources: (ModuleResult | undefined)[]): Relative[] {
   const relatives: Relative[] = []; const seen = new Set<string>();
   function addRel(r: Partial<Relative>) {
-    const key = (r.cpf || r.nome || "").toLowerCase();
+    const key = (r.cpf || r.nome || "").toLowerCase().trim();
     if (!key || seen.has(key)) return; seen.add(key);
     relatives.push({ cpf: r.cpf||"", nome: r.nome||"", nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
   }
@@ -347,46 +346,49 @@ function buildRelatives(res?: ModuleResult): Relative[] {
       if (nome || cpf) addRel({ nome, cpf, nasc, sexo });
     }
   }
-  for (const sec of res.data.sections) {
-    const items = sec.items;
-    if (!items.length) continue;
-    const isFullRecord = items.some(it =>
-      (it.includes("CPF") || it.includes("NOME")) && (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
-    );
-    if (isFullRecord) {
-      for (const item of items) {
-        const cpf  = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
-        const nome = (item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
-                  || item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1])?.trim() ?? "";
-        const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
-        const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
-        const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
-        if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: sec.name, origem });
+  function processSource(res: ModuleResult) {
+    for (const sec of res.data!.sections) {
+      const items = sec.items;
+      if (!items.length) continue;
+      const isFullRecord = items.some(it =>
+        (it.includes("CPF") || it.includes("NOME")) && (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
+      );
+      if (isFullRecord) {
+        for (const item of items) {
+          const cpf  = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
+          const nome = (item.match(/NOME RELACIONADO[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1]
+                    || item.match(/NOME[\s:·]+([^·|\n,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|$)/i)?.[1])?.trim() ?? "";
+          const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
+          const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
+          const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
+          if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: sec.name, origem });
+        }
+      } else {
+        let cur: Partial<Relative> = { relacao: sec.name };
+        for (const item of items) {
+          const kv = item.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9 ]+):\s*(.+)$/i);
+          if (!kv) continue;
+          const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,""); const v = kv[2].trim();
+          const isNome = k === "NOME" || k === "NOMERELACIONADO" || k === "NOMEPARTE";
+          if (isNome && cur.nome) { addRel(cur); cur = { relacao: sec.name }; }
+          if (isNome) cur.nome = v;
+          else if (k === "CPF" || k === "CPFREL" || k === "CPFRELACIONADO") cur.cpf = v.replace(/\D/g,"");
+          else if (k.includes("NASC") || k.includes("DATANASC")) cur.nasc = v;
+          else if (k === "SEXO") cur.sexo = v;
+          else if (k.includes("ORIGEM")) cur.origem = v;
+          else if (k.includes("RELAC") || k.includes("PARENT")) cur.relacao = v;
+        }
+        addRel(cur);
       }
-    } else {
-      let cur: Partial<Relative> = { relacao: sec.name };
-      for (const item of items) {
-        const kv = item.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9 ]+):\s*(.+)$/i);
-        if (!kv) continue;
-        const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,""); const v = kv[2].trim();
-        const isNome = k === "NOME" || k === "NOMERELACIONADO" || k === "NOMEPARTE";
-        if (isNome && cur.nome) { addRel(cur); cur = { relacao: sec.name }; }
-        if (isNome) cur.nome = v;
-        else if (k === "CPF" || k === "CPFREL" || k === "CPFRELACIONADO") cur.cpf = v.replace(/\D/g,"");
-        else if (k.includes("NASC") || k.includes("DATANASC")) cur.nasc = v;
-        else if (k === "SEXO") cur.sexo = v;
-        else if (k.includes("ORIGEM")) cur.origem = v;
-        else if (k.includes("RELAC") || k.includes("PARENT")) cur.relacao = v;
-      }
-      addRel(cur);
+    }
+    if (relatives.length === 0 && res.data!.raw) scanRaw(res.data!.raw);
+    if (relatives.length === 0 && res.data!.fields.length > 0) {
+      const cpf = gf(res.data!.fields,"CPF","CPFREL"); const nome = gf(res.data!.fields,"NOME","NOMERELACIONADO");
+      const nasc = gf(res.data!.fields,"NASC","NASCIMENTO","DATANASCIMENTO");
+      if (cpf || nome) addRel({ cpf, nome, nasc });
     }
   }
-  if (relatives.length === 0 && res.data.raw) scanRaw(res.data.raw);
-  if (relatives.length === 0 && res.data.fields.length > 0) {
-    const cpf = gf(res.data.fields,"CPF","CPFREL"); const nome = gf(res.data.fields,"NOME","NOMERELACIONADO");
-    const nasc = gf(res.data.fields,"NASC","NASCIMENTO","DATANASCIMENTO");
-    if (cpf || nome) addRel({ cpf, nome, nasc });
-  }
+  for (const src of sources) { if (src?.data) processSource(src); }
   return relatives;
 }
 
@@ -539,29 +541,62 @@ function CollapsibleSection({ title, icon: Icon, count, children, defaultOpen = 
 // ─── Identity Card ────────────────────────────────────────────────────────────
 function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
   const compact = useViewMode() === "compact";
+  const [cpfCopied, setCpfCopied] = useState(false);
   const uf = id.orgaoEmissor.match(/\b([A-Z]{2})$/)?.[1] ?? id.orgaoEmissor.match(/[-\/\s]([A-Z]{2})$/)?.[1] ?? "";
-  const F = ({ label, value, mono = false, accent }: { label: string; value: string; mono?: boolean; accent?: string }) => (
-    <div className="min-w-0">
-      <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 font-semibold mb-0.5">{label}</p>
-      <p className={`font-bold leading-tight break-words ${mono ? "font-mono" : ""} ${accent ?? "text-white"} ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
-        {value || <span className="text-white/20 font-normal">—</span>}
-      </p>
-      <div className="h-px bg-white/5 mt-1.5" />
-    </div>
-  );
+  const copyCpf = () => {
+    navigator.clipboard.writeText(fmtCPF(id.cpf)).then(() => {
+      setCpfCopied(true);
+      setTimeout(() => setCpfCopied(false), 1500);
+    });
+  };
+
+  const F = ({ label, value, mono = false, accent, copyable }: { label: string; value: string; mono?: boolean; accent?: string; copyable?: boolean }) => {
+    const [copied, setCopied] = useState(false);
+    return (
+      <div className="min-w-0 group relative">
+        <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 font-semibold mb-0.5">{label}</p>
+        <div className="flex items-center gap-1.5">
+          <p className={`flex-1 font-bold leading-tight break-words ${mono ? "font-mono" : ""} ${accent ?? "text-white"} ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
+            {value || <span className="text-white/20 font-normal">—</span>}
+          </p>
+          {copyable && value && (
+            <button
+              onClick={() => { navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }); }}
+              className="shrink-0 opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10 active:bg-white/15"
+              title={`Copiar ${label}`}>
+              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-white/35" />}
+            </button>
+          )}
+        </div>
+        <div className="h-px bg-white/5 mt-1.5" />
+      </div>
+    );
+  };
+
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" }}>
       {/* Header banner */}
-      <div className="relative px-8 py-5 overflow-hidden" style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 55%, black) 0%, color-mix(in srgb, var(--color-primary) 40%, black) 50%, color-mix(in srgb, var(--color-primary) 48%, black) 100%)" }}>
+      <div className="relative px-6 sm:px-8 py-5 overflow-hidden" style={{ background: "linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 55%, black) 0%, color-mix(in srgb, var(--color-primary) 40%, black) 50%, color-mix(in srgb, var(--color-primary) 48%, black) 100%)" }}>
         <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: "repeating-linear-gradient(45deg,#fff 0,#fff 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }} />
         <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at 80% 50%, rgba(255,255,255,0.08) 0%, transparent 70%)" }} />
-        <div className="relative z-10 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-1"><span className="text-xl">🇧🇷</span><p className="text-[9px] font-extrabold tracking-[0.24em] text-white/95">REPÚBLICA FEDERATIVA DO BRASIL</p></div>
+        <div className="relative z-10 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 mb-1"><span className="text-xl">🇧🇷</span><p className="text-[9px] font-extrabold tracking-[0.22em] text-white/95">REPÚBLICA FEDERATIVA DO BRASIL</p></div>
             {uf && <p className="text-[8px] tracking-[0.16em] text-white/60 mb-0.5">SECRETARIA DE SEGURANÇA PÚBLICA — SSP/{uf}</p>}
             <p className="text-[13px] font-black tracking-[0.32em] text-white mt-1">CARTEIRA DE IDENTIDADE</p>
+            {/* Copy CPF pill — prominent and always accessible */}
+            {id.cpf && (
+              <button onClick={copyCpf}
+                className="mt-3 flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all active:scale-95"
+                style={{ background: cpfCopied ? "rgba(52,211,153,0.2)" : "rgba(255,255,255,0.12)", border: `1px solid ${cpfCopied ? "rgba(52,211,153,0.5)" : "rgba(255,255,255,0.22)"}`, backdropFilter: "blur(8px)" }}>
+                {cpfCopied
+                  ? <><Check className="w-3 h-3 text-emerald-300" /><span className="text-[11px] font-bold text-emerald-300 font-mono">Copiado!</span></>
+                  : <><Copy className="w-3 h-3 text-white/70" /><span className="text-[11px] font-bold text-white/90 font-mono">{fmtCPF(id.cpf)}</span></>
+                }
+              </button>
+            )}
           </div>
-          <div className="text-right">
+          <div className="text-right shrink-0">
             <span className="inline-block text-[8px] bg-white/20 backdrop-blur rounded-full px-3 py-1 text-white/90 border border-white/25 font-semibold tracking-widest">1ª VIA</span>
             {id.situacaoCadastral && <p className={`text-[9px] mt-1.5 font-bold tracking-widest ${/REGULAR|ATIVO/i.test(id.situacaoCadastral) ? "text-emerald-300" : "text-amber-300"}`}>◉ {id.situacaoCadastral.toUpperCase()}</p>}
           </div>
@@ -578,7 +613,7 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
               <p className="text-[15px] font-black text-white">{id.nome || "—"}</p>
               <div className="h-px bg-white/5 mt-1.5" />
             </div>
-            <F label="CPF" value={fmtCPF(id.cpf)} mono />
+            <F label="CPF" value={fmtCPF(id.cpf)} mono copyable />
             <F label="RG" value={id.rg} />
             <F label="Nascimento" value={id.dataNascimento} />
             <F label="Mãe" value={id.mae} />
@@ -622,7 +657,7 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
               <F label="Nome Completo" value={id.nome} accent="text-white text-[13px]" />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
               <div className="grid grid-cols-3 gap-2"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
-              <div className="grid grid-cols-2 gap-3"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
+              <div className="grid grid-cols-2 gap-3"><F label="CPF" value={fmtCPF(id.cpf)} mono copyable /><F label="Naturalidade" value={id.naturalidade} /></div>
               <div className="grid grid-cols-2 gap-3"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
               {(id.tituloEleitor || id.pis) && (
                 <div className="grid grid-cols-2 gap-3">
@@ -1321,7 +1356,7 @@ export function CpfFullPanel({ cpf }: Props) {
   const phones      = useMemo(() => buildPhones(mResults),                [mResults]);
   const addresses   = useMemo(() => buildAddresses(mResults),             [mResults]);
   const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
-  const relatives   = useMemo(() => buildRelatives(mResults["parentes"]),  [mResults]);
+  const relatives   = useMemo(() => buildRelatives(mResults["parentes"], mResults["cpf"], mResults["cpfbasico"]),  [mResults]);
   const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
 
   const scoreFields1 = mResults["score"]?.data?.fields ?? [];
