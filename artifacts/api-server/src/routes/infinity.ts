@@ -1182,11 +1182,7 @@ async function callSkylers(
       url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
     }
 
-    const dispatcher = buildSkylersDispatcher();
-    const fetchFn = dispatcher
-      ? (u: string, o: RequestInit) => undiciFetch(u, { ...(o as object), dispatcher } as Parameters<typeof undiciFetch>[1])
-      : fetch;
-    const r = await fetchFn(url, { signal } as RequestInit);
+    const r = await fetch(url, { signal });
     const text = await r.text();
 
     if (!r.ok) {
