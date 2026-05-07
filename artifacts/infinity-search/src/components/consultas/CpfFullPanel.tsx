@@ -247,39 +247,18 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
     if (!mod?.data) continue;
     for (const sec of mod.data.sections) {
       if (!/TELEFON|CELULAR|CONTATO|FONE|PHONE/i.test(sec.name)) continue;
-      // Detect if section uses multi-line key:value format (DDD and NUMERO on separate lines)
-      const isMultiLine = sec.items.some(it => /^(DDD|NUMERO|TELEFONE|NUM|PRIORIDADE|TIPO|CLASSIF|DATA)\s*[:\s]/i.test(it));
-      if (isMultiLine) {
-        // Accumulate fields across items, flush when new record starts or section ends
-        type PhoneAccum = { ddd: string; num: string; prio: string; cls: string; dt: string; tipo: string };
-        let cur: PhoneAccum = { ddd:"", num:"", prio:"", cls:"", dt:"", tipo:"" };
-        const flush = () => { if (cur.num) add(cur.ddd, cur.num, cur.prio, cur.cls, cur.dt, cur.tipo); };
-        for (const item of sec.items) {
-          const kv = item.match(/^([A-Z_]+)\s*[:\s]+(.*)$/i);
-          if (!kv) continue;
-          const k = kv[1].toUpperCase().replace(/[^A-Z]/g,"");
-          const v = kv[2].trim();
-          if (k === "DDD")                                   cur.ddd  = v;
-          else if (/^(NUMERO|TELEFONE|CELULAR|NUM)$/.test(k)) { if (cur.num) { flush(); cur = { ddd: cur.ddd, num:"", prio:"", cls:"", dt:"", tipo:"" }; } cur.num = v.replace(/\D/g,""); }
-          else if (k === "PRIORIDADE")                       cur.prio = v;
-          else if (/CLASSIF/.test(k))                        cur.cls  = v;
-          else if (k === "DATA")                             cur.dt   = v;
-          else if (/TIPO|CLASSIF/.test(k) && /CELUL|MOVEL/i.test(v)) cur.tipo = "Celular";
-          else if (/TIPO|CLASSIF/.test(k) && /FIXO|RESID/i.test(v))  cur.tipo = "Fixo";
-        }
-        flush();
-      } else {
-        // Single-line records (each item contains all fields inline)
-        for (const item of sec.items) {
-          const ddd  = item.match(/DDD[\s:]+(\d{2,3})/i)?.[1] ?? item.match(/\((\d{2})\)/)?.[1] ?? "";
-          const num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d[\d\s\-]{6,11})/i)?.[1]?.replace(/\D/g,"")
-                    ?? item.match(/\(?\d{2}\)?[\s\-]?(\d{4,5}[\s\-]?\d{4})/)?.[1]?.replace(/\D/g,"") ?? "";
-          const prio = item.match(/PRIORIDADE[\s:]+(\S+)/i)?.[1] ?? "";
-          const cls  = item.match(/CLASSIF\w*[\s:]+(\S+)/i)?.[1] ?? "";
-          const dt   = item.match(/DATA[\s:]+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? "";
-          const tipo = /CELULAR|MOVEL/i.test(item) ? "Celular" : /FIXO|RESIDENC/i.test(item) ? "Fixo" : "";
-          if (num) add(ddd, num, prio, cls, dt, tipo);
-        }
+      // Each item may be a single-line record (all fields inline, possibly separated by " · ")
+      // e.g. Skylers: "Ddd: 11 · Numero: 999999999 · Tipo: CELULAR · Prioridade: 1"
+      // or Geass:     "DDD: 11 NUMERO: 35643333 TIPO: FIXO"
+      for (const item of sec.items) {
+        const ddd  = item.match(/\bDDD[\s:]+(\d{2,3})/i)?.[1] ?? item.match(/\((\d{2})\)/)?.[1] ?? "";
+        const num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d[\d\s\-]{6,11})/i)?.[1]?.replace(/\D/g,"")
+                  ?? item.match(/\(?\d{2}\)?[\s\-]?(\d{4,5}[\s\-]?\d{4})/)?.[1]?.replace(/\D/g,"") ?? "";
+        const prio = item.match(/PRIORIDADE[\s:]+(\S+)/i)?.[1] ?? "";
+        const cls  = item.match(/CLASSIF\w*[\s:]+(\S+)/i)?.[1] ?? "";
+        const dt   = item.match(/DATA[\s:]+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? "";
+        const tipo = /CELULAR|MOVEL/i.test(item) ? "Celular" : /FIXO|RESIDENC/i.test(item) ? "Fixo" : "";
+        if (num) add(ddd, num, prio, cls, dt, tipo);
       }
     }
     for (const [k, v] of mod.data.fields) {
