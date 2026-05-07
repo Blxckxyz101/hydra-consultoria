@@ -40,7 +40,11 @@ function fmtCPF(cpf: string): string {
 }
 
 function fmtPhone(ph: PhoneEntry): string {
-  return `(${ph.ddd}) ${ph.numero.slice(0,5)}-${ph.numero.slice(5)}`;
+  const n = ph.numero;
+  const formatted = n.length >= 9
+    ? `${n.slice(0,5)}-${n.slice(5)}`   // celular: 9 dígitos → XXXXX-XXXX
+    : `${n.slice(0,4)}-${n.slice(4)}`;   // fixo: 8 dígitos → XXXX-XXXX
+  return `(${ph.ddd}) ${formatted}`;
 }
 
 // ─── PDF Generator ────────────────────────────────────────────────────────────
@@ -259,7 +263,8 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
     ].filter(s => s.val);
     for (const s of scores) {
       checkY(18);
-      const pct = Math.min(100, Math.max(0, (parseInt(s.val) / 1000) * 100));
+      const parsed = parseInt(s.val) || 0;
+      const pct = Math.min(100, Math.max(0, (parsed / 1000) * 100));
       const barColor = pct > 70 ? C.green : pct > 40 ? C.amber : C.rose;
       doc.setFontSize(8);
       doc.setFont("helvetica", "normal");
@@ -269,11 +274,15 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
       doc.setFont("helvetica", "bold");
       doc.setTextColor(...hex(barColor));
       doc.text(s.val, margin + 50, y + 4);
-      // Bar
+      // Bar background (always full width)
       doc.setFillColor(230, 230, 235);
       doc.roundedRect(margin, y + 6, col, 3.5, 1, 1, "F");
-      doc.setFillColor(...hex(barColor));
-      doc.roundedRect(margin, y + 6, col * (pct / 100), 3.5, 1, 1, "F");
+      // Bar fill — minimum 2.5mm so roundedRect(rx=1) is always valid
+      if (pct > 0) {
+        const barW = Math.max(2.5, col * (pct / 100));
+        doc.setFillColor(...hex(barColor));
+        doc.roundedRect(margin, y + 6, barW, 3.5, 1, 1, "F");
+      }
       y += 14;
     }
   }
@@ -318,11 +327,68 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
   if (data.relatives.length > 0) {
     divider();
     sectionHeader("Árvore Genealógica", `(${data.relatives.length} pessoas)`);
+
+    // Photo gallery: up to 5 relatives with photos per row (card size 34×48mm)
+    const withPhotos = data.relatives.filter(r => {
+      const key = r.cpf || r.nome.toLowerCase();
+      return !!(data.relPhotos[r.cpf] || data.relPhotos[key]);
+    });
+    if (withPhotos.length > 0) {
+      const cardW = 34, cardH = 48, cardGap = 3;
+      const perRow = Math.min(5, Math.floor(col / (cardW + cardGap)));
+      const photoRows: typeof withPhotos[] = [];
+      for (let i = 0; i < Math.min(withPhotos.length, 10); i += perRow) {
+        photoRows.push(withPhotos.slice(i, i + perRow));
+      }
+      for (const row of photoRows) {
+        checkY(cardH + 6);
+        const totalW = row.length * (cardW + cardGap) - cardGap;
+        let cx = margin + (col - totalW) / 2;
+        for (const r of row) {
+          const photoKey = r.cpf ? (data.relPhotos[r.cpf] ? r.cpf : r.nome.toLowerCase()) : r.nome.toLowerCase();
+          const ph = data.relPhotos[r.cpf] || data.relPhotos[photoKey];
+          // Card background
+          doc.setFillColor(248, 250, 252);
+          doc.roundedRect(cx, y, cardW, cardH, 2, 2, "F");
+          doc.setDrawColor(...hex(C.border));
+          doc.setLineWidth(0.2);
+          doc.roundedRect(cx, y, cardW, cardH, 2, 2, "S");
+          // Photo
+          try {
+            doc.addImage(ph, "JPEG", cx + 3, y + 3, cardW - 6, cardW - 6);
+          } catch { /* skip bad image */ }
+          // Relation badge
+          const relLabel = fmt(r.relacao).slice(0, 12);
+          doc.setFillColor(...hex(C.primary));
+          doc.roundedRect(cx + 2, y + cardW - 4, cardW - 4, 5.5, 1, 1, "F");
+          doc.setFontSize(6);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(255, 255, 255);
+          doc.text(relLabel.toUpperCase(), cx + cardW / 2, y + cardW - 0.5, { align: "center" });
+          // Name
+          doc.setFontSize(6.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(...hex(C.text));
+          const firstName = r.nome.split(" ").slice(0, 2).join(" ");
+          const nameLines = doc.splitTextToSize(firstName, cardW - 2);
+          doc.text(nameLines.slice(0, 2), cx + cardW / 2, y + cardW + 5, { align: "center" });
+          // CPF if available
+          if (r.cpf) {
+            doc.setFontSize(5.5);
+            doc.setFont("helvetica", "normal");
+            doc.setTextColor(...hex(C.sub));
+            doc.text(fmtCPF(r.cpf), cx + cardW / 2, y + cardW + 12, { align: "center" });
+          }
+          cx += cardW + cardGap;
+        }
+        y += cardH + 8;
+      }
+    }
+
+    // Text table for all relatives
     const rw = [col * 0.37, col * 0.26, col * 0.18, col * 0.1, col * 0.09];
     tableRow(["Nome","CPF","Relação","Nascimento","Sexo"], rw, true);
     data.relatives.forEach((r, i) => {
-      const hasPhoto = r.cpf && data.relPhotos[r.cpf];
-      void hasPhoto;
       tableRow([fmt(r.nome), r.cpf ? fmtCPF(r.cpf) : "—", fmt(r.relacao), fmt(r.nasc), fmt(r.sexo)], rw, false, i % 2 === 0);
     });
     y += 3;

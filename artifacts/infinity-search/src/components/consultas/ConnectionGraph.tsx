@@ -5,7 +5,7 @@ type NodeType = "person" | "relative" | "phone" | "address" | "company";
 
 interface GraphNode {
   id: string; type: NodeType; label: string; sublabel?: string;
-  photo?: string; cpf?: string;
+  photo?: string; cpf?: string; nome?: string;
   x: number; y: number; vx: number; vy: number; fx?: number; fy?: number;
   ring: number; ringIdx: number; ringTotal: number;
 }
@@ -48,37 +48,43 @@ const EDGE_COLOR: Record<NodeType, string> = {
   company:  "rgba(251,146,60,0.3)",
 };
 
+// Lookup photo from relPhotos by CPF or full lowercase nome
+function lookupPhoto(relPhotos: Record<string, string>, cpf?: string, nome?: string): string | undefined {
+  if (cpf && relPhotos[cpf]) return relPhotos[cpf];
+  if (nome && relPhotos[nome.toLowerCase()]) return relPhotos[nome.toLowerCase()];
+  return undefined;
+}
+
 // ─── Build graph data ─────────────────────────────────────────────────────────
 function buildGraph(p: GraphProps): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
 
-  // ring-1 groups
-  const ring1: { id: string; type: NodeType; label: string; sublabel?: string; photo?: string; cpf?: string }[] = [];
+  const ring1: { id: string; type: NodeType; label: string; sublabel?: string; photo?: string; cpf?: string; nome?: string }[] = [];
   const ring2: typeof ring1 = [];
   const ring3: typeof ring1 = [];
   const ring4: typeof ring1 = [];
 
-  // Classify relatives
   for (const r of p.relatives) {
     const cat = r.relacao.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
     const isPrimary = /pai|mae|conjuge|esposa|esposo/.test(cat);
     const isChild   = /filho|filha/.test(cat);
     const isSibling = /irm/.test(cat);
     const target    = isPrimary ? ring1 : (isChild || isSibling) ? ring2 : ring4;
-    const id = `rel-${r.cpf || r.nome}`;
-    target.push({ id, type: "relative", label: r.nome.split(" ").slice(0,2).join(" "), sublabel: r.relacao, photo: r.cpf ? p.relPhotos[r.cpf] : undefined, cpf: r.cpf });
+    const id        = `rel-${r.cpf || r.nome}`;
+    const photo     = lookupPhoto(p.relPhotos, r.cpf, r.nome);
+    target.push({ id, type: "relative", label: r.nome.split(" ").slice(0,2).join(" "), sublabel: r.relacao, photo, cpf: r.cpf, nome: r.nome });
   }
 
-  // Phones → ring3
   const seenPhone = new Set<string>();
   for (const ph of p.phones.slice(0, 12)) {
     const num = `${ph.ddd}${ph.numero}`;
     if (seenPhone.has(num)) continue; seenPhone.add(num);
-    ring3.push({ id: `phone-${num}`, type: "phone", label: `(${ph.ddd}) ${ph.numero.slice(0,5)}-${ph.numero.slice(5)}`, sublabel: ph.tipo || ph.classificacao || "Telefone" });
+    const n = ph.numero;
+    const formatted = n.length >= 9 ? `${n.slice(0,5)}-${n.slice(5)}` : `${n.slice(0,4)}-${n.slice(4)}`;
+    ring3.push({ id: `phone-${num}`, type: "phone", label: `(${ph.ddd}) ${formatted}`, sublabel: ph.tipo || ph.classificacao || "Telefone" });
   }
 
-  // Addresses → ring3
   const seenAddr = new Set<string>();
   for (const a of p.addresses.slice(0, 10)) {
     const key = `${a.cidade}-${a.logradouro}`;
@@ -86,7 +92,6 @@ function buildGraph(p: GraphProps): { nodes: GraphNode[]; edges: GraphEdge[] } {
     ring3.push({ id: `addr-${key}`, type: "address", label: a.cidade || a.logradouro, sublabel: a.uf });
   }
 
-  // Companies → ring4
   const seenComp = new Set<string>();
   for (const e of p.employments.slice(0, 8)) {
     const key = e.cnpj || e.empresa;
@@ -94,13 +99,11 @@ function buildGraph(p: GraphProps): { nodes: GraphNode[]; edges: GraphEdge[] } {
     ring4.push({ id: `co-${key}`, type: "company", label: e.empresa.slice(0,20), sublabel: "Empregadora" });
   }
 
-  // Center node
   const mainId = `person-${p.identity.cpf}`;
   nodes.push({ id: mainId, type: "person", label: p.identity.nome.split(" ")[0] || "Titular",
     sublabel: p.identity.cpf, photo: p.mainPhoto ?? undefined,
     x: 0, y: 0, vx: 0, vy: 0, ring: 0, ringIdx: 0, ringTotal: 1 });
 
-  // Place ring nodes
   const groups = [ring1, ring2, ring3, ring4];
   for (let ri = 0; ri < groups.length; ri++) {
     const grp = groups[ri];
@@ -122,7 +125,6 @@ function tick(nodes: GraphNode[]): GraphNode[] {
   const ringStr = 0.08;
 
   const next = nodes.map(n => ({ ...n }));
-  // Repulsion between same-ring nodes
   for (let i = 0; i < next.length; i++) {
     for (let j = i + 1; j < next.length; j++) {
       if (next[i].ring !== next[j].ring) continue;
@@ -134,7 +136,6 @@ function tick(nodes: GraphNode[]): GraphNode[] {
       next[j].vx += ux * f; next[j].vy += uy * f;
     }
   }
-  // Ring spring: attract back to their ideal radius
   for (const n of next) {
     if (n.ring === 0 || n.fx !== undefined) continue;
     const ideal = RINGS[n.ring];
@@ -143,7 +144,6 @@ function tick(nodes: GraphNode[]): GraphNode[] {
     n.vx -= (n.x / dist) * delta * ringStr;
     n.vy -= (n.y / dist) * delta * ringStr;
   }
-  // Integrate
   for (const n of next) {
     if (n.fx !== undefined) { n.x = n.fx; n.y = n.fy!; continue; }
     if (n.ring === 0) { n.x = 0; n.y = 0; continue; }
@@ -155,16 +155,16 @@ function tick(nodes: GraphNode[]): GraphNode[] {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export function ConnectionGraph(props: GraphProps) {
-  const initial = useMemo(() => buildGraph(props), []);
+  const initial = useMemo(() => buildGraph(props), [props.relatives.length, props.phones.length, props.addresses.length, props.employments.length]);
   const [nodes, setNodes] = useState<GraphNode[]>(initial.nodes);
   const { edges } = initial;
   const [selected, setSelected] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [svgSize, setSvgSize] = useState({ w: 700, h: 500 });
   const svgRef   = useRef<SVGSVGElement>(null);
   const dragging = useRef<{ nodeId: string | null; mx: number; my: number }>({ nodeId: null, mx: 0, my: 0 });
   const panning  = useRef<{ active: boolean; mx: number; my: number; tx: number; ty: number }>({ active: false, mx: 0, my: 0, tx: 0, ty: 0 });
   const animRef  = useRef<number>(0);
-  const stableRef = useRef(0);
 
   // Run simulation for ~120 frames then stop
   useEffect(() => {
@@ -177,6 +177,34 @@ export function ConnectionGraph(props: GraphProps) {
     animRef.current = requestAnimationFrame(run);
     return () => cancelAnimationFrame(animRef.current);
   }, []);
+
+  // Track SVG container size for correct centering
+  useEffect(() => {
+    if (!svgRef.current) return;
+    const obs = new ResizeObserver(entries => {
+      const e = entries[0];
+      if (e) setSvgSize({ w: e.contentRect.width, h: e.contentRect.height });
+    });
+    obs.observe(svgRef.current);
+    // Initialize immediately
+    setSvgSize({ w: svgRef.current.clientWidth || 700, h: svgRef.current.clientHeight || 500 });
+    return () => obs.disconnect();
+  }, []);
+
+  // Reactively update photos when relPhotos or mainPhoto loads (async)
+  useEffect(() => {
+    setNodes(prev => prev.map(n => {
+      if (n.type === "relative") {
+        const photo = lookupPhoto(props.relPhotos, n.cpf, n.nome) ?? n.photo;
+        return photo !== n.photo ? { ...n, photo } : n;
+      }
+      if (n.type === "person") {
+        const photo = props.mainPhoto ?? n.photo;
+        return photo !== n.photo ? { ...n, photo: photo ?? undefined } : n;
+      }
+      return n;
+    }));
+  }, [props.relPhotos, props.mainPhoto]);
 
   const svgToWorld = useCallback((ex: number, ey: number): [number, number] => {
     const r = svgRef.current!.getBoundingClientRect();
@@ -200,7 +228,6 @@ export function ConnectionGraph(props: GraphProps) {
       const [wx, wy] = svgToWorld(e.clientX, e.clientY);
       const id = dragging.current.nodeId;
       setNodes(prev => prev.map(n => n.id === id ? { ...n, fx: wx, fy: wy, x: wx, y: wy } : n));
-      stableRef.current = 0;
       cancelAnimationFrame(animRef.current);
       let frame = 0;
       const run = () => { if (frame++ > 80) return; setNodes(t => tick(t)); animRef.current = requestAnimationFrame(run); };
@@ -246,12 +273,12 @@ export function ConnectionGraph(props: GraphProps) {
   return (
     <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.25)" }}>
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.3)" }}>
+      <div className="flex items-center justify-between px-4 py-3 flex-wrap gap-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.3)" }}>
         <div className="flex items-center gap-3">
           <span className="text-[10px] uppercase tracking-widest font-bold text-white/40">Grafo de Conexões</span>
           <span className="text-[9px] text-white/20">{nodes.length - 1} nós · {edges.length} arestas</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {LEGEND.map(l => (
             <div key={l.type} className="flex items-center gap-1">
               <div className="w-2 h-2 rounded-full" style={{ background: NODE_COLOR[l.type] }} />
@@ -285,7 +312,7 @@ export function ConnectionGraph(props: GraphProps) {
             </filter>
           </defs>
 
-          <g transform={`translate(${(svgRef.current?.clientWidth ?? 700) / 2 + transform.x} ${(svgRef.current?.clientHeight ?? 500) / 2 + transform.y}) scale(${transform.scale})`}>
+          <g transform={`translate(${svgSize.w / 2 + transform.x} ${svgSize.h / 2 + transform.y}) scale(${transform.scale})`}>
             {/* Edges */}
             {edges.map(e => {
               const s = nodeMap[e.src], t = nodeMap[e.dst];
@@ -315,15 +342,12 @@ export function ConnectionGraph(props: GraphProps) {
                   onPointerDown={e => onNodePointerDown(e, n.id)}
                   onPointerUp={e => { e.stopPropagation(); if (!dragging.current.nodeId || dragging.current.nodeId === n.id) setSelected(s => s === n.id ? null : n.id); dragging.current.nodeId = null; }}>
 
-                  {/* Glow ring for selected */}
                   {isSel && <circle r={r + 8} fill="none" stroke={color} strokeWidth="2" opacity="0.35" filter="url(#glow)" />}
 
-                  {/* Background circle */}
                   <circle r={r} fill={`rgba(9,9,15,0.95)`}
                     stroke={isSel ? color : isConn ? color : `${color}55`}
                     strokeWidth={isSel ? 2.5 : isConn ? 1.5 : 1} />
 
-                  {/* Photo or colored fill */}
                   {n.photo ? (
                     <image href={n.photo} x={-r} y={-r} width={r*2} height={r*2}
                       clipPath={`url(#clip-${n.id})`} preserveAspectRatio="xMidYMid slice" />
@@ -331,7 +355,6 @@ export function ConnectionGraph(props: GraphProps) {
                     <circle r={r - 3} fill={`${color}18`} />
                   )}
 
-                  {/* Type icon overlay for non-photo nodes */}
                   {!n.photo && (
                     <text textAnchor="middle" dominantBaseline="central" fontSize={r * 0.65}
                       fill={color} style={{ pointerEvents: "none", userSelect: "none" }}>
@@ -339,7 +362,6 @@ export function ConnectionGraph(props: GraphProps) {
                     </text>
                   )}
 
-                  {/* Label */}
                   <text y={r + 10} textAnchor="middle" fontSize="8.5" fill="rgba(255,255,255,0.75)"
                     fontWeight={isSel ? "700" : "500"} style={{ pointerEvents: "none", userSelect: "none" }}>
                     {n.label.length > 14 ? n.label.slice(0,13)+"…" : n.label}
@@ -368,6 +390,9 @@ export function ConnectionGraph(props: GraphProps) {
               </div>
             </div>
             {selNode.cpf && <p className="text-[10px]" style={{ color: NODE_COLOR[selNode.type] }}>CPF: {selNode.cpf}</p>}
+            {selNode.nome && selNode.nome !== selNode.label && (
+              <p className="text-[10px] text-white/50 mt-0.5">{selNode.nome}</p>
+            )}
             <p className="text-[9px] text-white/25 mt-1 uppercase tracking-widest">{selNode.type === "person" ? "Titular" : selNode.type === "relative" ? "Parente" : selNode.type === "phone" ? "Telefone" : selNode.type === "address" ? "Endereço" : "Empresa"}</p>
           </div>
         )}
