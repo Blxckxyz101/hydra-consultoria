@@ -192,12 +192,18 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const cpfVal = gfExact(f, "CPF", "NUMERO CPF", "NUMEROCPF") || gf(f, "CPF", "NUMEROCPF") || rxv(raw, "CPF");
   const rg     = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE") || rxv(raw,"RG","IDENTIDADE");
 
-  const mae = gfExact(f,"NOME MAE","NOMEMAE","MAE","FILIACAO1","FILIACAO 1") ||
-              gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1") ||
-              rxv(raw,"NOME DA MÃE","NOME MAE","NOMEMAE","MAE","FILIACAO 1");
-  const pai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2") ||
-              gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
-              rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
+  const rawMae = gfExact(f,"NOME MAE","NOMEMAE","MAE","FILIACAO1","FILIACAO 1") ||
+                gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1") ||
+                rxv(raw,"NOME DA MÃE","NOME MAE","NOMEMAE","MAE","FILIACAO 1");
+  const rawPai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2") ||
+                gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
+                rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
+  const isValidParent = (v: string, subj: string) =>
+    v.length >= 5 && !/^https?:\/\//i.test(v) && v.toUpperCase() !== subj.toUpperCase();
+  // Resolve nome early for validation (use fields directly to avoid circular call)
+  const nomeForVal = (gfExact(f,"NOME","NOME COMPLETO","NOMECOMPLETO") || "").toUpperCase();
+  const mae = isValidParent(rawMae, nomeForVal) ? rawMae : "";
+  const pai = isValidParent(rawPai, nomeForVal) ? rawPai : "";
 
   // ── NATURALIDADE: exact match FIRST to avoid "MUNICIPIONASCIMENTO" matching "NASCIMENTO" date field
   const naturalidade =
@@ -262,6 +268,7 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
       if (parseInt(m[1]) >= 11 && parseInt(m[1]) <= 99) add(m[1], m[2], "", "", "", "");
     }
   }
+  phones.sort((a, b) => phoneScore(b) - phoneScore(a));
   return phones;
 }
 
@@ -335,10 +342,17 @@ function buildEmployments(r?: ModuleResult): Employment[] {
 // represents a single parent — we override the relação field accordingly.
 function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Relative[] {
   const relatives: Relative[] = []; const seen = new Set<string>();
+  // Strip relacao prefix injected into name by some APIs: "MÃE — NADINE ..." → "NADINE ..."
+  function cleanNome(n: string): string {
+    return n.replace(/^(M[ÃA]E|PAI|IRM[ÃA][OS]?|FILH[OA]S?|C[OÔ]NJUGE|PARENTE|RELACIONADO)\s*[-—]\s*/i, "").trim();
+  }
   function addRel(r: Partial<Relative>) {
-    const key = (r.cpf || r.nome || "").toLowerCase().trim();
+    const nome = cleanNome(r.nome || "");
+    // Reject URLs and empty names
+    if (/^https?:\/\//i.test(nome)) return;
+    const key = (r.cpf || nome || "").toLowerCase().trim();
     if (!key || seen.has(key)) return; seen.add(key);
-    relatives.push({ cpf: r.cpf||"", nome: r.nome||"", nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
+    relatives.push({ cpf: r.cpf||"", nome, nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
   }
   function scanRaw(raw: string, fallbackRelacao?: string) {
     const entries2 = raw.split(/\bNOME[\s:·]+/i);
@@ -473,9 +487,25 @@ function fmtCPF(c: string) {
 }
 function fmtPhone(ddd: string, num: string) {
   const n = num.replace(/\D/g,"");
-  if (n.length === 9) return `(${ddd}) ${n.slice(0,5)}-${n.slice(5)}`;
-  if (n.length === 8) return `(${ddd}) ${n.slice(0,4)}-${n.slice(4)}`;
-  return ddd ? `(${ddd}) ${n}` : n;
+  const body = n.length === 9 ? `${n.slice(0,5)}-${n.slice(5)}`
+             : n.length === 8 ? `${n.slice(0,4)}-${n.slice(4)}`
+             : n;
+  return ddd ? `(${ddd}) ${body}` : body;
+}
+function phoneScore(p: { ddd: string; numero: string; prioridade: string; data: string }): number {
+  let s = 0;
+  // Mobile (9 digits starting with 9 or 8) = higher priority
+  if (p.numero.length === 9 && /^[98]/.test(p.numero)) s += 1000;
+  // Has DDD = more reliable
+  if (p.ddd) s += 500;
+  // Prioridade field (lower = better, max bonus 300)
+  if (p.prioridade) { const n = parseInt(p.prioridade); if (!isNaN(n)) s += Math.max(0, 300 - n * 30); }
+  // Most recent date first
+  if (p.data) {
+    const m = p.data.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (m) s += parseInt(m[3]) * 12 + parseInt(m[2]);
+  }
+  return s;
 }
 
 // ─── Copy button ──────────────────────────────────────────────────────────────
@@ -785,42 +815,55 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
 function PhoneCard({ phone, idx }: { phone: PhoneEntry; idx: number }) {
   const compact = useViewMode() === "compact";
   const formatted = fmtPhone(phone.ddd, phone.numero);
+  const isMobile  = phone.numero.length === 9 && /^[98]/.test(phone.numero);
+  const tipoLabel = phone.tipo || (isMobile ? "Celular" : phone.numero.length === 8 ? "Fixo" : "");
+  const noDDD     = !phone.ddd;
+  const waHref    = `https://wa.me/55${phone.ddd}${phone.numero}`;
+
   if (compact) {
     return (
       <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.03 }}
-        className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
-        <Phone className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--color-primary)" }} />
+        className="flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/[0.04] transition-all">
+        <Phone className="w-3.5 h-3.5 shrink-0" style={{ color: isMobile ? "#34d399" : "var(--color-primary)" }} />
         <span className="flex-1 font-mono text-[13px] font-bold text-white">{formatted}</span>
-        {phone.tipo && <span className="text-[9px] uppercase tracking-wider" style={{ color: "color-mix(in srgb, var(--color-primary) 60%, transparent)" }}>{phone.tipo}</span>}
-        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          <CopyBtn text={formatted} />
-          <a href={`https://wa.me/55${phone.ddd}${phone.numero}`} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[9px] font-bold transition-colors">
-            <MessageCircle className="w-2.5 h-2.5" /> WA
-          </a>
-        </div>
+        {tipoLabel && <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-semibold ${isMobile ? "bg-emerald-500/15 text-emerald-400" : "bg-white/8 text-white/35"}`}>{tipoLabel}</span>}
+        {noDDD && <span className="text-[8px] text-amber-500/60 px-1">sem DDD</span>}
+        <CopyBtn text={formatted} />
+        <a href={waHref} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[9px] font-bold transition-colors">
+          <MessageCircle className="w-2.5 h-2.5" /> WA
+        </a>
       </motion.div>
     );
   }
   return (
     <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
-      className="group flex items-center gap-3 rounded-xl transition-all p-3"
-      style={{ border: "1px solid rgba(255,255,255,0.07)", background: "rgba(0,0,0,0.2)", backdropFilter: "blur(8px)" }}>
-      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 25%, transparent)" }}>
-        <Phone className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+      className="flex items-center gap-3 rounded-xl transition-all p-3"
+      style={{ border: `1px solid ${isMobile ? "rgba(52,211,153,0.18)" : "rgba(255,255,255,0.07)"}`, background: "rgba(0,0,0,0.2)", backdropFilter: "blur(8px)" }}>
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+        style={{ background: isMobile ? "rgba(52,211,153,0.1)" : "color-mix(in srgb, var(--color-primary) 12%, transparent)",
+                 border: `1px solid ${isMobile ? "rgba(52,211,153,0.25)" : "color-mix(in srgb, var(--color-primary) 25%, transparent)"}` }}>
+        <Phone className="w-4 h-4" style={{ color: isMobile ? "#34d399" : "var(--color-primary)" }} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] font-bold font-mono text-white">{formatted}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-[14px] font-bold font-mono text-white">{formatted}</p>
+          {tipoLabel && (
+            <span className={`text-[8px] px-2 py-0.5 rounded-full font-semibold ${isMobile ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20" : "bg-white/6 text-white/30 border border-white/10"}`}>
+              {tipoLabel}
+            </span>
+          )}
+          {noDDD && <span className="text-[8px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500/60 border border-amber-500/20">sem DDD</span>}
+        </div>
         <div className="flex items-center gap-2 flex-wrap mt-0.5">
-          {phone.tipo && <span className="text-[9px] uppercase tracking-wider" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>{phone.tipo}</span>}
-          {phone.prioridade && <span className="text-[9px] text-white/30">· Prioridade: {phone.prioridade}</span>}
-          {phone.classificacao && <span className="text-[9px] text-white/30">· {phone.classificacao}</span>}
+          {phone.prioridade && <span className="text-[9px] text-white/30">Prio {phone.prioridade}</span>}
+          {phone.classificacao && phone.classificacao !== "Não Informado" && <span className="text-[9px] text-white/25">· {phone.classificacao}</span>}
           {phone.data && phone.data !== "Não Informado" && <span className="text-[9px] text-white/20">· {phone.data}</span>}
         </div>
       </div>
       <div className="flex items-center gap-1.5">
         <CopyBtn text={formatted} />
-        <a href={`https://wa.me/55${phone.ddd}${phone.numero}`} target="_blank" rel="noopener noreferrer"
+        <a href={waHref} target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-[10px] font-bold transition-colors whitespace-nowrap">
           <MessageCircle className="w-3 h-3" /> WA
         </a>
