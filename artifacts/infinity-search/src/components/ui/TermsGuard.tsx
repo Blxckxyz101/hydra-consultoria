@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ShieldCheck, AlertTriangle, ExternalLink, X, CreditCard, Zap, Shield, Eye, Lock, BanIcon } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ShieldCheck, ChevronDown, ChevronUp, Square, CheckSquare } from "lucide-react";
 import logoUrl from "@/assets/logo.png";
 
 const LS_KEY = "infinity_terms_v1";
@@ -10,156 +9,131 @@ function hasAccepted() {
   try { return localStorage.getItem(LS_KEY) === "accepted"; } catch { return false; }
 }
 
-const TERMS: { Icon: LucideIcon; title: string; text: string }[] = [
-  {
-    Icon: CreditCard,
-    title: "Sem reembolso",
-    text: "Todas as assinaturas e pagamentos são definitivos e não reembolsáveis, independente do motivo.",
-  },
-  {
-    Icon: Zap,
-    title: "Sem responsabilidade por instabilidades",
-    text: "O Infinity Search não se responsabiliza por interrupções, lentidão, indisponibilidade ou perda de dados causados por falhas técnicas, ataques ou manutenção.",
-  },
-  {
-    Icon: Shield,
-    title: "Sem responsabilidade por atos de terceiros",
-    text: "O Infinity Search não se responsabiliza por ações, danos ou prejuízos causados por terceiros com dados obtidos pela plataforma.",
-  },
-  {
-    Icon: Eye,
-    title: "Uso legal e exclusivo do usuário",
-    text: "O usuário declara que utilizará as consultas exclusivamente para fins lícitos. O uso indevido é de inteira responsabilidade do usuário, eximindo totalmente o Infinity Search.",
-  },
-  {
-    Icon: Lock,
-    title: "Conformidade com a LGPD",
-    text: "As consultas são realizadas em bases de dados de acesso público ou fontes legalmente autorizadas. O usuário se compromete a tratar os dados obtidos conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018).",
-  },
-  {
-    Icon: BanIcon,
-    title: "Vedação de compartilhamento",
-    text: "É proibido revender, compartilhar ou redistribuir o acesso à plataforma. Infrações resultam em encerramento imediato da conta sem reembolso.",
-  },
+const TERMS_FULL = [
+  { title: "Sem reembolso", text: "Todas as assinaturas e pagamentos são definitivos e não reembolsáveis, independente do motivo." },
+  { title: "Sem responsabilidade por instabilidades", text: "O Infinity Search não se responsabiliza por interrupções, lentidão, indisponibilidade ou perda de dados causados por falhas técnicas, ataques ou manutenção." },
+  { title: "Sem responsabilidade por atos de terceiros", text: "O Infinity Search não se responsabiliza por ações, danos ou prejuízos causados por terceiros com dados obtidos pela plataforma." },
+  { title: "Uso legal e exclusivo do usuário", text: "O usuário declara que utilizará as consultas exclusivamente para fins lícitos. O uso indevido é de inteira responsabilidade do usuário, eximindo totalmente o Infinity Search." },
+  { title: "Conformidade com a LGPD", text: "As consultas são realizadas em bases de dados de acesso público ou fontes legalmente autorizadas. O usuário se compromete a tratar os dados obtidos conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018)." },
+  { title: "Vedação de compartilhamento", text: "É proibido revender, compartilhar ou redistribuir o acesso à plataforma. Infrações resultam em encerramento imediato da conta sem reembolso." },
 ];
 
 export function TermsGuard({ children }: { children: React.ReactNode }) {
   const [accepted, setAccepted] = useState(hasAccepted);
-  const [refused, setRefused] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [showFull, setShowFull] = useState(false);
 
   if (accepted) return <>{children}</>;
 
   const accept = () => {
+    if (!checked) return;
     try { localStorage.setItem(LS_KEY, "accepted"); } catch {}
     setAccepted(true);
   };
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background */}
       <div className="absolute inset-0 bg-[#030712]" />
-      <div className="absolute inset-0 bg-gradient-to-br from-sky-950/30 via-transparent to-cyan-950/20" />
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-sky-500/5 rounded-full blur-[100px] pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-br from-sky-950/25 via-transparent to-cyan-950/15" />
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[200px] bg-sky-500/5 rounded-full blur-[120px] pointer-events-none" />
 
       <motion.div
-        initial={{ opacity: 0, y: 24, scale: 0.97 }}
+        initial={{ opacity: 0, y: 20, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full max-w-2xl"
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-md"
       >
-        <div className="rounded-3xl border border-white/10 bg-black/60 backdrop-blur-2xl overflow-hidden shadow-2xl">
+        <div className="rounded-2xl border border-white/8 bg-black/70 backdrop-blur-2xl overflow-hidden shadow-2xl">
           {/* Header */}
-          <div className="px-8 pt-8 pb-6 border-b border-white/5 flex items-center gap-4">
+          <div className="px-7 pt-7 pb-6 flex items-center gap-3.5">
             <div className="relative shrink-0">
-              <div className="absolute inset-0 rounded-2xl bg-sky-400/20 blur-xl" />
-              <img src={logoUrl} alt="Infinity" className="relative w-14 h-14 object-contain drop-shadow-[0_0_16px_rgba(56,189,248,0.5)]" />
+              <div className="absolute inset-0 rounded-xl bg-sky-400/15 blur-lg" />
+              <img src={logoUrl} alt="Infinity" className="relative w-10 h-10 object-contain" />
             </div>
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <ShieldCheck className="w-4 h-4 text-sky-400" />
-                <span className="text-[10px] uppercase tracking-[0.5em] text-sky-400/80">Termos de Uso</span>
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <ShieldCheck className="w-3 h-3 text-sky-400" />
+                <span className="text-[9px] uppercase tracking-[0.5em] text-sky-400/70">Termos de Uso</span>
               </div>
-              <h1 className="text-xl font-bold tracking-wide">Infinity Search</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">Leia e aceite os termos antes de continuar</p>
+              <h1 className="text-base font-bold tracking-wide text-white">Infinity Search</h1>
             </div>
           </div>
 
-          {/* Terms list */}
-          <div
-            className="px-8 py-6 space-y-4 max-h-[52vh] overflow-y-auto"
-            onScroll={(e) => { if ((e.target as HTMLDivElement).scrollTop > 40) setScrolled(true); }}
-            style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(56,189,248,0.2) transparent" }}
-          >
-            {TERMS.map((term, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.06, duration: 0.3 }}
-                className="flex gap-4 p-4 rounded-2xl bg-white/3 border border-white/6 hover:bg-white/5 transition-colors"
-              >
-                <div className="shrink-0 mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center bg-sky-500/10">
-                  <term.Icon className="w-4 h-4 text-sky-400" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-white mb-1">{term.title}</div>
-                  <div className="text-xs text-muted-foreground leading-relaxed">{term.text}</div>
-                </div>
-              </motion.div>
-            ))}
+          <div className="px-7 pb-2 space-y-5">
+            {/* Main text */}
+            <p className="text-sm text-white/80 leading-relaxed">
+              Ao prosseguir, você concorda com todos os{" "}
+              <strong className="text-white">Termos de Uso</strong> do Infinity Search,
+              incluindo conformidade com a{" "}
+              <strong className="text-white">LGPD (Lei 13.709/2018)</strong> e uso exclusivamente
+              para fins lícitos. O uso indevido é de sua inteira responsabilidade.
+            </p>
 
-            <div className="pt-2 pb-1 px-1">
-              <p className="text-[11px] text-muted-foreground/60 leading-relaxed text-center">
-                Ao clicar em <strong className="text-white">Concordo</strong>, você declara ter lido, compreendido e aceitado integralmente estes Termos de Uso e a Política de Privacidade do Infinity Search, em conformidade com a LGPD (Lei 13.709/2018).
-              </p>
-            </div>
-          </div>
+            {/* Read terms toggle */}
+            <button
+              onClick={() => setShowFull((v) => !v)}
+              className="flex items-center gap-1.5 text-[11px] text-sky-400/70 hover:text-sky-400 transition-colors"
+            >
+              {showFull ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              {showFull ? "Ocultar termos" : "Ler termos completos"}
+            </button>
 
-          {/* Footer */}
-          <div className="px-8 py-6 border-t border-white/5 bg-black/20">
             <AnimatePresence>
-              {refused && (
+              {showFull && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="mb-4 flex items-start gap-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300"
+                  transition={{ duration: 0.25 }}
+                  className="overflow-hidden"
                 >
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p className="text-xs leading-relaxed">
-                    Para usar o Infinity Search é necessário aceitar os termos de uso. Sem a aceitação, o acesso à plataforma não será liberado.
-                  </p>
-                  <button onClick={() => setRefused(false)} className="shrink-0 p-0.5 hover:text-white transition-colors">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <div
+                    className="space-y-3 max-h-52 overflow-y-auto pr-1 pb-1"
+                    style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(56,189,248,0.15) transparent" }}
+                  >
+                    {TERMS_FULL.map((t, i) => (
+                      <div key={i} className="rounded-xl bg-white/3 border border-white/5 px-4 py-3">
+                        <p className="text-[11px] font-semibold text-white/80 mb-1">{t.title}</p>
+                        <p className="text-[11px] text-white/40 leading-relaxed">{t.text}</p>
+                      </div>
+                    ))}
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setRefused(true)}
-                className="flex-1 py-3 rounded-2xl border border-white/10 text-muted-foreground hover:text-white hover:border-white/20 transition-all text-sm font-medium"
-              >
-                Recusar
-              </button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={accept}
-                className="flex-[2] py-3 rounded-2xl bg-gradient-to-r from-sky-500 to-cyan-400 text-black font-bold text-sm flex items-center justify-center gap-2 shadow-[0_0_24px_rgba(56,189,248,0.35)] hover:shadow-[0_0_36px_rgba(56,189,248,0.55)] transition-shadow"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                Concordo com os Termos
-              </motion.button>
-            </div>
+            {/* Checkbox */}
+            <button
+              onClick={() => setChecked((v) => !v)}
+              className="flex items-start gap-3 w-full text-left group"
+            >
+              <div className="shrink-0 mt-0.5 transition-transform group-active:scale-95">
+                {checked
+                  ? <CheckSquare className="w-4.5 h-4.5 text-sky-400" />
+                  : <Square className="w-4.5 h-4.5 text-white/30 group-hover:text-white/50 transition-colors" />
+                }
+              </div>
+              <span className="text-[12px] text-white/60 group-hover:text-white/80 transition-colors leading-relaxed">
+                Li e concordo com os Termos de Uso e a Política de Privacidade do Infinity Search
+              </span>
+            </button>
+          </div>
 
-            {!scrolled && (
-              <p className="text-center text-[10px] text-muted-foreground/40 mt-3">
-                Role para baixo para ler todos os termos
-              </p>
-            )}
+          {/* Footer */}
+          <div className="px-7 py-6 mt-2">
+            <motion.button
+              whileHover={checked ? { scale: 1.02 } : {}}
+              whileTap={checked ? { scale: 0.98 } : {}}
+              onClick={accept}
+              disabled={!checked}
+              className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-200 ${
+                checked
+                  ? "bg-gradient-to-r from-sky-500 to-cyan-400 text-black shadow-[0_0_20px_rgba(56,189,248,0.3)] hover:shadow-[0_0_30px_rgba(56,189,248,0.5)]"
+                  : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed"
+              }`}
+            >
+              Continuar
+            </motion.button>
           </div>
         </div>
       </motion.div>

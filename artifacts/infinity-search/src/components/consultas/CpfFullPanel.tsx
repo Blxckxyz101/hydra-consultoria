@@ -156,7 +156,11 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean, skipLo
     const timer = setTimeout(() => ctrl.abort(), 28_000);
     const r = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...(skipLog ? { "X-Skip-Log": "1" } : {}),
+      },
       body: JSON.stringify({ tipo, dados, skipLog }),
       signal: ctrl.signal,
     });

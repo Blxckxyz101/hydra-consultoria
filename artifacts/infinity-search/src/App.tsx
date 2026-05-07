@@ -43,8 +43,8 @@ function Router() {
         </TermsGuard>
       </Route>
       <Route>
-        <TermsGuard>
         <AuthGuard>
+          <TermsGuard>
           <Layout>
             <Switch>
               <Route path="/" component={Overview} />
@@ -64,8 +64,8 @@ function Router() {
               <Route component={NotFound} />
             </Switch>
           </Layout>
+          </TermsGuard>
         </AuthGuard>
-        </TermsGuard>
       </Route>
     </Switch>
   );

@@ -1172,7 +1172,16 @@ async function callSkylers(
     const text = await r.text();
 
     if (!r.ok) {
-      return { ok: false, error: `Skylers HTTP ${r.status}`, raw: text.slice(0, 500) };
+      const friendly = r.status === 400
+        ? "Consulta não disponível para este dado na Skylers API"
+        : r.status === 401 || r.status === 403
+        ? "Token Skylers inválido ou expirado"
+        : r.status === 429
+        ? "Limite de requisições Skylers atingido, tente novamente em instantes"
+        : r.status >= 500
+        ? "Skylers API temporariamente indisponível"
+        : `Skylers HTTP ${r.status}`;
+      return { ok: false, error: friendly, raw: text.slice(0, 500) };
     }
 
     let json: unknown;
@@ -1847,7 +1856,8 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     res.status(400).json({ error: "Campo 'dados' obrigatório" });
     return;
   }
-  const skipLog = req.body?.skipLog === true;
+  // Strict boolean check — belt-and-suspenders with header fallback for CpfFullPanel batch calls
+  const skipLog = req.body?.skipLog === true || req.headers["x-skip-log"] === "1";
 
   const username = req.infinityUser!.username;
   const isAdmin  = req.infinityUser!.role === "admin";
@@ -2246,7 +2256,10 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     return;
   }
 
-  const { tipo, dados, skipLog } = req.body as { tipo?: string; dados?: string; skipLog?: boolean };
+  const tipo  = String(req.body?.tipo  ?? "").trim();
+  const dados = String(req.body?.dados ?? "").trim();
+  // Strict boolean check — belt-and-suspenders with header fallback for CpfFullPanel batch calls
+  const skipLog = req.body?.skipLog === true || req.headers["x-skip-log"] === "1";
   if (!tipo || !dados) {
     res.status(400).json({ success: false, error: "Parâmetros 'tipo' e 'dados' são obrigatórios." });
     return;
