@@ -719,7 +719,7 @@ router.get("/discord/accounts/free-proxy", async (_req, res) => {
     let residentialCandidates = candidates;
     try {
       const ipList = candidates.map(p => p.split(":")[0]);
-      const batchResp = await fetch("http://ip-api.com/batch?fields=query,hosting,proxy", {
+      const batchResp = await fetch("https://ip-api.com/batch?fields=query,hosting,proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(ipList.slice(0, 100)),

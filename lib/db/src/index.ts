@@ -10,7 +10,14 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Always enforce SSL for Neon / cloud Postgres — prevents MITM on the DB connection.
+// NODE_ENV=development with a local Postgres (no SSL) can override via DATABASE_URL ?sslmode=disable
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes("localhost") || process.env.DATABASE_URL?.includes("127.0.0.1")
+    ? false
+    : { rejectUnauthorized: true },
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

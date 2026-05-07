@@ -6057,7 +6057,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
 // ── /osint — External OSINT lookup via GeassZero + DarkFlow + SIPNI ──────────
 const GEASS_ZERO_BASE = "http://149.56.18.68:25584/api/consulta";
 const GEASS_ZERO_KEY  = "GeassZero";
-const DARKFLOW_TOKEN  = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
+const DARKFLOW_TOKEN  = process.env.DARKFLOW_TOKEN ?? "KEVINvQUCvPrDSob5q437uC36MPubhxa";
 const DARKFLOW_BASE   = "https://darkflowapis.space/api.php";
 
 // ── SIPNI (servicos-cloud.saude.gov.br) ───────────────────────────────────────
