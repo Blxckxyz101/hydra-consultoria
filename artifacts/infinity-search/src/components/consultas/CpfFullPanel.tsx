@@ -258,9 +258,12 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
       // e.g. Skylers: "Ddd: 11 · Numero: 999999999 · Tipo: CELULAR · Prioridade: 1"
       // or Geass:     "DDD: 11 NUMERO: 35643333 TIPO: FIXO"
       for (const item of sec.items) {
-        const ddd  = item.match(/\bDDD[\s:]+(\d{2,3})/i)?.[1] ?? item.match(/\((\d{2})\)/)?.[1] ?? "";
-        const num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM)[\s:]+(\d[\d\s\-]{6,11})/i)?.[1]?.replace(/\D/g,"")
-                  ?? item.match(/\(?\d{2}\)?[\s\-]?(\d{4,5}[\s\-]?\d{4})/)?.[1]?.replace(/\D/g,"") ?? "";
+        let ddd  = item.match(/\b(?:DDD|COD(?:IGO)?[_\s]?AREA|AREA[_\s]?CODE)[\s:]+(\d{2,3})/i)?.[1]
+                ?? item.match(/\((\d{2})\)/)?.[1] ?? "";
+        let num  = item.match(/(?:NUMERO|TELEFONE|CELULAR|NUM|FONE)[\s:]+(\d[\d\s\-]{6,14})/i)?.[1]?.replace(/\D/g,"")
+                ?? item.match(/\(?\d{2}\)?[\s\-]?(\d{4,5}[\s\-]?\d{4})/)?.[1]?.replace(/\D/g,"") ?? "";
+        // If DDD not found separately but number has 10+ digits (DDD embedded), split it out
+        if (!ddd && num.length >= 10) { ddd = num.slice(0, 2); num = num.slice(2); }
         const prio = item.match(/PRIORIDADE[\s:]+(\S+)/i)?.[1] ?? "";
         const cls  = item.match(/CLASSIF\w*[\s:]+(\S+)/i)?.[1] ?? "";
         const dt   = item.match(/DATA[\s:]+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? "";
@@ -278,6 +281,8 @@ function buildPhones(results: Record<string, ModuleResult>): PhoneEntry[] {
       );
     }
     for (const m of mod.data.raw.matchAll(/\((\d{2})\)\s*(\d{4,5}[-\s]?\d{4})/g)) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
+    // "DDD: 11 NUMERO: 35643333" — Geass field-format phones without bullet section
+    for (const m of mod.data.raw.matchAll(/\bDDD[\s:]+(\d{2,3})\s+(?:NUMERO|NUM|TELEFONE|FONE)[\s:]+(\d{6,11})/gi)) add(m[1], m[2].replace(/\D/g,""), "", "", "", "");
     for (const m of mod.data.raw.matchAll(/\b(\d{2})\s+(\d{4,5}\d{4})\b/g)) {
       if (parseInt(m[1]) >= 11 && parseInt(m[1]) <= 99) add(m[1], m[2], "", "", "", "");
     }
