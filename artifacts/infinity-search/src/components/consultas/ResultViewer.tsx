@@ -8,6 +8,7 @@ import {
   Wallet, Scale, Calendar, CreditCard, Fingerprint, Heart,
   ShieldAlert, Hash, List, Briefcase, Database, ChevronDown,
   ChevronUp, ExternalLink, Zap, type LucideIcon, Info, LayoutGrid, Rows3,
+  Search, X,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -240,11 +241,20 @@ function parseSectionItem(item: string): Array<{ k: string; v: string }> | null 
 // ─── Collapsible Section card ─────────────────────────────────────────────────
 const SECTION_COLLAPSE_THRESHOLD = 5;
 
-function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
+function SectionCard({ sec, idx, filterText = "" }: { sec: ParsedSection; idx: number; filterText?: string }) {
   const theme = getSectionTheme(sec.name);
   const Icon = theme.icon;
+
+  const filteredItems = useMemo(() => {
+    if (!filterText.trim()) return sec.items;
+    const term = filterText.toLowerCase();
+    return sec.items.filter(item => item.toLowerCase().includes(term));
+  }, [sec.items, filterText]);
+
   const [collapsed, setCollapsed] = useState(sec.items.length > SECTION_COLLAPSE_THRESHOLD);
-  const visibleItems = collapsed ? sec.items.slice(0, SECTION_COLLAPSE_THRESHOLD) : sec.items;
+  // When filtering, always expand so the user can see all matches
+  const isFiltering = filterText.trim().length > 0;
+  const visibleItems = (collapsed && !isFiltering) ? filteredItems.slice(0, SECTION_COLLAPSE_THRESHOLD) : filteredItems;
 
   return (
     <motion.div
@@ -269,14 +279,16 @@ function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
           <div>
             <h3 className={`text-xs font-bold uppercase tracking-[0.25em] ${theme.color}`}>{sec.name}</h3>
             <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-              {sec.items.length} {sec.items.length === 1 ? "registro" : "registros"}
-              {collapsed ? ` · mostrando ${SECTION_COLLAPSE_THRESHOLD}` : ""}
+              {isFiltering
+                ? <>{filteredItems.length} de {sec.items.length} {sec.items.length === 1 ? "registro" : "registros"}</>
+                : <>{sec.items.length} {sec.items.length === 1 ? "registro" : "registros"}{collapsed ? ` · mostrando ${SECTION_COLLAPSE_THRESHOLD}` : ""}</>
+              }
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <CopyButton text={sec.items.join("\n")} label="Copiar" />
-          {sec.items.length > SECTION_COLLAPSE_THRESHOLD && (
+          <CopyButton text={visibleItems.join("\n")} label="Copiar" />
+          {!isFiltering && sec.items.length > SECTION_COLLAPSE_THRESHOLD && (
             <button onClick={() => setCollapsed(v => !v)}
               className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest ${theme.color} opacity-70 hover:opacity-100 transition-opacity`}>
               {collapsed ? <><ChevronDown className="w-3 h-3" /> Ver todos</> : <><ChevronUp className="w-3 h-3" /> Recolher</>}
@@ -287,53 +299,57 @@ function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
 
       {/* Items */}
       <div className="p-4 space-y-2">
-        <AnimatePresence initial={false}>
-          {visibleItems.map((item, i) => {
-            const structured = parseSectionItem(item);
-            return (
-              <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -6 }} transition={{ delay: Math.min(i * 0.012, 0.25) }} className="group relative">
-                {structured ? (
-                  // Structured key:value card
-                  <div className="rounded-xl p-3.5 transition-all"
-                    style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.06)", backdropFilter: "blur(8px)" }}>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3">
-                      {structured.map(({ k, v }, pi) => (
-                        <div key={pi} className="min-w-0">
-                          <p className={`text-[9px] uppercase tracking-widest ${theme.color} opacity-60 mb-0.5`}>{k}</p>
-                          <p className="text-[12px] font-semibold break-words text-white/90">{v || "—"}</p>
-                        </div>
-                      ))}
+        {filteredItems.length === 0 && isFiltering ? (
+          <div className="py-6 text-center">
+            <p className="text-[11px] text-muted-foreground/40 uppercase tracking-widest">Nenhum registro encontrado</p>
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {visibleItems.map((item, i) => {
+              const structured = parseSectionItem(item);
+              return (
+                <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -6 }} transition={{ delay: Math.min(i * 0.012, 0.25) }} className="group relative">
+                  {structured ? (
+                    <div className="rounded-xl p-3.5 transition-all"
+                      style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.06)", backdropFilter: "blur(8px)" }}>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3">
+                        {structured.map(({ k, v }, pi) => (
+                          <div key={pi} className="min-w-0">
+                            <p className={`text-[9px] uppercase tracking-widest ${theme.color} opacity-60 mb-0.5`}>{k}</p>
+                            <p className="text-[12px] font-semibold break-words text-white/90">{v || "—"}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 pt-2 flex justify-end" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                        <InlineCopy text={item} />
+                      </div>
                     </div>
-                    <div className="mt-2 pt-2 flex justify-end" style={{ borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                  ) : (
+                    <div className="flex items-start gap-3 rounded-xl p-3 transition-all group"
+                      style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.05)", backdropFilter: "blur(8px)" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.4)"; (e.currentTarget as HTMLElement).style.borderColor = theme.borderStyle; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.25)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.05)"; }}>
+                      <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-black shrink-0 mt-px"
+                        style={{ background: theme.bgStyle, color: "currentColor", border: `1px solid ${theme.borderStyle}` }}>
+                        <span className={theme.color}>{i + 1}</span>
+                      </span>
+                      <p className="text-[12px] font-mono flex-1 break-words leading-relaxed text-white/80">{item}</p>
                       <InlineCopy text={item} />
                     </div>
-                  </div>
-                ) : (
-                  // Plain text item
-                  <div className="flex items-start gap-3 rounded-xl p-3 transition-all group"
-                    style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.05)", backdropFilter: "blur(8px)" }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.4)"; (e.currentTarget as HTMLElement).style.borderColor = theme.borderStyle; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(0,0,0,0.25)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.05)"; }}>
-                    <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-black shrink-0 mt-px"
-                      style={{ background: theme.bgStyle, color: "currentColor", border: `1px solid ${theme.borderStyle}` }}>
-                      <span className={theme.color}>{i + 1}</span>
-                    </span>
-                    <p className="text-[12px] font-mono flex-1 break-words leading-relaxed text-white/80">{item}</p>
-                    <InlineCopy text={item} />
-                  </div>
-                )}
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
+                  )}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        )}
 
         {/* Expand button */}
-        {collapsed && sec.items.length > SECTION_COLLAPSE_THRESHOLD && (
+        {!isFiltering && collapsed && filteredItems.length > SECTION_COLLAPSE_THRESHOLD && (
           <button onClick={() => setCollapsed(false)}
             className="w-full py-3 rounded-xl text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
             style={{ background: theme.bgStyle, border: `1px solid ${theme.borderStyle}`, color: "currentColor" }}>
-            <span className={theme.color}>+ {sec.items.length - SECTION_COLLAPSE_THRESHOLD} registros ocultos · Clique para expandir</span>
+            <span className={theme.color}>+ {filteredItems.length - SECTION_COLLAPSE_THRESHOLD} registros ocultos · Clique para expandir</span>
           </button>
         )}
       </div>
@@ -345,6 +361,7 @@ function SectionCard({ sec, idx }: { sec: ParsedSection; idx: number }) {
 export function ResultViewer({ tipo, query = "", result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
   const [compact, setCompact] = useState(false);
+  const [filterText, setFilterText] = useState("");
   const queriedAt = useMemo(() => new Date(), []);
 
   const parsed: Parsed = useMemo(() => {
@@ -696,9 +713,44 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
         </motion.div>
       )}
 
+      {/* ── Section filter bar (only when there are sections with enough items) */}
+      {totalItems >= 5 && (
+        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+          className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
+            <input
+              type="text"
+              value={filterText}
+              onChange={e => setFilterText(e.target.value)}
+              placeholder={`Filtrar nos ${totalItems} registros… ex: 1990, SP, João`}
+              className="w-full pl-9 pr-9 py-2.5 text-[12px] rounded-xl outline-none transition-all"
+              style={{
+                background: "rgba(0,0,0,0.4)",
+                border: `1px solid ${filterText ? "color-mix(in srgb, var(--color-primary) 35%, transparent)" : "rgba(255,255,255,0.08)"}`,
+                color: "rgba(255,255,255,0.85)",
+                backdropFilter: "blur(20px)",
+              }}
+            />
+            {filterText && (
+              <button onClick={() => setFilterText("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {filterText && (
+            <span className="text-[10px] uppercase tracking-widest whitespace-nowrap"
+              style={{ color: "var(--color-primary)" }}>
+              {parsed.sections.reduce((acc, s) => acc + s.items.filter(it => it.toLowerCase().includes(filterText.toLowerCase())).length, 0)} resultado{parsed.sections.reduce((acc, s) => acc + s.items.filter(it => it.toLowerCase().includes(filterText.toLowerCase())).length, 0) !== 1 ? "s" : ""}
+            </span>
+          )}
+        </motion.div>
+      )}
+
       {/* ── Sections ─────────────────────────────────────────────────────── */}
       {parsed.sections.map((sec, idx) => (
-        <SectionCard key={`${sec.name}-${idx}`} sec={sec} idx={idx} />
+        <SectionCard key={`${sec.name}-${idx}`} sec={sec} idx={idx} filterText={filterText} />
       ))}
 
       {/* ── Raw response (toggle) ─────────────────────────────────────────── */}

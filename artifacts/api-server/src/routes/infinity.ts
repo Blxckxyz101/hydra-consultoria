@@ -11,6 +11,7 @@ import {
 } from "../lib/infinity-auth.js";
 import { loginLimiter, consultaLimiter, panelAuthLimiter } from "../middlewares/rateLimit.js";
 import crypto from "node:crypto";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const router: IRouter = Router();
 
@@ -19,6 +20,19 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
+
+// ── Proxy helper for Skylers (server unreachable without residential proxy) ──
+function buildSkylersDispatcher(): ProxyAgent | undefined {
+  const list = process.env.WEBSHARE_PROXY_LIST?.trim();
+  const user = process.env.WEBSHARE_PROXY_USER?.trim();
+  const pass = process.env.WEBSHARE_PROXY_PASS?.trim();
+  if (!list || !user || !pass) return undefined;
+  const ips = list.split(",").map((s: string) => s.trim()).filter(Boolean);
+  if (ips.length === 0) return undefined;
+  const ip = ips[Math.floor(Math.random() * ips.length)];
+  const proxyUrl = `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}`;
+  return new ProxyAgent({ uri: proxyUrl, connectTimeout: 8_000 });
+}
 
 // ─── Temp foto store (base64 → URL) ─────────────────────────────────────────
 interface FotoEntry { dataUri: string; expires: number; }
@@ -1168,7 +1182,11 @@ async function callSkylers(
       url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
     }
 
-    const r = await fetch(url, { signal });
+    const dispatcher = buildSkylersDispatcher();
+    const fetchFn = dispatcher
+      ? (u: string, o: RequestInit) => undiciFetch(u, { ...(o as object), dispatcher } as Parameters<typeof undiciFetch>[1])
+      : fetch;
+    const r = await fetchFn(url, { signal } as RequestInit);
     const text = await r.text();
 
     if (!r.ok) {
