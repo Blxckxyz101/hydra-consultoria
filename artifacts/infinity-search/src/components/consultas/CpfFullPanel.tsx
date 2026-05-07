@@ -37,28 +37,23 @@ type RelCat      = "pai" | "mae" | "conjuge" | "filho" | "filha" | "irmao" | "ir
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
 const MODULES = [
-  { tipo: "cpf",          label: "CPF",              skylers: false, hidden: false },
-  { tipo: "cpfbasico",    label: "CPF Básico",        skylers: true,  hidden: false },
-  { tipo: "fotonc",       label: "Foto",              skylers: true,  hidden: false },
-  { tipo: "parentes",     label: "Parentes",          skylers: false, hidden: false },
-  { tipo: "parentesSky",  label: "Parentes Sky",      skylers: true,  hidden: true  },
-  { tipo: "mae",          label: "Mãe",               skylers: false, hidden: true  },
-  { tipo: "pai",          label: "Pai",               skylers: false, hidden: true  },
-  { tipo: "maeSky",       label: "Mãe Sky",           skylers: true,  hidden: true  },
-  { tipo: "paiSky",       label: "Pai Sky",           skylers: true,  hidden: true  },
-  { tipo: "empregos",     label: "Empregos",          skylers: false, hidden: false },
-  { tipo: "cnh",          label: "CNH",               skylers: false, hidden: false },
-  { tipo: "obito",        label: "Óbito",             skylers: false, hidden: false },
-  { tipo: "score",        label: "Score",             skylers: true,  hidden: false },
-  { tipo: "score2",       label: "Score 2",           skylers: true,  hidden: false },
-  { tipo: "irpf",         label: "IRPF",              skylers: true,  hidden: false },
-  { tipo: "beneficios",   label: "Benefícios",        skylers: true,  hidden: false },
-  { tipo: "mandado",      label: "Mandados",          skylers: true,  hidden: false },
-  { tipo: "dividas",      label: "Dívidas",           skylers: true,  hidden: false },
-  { tipo: "bens",         label: "Bens",              skylers: true,  hidden: false },
-  { tipo: "processos",    label: "Processos",         skylers: true,  hidden: false },
-  { tipo: "spc",          label: "SPC",               skylers: true,  hidden: false },
-  { tipo: "titulo",       label: "Título Eleitor",    skylers: true,  hidden: false },
+  { tipo: "cpf",        label: "CPF",           skylers: false },
+  { tipo: "cpfbasico",  label: "CPF Básico",     skylers: true  },
+  { tipo: "fotonc",     label: "Foto",           skylers: true  },
+  { tipo: "parentes",   label: "Parentes",       skylers: false },
+  { tipo: "empregos",   label: "Empregos",       skylers: false },
+  { tipo: "cnh",        label: "CNH",            skylers: false },
+  { tipo: "obito",      label: "Óbito",          skylers: false },
+  { tipo: "score",      label: "Score",          skylers: true  },
+  { tipo: "score2",     label: "Score 2",        skylers: true  },
+  { tipo: "irpf",       label: "IRPF",           skylers: true  },
+  { tipo: "beneficios", label: "Benefícios",     skylers: true  },
+  { tipo: "mandado",    label: "Mandados",       skylers: true  },
+  { tipo: "dividas",    label: "Dívidas",        skylers: true  },
+  { tipo: "bens",       label: "Bens",           skylers: true  },
+  { tipo: "processos",  label: "Processos",      skylers: true  },
+  { tipo: "spc",        label: "SPC",            skylers: true  },
+  { tipo: "titulo",     label: "Título Eleitor", skylers: true  },
 ];
 
 // ─── Normalize fields ─────────────────────────────────────────────────────────
@@ -592,9 +587,9 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
           {copyable && value && (
             <button
               onClick={() => { navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }); }}
-              className="shrink-0 opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity p-1 rounded-md hover:bg-white/10 active:bg-white/15"
+              className="shrink-0 transition-colors p-1 rounded-md active:bg-white/15"
               title={`Copiar ${label}`}>
-              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-white/35" />}
+              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-white/25" />}
             </button>
           )}
         </div>
@@ -1288,8 +1283,7 @@ export function CpfFullPanel({ cpf }: Props) {
     (async () => {
       const acc = finalResultsRef.current;
       const rels = buildRelatives(
-        [acc["parentes"]], [acc["parentesSky"]], [acc["cpf"]], [acc["cpfbasico"]],
-        [acc["mae"], "MAE"], [acc["maeSky"], "MAE"], [acc["pai"], "PAI"], [acc["paiSky"], "PAI"],
+        [acc["parentes"]], [acc["cpf"]], [acc["cpfbasico"]],
       );
 
       // CPFs already known from the parentes result
@@ -1391,13 +1385,8 @@ export function CpfFullPanel({ cpf }: Props) {
   const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
   const relatives   = useMemo(() => buildRelatives(
     [mResults["parentes"]],
-    [mResults["parentesSky"]],
     [mResults["cpf"]],
     [mResults["cpfbasico"]],
-    [mResults["mae"],    "MAE"],
-    [mResults["maeSky"], "MAE"],
-    [mResults["pai"],    "PAI"],
-    [mResults["paiSky"], "PAI"],
   ), [mResults]);
   const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
 
@@ -1407,8 +1396,7 @@ export function CpfFullPanel({ cpf }: Props) {
   const score2Val = gf(scoreFields2,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
 
   const geocoded  = geoAddr.filter(a => a.lat && a.lng);
-  const visibleModules = MODULES.filter(m => !m.hidden);
-  const doneCount = visibleModules.filter(m => mStates[m.tipo] === "done").length;
+  const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
 
   const hasIdentity  = !!(identity.nome || identity.rg);
   const hasCNH       = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
@@ -1488,10 +1476,10 @@ export function CpfFullPanel({ cpf }: Props) {
               </div>
               <div className="h-1.5 rounded-full mb-4 overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
                 <motion.div className="h-full rounded-full" style={{ background: "var(--color-primary)" }}
-                  animate={{ width: `${(doneCount / visibleModules.length) * 100}%` }} transition={{ duration: 0.5 }} />
+                  animate={{ width: `${(doneCount / MODULES.length) * 100}%` }} transition={{ duration: 0.5 }} />
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
-                {visibleModules.map(m => {
+                {MODULES.map(m => {
                   const s = mStates[m.tipo] ?? "idle";
                   return (
                     <div key={m.tipo} className="flex items-center gap-1 text-[9px] truncate">
