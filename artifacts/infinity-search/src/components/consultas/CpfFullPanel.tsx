@@ -116,16 +116,24 @@ function calcDuration(start: string, end: string): string {
 
 // ─── Relative categorizer ─────────────────────────────────────────────────────
 function categorizeRel(rel: Relative): RelCat {
-  const r = (rel.relacao + " " + rel.nome).toLowerCase()
+  // Include all available fields — APIs often put the relation type in `origem` or section name
+  const r = [rel.relacao, rel.origem, rel.nome].join(" ").toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/gi, " ");
-  if (/\bpai\b|father|genitor\b/.test(r)) return "pai";
-  if (/\bmae\b|mother|genitora\b/.test(r)) return "mae";
-  if (/conjuge|esposa|esposo|marido|companheiro|companheira|wife|husband/.test(r)) return "conjuge";
+  // Pai / genitores masculinos
+  if (/\bpai\b|father|\bgenitor\b|genitorm|genitores?/.test(r) && !/\bfilh/.test(r)) return "pai";
+  // Mãe / genitoras femininas
+  if (/\bmae\b|mother|\bgenitora\b|genitorf/.test(r) && !/\bfilh/.test(r)) return "mae";
+  // Cônjuge
+  if (/conjuge|esposa|esposo|marido|companheiro|companheira|wife|husband|uniao|socio/.test(r)) return "conjuge";
+  // Filhos
+  if (/\bfilha\b|\bfilhos?\b/.test(r) && rel.sexo?.toLowerCase() === "f") return "filha";
   if (/\bfilha\b/.test(r)) return "filha";
   if (/\bfilho\b/.test(r)) return "filho";
+  if (/\bfilhos\b/.test(r)) return rel.sexo?.toLowerCase() === "f" ? "filha" : "filho";
   if (/\bfilh/.test(r)) return rel.sexo?.toLowerCase() === "f" ? "filha" : "filho";
-  if (/\birma\b/.test(r)) return "irma";
-  if (/\birmao\b/.test(r)) return "irmao";
+  // Irmãos
+  if (/\birma\b|\birmas\b/.test(r)) return "irma";
+  if (/\birmao\b|\irmaos\b/.test(r)) return "irmao";
   if (/\birm/.test(r)) return rel.sexo?.toLowerCase() === "f" ? "irma" : "irmao";
   return "outro";
 }
@@ -549,19 +557,45 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
           </div>
         ) : (
           /* ── Expanded layout ── */
-          <div className="flex gap-5">
-            <div className="flex-1 space-y-3 min-w-0">
-              <div className="text-center mb-5">
-                <p className="text-[8.5px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
-                <p className="text-[28px] font-black tracking-[0.12em] text-white leading-none">{id.rg || "—"}</p>
+          <div className="flex gap-4">
+            {/* Photo column — always visible, like a real ID card */}
+            <div className="shrink-0 flex flex-col items-center gap-2">
+              <div className="relative overflow-hidden rounded-xl flex items-center justify-center"
+                style={{ width: 76, height: 100, border: "2px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)", boxShadow: "0 4px 20px rgba(0,0,0,0.55)" }}>
+                {photo
+                  ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  : <div className="flex flex-col items-center gap-1 px-1">
+                      <Camera className="w-6 h-6 text-white/15" />
+                      <p className="text-[7px] text-white/15 text-center leading-tight">Sem foto</p>
+                    </div>}
+                {photo && (
+                  <div className="absolute bottom-1 right-1 w-4 h-4 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(52,211,153,0.25)", border: "1px solid rgba(52,211,153,0.5)" }}>
+                    <Fingerprint className="w-2 h-2 text-emerald-300" />
+                  </div>
+                )}
               </div>
-              <F label="Nome Completo" value={id.nome} accent="text-white text-[14px]" />
-              <div className="grid grid-cols-2 gap-4"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
-              <div className="grid grid-cols-3 gap-3"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
-              <div className="grid grid-cols-2 gap-4"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
-              <div className="grid grid-cols-2 gap-4"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
+              <p className="text-[6px] uppercase tracking-[0.15em] text-white/20 text-center">Titular</p>
+              {id.tipoSanguineo && (
+                <div className="w-11 h-11 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
+                  <p className="text-[6px] text-red-400/60 uppercase tracking-widest">Tipo</p>
+                  <p className="text-sm font-black text-red-300">{id.tipoSanguineo}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 space-y-3 min-w-0">
+              <div className="text-center mb-4">
+                <p className="text-[8px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
+                <p className="text-[22px] sm:text-[28px] font-black tracking-[0.1em] text-white leading-none">{id.rg || "—"}</p>
+              </div>
+              <F label="Nome Completo" value={id.nome} accent="text-white text-[13px]" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
+              <div className="grid grid-cols-3 gap-2"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
+              <div className="grid grid-cols-2 gap-3"><F label="CPF" value={fmtCPF(id.cpf)} mono /><F label="Naturalidade" value={id.naturalidade} /></div>
+              <div className="grid grid-cols-2 gap-3"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
               {(id.tituloEleitor || id.pis) && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   {id.tituloEleitor && <F label="Título de Eleitor" value={id.tituloEleitor} mono />}
                   {id.pis && <F label="PIS / NIS" value={id.pis || id.nis} mono />}
                 </div>
@@ -574,21 +608,6 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
                     <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 mb-0.5">Endereço Principal</p>
                     <p className="text-[12px] font-semibold text-white/85 break-words">{id.enderecoPrincipal}</p>
                   </div>
-                </div>
-              )}
-            </div>
-            {/* Photo column (expanded only) */}
-            <div className="shrink-0 hidden sm:flex flex-col items-center gap-2 mt-1">
-              <div className="w-28 h-36 rounded-xl overflow-hidden flex items-center justify-center relative" style={{ border: "2px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)" }}>
-                {photo ? <img src={photo} alt="Foto" className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                  : <div className="flex flex-col items-center gap-1.5"><Camera className="w-8 h-8 text-white/10" /><p className="text-[8px] text-white/15 text-center leading-tight px-1">Sem foto</p></div>}
-                {photo && <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400/20 border border-emerald-400/40 flex items-center justify-center"><Fingerprint className="w-2.5 h-2.5 text-emerald-300" /></div>}
-              </div>
-              <p className="text-[7.5px] uppercase tracking-[0.2em] text-white/20 text-center">Foto do Titular</p>
-              {id.tipoSanguineo && (
-                <div className="mt-1 w-14 h-14 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
-                  <p className="text-[8px] text-red-400/60 uppercase tracking-widest">Tipo</p>
-                  <p className="text-lg font-black text-red-300">{id.tipoSanguineo}</p>
                 </div>
               )}
             </div>
@@ -874,29 +893,52 @@ function MapBoundsAdjuster({ points }: { points: [number, number][] }) {
 }
 
 // ─── Person Node ──────────────────────────────────────────────────────────────
-function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo }: {
+function PersonNode({ nome, cpf, nasc, photo, loading, isMain, label, sexo, small }: {
   nome?: string; cpf?: string; nasc?: string; photo?: string; loading?: boolean;
-  isMain?: boolean; label?: string; sexo?: string;
+  isMain?: boolean; label?: string; sexo?: string; small?: boolean;
 }) {
   const emoji = sexo?.toLowerCase() === "f" ? "♀" : sexo?.toLowerCase() === "m" ? "♂" : "";
+  const sz = isMain ? { w: 76, h: 96 } : small ? { w: 52, h: 66 } : { w: 64, h: 80 };
   return (
     <div className="flex flex-col items-center gap-1.5 min-w-0">
-      {label && <span className={`text-[8px] uppercase tracking-widest font-bold mb-0.5 ${isMain ? "text-primary" : "text-white/30"}`}>{label}</span>}
-      <div className={`relative overflow-hidden flex items-center justify-center ${isMain ? "w-[72px] h-[88px] rounded-2xl" : "w-[52px] h-[64px] rounded-xl"}`}
-        style={isMain
-          ? { border: "2px solid rgba(124,58,237,0.7)", boxShadow: "0 0 24px rgba(124,58,237,0.35)", background: "rgba(255,255,255,0.05)" }
-          : { border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)" }}>
-        {loading ? <Loader2 className={`animate-spin text-white/20 ${isMain ? "w-6 h-6" : "w-4 h-4"}`} />
-          : photo ? <img src={photo} alt={nome} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-          : <User className={`text-white/12 ${isMain ? "w-7 h-7" : "w-5 h-5"}`} />}
-        {isMain && <div className="absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "rgba(124,58,237,0.5)" }}><Star className="w-2 h-2 text-white" fill="white" /></div>}
-        {photo && <div className={`absolute bottom-1 right-1 rounded-full flex items-center justify-center ${isMain ? "w-4 h-4" : "w-3 h-3"}`} style={{ background: "rgba(52,211,153,0.25)", border: "1px solid rgba(52,211,153,0.5)" }}><Fingerprint className={`text-emerald-300 ${isMain ? "w-2 h-2" : "w-1.5 h-1.5"}`} /></div>}
+      {label && (
+        <span className={`text-[8px] uppercase tracking-widest font-bold mb-0.5 ${isMain ? "" : "text-white/35"}`}
+          style={isMain ? { color: "var(--color-primary)" } : {}}>
+          {label}
+        </span>
+      )}
+      <div
+        className="relative overflow-hidden flex items-center justify-center rounded-2xl"
+        style={{
+          width: sz.w, height: sz.h,
+          ...(isMain
+            ? { border: "2px solid rgba(124,58,237,0.75)", boxShadow: "0 0 28px rgba(124,58,237,0.4)", background: "rgba(255,255,255,0.05)" }
+            : photo
+              ? { border: "1.5px solid rgba(52,211,153,0.35)", boxShadow: "0 0 12px rgba(52,211,153,0.12)", background: "rgba(255,255,255,0.04)" }
+              : { border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.03)" }),
+        }}>
+        {loading
+          ? <Loader2 className={`animate-spin text-white/25 ${isMain ? "w-6 h-6" : "w-5 h-5"}`} />
+          : photo
+            ? <img src={photo} alt={nome} className="w-full h-full object-cover" onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+            : <User className={`text-white/10 ${isMain ? "w-8 h-8" : "w-6 h-6"}`} />}
+        {isMain && (
+          <div className="absolute top-1 left-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: "rgba(124,58,237,0.55)" }}>
+            <Star className="w-2 h-2 text-white" fill="white" />
+          </div>
+        )}
+        {photo && (
+          <div className={`absolute bottom-1 right-1 rounded-full flex items-center justify-center ${isMain ? "w-4 h-4" : "w-3 h-3"}`}
+            style={{ background: "rgba(52,211,153,0.25)", border: "1px solid rgba(52,211,153,0.5)" }}>
+            <Fingerprint className={`text-emerald-300 ${isMain ? "w-2 h-2" : "w-1.5 h-1.5"}`} />
+          </div>
+        )}
       </div>
-      <div className={`text-center ${isMain ? "max-w-[90px]" : "max-w-[72px]"}`}>
-        <p className={`font-bold leading-tight line-clamp-2 ${isMain ? "text-[11px] text-white" : "text-[9px] text-white/70"}`}>
-          {nome || "—"} {emoji && <span className="text-white/30">{emoji}</span>}
+      <div className={`text-center ${isMain ? "max-w-[100px]" : "max-w-[80px]"}`}>
+        <p className={`font-bold leading-tight line-clamp-2 ${isMain ? "text-[11px] text-white" : "text-[10px] text-white/75"}`}>
+          {nome || "—"}{emoji ? <span className="text-white/30 ml-0.5 text-[8px]">{emoji}</span> : null}
         </p>
-        {cpf && cpf.length === 11 && <p className="text-[7px] font-mono text-white/28 mt-0.5">{fmtCPF(cpf)}</p>}
+        {cpf && cpf.length === 11 && <p className="text-[7px] font-mono text-white/30 mt-0.5">{fmtCPF(cpf)}</p>}
         {nasc && <p className="text-[7px] text-white/22 mt-0.5">{nasc}</p>}
       </div>
     </div>
@@ -1007,19 +1049,40 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
         )}
 
 
-        {outros.length > 0 && (
-          <>
-            <div className="h-px bg-white/5 mt-8 mb-6" />
-            <p className="text-[8px] uppercase tracking-widest text-white/20 mb-5 font-bold text-center">Outros Relacionados ({outros.length})</p>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-5">
-              {outros.map((r, i) => (
-                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 * i }} className="flex flex-col items-center gap-1">
-                  <PersonNode nome={r.nome} cpf={r.cpf} nasc={r.nasc} sexo={r.sexo} label={r.relacao || "Relacionado"} {...np(r)} />
-                </motion.div>
+        {outros.length > 0 && (() => {
+          // Group "outros" by their relacao / origem label for clarity
+          const groups: Record<string, Relative[]> = {};
+          for (const r of outros) {
+            const key = r.origem || r.relacao || "Relacionado";
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(r);
+          }
+          const groupEntries = Object.entries(groups);
+          return (
+            <>
+              <div className="h-px bg-white/5 mt-8 mb-6" />
+              <p className="text-[8px] uppercase tracking-widest text-white/20 mb-5 font-bold text-center">
+                Outros Relacionados ({outros.length})
+              </p>
+              {groupEntries.map(([grpLabel, grpRels], gi) => (
+                <div key={gi} className="mb-6">
+                  {groupEntries.length > 1 && (
+                    <p className="text-[8px] uppercase tracking-[0.2em] text-white/25 font-semibold mb-3 text-center">{grpLabel}</p>
+                  )}
+                  <div className="flex flex-wrap justify-center gap-4">
+                    {grpRels.map((r, i) => (
+                      <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.04 * (gi * 10 + i) }}>
+                        <PersonNode nome={r.nome} cpf={r.cpf} nasc={r.nasc} sexo={r.sexo}
+                          label={groupEntries.length === 1 ? (r.origem || r.relacao || "Relacionado") : undefined}
+                          small {...np(r)} />
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
               ))}
-            </div>
-          </>
-        )}
+            </>
+          );
+        })()}
       </div>
     </div>
   );
