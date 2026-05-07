@@ -1828,11 +1828,11 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
 
   bumpCaches(username);
   bumpSkylersTipoCache(username, tipoKey);
-  await logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true });
-
+  // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
   if (!res.headersSent) {
     res.json({ success, data, error: provider.error ?? null });
   }
+  void logConsulta({ tipo: tipoLog, query: String(valor).trim(), username, success, result: data, skylers: true }).catch(() => {});
 });
 
 // ─── consultas universal ───────────────────────────────────────────────────
@@ -1939,11 +1939,7 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const success = provider.ok && !!provider.parsed;
   const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
 
-  if (!skipLog) {
-    await logConsulta({ tipo, query: dados, username, success, result: data });
-    bumpCaches(username);
-  }
-
+  // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
   res.json({
     success,
     tipo,
@@ -1951,6 +1947,10 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     data,
     error: provider.error ?? null,
   });
+  if (!skipLog) {
+    bumpCaches(username);
+    void logConsulta({ tipo, query: dados, username, success, result: data }).catch(() => {});
+  }
 });
 
 // ─── AI chat (streaming via SSE, with tool-calling for consultations) ────────
@@ -2293,24 +2293,25 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const success = provider.ok && !!provider.parsed;
     // Serialize parsed result as compact string for the base-selector "raw" display
     const rawText = provider.parsed?.raw ?? "";
-    if (req.infinityUser && !skipLog) {
-      bumpCaches(req.infinityUser.username);
-      bumpSkylersTipoCache(req.infinityUser.username, extTipoKey);
-      await logConsulta({
-        tipo: `skylers:${modulo}`,
-        query: dadosStr,
-        username: req.infinityUser.username,
-        success,
-        result: provider.parsed ?? {},
-        skylers: true,
-      });
-    }
+    // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
     if (!res.headersSent) {
       if (success) {
         res.json({ success: true, data: provider.parsed });
       } else {
         res.json({ success: false, error: provider.error ?? "Sem resultado", data: rawText });
       }
+    }
+    if (req.infinityUser && !skipLog) {
+      bumpCaches(req.infinityUser.username);
+      bumpSkylersTipoCache(req.infinityUser.username, extTipoKey);
+      void logConsulta({
+        tipo: `skylers:${modulo}`,
+        query: dadosStr,
+        username: req.infinityUser.username,
+        success,
+        result: provider.parsed ?? {},
+        skylers: true,
+      }).catch(() => {});
     }
     return;
   }
