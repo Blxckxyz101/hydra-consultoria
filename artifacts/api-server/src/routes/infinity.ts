@@ -99,6 +99,10 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   fotodetran: "iseek-dados---fotodetran",
   crlvto: "iseek-dados---crlvto",
   crlvmt: "iseek-dados---crlvmt",
+  // ── aliases para dupla-consulta Geass+Skylers (family tree) ─────────────
+  parentesSky: "iseek-dados---parentes",
+  maeSky:      "iseek-dados---mae",
+  paiSky:      "iseek-dados---pai",
   // ── tipos exclusivos Skylers ─────────────────────────────────────────────
   cpfbasico: "iseek-cpfbasico",
   titulo: "iseek-dados---titulo",

@@ -37,23 +37,28 @@ type RelCat      = "pai" | "mae" | "conjuge" | "filho" | "filha" | "irmao" | "ir
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
 const MODULES = [
-  { tipo: "cpf",        label: "CPF",           skylers: false },
-  { tipo: "cpfbasico",  label: "CPF Básico",     skylers: true  },
-  { tipo: "fotonc",     label: "Foto",           skylers: true  },
-  { tipo: "parentes",   label: "Parentes",       skylers: false },
-  { tipo: "empregos",   label: "Empregos",       skylers: false },
-  { tipo: "cnh",        label: "CNH",            skylers: false },
-  { tipo: "obito",      label: "Óbito",          skylers: false },
-  { tipo: "score",      label: "Score",          skylers: true  },
-  { tipo: "score2",     label: "Score 2",        skylers: true  },
-  { tipo: "irpf",       label: "IRPF",           skylers: true  },
-  { tipo: "beneficios", label: "Benefícios",     skylers: true  },
-  { tipo: "mandado",    label: "Mandados",       skylers: true  },
-  { tipo: "dividas",    label: "Dívidas",        skylers: true  },
-  { tipo: "bens",       label: "Bens",           skylers: true  },
-  { tipo: "processos",  label: "Processos",      skylers: true  },
-  { tipo: "spc",        label: "SPC",            skylers: true  },
-  { tipo: "titulo",     label: "Título Eleitor", skylers: true  },
+  { tipo: "cpf",          label: "CPF",              skylers: false, hidden: false },
+  { tipo: "cpfbasico",    label: "CPF Básico",        skylers: true,  hidden: false },
+  { tipo: "fotonc",       label: "Foto",              skylers: true,  hidden: false },
+  { tipo: "parentes",     label: "Parentes",          skylers: false, hidden: false },
+  { tipo: "parentesSky",  label: "Parentes Sky",      skylers: true,  hidden: true  },
+  { tipo: "mae",          label: "Mãe",               skylers: false, hidden: true  },
+  { tipo: "pai",          label: "Pai",               skylers: false, hidden: true  },
+  { tipo: "maeSky",       label: "Mãe Sky",           skylers: true,  hidden: true  },
+  { tipo: "paiSky",       label: "Pai Sky",           skylers: true,  hidden: true  },
+  { tipo: "empregos",     label: "Empregos",          skylers: false, hidden: false },
+  { tipo: "cnh",          label: "CNH",               skylers: false, hidden: false },
+  { tipo: "obito",        label: "Óbito",             skylers: false, hidden: false },
+  { tipo: "score",        label: "Score",             skylers: true,  hidden: false },
+  { tipo: "score2",       label: "Score 2",           skylers: true,  hidden: false },
+  { tipo: "irpf",         label: "IRPF",              skylers: true,  hidden: false },
+  { tipo: "beneficios",   label: "Benefícios",        skylers: true,  hidden: false },
+  { tipo: "mandado",      label: "Mandados",          skylers: true,  hidden: false },
+  { tipo: "dividas",      label: "Dívidas",           skylers: true,  hidden: false },
+  { tipo: "bens",         label: "Bens",              skylers: true,  hidden: false },
+  { tipo: "processos",    label: "Processos",         skylers: true,  hidden: false },
+  { tipo: "spc",          label: "SPC",               skylers: true,  hidden: false },
+  { tipo: "titulo",       label: "Título Eleitor",    skylers: true,  hidden: false },
 ];
 
 // ─── Normalize fields ─────────────────────────────────────────────────────────
@@ -328,25 +333,43 @@ function buildEmployments(r?: ModuleResult): Employment[] {
 }
 
 // ─── Build relatives ──────────────────────────────────────────────────────────
-function buildRelatives(...sources: (ModuleResult | undefined)[]): Relative[] {
+// Parses multiple module results from both Geass and Skylers databases and
+// merges them into a single deduplicated list.
+// Pass sources as [res, forcedRelacao | undefined] pairs.
+// forcedRelacao: when the module is "mae"/"maeSky"/"pai"/"paiSky", the record
+// represents a single parent — we override the relação field accordingly.
+function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Relative[] {
   const relatives: Relative[] = []; const seen = new Set<string>();
   function addRel(r: Partial<Relative>) {
     const key = (r.cpf || r.nome || "").toLowerCase().trim();
     if (!key || seen.has(key)) return; seen.add(key);
     relatives.push({ cpf: r.cpf||"", nome: r.nome||"", nasc: r.nasc||"", sexo: r.sexo||"", relacao: r.relacao||"", origem: r.origem||"" });
   }
-  function scanRaw(raw: string) {
-    const entries = raw.split(/\bNOME[\s:·]+/i);
-    for (let i = 1; i < entries.length; i++) {
-      const chunk = entries[i].slice(0, 300);
+  function scanRaw(raw: string, fallbackRelacao?: string) {
+    const entries2 = raw.split(/\bNOME[\s:·]+/i);
+    for (let i = 1; i < entries2.length; i++) {
+      const chunk = entries2[i].slice(0, 300);
       const nome = chunk.match(/^([^·\n|,;]{3,60}?)(?:\s*[·|]|\s+CPF|\s+NASC|\s*$)/i)?.[1]?.trim() ?? "";
       const cpf  = chunk.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
       const nasc = chunk.match(/(?:NASC|NASCIMENTO|DATA_NASC)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
       const sexo = chunk.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
-      if (nome || cpf) addRel({ nome, cpf, nasc, sexo });
+      if (nome || cpf) addRel({ nome, cpf, nasc, sexo, relacao: fallbackRelacao });
     }
   }
-  function processSource(res: ModuleResult) {
+  function extractSingleRecord(res: ModuleResult, relacao: string) {
+    // For mae/pai modules: the response is a person record — extract as one relative entry
+    const f = res.data!.fields;
+    const raw = res.data!.raw;
+    const nome = gf(f,"NOME","NOMERELACIONADO","NOMECOMPLETO") || raw.match(/NOME[\s:·]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^·\n,;|]{2,60}?)(?:\s*[·|]|$)/i)?.[1]?.trim() || "";
+    const cpf  = (gf(f,"CPF","CPFREL","CPFRELACIONADO") || raw.match(/\bCPF[\s:·]+(\d{11}|\d{3}\.\d{3}\.\d{3}-\d{2})/i)?.[1] || "").replace(/\D/g,"");
+    const nasc = gf(f,"DATANASCIMENTO","NASC","NASCIMENTO","DATA_NASC") || raw.match(/(?:NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] || "";
+    const sexo = gf(f,"SEXO") || raw.match(/SEXO[\s:·]+([MF])/i)?.[1] || "";
+    if (nome || cpf) addRel({ nome, cpf, nasc, sexo, relacao, origem: "direto" });
+    // Also try to pick up any additional relatives hidden in sections
+    if (res.data!.sections.length > 0) processSource(res, relacao);
+  }
+  function processSource(res: ModuleResult, forcedRelacao?: string) {
+    const startLen = relatives.length;
     for (const sec of res.data!.sections) {
       const items = sec.items;
       if (!items.length) continue;
@@ -361,34 +384,41 @@ function buildRelatives(...sources: (ModuleResult | undefined)[]): Relative[] {
           const nasc = item.match(/(?:NASC|DATA_?NASC|NASCIMENTO)[\s:·]+(\d{2}\/\d{2}\/\d{4}|\d{4}-\d{2}-\d{2})/i)?.[1] ?? "";
           const sexo = item.match(/SEXO[\s:·]+([MF])/i)?.[1] ?? "";
           const origem = item.match(/ORIGEM[\s:·]+([^·|\n,;]{2,40}?)(?:\s*[·|]|$)/i)?.[1]?.trim() ?? "";
-          if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: sec.name, origem });
+          if (cpf || nome) addRel({ cpf, nome, nasc, sexo, relacao: forcedRelacao || sec.name, origem });
         }
       } else {
-        let cur: Partial<Relative> = { relacao: sec.name };
+        let cur: Partial<Relative> = { relacao: forcedRelacao || sec.name };
         for (const item of items) {
           const kv = item.match(/^([A-ZÁÉÍÓÚÂÊÔÃÕÇÑA-Z_0-9 ]+):\s*(.+)$/i);
           if (!kv) continue;
           const k = kv[1].trim().toUpperCase().replace(/[\s_]/g,""); const v = kv[2].trim();
           const isNome = k === "NOME" || k === "NOMERELACIONADO" || k === "NOMEPARTE";
-          if (isNome && cur.nome) { addRel(cur); cur = { relacao: sec.name }; }
+          if (isNome && cur.nome) { addRel(cur); cur = { relacao: forcedRelacao || sec.name }; }
           if (isNome) cur.nome = v;
           else if (k === "CPF" || k === "CPFREL" || k === "CPFRELACIONADO") cur.cpf = v.replace(/\D/g,"");
           else if (k.includes("NASC") || k.includes("DATANASC")) cur.nasc = v;
           else if (k === "SEXO") cur.sexo = v;
           else if (k.includes("ORIGEM")) cur.origem = v;
-          else if (k.includes("RELAC") || k.includes("PARENT")) cur.relacao = v;
+          else if (k.includes("RELAC") || k.includes("PARENT")) cur.relacao = forcedRelacao || v;
         }
         addRel(cur);
       }
     }
-    if (relatives.length === 0 && res.data!.raw) scanRaw(res.data!.raw);
-    if (relatives.length === 0 && res.data!.fields.length > 0) {
+    if (relatives.length === startLen && res.data!.raw) scanRaw(res.data!.raw, forcedRelacao);
+    if (relatives.length === startLen && res.data!.fields.length > 0) {
       const cpf = gf(res.data!.fields,"CPF","CPFREL"); const nome = gf(res.data!.fields,"NOME","NOMERELACIONADO");
       const nasc = gf(res.data!.fields,"NASC","NASCIMENTO","DATANASCIMENTO");
-      if (cpf || nome) addRel({ cpf, nome, nasc });
+      if (cpf || nome) addRel({ cpf, nome, nasc, relacao: forcedRelacao });
     }
   }
-  for (const src of sources) { if (src?.data) processSource(src); }
+  for (const [src, forced] of entries) {
+    if (!src?.data) continue;
+    if (forced) {
+      extractSingleRecord(src, forced);
+    } else {
+      processSource(src);
+    }
+  }
   return relatives;
 }
 
@@ -1257,7 +1287,10 @@ export function CpfFullPanel({ cpf }: Props) {
 
     (async () => {
       const acc = finalResultsRef.current;
-      const rels = buildRelatives(acc["parentes"]);
+      const rels = buildRelatives(
+        [acc["parentes"]], [acc["parentesSky"]], [acc["cpf"]], [acc["cpfbasico"]],
+        [acc["mae"], "MAE"], [acc["maeSky"], "MAE"], [acc["pai"], "PAI"], [acc["paiSky"], "PAI"],
+      );
 
       // CPFs already known from the parentes result
       const cpfSet = new Set(rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf));
@@ -1356,7 +1389,16 @@ export function CpfFullPanel({ cpf }: Props) {
   const phones      = useMemo(() => buildPhones(mResults),                [mResults]);
   const addresses   = useMemo(() => buildAddresses(mResults),             [mResults]);
   const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
-  const relatives   = useMemo(() => buildRelatives(mResults["parentes"], mResults["cpf"], mResults["cpfbasico"]),  [mResults]);
+  const relatives   = useMemo(() => buildRelatives(
+    [mResults["parentes"]],
+    [mResults["parentesSky"]],
+    [mResults["cpf"]],
+    [mResults["cpfbasico"]],
+    [mResults["mae"],    "MAE"],
+    [mResults["maeSky"], "MAE"],
+    [mResults["pai"],    "PAI"],
+    [mResults["paiSky"], "PAI"],
+  ), [mResults]);
   const photo       = useMemo(() => extractPhoto(mResults),               [mResults]);
 
   const scoreFields1 = mResults["score"]?.data?.fields ?? [];
@@ -1365,7 +1407,8 @@ export function CpfFullPanel({ cpf }: Props) {
   const score2Val = gf(scoreFields2,"SCORE","PONTUACAO","PONTUAÇÃO","SERASA") || mResults["score2"]?.data?.raw?.match(/\b(\d{3,4})\b/)?.[1] || "";
 
   const geocoded  = geoAddr.filter(a => a.lat && a.lng);
-  const doneCount = MODULES.filter(m => mStates[m.tipo] === "done").length;
+  const visibleModules = MODULES.filter(m => !m.hidden);
+  const doneCount = visibleModules.filter(m => mStates[m.tipo] === "done").length;
 
   const hasIdentity  = !!(identity.nome || identity.rg);
   const hasCNH       = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
@@ -1445,10 +1488,10 @@ export function CpfFullPanel({ cpf }: Props) {
               </div>
               <div className="h-1.5 rounded-full mb-4 overflow-hidden" style={{ background: "rgba(255,255,255,0.05)" }}>
                 <motion.div className="h-full rounded-full" style={{ background: "var(--color-primary)" }}
-                  animate={{ width: `${(doneCount / MODULES.length) * 100}%` }} transition={{ duration: 0.5 }} />
+                  animate={{ width: `${(doneCount / visibleModules.length) * 100}%` }} transition={{ duration: 0.5 }} />
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-1.5">
-                {MODULES.map(m => {
+                {visibleModules.map(m => {
                   const s = mStates[m.tipo] ?? "idle";
                   return (
                     <div key={m.tipo} className="flex items-center gap-1 text-[9px] truncate">
