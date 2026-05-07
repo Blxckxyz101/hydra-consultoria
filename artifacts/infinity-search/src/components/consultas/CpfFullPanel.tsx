@@ -152,11 +152,15 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean, skipLo
   const token = localStorage.getItem("infinity_token");
   try {
     const endpoint = skylers ? "/api/infinity/external/skylers" : `/api/infinity/consultas/${tipo}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 28_000);
     const r = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ tipo, dados, skipLog }),
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
     const json = await r.json() as { success: boolean; data?: unknown; error?: string };
     let parsed: ParsedData | undefined;
     if (json.data && typeof json.data === "object") {
@@ -353,10 +357,12 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
   // We extract it to set relacao and strip it from nome so names render clean.
   // Broad separator: hyphen, en/em dash, U+23AF (⎯ Geass delimiter), horizontal bar, colon, middle dot
   const REL_PREFIX = /^(M[ÃA]E|PAI|IRM[ÃA][OS]?|FILH[OA]S?|C[OÔ]NJUGE|PARENTE|RELACIONADO)\s*[-\u2013\u2014\u23AF\u2012\u2015:·\u00B7]+\s*/i;
+  const BARE_DASH  = /^[-\u2013\u2014\u23AF\u2012\u2015\s]+/;
   function addRel(r: Partial<Relative>) {
     const raw = (r.nome || "").trim();
     const prefixMatch = raw.match(REL_PREFIX);
-    const nome     = prefixMatch ? raw.slice(prefixMatch[0].length).trim() : raw;
+    // Strip "MÃE — NOME" pattern OR bare leading dashes like "—NOME"
+    const nome     = prefixMatch ? raw.slice(prefixMatch[0].length).trim() : raw.replace(BARE_DASH, "").trim();
     const prefixRel = prefixMatch
       ? prefixMatch[1].toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")
       : "";

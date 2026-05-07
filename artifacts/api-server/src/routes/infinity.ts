@@ -1812,7 +1812,7 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   }
 
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8_500);
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
 
   const provider = await callSkylers(
     String(modulo ?? ""),
@@ -2282,7 +2282,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       }
     }
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8_500);
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
     const provider = await callSkylers(
       modulo,
       dadosStr,
