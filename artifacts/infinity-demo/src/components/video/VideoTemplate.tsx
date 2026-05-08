@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect } from 'react';
 import { useVideoPlayer } from '@/lib/video';
+import { useDemoAudio } from '@/lib/video/useAudio';
 import { Scene1 } from './video_scenes/Scene1';
 import { Scene2 } from './video_scenes/Scene2';
 import { Scene3 } from './video_scenes/Scene3';
@@ -49,6 +50,7 @@ export default function VideoTemplate({
   onSceneChange?: (sceneKey: string) => void;
 } = {}) {
   const { currentScene, currentSceneKey } = useVideoPlayer({ durations, loop });
+  useDemoAudio(currentSceneKey);
 
   useEffect(() => {
     onSceneChange?.(currentSceneKey);
