@@ -130,7 +130,7 @@ const THEME_HSL: Record<string, string> = {
 const TIPO_TO_SKYLERS: Record<string, string> = {
   // ── tipos comuns (Geass + Skylers) ──────────────────────────────────────
   cpf: "iseek-cpf",
-  nome: "iseek-dados---nomeabreviadofriltros",
+  nome: "iseek-dados---nomeabreviadofiltros",
   rg: "iseek-dados---rg",
   mae: "iseek-dados---mae",
   pai: "iseek-dados---pai",
@@ -144,7 +144,7 @@ const TIPO_TO_SKYLERS: Record<string, string> = {
   email: "iseek-dados---email",
   pix: "iseek-dados---pix",
   cep: "iseek-dados---cep",
-  endereco: "iseek-dados---endereco",
+  endereco: "iseek-dados---cep",
   placa: "iseek-dados---placa",
   chassi: "iseek-dados---chassi",
   renavam: "iseek-dados---renavam",
@@ -1255,36 +1255,100 @@ async function callSkylers(
         : status >= 500
         ? "Skylers API temporariamente indisponível"
         : `Skylers HTTP ${status}`;
-      skylersCircuit.recordFailure();
+      // Only count as circuit failure for true server errors (5xx), not client errors (4xx)
+      if (status >= 500) skylersCircuit.recordFailure();
       return { ok: false, error: friendly, raw: text.slice(0, 500) };
     }
 
     let json: unknown;
     try { json = JSON.parse(text); } catch { json = { raw: text }; }
 
-    // Check for error responses
+    // Check for error responses — case-insensitive key scan
     if (json && typeof json === "object" && !Array.isArray(json)) {
       const dj = json as Record<string, unknown>;
-      const isErr = dj.error || (dj.status && String(dj.status).toLowerCase() === "error") ||
-        (dj.message && String(dj.message).toLowerCase().includes("error"));
+      // Build a lowercase→value map for case-insensitive lookup
+      const djLower = Object.fromEntries(Object.entries(dj).map(([k, v]) => [k.toLowerCase(), v]));
+      const isErr = djLower.error || djLower.err ||
+        (djLower.status && String(djLower.status).toLowerCase() === "error") ||
+        (djLower.message && String(djLower.message).toLowerCase().includes("error")) ||
+        (djLower.success === false);
       if (isErr) {
-        return { ok: false, error: String(dj.message ?? dj.error ?? dj.detail ?? "Sem resultado"), raw: json };
+        const msg = djLower.message ?? djLower.error ?? djLower.err ?? djLower.detail ?? "Sem resultado";
+        return { ok: false, error: String(msg), raw: json };
       }
     }
 
     const parsed = parseSkylers(json);
     if (parsed.fields.length === 0 && parsed.sections.length === 0) {
+      // Server responded fine (2xx) but returned no useful data — NOT a circuit failure
+      skylersCircuit.recordSuccess();
       return { ok: false, error: "Sem dados retornados para esta consulta", parsed };
+    }
+    // Detect error-only results that survived as a single field (e.g. nested {"Err":"CPF inválido."})
+    if (parsed.fields.length === 1 && parsed.sections.length === 0) {
+      const fk = parsed.fields[0].key.toLowerCase();
+      if (fk === "err" || fk === "error" || fk === "erro" || fk === "erros" || fk === "resultado") {
+        skylersCircuit.recordSuccess(); // server is up, just a bad query
+        return { ok: false, error: parsed.fields[0].value, parsed: { fields: [], sections: [], raw: parsed.raw } };
+      }
     }
     skylersCircuit.recordSuccess();
     return { ok: true, parsed };
   } catch (e) {
-    skylersCircuit.recordFailure();
+    // Only count as circuit failure for actual network errors (ECONNREFUSED, timeout)
+    const isNetworkErr = e instanceof Error && (
+      e.name === "AbortError" ||
+      (e as NodeJS.ErrnoException).code === "ECONNREFUSED" ||
+      (e as NodeJS.ErrnoException).code === "ECONNRESET" ||
+      (e as NodeJS.ErrnoException).code === "ETIMEDOUT" ||
+      e.message.includes("timed out") ||
+      e.message.includes("network")
+    );
+    if (isNetworkErr) skylersCircuit.recordFailure();
     const msg = e instanceof Error ? e.message : "Serviço indisponível";
     return { ok: false, error: msg };
   }
 }
 
+
+// ─── Field priority sorter for pessoa-type results ─────────────────────────
+// Moves the most important identity fields to the top of the fields array.
+// Priority groups for pessoa-type results (lower index = higher priority).
+// Each group is an array of aliases — if a field key matches ANY alias, it gets that group's rank.
+const PESSOA_PRIORITY_GROUPS: string[][] = [
+  ["nome", "nome completo", "nome_completo"],
+  ["data de nascimento", "data_nascimento", "nascimento", "dt_nascimento", "dt nascimento", "nasc", "data nasc"],
+  ["nome da mãe", "nome_mae", "nome mãe", "nome da mae", "nome mae", "filiacao · nome mae", "mae", "mãe"],
+  ["nome do pai", "nome_pai", "nome pai", "filiacao · nome pai", "pai"],
+  ["cpf", "rg"],
+  ["sexo", "genero", "gênero", "idade"],
+  ["situação", "situacao", "status"],
+  ["email"],
+  ["telefone", "celular"],
+  ["logradouro", "endereço", "endereco", "bairro", "cidade", "uf", "cep"],
+];
+
+function sortFieldsByPriority(fields: { key: string; value: string }[]): { key: string; value: string }[] {
+  const priority = (key: string): number => {
+    const k = key.toLowerCase().trim();
+    for (let g = 0; g < PESSOA_PRIORITY_GROUPS.length; g++) {
+      for (const alias of PESSOA_PRIORITY_GROUPS[g]) {
+        // Exact match always wins
+        if (k === alias) return g;
+        // Multi-word aliases can match as substring of compound field keys (e.g. "filiacao · nome mae")
+        // Single-word aliases only match exactly to avoid "nome" matching "filiacao · nome mae"
+        if (alias.includes(" ") && k.includes(alias)) return g;
+        if (alias.includes(" ") && alias.includes(k)) return g;
+      }
+    }
+    return 9999;
+  };
+  // Stable sort: preserve original order for fields with equal priority
+  return [...fields].sort((a, b) => priority(a.key) - priority(b.key));
+}
+
+// Tipos that represent person records and should have priority field sorting
+const PESSOA_TIPOS = new Set(["cpf", "nome", "telefone", "email", "rg", "mae", "pai", "parentes", "titulo", "obito", "irpf", "score", "cheque"]);
 
 // ─── auth ──────────────────────────────────────────────────────────────────
 // Per-username brute-force lockout (in-memory, complements IP rate limiter)
@@ -2004,7 +2068,10 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
       const geassErr = provider.error;
       const sk = await callSkylers(skylersModulo, dados, ctrl.signal);
       if (sk.ok && sk.parsed) {
-        provider = { ok: true, parsed: sk.parsed };
+        const sortedParsed = PESSOA_TIPOS.has(tipo)
+          ? { ...sk.parsed, fields: sortFieldsByPriority(sk.parsed.fields) }
+          : sk.parsed;
+        provider = { ok: true, parsed: sortedParsed };
       } else {
         // Both providers failed — give a clear combined message
         provider = { ...provider, error: "Provedores OSINT indisponíveis temporariamente. Tente novamente em instantes." };
