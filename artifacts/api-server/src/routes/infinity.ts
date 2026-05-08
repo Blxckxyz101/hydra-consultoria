@@ -2001,11 +2001,15 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   if (!provider.ok && !ctrl.signal.aborted) {
     const skylersModulo = TIPO_TO_SKYLERS[tipo];
     if (skylersModulo) {
+      const geassErr = provider.error;
       const sk = await callSkylers(skylersModulo, dados, ctrl.signal);
       if (sk.ok && sk.parsed) {
         provider = { ok: true, parsed: sk.parsed };
+      } else {
+        // Both providers failed — give a clear combined message
+        provider = { ...provider, error: "Provedores OSINT indisponíveis temporariamente. Tente novamente em instantes." };
+        void geassErr; // suppress unused warning
       }
-      // If Skylers also fails, keep the original Geass error message
     }
   }
 
@@ -2265,7 +2269,10 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
           if (base === "skylers") {
             const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
             if (modulo) {
-              const sk = await callSkylers(modulo, dados, new AbortController().signal);
+              const aiSkCtrl = new AbortController();
+              const aiSkTimer = setTimeout(() => aiSkCtrl.abort(), 10_000);
+              const sk = await callSkylers(modulo, dados, aiSkCtrl.signal);
+              clearTimeout(aiSkTimer);
               if (sk.ok && sk.parsed) {
                 toolContent = buildToolContent(sk.parsed);
               } else {
@@ -2273,13 +2280,19 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
               }
             } else {
               toolContent = `Tipo '${tipo}' não suportado pela Skylers API, usando base principal.`;
-              const fallback = await callProvider(tipo, dados, new AbortController().signal);
+              const aiFbCtrl = new AbortController();
+              const aiFbTimer = setTimeout(() => aiFbCtrl.abort(), 10_000);
+              const fallback = await callProvider(tipo, dados, aiFbCtrl.signal);
+              clearTimeout(aiFbTimer);
               if (fallback.ok && fallback.parsed) {
                 toolContent = buildToolContent(fallback.parsed);
               }
             }
           } else {
-            const consultResult = await callProvider(tipo, dados, new AbortController().signal);
+            const aiCtrl = new AbortController();
+            const aiTimer = setTimeout(() => aiCtrl.abort(), 10_000);
+            const consultResult = await callProvider(tipo, dados, aiCtrl.signal);
+            clearTimeout(aiTimer);
             if (consultResult.ok && consultResult.parsed) {
               toolContent = buildToolContent(consultResult.parsed);
             } else {
@@ -2400,7 +2413,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       if (success) {
         res.json({ success: true, data: provider.parsed });
       } else {
-        res.json({ success: false, error: provider.error ?? "Sem resultado", data: rawText });
+        res.json({ success: false, error: provider.error ?? "Sem resultado", data: { fields: [], sections: [], raw: rawText } });
       }
     }
     if (req.infinityUser && !skipLog) {

@@ -38,8 +38,9 @@ export function isFetchingProxies()  { return isFetching; }
 // ── Persistence — save/load residential config across restarts ────────────
 const CONFIG_FILE = path.join(process.cwd(), "data", "proxy-config.json");
 
+type ResidentialConfig = { host: string; port: number; username: string; password: string; count: number };
 interface SavedConfig {
-  residential?: typeof residentialCreds;
+  residential?: ResidentialConfig | null;
   pinnedList?: Array<{ host: string; port: number; username?: string; password?: string }>;
 }
 
@@ -100,18 +101,22 @@ function loadConfig(): void {
       lastFetch = Date.now();
       console.log(`[PROXIES] Restored ${pinnedProxies.length} pinned proxies from config`);
     } else if (cfg.residential) {
-      const pass = resolvePassword(cfg.residential.password);
-      residentialCreds = { ...cfg.residential, password: pass ?? cfg.residential.password };
-      pinnedProxies = Array.from({ length: cfg.residential.count }, (_, i) => ({
-        host: cfg.residential!.host, port: cfg.residential!.port,
+      const rc: ResidentialConfig = cfg.residential;
+      const pass = resolvePassword(rc.password);
+      residentialCreds = { ...rc, password: pass ?? rc.password };
+      pinnedProxies = Array.from({ length: rc.count }, (_, i) => ({
+        host: rc.host, port: rc.port,
         responseMs: i + 1, type: "http" as const,
-        username: cfg.residential!.username, password: pass,
+        username: rc.username, password: pass,
       }));
       proxyCache = [...pinnedProxies];
       lastFetch = Date.now();
-      console.log(`[PROXIES] Restored ${cfg.residential.count} residential slots from legacy config (${cfg.residential.host})`);
+      console.log(`[PROXIES] Restored ${rc.count} residential slots from legacy config (${rc.host})`);
     }
-    if (cfg.residential) residentialCreds = { ...cfg.residential, password: resolvePassword(cfg.residential.password) ?? cfg.residential.password };
+    if (cfg.residential) {
+      const rc2: ResidentialConfig = cfg.residential;
+      residentialCreds = { ...rc2, password: resolvePassword(rc2.password) ?? rc2.password };
+    }
   } catch { /* no saved config */ }
 }
 

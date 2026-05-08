@@ -563,9 +563,9 @@ async function _isRealOrigin(ip: string, hostname: string): Promise<boolean> {
         ...opts,
         headers: { "Host": hostname, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "text/html" },
       }, res => {
-        const srv   = (res.headers["server"] || "").toLowerCase();
-        const via   = (res.headers["via"]    || "").toLowerCase();
-        const xPow  = (res.headers["x-powered-by"] || "").toLowerCase();
+        const srv   = String(res.headers["server"]       ?? "").toLowerCase();
+        const via   = String(res.headers["via"]           ?? "").toLowerCase();
+        const xPow  = String(res.headers["x-powered-by"] ?? "").toLowerCase();
         const isCDN = CDN_SIGNATURES.some(s => srv.includes(s) || via.includes(s));
         // Accept if: not CDN, or server header looks like a real app server
         const isApp = /nginx|apache|litespeed|iis|gunicorn|uvicorn|php|wordpress|joomla|drupal/i.test(srv + xPow);

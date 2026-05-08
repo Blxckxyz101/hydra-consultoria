@@ -63,7 +63,8 @@ async function fetchWaTokensViaHeadless(): Promise<WaPageTokens | null> {
 
     // Wait for the form DTSG field to appear
     await (page as any).waitForFunction(
-      () => document.body.innerHTML.includes('"token":"Ad'),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      '(window as any).document.body.innerHTML.includes(\'"token":"Ad\')',
       { timeout: 20_000 },
     ).catch(() => { /* proceed with whatever loaded */ });
 

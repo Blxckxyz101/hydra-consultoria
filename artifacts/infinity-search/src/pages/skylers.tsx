@@ -205,11 +205,15 @@ export default function Skylers() {
       } else {
         body.modulo = selectedModule.key;
       }
+      const skyCtrl = new AbortController();
+      const skyTimer = setTimeout(() => skyCtrl.abort(), 20_000);
       const r = await fetch("/api/infinity/skylers", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
+        signal: skyCtrl.signal,
       });
+      clearTimeout(skyTimer);
       const data = await r.json() as QueryResult & { rateLimited?: boolean };
       if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
