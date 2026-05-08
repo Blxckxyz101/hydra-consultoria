@@ -13,6 +13,7 @@ import Dossie from "@/pages/dossie";
 import Perfil from "@/pages/perfil";
 import Bases from "@/pages/bases";
 import Favoritos from "@/pages/favoritos";
+import { AdminGuard } from "@/components/layout/AdminGuard";
 import Personalizar, { initSavedTheme } from "@/pages/personalizar";
 import Skylers from "@/pages/skylers";
 import Suporte from "@/pages/suporte";
@@ -52,7 +53,9 @@ function Router() {
               <Route path="/ia" component={IA} />
               <Route path="/dossie" component={Dossie} />
               <Route path="/favoritos" component={Favoritos} />
-              <Route path="/bases" component={Bases} />
+              <Route path="/bases">
+                <AdminGuard><Bases /></AdminGuard>
+              </Route>
               <Route path="/perfil" component={Perfil} />
               <Route path="/configuracoes" component={Configuracoes} />
               <Route path="/personalizar" component={Personalizar} />

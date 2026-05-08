@@ -1862,7 +1862,7 @@ router.get("/consultas", requireAuth, async (req, res) => {
 });
 
 // ─── bases status ──────────────────────────────────────────────────────────
-router.get("/bases/status", requireAuth, async (_req, res) => {
+router.get("/bases/status", requireAdmin, async (_req, res) => {
   // Use real probe URLs that reflect actual API health (not just root paths)
   const bases = [
     {
@@ -1877,7 +1877,9 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
       id: "skylers",
       name: "Skylers API",
       description: "Provedor OSINT avançado · 80+ módulos · Foto CNH",
-      url: `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=iseek-cpfbasico&valor=00000000000`,
+      // Probe root only — returns HTTP 404 in ~150ms when server is UP.
+      // Using the real /consulta endpoint with a query is too slow (DB lookup).
+      url: SKYLERS_BASE,
       circuitOpen: skylersCircuit.isOpen(),
       role: "fallback",
     },
