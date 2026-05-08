@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg:      #05080f;
+  --color-bg-mid:  #080d16;
+  --color-cyan:    #06b6d4;
+  --color-amber:   #c8a84b;
+  --color-text:    #e2e8f0;
+  --color-muted:   #64748b;
+  --color-dim:     #1e293b;
+
+  --font-mono: 'Courier Prime', monospace;
+  --font-body: 'Inter', sans-serif;
+}
+
+@theme inline {
+  --color-primary:   var(--color-cyan);
+  --color-secondary: var(--color-amber);
+  --font-display:    var(--font-mono);
+  --font-body:       var(--font-body);
+  --font-mono:       var(--font-mono);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scanline overlay */
+.scanlines::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.07) 2px,
+    rgba(0,0,0,0.07) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* Cursor blink */
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.cursor-blink {
+  animation: blink 0.9s step-end infinite;
+}
+
+/* Radar pulse */
+@keyframes radar-ping {
+  0% { transform: scale(0.4); opacity: 0.8; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+.radar-ping {
+  animation: radar-ping 2s ease-out infinite;
+}
+.radar-ping-2 {
+  animation: radar-ping 2s ease-out 0.7s infinite;
+}
+.radar-ping-3 {
+  animation: radar-ping 2s ease-out 1.4s infinite;
+}
+
+/* Data field flash */
+@keyframes field-flash {
+  0% { background: rgba(6, 182, 212, 0.25); }
+  100% { background: transparent; }
+}
+.field-flash {
+  animation: field-flash 0.6s ease-out forwards;
+}
+
+/* Grid background */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(6, 182, 212, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Reveal scan line */
+@keyframes scan-reveal {
+  0% { clip-path: inset(0 0 100% 0); }
+  100% { clip-path: inset(0 0 0% 0); }
+}
+.scan-reveal {
+  animation: scan-reveal 0.5s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* Glow pulse */
+@keyframes glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(6,182,212,0.6)); }
+  50% { filter: drop-shadow(0 0 24px rgba(6,182,212,1)); }
+}
+.glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Noise texture */
+@keyframes noise-shift {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 100% 100%; }
+}

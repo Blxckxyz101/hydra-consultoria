@@ -320,6 +320,75 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  artifacts/infinity-caso:
+    devDependencies:
+      '@react-spring/web':
+        specifier: ^10.0.3
+        version: 10.0.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@react-three/drei':
+        specifier: ^10.7.7
+        version: 10.7.7(@react-three/fiber@9.6.1(@types/react@19.2.14)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(three@0.182.0))(@types/react@19.2.14)(@types/three@0.184.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(three@0.182.0)
+      '@react-three/fiber':
+        specifier: ^9.5.0
+        version: 9.6.1(@types/react@19.2.14)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(three@0.182.0)
+      '@replit/vite-plugin-cartographer':
+        specifier: 'catalog:'
+        version: 0.5.1
+      '@replit/vite-plugin-dev-banner':
+        specifier: 'catalog:'
+        version: 0.1.2
+      '@replit/vite-plugin-runtime-error-modal':
+        specifier: 'catalog:'
+        version: 0.0.6
+      '@tailwindcss/vite':
+        specifier: 'catalog:'
+        version: 4.2.1(vite@7.3.1(@types/node@25.3.5)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)(yaml@2.8.2))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: 'catalog:'
+        version: 5.1.4(vite@7.3.1(@types/node@25.3.5)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)(yaml@2.8.2))
+      clsx:
+        specifier: 'catalog:'
+        version: 2.1.1
+      framer-motion:
+        specifier: 'catalog:'
+        version: 12.35.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      gsap:
+        specifier: ^3.14.2
+        version: 3.15.0
+      lottie-react:
+        specifier: ^2.4.1
+        version: 2.4.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      lucide-react:
+        specifier: 'catalog:'
+        version: 0.545.0(react@19.1.0)
+      react:
+        specifier: 'catalog:'
+        version: 19.1.0
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.1.0(react@19.1.0)
+      tailwind-merge:
+        specifier: 'catalog:'
+        version: 3.5.0
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.2.1
+      three:
+        specifier: ^0.182.0
+        version: 0.182.0
+      vite:
+        specifier: 'catalog:'
+        version: 7.3.1(@types/node@25.3.5)(jiti@2.6.1)(lightningcss@1.31.1)(tsx@4.21.0)(yaml@2.8.2)
+
   artifacts/infinity-demo:
     devDependencies:
       '@react-spring/web':
