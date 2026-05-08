@@ -274,11 +274,19 @@ export default function Consultas() {
         body = { tipo, dados };
       }
 
-      const r = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
+      const fetchCtrl = new AbortController();
+      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 18_000);
+      let r: Response;
+      try {
+        r = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+          signal: fetchCtrl.signal,
+        });
+      } finally {
+        clearTimeout(fetchTimer);
+      }
       const data = await r.json() as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
       if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
@@ -292,7 +300,10 @@ export default function Consultas() {
         else toast.error(data.error ?? "Sem dados para esta consulta");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Falha na requisição";
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      const msg = isAbort
+        ? "Serviços OSINT temporariamente indisponíveis. Tente novamente em instantes."
+        : err instanceof Error ? err.message : "Falha na requisição";
       setResult({ success: false, error: msg, data: { fields: [], sections: [], raw: "" } });
       toast.error(msg);
     } finally {

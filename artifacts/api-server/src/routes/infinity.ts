@@ -35,9 +35,29 @@ function buildOutboundDispatcher(): ProxyAgent | undefined {
   const proxyUrl = `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}`;
   return new ProxyAgent({ uri: proxyUrl, connectTimeout: 8_000 });
 }
+// ── Circuit breaker — prevents hammering dead providers ──────────────────────
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailure = 0;
+  private readonly threshold = 3;
+  private readonly resetMs = 90_000; // 90s cooldown after 3 consecutive failures
+
+  isOpen(): boolean {
+    if (this.failures < this.threshold) return false;
+    if (Date.now() - this.lastFailure > this.resetMs) { this.failures = 0; return false; }
+    return true;
+  }
+  recordFailure() { this.failures++; this.lastFailure = Date.now(); }
+  recordSuccess() { this.failures = 0; }
+}
+const geassCircuit  = new CircuitBreaker();
+const skylersCircuit = new CircuitBreaker();
+
 // ── httpGet: uses Node.js native http/https — works where undici/fetch fail ─
+// Timeout: 8s (short) — fail fast so users don't wait forever
 function httpGet(url: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new Error("Serviço indisponível (cancelado)")); return; }
     const parsed = new URL(url);
     const mod = parsed.protocol === "https:" ? https : http;
     const req = mod.request({
@@ -45,18 +65,23 @@ function httpGet(url: string, signal: AbortSignal): Promise<{ status: number; bo
       port: parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: "GET",
-      timeout: 25_000,
+      timeout: 8_000,
       headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*", "Connection": "close" },
     }, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
-      res.on("error", reject);
+      res.on("error", (e) => reject(new Error("Erro de rede: " + e.message)));
     });
-    req.on("timeout", () => { req.destroy(); reject(new Error("request timeout")); });
-    req.on("error", reject);
-    if (signal.aborted) { req.destroy(); reject(new Error("aborted")); return; }
-    signal.addEventListener("abort", () => { req.destroy(); reject(new Error("aborted")); }, { once: true });
+    req.on("timeout", () => { req.destroy(); reject(new Error("Serviço indisponível (sem resposta)")); });
+    req.on("error", (e: NodeJS.ErrnoException) => {
+      const code = e.code ?? "";
+      if (code === "ECONNREFUSED") reject(new Error("Serviço indisponível (conexão recusada)"));
+      else if (code === "ENOTFOUND" || code === "EAI_AGAIN") reject(new Error("Serviço indisponível (DNS)"));
+      else reject(new Error("Serviço indisponível (" + (e.message ?? code) + ")"));
+    });
+    const onAbort = () => { req.destroy(); reject(new Error("Serviço indisponível (cancelado)")); };
+    signal.addEventListener("abort", onAbort, { once: true });
     req.end();
   });
 }
@@ -602,16 +627,21 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
   http?: number;
   raw?: unknown;
 }> {
+  if (geassCircuit.isOpen()) {
+    return { ok: false, error: "Geass API temporariamente indisponível" };
+  }
   const url = `${PROVIDER_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(PROVIDER_KEY)}`;
   try {
     const { status, body: text } = await httpGet(url, signal);
     if (status < 200 || status >= 300) {
+      geassCircuit.recordFailure();
       return { ok: false, http: status, error: `Provedor HTTP ${status}`, raw: text.slice(0, 1000) };
     }
     let json: { status?: string; resposta?: string; criador?: string };
     try {
       json = JSON.parse(text);
     } catch {
+      geassCircuit.recordFailure();
       return { ok: false, error: "Provedor retornou texto inválido", raw: text.slice(0, 500) };
     }
     if (!json.resposta || typeof json.resposta !== "string") {
@@ -621,9 +651,11 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
     if (parsed.fields.length === 0 && parsed.sections.length === 0 && parsed.raw.trim().length === 0) {
       return { ok: false, error: "Sem dados retornados", parsed };
     }
+    geassCircuit.recordSuccess();
     return { ok: true, parsed };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "erro de rede";
+    geassCircuit.recordFailure();
+    const msg = e instanceof Error ? e.message : "Serviço indisponível";
     return { ok: false, error: msg };
   }
 }
@@ -1198,6 +1230,9 @@ async function callSkylers(
   signal: AbortSignal,
   endpoint?: "likes" | "telegram",
 ): Promise<{ ok: boolean; parsed?: Parsed; error?: string; raw?: unknown }> {
+  if (skylersCircuit.isOpen()) {
+    return { ok: false, error: "Skylers API temporariamente indisponível" };
+  }
   try {
     let url: string;
     if (endpoint === "likes") {
@@ -1220,6 +1255,7 @@ async function callSkylers(
         : status >= 500
         ? "Skylers API temporariamente indisponível"
         : `Skylers HTTP ${status}`;
+      skylersCircuit.recordFailure();
       return { ok: false, error: friendly, raw: text.slice(0, 500) };
     }
 
@@ -1240,9 +1276,11 @@ async function callSkylers(
     if (parsed.fields.length === 0 && parsed.sections.length === 0) {
       return { ok: false, error: "Sem dados retornados para esta consulta", parsed };
     }
+    skylersCircuit.recordSuccess();
     return { ok: true, parsed };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "erro de rede";
+    skylersCircuit.recordFailure();
+    const msg = e instanceof Error ? e.message : "Serviço indisponível";
     return { ok: false, error: msg };
   }
 }
