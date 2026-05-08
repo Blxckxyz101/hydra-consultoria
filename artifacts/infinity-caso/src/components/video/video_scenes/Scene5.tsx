@@ -29,6 +29,7 @@ export function Scene5() {
       setTimeout(() => setPhase(2), 1200),
       setTimeout(() => setPhase(3), 1800),
       setTimeout(() => setPhase(4), 2800),
+      setTimeout(() => setPhase(5), 3600),
     ];
     return () => timers.forEach(clearTimeout);
   }, []);
@@ -146,6 +147,38 @@ export function Scene5() {
           OSINT · INTELIGÊNCIA · BRASIL
         </span>
         <div style={{ height: '1px', width: '60px', backgroundColor: 'rgba(100,116,139,0.4)' }} />
+      </motion.div>
+
+      {/* CTA — acesse agora */}
+      <motion.div
+        className="mt-7 flex flex-col items-center gap-1"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: phase >= 5 ? 1 : 0, y: phase >= 5 ? 0 : 16 }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <span style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 'clamp(0.6rem, 1.2vw, 0.8rem)',
+          color: '#94a3b8',
+          letterSpacing: '0.22em',
+          textTransform: 'uppercase',
+        }}>
+          acesse agora
+        </span>
+        <motion.span
+          style={{
+            fontFamily: 'var(--font-body)',
+            fontSize: 'clamp(1rem, 2.8vw, 1.8rem)',
+            fontWeight: 700,
+            color: '#06b6d4',
+            letterSpacing: '0.04em',
+            textShadow: '0 0 24px rgba(6,182,212,0.55)',
+          }}
+          animate={{ opacity: [0.85, 1, 0.85] }}
+          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+        >
+          infinitysearch.pro
+        </motion.span>
       </motion.div>
 
       {/* Bottom bar */}

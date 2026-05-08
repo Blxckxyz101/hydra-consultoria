@@ -10,6 +10,7 @@ export function Scene5() {
       setTimeout(() => setPhase(2), 800),
       setTimeout(() => setPhase(3), 1500),
       setTimeout(() => setPhase(4), 2200),
+      setTimeout(() => setPhase(5), 3200),
     ];
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
@@ -133,6 +134,39 @@ export function Scene5() {
         >
           Acesso restrito&nbsp;·&nbsp;Resultados reais
         </motion.p>
+
+        {/* CTA */}
+        <motion.div
+          className="flex flex-col items-center"
+          style={{ marginTop: '4vh', gap: '0.4em' }}
+          initial={{ opacity: 0, y: 18 }}
+          animate={phase >= 5 ? { opacity: 1, y: 0 } : { opacity: 0, y: 18 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 'clamp(0.55rem, 1vw, 0.75rem)',
+            color: '#64748b',
+            letterSpacing: '0.25em',
+            textTransform: 'uppercase',
+          }}>
+            acesse agora
+          </span>
+          <motion.span
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 'clamp(1.1rem, 3vw, 2rem)',
+              fontWeight: 700,
+              color: '#06b6d4',
+              letterSpacing: '0.05em',
+              textShadow: '0 0 28px rgba(6,182,212,0.6), 0 0 60px rgba(6,182,212,0.2)',
+            }}
+            animate={{ opacity: [0.8, 1, 0.8] }}
+            transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+          >
+            infinitysearch.pro
+          </motion.span>
+        </motion.div>
 
         {/* Pulsing ring around ∞ */}
         <motion.div
