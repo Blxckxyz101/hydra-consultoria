@@ -54,8 +54,8 @@ const geassCircuit  = new CircuitBreaker();
 const skylersCircuit = new CircuitBreaker();
 
 // ── httpGet: uses Node.js native http/https — works where undici/fetch fail ─
-// Timeout: 8s (short) — fail fast so users don't wait forever
-function httpGet(url: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
+// timeoutMs: 8s default for Geass, pass 15_000 for Skylers (can be slow ~7s)
+function httpGet(url: string, signal: AbortSignal, timeoutMs = 8_000): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(new Error("Serviço indisponível (cancelado)")); return; }
     const parsed = new URL(url);
@@ -65,7 +65,7 @@ function httpGet(url: string, signal: AbortSignal): Promise<{ status: number; bo
       port: parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: "GET",
-      timeout: 8_000,
+      timeout: timeoutMs,
       headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*", "Connection": "close" },
     }, (res) => {
       const chunks: Buffer[] = [];
@@ -1243,7 +1243,7 @@ async function callSkylers(
       url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
     }
 
-    const { status, body: text } = await httpGet(url, signal);
+    const { status, body: text } = await httpGet(url, signal, 15_000);
 
     if (status < 200 || status >= 300) {
       const friendly = status === 400
