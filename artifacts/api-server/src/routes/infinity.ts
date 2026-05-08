@@ -1863,13 +1863,56 @@ router.get("/consultas", requireAuth, async (req, res) => {
 
 // ─── bases status ──────────────────────────────────────────────────────────
 router.get("/bases/status", requireAuth, async (_req, res) => {
+  // Use real probe URLs that reflect actual API health (not just root paths)
   const bases = [
-    { id: "geass",    name: "Geass API",    description: "Provedor OSINT principal · 24 tipos",                url: PROVIDER_BASE.replace("/api/consulta", "/") },
-    { id: "skylers",  name: "Skylers API",  description: "Provedor OSINT avançado · 80+ módulos + Foto CNH",   url: SKYLERS_BASE },
-    { id: "viacep",    name: "ViaCEP",      description: "Consulta de endereços por CEP · fallback CEP",        url: "https://viacep.com.br/ws/01001000/json/" },
-    { id: "receitaws", name: "ReceitaWS",   description: "CNPJ via Receita Federal · fallback CNPJ primário",  url: "https://www.receitaws.com.br/v1/cnpj/11222333000181" },
-    { id: "brasilapi", name: "BrasilAPI",   description: "CNPJ público com QSA · fallback CNPJ secundário",    url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104" },
-    { id: "cnpjws",    name: "CNPJ.ws",     description: "Consulta pública de CNPJ · fallback CNPJ terciário", url: "https://publica.cnpj.ws/v1/" },
+    {
+      id: "geass",
+      name: "Geass API",
+      description: "Provedor OSINT principal · 24 tipos (CPF, Nome, Placa…)",
+      url: `${PROVIDER_BASE}/cpf?cpf=00000000000`,
+      circuitOpen: geassCircuit.isOpen(),
+      role: "primary",
+    },
+    {
+      id: "skylers",
+      name: "Skylers API",
+      description: "Provedor OSINT avançado · 80+ módulos · Foto CNH",
+      url: `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=iseek-cpfbasico&valor=00000000000`,
+      circuitOpen: skylersCircuit.isOpen(),
+      role: "fallback",
+    },
+    {
+      id: "viacep",
+      name: "ViaCEP",
+      description: "Consulta de endereços por CEP · fallback automático CEP",
+      url: "https://viacep.com.br/ws/01001000/json/",
+      circuitOpen: false,
+      role: "fallback",
+    },
+    {
+      id: "receitaws",
+      name: "ReceitaWS",
+      description: "CNPJ via Receita Federal · fallback CNPJ primário",
+      url: "https://www.receitaws.com.br/v1/cnpj/11222333000181",
+      circuitOpen: false,
+      role: "fallback",
+    },
+    {
+      id: "brasilapi",
+      name: "BrasilAPI",
+      description: "CNPJ público com QSA · fallback CNPJ secundário",
+      url: "https://brasilapi.com.br/api/cnpj/v1/00360305000104",
+      circuitOpen: false,
+      role: "fallback",
+    },
+    {
+      id: "cnpjws",
+      name: "CNPJ.ws",
+      description: "Consulta pública de CNPJ · fallback CNPJ terciário",
+      url: "https://publica.cnpj.ws/cnpj/11222333000181",
+      circuitOpen: false,
+      role: "fallback",
+    },
   ];
 
   const checks = await Promise.allSettled(
@@ -1886,17 +1929,19 @@ router.get("/bases/status", requireAuth, async (_req, res) => {
         });
         clearTimeout(timer);
         const ms = Date.now() - start;
+        // Consider online only if the server actually responded (not ECONNREFUSED/timeout)
+        // 4xx = server up but query failed (still online), 5xx = server error (offline)
         const online = r.status < 500;
-        return { id: base.id, name: base.name, description: base.description, online, ms, http: r.status };
+        return { id: base.id, name: base.name, description: base.description, online, ms, http: r.status, circuitOpen: base.circuitOpen, role: base.role };
       } catch {
-        return { id: base.id, name: base.name, description: base.description, online: false, ms: Date.now() - start, http: 0 };
+        return { id: base.id, name: base.name, description: base.description, online: false, ms: Date.now() - start, http: 0, circuitOpen: base.circuitOpen, role: base.role };
       }
     })
   );
 
   const results = checks.map((c, i) => {
     if (c.status === "fulfilled") return c.value;
-    return { id: bases[i].id, name: bases[i].name, description: bases[i].description, online: false, ms: 0, http: 0 };
+    return { id: bases[i].id, name: bases[i].name, description: bases[i].description, online: false, ms: 0, http: 0, circuitOpen: bases[i].circuitOpen, role: bases[i].role };
   });
 
   res.json(results);
