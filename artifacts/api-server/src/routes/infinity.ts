@@ -12,6 +12,8 @@ import {
 import { loginLimiter, consultaLimiter, panelAuthLimiter } from "../middlewares/rateLimit.js";
 import crypto from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import http from "node:http";
+import https from "node:https";
 
 const router: IRouter = Router();
 
@@ -21,8 +23,8 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
 
-// ── Proxy helper for Skylers (server unreachable without residential proxy) ──
-function buildSkylersDispatcher(): ProxyAgent | undefined {
+// ── Proxy helper — both Geass and Skylers require it from Replit infra ───────
+function buildOutboundDispatcher(): ProxyAgent | undefined {
   const list = process.env.WEBSHARE_PROXY_LIST?.trim();
   const user = process.env.WEBSHARE_PROXY_USER?.trim();
   const pass = process.env.WEBSHARE_PROXY_PASS?.trim();
@@ -32,6 +34,31 @@ function buildSkylersDispatcher(): ProxyAgent | undefined {
   const ip = ips[Math.floor(Math.random() * ips.length)];
   const proxyUrl = `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${ip}`;
   return new ProxyAgent({ uri: proxyUrl, connectTimeout: 8_000 });
+}
+// ── httpGet: uses Node.js native http/https — works where undici/fetch fail ─
+function httpGet(url: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const mod = parsed.protocol === "https:" ? https : http;
+    const req = mod.request({
+      hostname: parsed.hostname,
+      port: parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: "GET",
+      timeout: 25_000,
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*", "Connection": "close" },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      res.on("error", reject);
+    });
+    req.on("timeout", () => { req.destroy(); reject(new Error("request timeout")); });
+    req.on("error", reject);
+    if (signal.aborted) { req.destroy(); reject(new Error("aborted")); return; }
+    signal.addEventListener("abort", () => { req.destroy(); reject(new Error("aborted")); }, { once: true });
+    req.end();
+  });
 }
 
 // ─── Temp foto store (base64 → URL) ─────────────────────────────────────────
@@ -577,10 +604,9 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
 }> {
   const url = `${PROVIDER_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(PROVIDER_KEY)}`;
   try {
-    const r = await fetch(url, { signal });
-    const text = await r.text();
-    if (!r.ok) {
-      return { ok: false, http: r.status, error: `Provedor HTTP ${r.status}`, raw: text.slice(0, 1000) };
+    const { status, body: text } = await httpGet(url, signal);
+    if (status < 200 || status >= 300) {
+      return { ok: false, http: status, error: `Provedor HTTP ${status}`, raw: text.slice(0, 1000) };
     }
     let json: { status?: string; resposta?: string; criador?: string };
     try {
@@ -1182,19 +1208,18 @@ async function callSkylers(
       url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
     }
 
-    const r = await fetch(url, { signal });
-    const text = await r.text();
+    const { status, body: text } = await httpGet(url, signal);
 
-    if (!r.ok) {
-      const friendly = r.status === 400
+    if (status < 200 || status >= 300) {
+      const friendly = status === 400
         ? "Consulta não disponível para este dado na Skylers API"
-        : r.status === 401 || r.status === 403
+        : status === 401 || status === 403
         ? "Token Skylers inválido ou expirado"
-        : r.status === 429
+        : status === 429
         ? "Limite de requisições Skylers atingido, tente novamente em instantes"
-        : r.status >= 500
+        : status >= 500
         ? "Skylers API temporariamente indisponível"
-        : `Skylers HTTP ${r.status}`;
+        : `Skylers HTTP ${status}`;
       return { ok: false, error: friendly, raw: text.slice(0, 500) };
     }
 
@@ -1933,6 +1958,18 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const timer = setTimeout(() => ctrl.abort(), 30_000);
 
   let provider = await callProvider(tipo, dados, ctrl.signal);
+
+  // ─── Skylers fallback: when Geass fails and the tipo has a Skylers mapping ──
+  if (!provider.ok && !ctrl.signal.aborted) {
+    const skylersModulo = TIPO_TO_SKYLERS[tipo];
+    if (skylersModulo) {
+      const sk = await callSkylers(skylersModulo, dados, ctrl.signal);
+      if (sk.ok && sk.parsed) {
+        provider = { ok: true, parsed: sk.parsed };
+      }
+      // If Skylers also fails, keep the original Geass error message
+    }
+  }
 
   // ─── CEP fallback: ViaCEP ─────────────────────────────────────────────────
   if (!provider.ok && tipo === "cep" && !ctrl.signal.aborted) {
