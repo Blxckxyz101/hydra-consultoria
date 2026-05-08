@@ -220,6 +220,10 @@ export default function Consultas() {
   const [skylersLimit, setSkylersLimit] = useState<number>(25);
   const [isAdmin, setIsAdmin] = useState(false);
 
+  type ProviderStatus = { online: boolean; ms: number; circuitOpen: boolean } | null;
+  const [geassStatus, setGeassStatus]     = useState<ProviderStatus>(null);
+  const [skylersStatus, setSkylersStatus] = useState<ProviderStatus>(null);
+
   useEffect(() => {
     const token = localStorage.getItem("infinity_token");
     fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
@@ -230,6 +234,22 @@ export default function Consultas() {
         setIsAdmin(d.role === "admin");
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const fetchPing = () => {
+      const token = localStorage.getItem("infinity_token");
+      fetch("/api/infinity/providers/ping", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then((d: { geass: ProviderStatus; skylers: ProviderStatus }) => {
+          setGeassStatus(d.geass);
+          setSkylersStatus(d.skylers);
+        })
+        .catch(() => {});
+    };
+    fetchPing();
+    const id = setInterval(fetchPing, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   const historyKey = ["infinity-history", 20] as const;
@@ -417,13 +437,31 @@ export default function Consultas() {
               </span>
             </motion.div>
           )}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
-            <div className="relative">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+          {/* Header provider status — reflects real Skylers health */}
+          {skylersStatus === null ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 animate-pulse" />
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-semibold">Verificando</span>
             </div>
-            <span className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold">Online</span>
-          </div>
+          ) : skylersStatus.online && !skylersStatus.circuitOpen ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-400/10 border border-emerald-400/30">
+              <div className="relative">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <div className="absolute inset-0 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              </div>
+              <span className="text-[10px] uppercase tracking-widest text-emerald-300 font-semibold">Online</span>
+            </div>
+          ) : skylersStatus.circuitOpen ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-400/10 border border-amber-400/30">
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="text-[10px] uppercase tracking-widest text-amber-300 font-semibold">Degradado</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-400/10 border border-rose-400/30">
+              <div className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              <span className="text-[10px] uppercase tracking-widest text-rose-300 font-semibold">Offline</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -656,10 +694,22 @@ export default function Consultas() {
                     <div className="p-2 rounded-xl bg-primary/15 border border-primary/25 group-hover:bg-primary/20 transition-colors">
                       <Database className="w-4 h-4 text-primary" />
                     </div>
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                      <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                      <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
-                    </div>
+                    {geassStatus === null ? (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10">
+                        <div className="w-1.5 h-1.5 rounded-full bg-white/30 animate-pulse" />
+                        <span className="text-[8px] uppercase tracking-wider text-muted-foreground/40 font-semibold">—</span>
+                      </div>
+                    ) : geassStatus.online ? (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                        <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20">
+                        <Activity className="w-2.5 h-2.5 text-rose-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-rose-400 font-semibold">Offline</span>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Infinity Search</p>
@@ -679,10 +729,27 @@ export default function Consultas() {
                     <div className="p-2 rounded-xl bg-sky-500/10 border border-sky-500/20 group-hover:bg-sky-500/15 transition-colors">
                       <Network className="w-4 h-4 text-sky-400" />
                     </div>
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                      <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                      <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
-                    </div>
+                    {skylersStatus === null ? (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10">
+                        <div className="w-1.5 h-1.5 rounded-full bg-white/30 animate-pulse" />
+                        <span className="text-[8px] uppercase tracking-wider text-muted-foreground/40 font-semibold">—</span>
+                      </div>
+                    ) : skylersStatus.online && !skylersStatus.circuitOpen ? (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                        <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                      </div>
+                    ) : skylersStatus.circuitOpen ? (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+                        <Activity className="w-2.5 h-2.5 text-amber-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-amber-400 font-semibold">Protegido</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20">
+                        <Activity className="w-2.5 h-2.5 text-rose-400" />
+                        <span className="text-[8px] uppercase tracking-wider text-rose-400 font-semibold">Offline</span>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-sky-300 group-hover:text-white transition-colors">Skylers API</p>
@@ -703,10 +770,27 @@ export default function Consultas() {
                       <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/15 transition-colors">
                         <CreditCard className="w-4 h-4 text-blue-400" />
                       </div>
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                        <Activity className="w-2.5 h-2.5 text-emerald-400" />
-                        <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
-                      </div>
+                      {skylersStatus === null ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 border border-white/10">
+                          <div className="w-1.5 h-1.5 rounded-full bg-white/30 animate-pulse" />
+                          <span className="text-[8px] uppercase tracking-wider text-muted-foreground/40 font-semibold">—</span>
+                        </div>
+                      ) : skylersStatus.online && !skylersStatus.circuitOpen ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                          <Activity className="w-2.5 h-2.5 text-emerald-400" />
+                          <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-semibold">Online</span>
+                        </div>
+                      ) : skylersStatus.circuitOpen ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
+                          <Activity className="w-2.5 h-2.5 text-amber-400" />
+                          <span className="text-[8px] uppercase tracking-wider text-amber-400 font-semibold">Protegido</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20">
+                          <Activity className="w-2.5 h-2.5 text-rose-400" />
+                          <span className="text-[8px] uppercase tracking-wider text-rose-400 font-semibold">Offline</span>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-blue-300 group-hover:text-white transition-colors">CrediLink</p>

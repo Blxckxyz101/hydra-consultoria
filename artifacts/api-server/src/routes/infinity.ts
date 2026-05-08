@@ -1861,6 +1861,32 @@ router.get("/consultas", requireAuth, async (req, res) => {
   );
 });
 
+// ─── providers/ping — lightweight status for any auth'd user ───────────────
+router.get("/providers/ping", requireAuth, async (_req, res) => {
+  const probe = async (url: string, timeoutMs = 3000): Promise<{ online: boolean; ms: number }> => {
+    const start = Date.now();
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const r = await fetch(url, { method: "GET", signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0" }, redirect: "follow" });
+      clearTimeout(timer);
+      return { online: r.status < 500, ms: Date.now() - start };
+    } catch {
+      return { online: false, ms: Date.now() - start };
+    }
+  };
+
+  const [geassProbe, skylersProbe] = await Promise.all([
+    probe(`${PROVIDER_BASE}/cpf?cpf=00000000000`, 3000),
+    probe(SKYLERS_BASE, 3000),
+  ]);
+
+  res.json({
+    geass:   { online: geassProbe.online,   ms: geassProbe.ms,   circuitOpen: geassCircuit.isOpen() },
+    skylers: { online: skylersProbe.online, ms: skylersProbe.ms, circuitOpen: skylersCircuit.isOpen() },
+  });
+});
+
 // ─── bases status ──────────────────────────────────────────────────────────
 router.get("/bases/status", requireAdmin, async (_req, res) => {
   // Use real probe URLs that reflect actual API health (not just root paths)
