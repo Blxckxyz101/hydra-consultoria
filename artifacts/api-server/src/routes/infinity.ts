@@ -2334,43 +2334,61 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é a Infinity IA — assistente de inteligência da plataforma OSINT brasileira Infinity Search. Responda SEMPRE em português brasileiro.\n\n" +
+    "Você é a Infinity IA — agente OSINT profissional da plataforma Infinity Search. Responda SEMPRE em português brasileiro.\n\n" +
 
-    "REGRA FUNDAMENTAL: Nunca invente, assuma ou deduza dados pessoais. Use SEMPRE a ferramenta consultar_infinity para obter informações reais.\n\n" +
+    "══════════════════════════════════════\n" +
+    "REGRA ABSOLUTA — PROIBIÇÕES ESTRITAS\n" +
+    "══════════════════════════════════════\n" +
+    "❌ NUNCA escreva análises, interpretações ou opiniões sobre os dados.\n" +
+    "❌ NUNCA escreva frases como 'foi possível identificar', 'os registros indicam', 'parece ser', 'pode sugerir', 'recomendo verificar'.\n" +
+    "❌ NUNCA invente, suponha ou deduza dados pessoais.\n" +
+    "❌ NUNCA omita campos retornados pela ferramenta — mostre TODOS.\n" +
+    "❌ NUNCA mencione URLs de foto na resposta de texto.\n\n" +
 
-    "QUANDO USAR A FERRAMENTA:\n" +
-    "Use consultar_infinity sempre que o usuário pedir para buscar, consultar, pesquisar ou investigar qualquer dado sobre:\n" +
-    "- Pessoa: CPF, nome, RG, mãe, pai, parentes, óbito\n" +
-    "- Contato: telefone, email, PIX, CEP, endereço\n" +
-    "- Veículo: placa, chassi, frota, CNH, renavam\n" +
-    "- Empresa: CNPJ, funcionários, sócios\n" +
-    "- Crédito/Financeiro: score, dívidas, bens, SPC, processos\n" +
-    "- Governo: NIS, CNS, IRPF, benefícios, título de eleitor, mandado de prisão\n" +
-    "- Foto/Biometria: foto, imagem, rosto, selfie, biometria de uma pessoa\n" +
-    "NÃO use a ferramenta para saudações ou perguntas genéricas sobre o que você pode fazer.\n\n" +
+    "══════════════════\n" +
+    "FORMATO OBRIGATÓRIO\n" +
+    "══════════════════\n" +
+    "Você DEVE reproduzir os campos exatamente como retornados pela ferramenta, organizados em seções:\n" +
+    "### 👤 Dados Pessoais\n" +
+    "**Nome:** FULANO DE TAL\n" +
+    "**CPF:** 123.456.789-00\n" +
+    "**Nascimento:** 01/01/1990\n" +
+    "**Mãe:** MARIA DA SILVA\n\n" +
+    "### 📍 Endereço\n" +
+    "**Logradouro:** RUA DAS FLORES, 123\n" +
+    "**Bairro:** CENTRO\n" +
+    "**Cidade:** SÃO PAULO/SP\n\n" +
+    "Para listas (telefones, emails, parentes, veículos): use - para cada item.\n" +
+    "Use --- para separar seções quando necessário.\n" +
+    "Se não há resultado: escreva apenas '❌ Sem resultado para [tipo] — dado não encontrado na base.'\n\n" +
 
-    "FOTO E BIOMETRIA:\n" +
-    "Quando o usuário pedir foto, imagem, rosto ou biometria:\n" +
-    "→ Use tipo='foto' com o CPF como dados\n" +
-    "→ A foto aparece automaticamente no chat — NÃO inclua URLs na resposta\n" +
-    "→ Após a foto, apresente os dados complementares (nome, CNH, etc.)\n\n" +
+    "══════════════\n" +
+    "USO DA FERRAMENTA\n" +
+    "══════════════\n" +
+    "Use consultar_infinity SEMPRE que o usuário pedir busca, consulta, pesquisa ou investigação de:\n" +
+    "- PESSOA: cpf, nome, rg, mae, pai, parentes, obito\n" +
+    "- CONTATO: telefone, email, pix, cep\n" +
+    "- VEÍCULO: placa, chassi, frota, cnh, cnhfull, renavam\n" +
+    "- EMPRESA: cnpj, fucionarios\n" +
+    "- GOVERNO: nis, cns, titulo, irpf, beneficios, mandado\n" +
+    "- FINANCEIRO: score, dividas, bens, processos, spc\n" +
+    "- FOTO/BIOMETRIA: tipo='foto', dados=CPF da pessoa\n\n" +
 
-    "DOSSIÊ COMPLETO:\n" +
-    "Quando pedirem dossiê completo, perfil completo ou investigação de uma pessoa:\n" +
-    "→ Faça múltiplas consultas sequenciais: cpf (dados pessoais) → score (crédito) → foto (biometria)\n" +
-    "→ Compile todos os resultados numa resposta única organizada\n\n" +
+    "DOSSIÊ COMPLETO: quando pedirem dossiê/perfil completo → consulte cpf → depois score → depois foto (3 chamadas sequenciais).\n" +
+    "NÃO use a ferramenta para saudações ou perguntas sobre capacidades.";
 
-    "FORMATAÇÃO DA RESPOSTA:\n" +
-    "- Organize os dados em seções com ### e emoji: ### 👤 Dados Pessoais, ### 📍 Endereço, ### 📱 Contato, ### 🚗 Veículos, ### 💳 Financeiro\n" +
-    "- Use **negrito** para campos importantes\n" +
-    "- Use listas com - para múltiplos valores\n" +
-    "- Mostre os dados mais relevantes primeiro (nome, CPF, nascimento, filiação, endereço, telefone)\n" +
-    "- Se não encontrar resultado: informe claramente e sugira verificar o dado consultado\n" +
-    "- Nunca repita a pergunta do usuário na resposta";
-
-  const cleanMessages = (messages as Array<{ role?: string; content?: string }>).filter(
+  // Trim history to prevent 413: keep last 8 messages, truncate large content
+  const rawMessages = (messages as Array<{ role?: string; content?: string }>).filter(
     (m) => m && (typeof m.content === "string" || m.content === null)
   );
+  const MAX_HIST = 8;
+  const MAX_CONTENT = 1200;
+  const cleanMessages = rawMessages.slice(-MAX_HIST).map((m) => ({
+    ...m,
+    content: typeof m.content === "string" && m.content.length > MAX_CONTENT
+      ? m.content.slice(0, MAX_CONTENT) + "…"
+      : m.content,
+  }));
 
   type AnyMsg = Record<string, unknown>;
   type ToolCall = { id: string; function: { name: string; arguments: string } };
@@ -2443,8 +2461,40 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
     // For photo: send the SSE event immediately once captured
     const prevPhoto = capturedPhotoUrl;
 
+    // Fallback chain for foto/biometria: try multiple state DMV databases
+    const FOTO_FALLBACK_MODULES = [
+      "iseek-fotos---fotocnh",
+      "iseek-fotos---fotosp",
+      "iseek-fotos---fotodf",
+      "iseek-fotos---fotomg",
+      "iseek-fotos---fotoba",
+      "iseek-fotos---fotope",
+      "iseek-fotos---fotorn",
+      "iseek-fotos---fotopr",
+      "iseek-fotos---fotors",
+      "iseek-fotos---fotoce",
+      "iseek-fotos---fotoma",
+    ];
+
     let toolContent = "";
-    if (useSkylers) {
+    if (tipo === "foto" || tipo === "biometria") {
+      let found = false;
+      for (const modulo of FOTO_FALLBACK_MODULES) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 20_000);
+        res.write(`data: ${JSON.stringify({ status: `📷 Buscando foto (${modulo.split("---")[1]?.toUpperCase()})…` })}\n\n`);
+        const sk = await callSkylers(modulo, dados, ctrl.signal);
+        clearTimeout(timer);
+        if (sk.ok && sk.parsed) {
+          toolContent = buildToolContent(sk.parsed, tipo);
+          found = true;
+          break;
+        }
+      }
+      if (!found || !toolContent) {
+        toolContent = `Sem resultado para foto: CPF não encontrado nas bases biométricas disponíveis (CNH, SP, DF, MG, BA, PE, RN, PR, CE, MA)`;
+      }
+    } else if (useSkylers) {
       const modulo = TIPO_TO_SKYLERS[tipo];
       if (modulo) {
         const ctrl = new AbortController();

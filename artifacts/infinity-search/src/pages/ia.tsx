@@ -297,10 +297,17 @@ export default function IA() {
 
     try {
       const token = localStorage.getItem("infinity_token");
-      const historyMessages = [...messages, userEntry].map(({ role, content }) => ({
-        role,
-        content: content.replace(/\n\/api\/infinity\/foto\/[a-f0-9]+\n/g, "[foto exibida acima]"),
-      }));
+      const MAX_HIST_MSGS = 8;
+      const MAX_HIST_CONTENT = 1200;
+      const historyMessages = [...messages, userEntry]
+        .slice(-MAX_HIST_MSGS)
+        .map(({ role, content }) => {
+          const cleaned = content.replace(/\n\/api\/infinity\/foto\/[a-f0-9]+\n/g, "[foto exibida acima]");
+          return {
+            role,
+            content: cleaned.length > MAX_HIST_CONTENT ? cleaned.slice(0, MAX_HIST_CONTENT) + "…" : cleaned,
+          };
+        });
       const res = await fetch("/api/infinity/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
