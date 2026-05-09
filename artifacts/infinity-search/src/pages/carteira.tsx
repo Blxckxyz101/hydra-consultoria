@@ -163,7 +163,14 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
               <div className="flex flex-col items-center gap-4 mb-5">
                 {pixData.qrcode_base64 && (
                   <div className="p-3 rounded-2xl bg-white shadow-xl">
-                    <img src={`data:image/png;base64,${pixData.qrcode_base64}`} alt="QR PIX" className="w-44 h-44" />
+                    <img
+                      src={
+                        pixData.qrcode_base64.startsWith("http") ? pixData.qrcode_base64 :
+                        pixData.qrcode_base64.startsWith("data:") ? pixData.qrcode_base64 :
+                        `data:image/png;base64,${pixData.qrcode_base64}`
+                      }
+                      alt="QR PIX" className="w-44 h-44"
+                    />
                   </div>
                 )}
                 <div className="text-2xl font-bold" style={{ color: "var(--color-primary)" }}>R$ {pixData.amountBrl}</div>

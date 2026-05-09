@@ -2461,8 +2461,9 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
     // For photo: send the SSE event immediately once captured
     const prevPhoto = capturedPhotoUrl;
 
-    // Fallback chain for foto/biometria: try multiple state DMV databases
+    // Fallback chain for foto/biometria: national first, then CNH, then state DMV databases
     const FOTO_FALLBACK_MODULES = [
+      "iseek-fotos---fotonc",
       "iseek-fotos---fotocnh",
       "iseek-fotos---fotosp",
       "iseek-fotos---fotodf",
