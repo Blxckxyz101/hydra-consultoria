@@ -1,21 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, MessageCircle } from "lucide-react";
+import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock } from "lucide-react";
 
 interface Plan {
   id: string;
   label: string;
   days: number;
   amountBrl: string;
+  amountCents: number;
   highlight?: boolean;
 }
-
-const PLANS: Plan[] = [
-  { id: "1d",  label: "1 Dia",    days: 1,  amountBrl: "15,00" },
-  { id: "7d",  label: "7 Dias",   days: 7,  amountBrl: "40,00" },
-  { id: "14d", label: "14 Dias",  days: 14, amountBrl: "70,00", highlight: true },
-  { id: "30d", label: "30 Dias",  days: 30, amountBrl: "100,00" },
-];
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
   "1d":  Clock,
@@ -24,17 +18,31 @@ const PLAN_ICONS: Record<string, React.ElementType> = {
   "30d": Shield,
 };
 
-const CONTACTS = [
-  { handle: "@Blxckxyz",  url: "https://t.me/Blxckxyz" },
-  { handle: "@xxmathexx", url: "https://t.me/xxmathexx" },
-  { handle: "@piancooz",  url: "https://t.me/piancooz" },
-];
+const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+const apiFetch = (path: string, opts?: RequestInit) => {
+  const token = localStorage.getItem("infinity_token");
+  return fetch(`${BASE}/api/infinity${path}`, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts?.headers ?? {}),
+    },
+  });
+};
 
-const TG_ICON = (
-  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-    <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.08 14.07l-2.95-.924c-.642-.2-.657-.642.136-.953l11.57-4.461c.537-.194 1.006.131.726.516z" />
-  </svg>
-);
+type Step = "plans" | "register" | "payment" | "success";
+
+interface PaymentData {
+  paymentId: string;
+  txid: string;
+  pixCopiaECola: string;
+  qrcode_base64: string;
+  amountBrl: string;
+  taxa?: number;
+  plan: { id: string; label: string; days: number };
+  username?: string;
+}
 
 function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean; onSelect: () => void }) {
   const Icon = PLAN_ICONS[plan.id] ?? Zap;
@@ -57,10 +65,7 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
         </span>
       )}
       {selected && (
-        <span
-          className="absolute -top-2.5 right-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full"
-          style={{ background: "var(--color-primary)" }}
-        >
+        <span className="absolute -top-2.5 right-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full" style={{ background: "var(--color-primary)" }}>
           Selecionado
         </span>
       )}
@@ -78,32 +83,131 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
-        <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> 24 tipos de consulta OSINT
-        </div>
-        <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Assistente IA incluso
-        </div>
-        <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Dossiê e histórico completo
-        </div>
+        {["24 tipos de consulta OSINT", "Assistente IA incluso", "Dossiê e histórico completo"].map(f => (
+          <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" /> {f}
+          </div>
+        ))}
       </div>
     </motion.button>
   );
 }
 
-type Step = "plans" | "contact";
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={copy}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-muted-foreground hover:text-foreground transition-all"
+    >
+      {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copiado!</> : <><Copy className="w-3.5 h-3.5" /> Copiar</>}
+    </button>
+  );
+}
 
 export default function Planos() {
-  const [selectedPlan, setSelectedPlan] = useState<string>("14d");
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("14d");
   const [step, setStep] = useState<Step>("plans");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  const plan = PLANS.find(p => p.id === selectedPlan);
+  // Register form
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [formError, setFormError] = useState("");
 
-  const tgMessage = (handle: string) => {
-    const msg = encodeURIComponent(`Olá ${handle}! Quero contratar o plano ${plan?.label ?? ""} (R$ ${plan?.amountBrl ?? ""}) do Infinity Search.`);
-    return `https://t.me/${handle.replace("@", "")}?text=${msg}`;
+  // Payment state
+  const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid" | "failed">("pending");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem("infinity_token");
+    setIsLoggedIn(!!token);
+
+    apiFetch("/plans").then(r => r.json()).then((data: Plan[]) => {
+      if (Array.isArray(data)) {
+        const mapped = data.map(p => ({ ...p, amountBrl: Number(p.amountBrl ?? p.amountCents / 100).toFixed(2).replace(".", ",") }));
+        setPlans(mapped);
+        const def = mapped.find(p => p.highlight) ?? mapped[1];
+        if (def) setSelectedPlanId(def.id);
+      }
+    }).catch(() => {
+      setPlans([
+        { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  amountBrl: "15,00" },
+        { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  amountBrl: "40,00" },
+        { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  amountBrl: "70,00", highlight: true },
+        { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, amountBrl: "100,00" },
+      ]);
+    });
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const startPolling = useCallback((paymentId: string) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await apiFetch(`/payments/${paymentId}/status`);
+        const data = await r.json() as { status: string };
+        if (data.status === "paid") {
+          setPaymentStatus("paid");
+          setStep("success");
+          stopPolling();
+        } else if (data.status === "failed" || data.status === "expired") {
+          setPaymentStatus("failed");
+          stopPolling();
+        }
+      } catch {}
+    }, 3000);
+  }, [stopPolling]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const handleProceed = () => {
+    if (isLoggedIn) {
+      handleCreatePayment();
+    } else {
+      setStep("register");
+    }
   };
+
+  const handleCreatePayment = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      let r: Response;
+      if (isLoggedIn) {
+        r = await apiFetch("/payments/create", { method: "POST", body: JSON.stringify({ planId: selectedPlanId }) });
+      } else {
+        if (!username || !password) { setFormError("Preencha usuário e senha"); setLoading(false); return; }
+        r = await apiFetch("/payments/create-guest", {
+          method: "POST",
+          body: JSON.stringify({ planId: selectedPlanId, username: username.trim().toLowerCase(), password }),
+        });
+      }
+      const data = await r.json() as PaymentData & { error?: string };
+      if (!r.ok) { setError(data.error ?? "Erro ao gerar pagamento"); setLoading(false); return; }
+      setPaymentData(data);
+      setPaymentStatus("pending");
+      setStep("payment");
+      startPolling(data.paymentId);
+    } catch {
+      setError("Erro de conexão. Tente novamente.");
+    }
+    setLoading(false);
+  };
+
+  const plan = plans.find(p => p.id === selectedPlanId);
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -116,107 +220,193 @@ export default function Planos() {
           Planos
         </motion.h1>
         <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-          Acesso completo à plataforma OSINT
+          Acesso completo à plataforma OSINT · Ativação automática
         </p>
       </div>
 
       <AnimatePresence mode="wait">
+
+        {/* ── Step 1: Plan selection ── */}
         {step === "plans" && (
-          <motion.div
-            key="plans"
-            initial={{ opacity: 0, x: -16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 16 }}
-            className="space-y-4"
-          >
+          <motion.div key="plans" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} className="space-y-4">
             <div className="grid gap-3">
-              {PLANS.map(p => (
-                <PlanCard
-                  key={p.id}
-                  plan={p}
-                  selected={selectedPlan === p.id}
-                  onSelect={() => setSelectedPlan(p.id)}
-                />
+              {plans.map(p => (
+                <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
               ))}
             </div>
-
+            {error && <p className="text-xs text-red-400 text-center">{error}</p>}
             <button
-              onClick={() => setStep("contact")}
-              disabled={!selectedPlan}
+              onClick={handleProceed}
+              disabled={!selectedPlanId || loading}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold text-sm uppercase tracking-[0.25em] text-black transition-all disabled:opacity-50"
               style={{ background: "var(--color-primary)" }}
             >
-              <MessageCircle className="w-4 h-4" />
-              Contratar plano
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
+              {isLoggedIn ? "Pagar com PIX" : "Criar conta e pagar"}
             </button>
+            <p className="text-center text-[10px] text-muted-foreground">
+              ✅ Ativação automática após confirmação do pagamento
+            </p>
           </motion.div>
         )}
 
-        {step === "contact" && plan && (
-          <motion.div
-            key="contact"
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -16 }}
-            className="space-y-4"
-          >
+        {/* ── Step 2: Register (new users only) ── */}
+        {step === "register" && (
+          <motion.div key="register" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-4">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => setStep("plans")}
-                className="p-2 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
-              >
+              <button onClick={() => setStep("plans")} className="p-2 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors">
                 <ArrowLeft className="w-4 h-4" />
               </button>
               <div>
-                <div className="font-bold text-sm">Plano {plan.label} selecionado</div>
+                <div className="font-bold text-sm">Criar conta — Plano {plan?.label}</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">R$ {plan?.amountBrl} · {plan?.days} {plan?.days === 1 ? "dia" : "dias"} de acesso</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-4">
+              <p className="text-xs text-muted-foreground">Crie sua conta e pague na próxima etapa. O acesso é liberado automaticamente após a confirmação do PIX.</p>
+
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase tracking-widest text-muted-foreground">Usuário</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={e => { setUsername(e.target.value); setFormError(""); }}
+                      placeholder="seu_usuario"
+                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/40 border border-white/10 text-sm focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase tracking-widest text-muted-foreground">Senha</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={e => { setPassword(e.target.value); setFormError(""); }}
+                      placeholder="mínimo 6 caracteres"
+                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/40 border border-white/10 text-sm focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {formError && <p className="text-xs text-red-400">{formError}</p>}
+              {error && <p className="text-xs text-red-400">{error}</p>}
+
+              <button
+                onClick={handleCreatePayment}
+                disabled={loading || !username || !password}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-sm uppercase tracking-[0.2em] text-black disabled:opacity-50 transition-all"
+                style={{ background: "var(--color-primary)" }}
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
+                Gerar PIX
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Step 3: Payment ── */}
+        {step === "payment" && paymentData && (
+          <motion.div key="payment" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-4">
+            <div className="flex items-center gap-3">
+              <button onClick={() => { stopPolling(); setStep(isLoggedIn ? "plans" : "register"); }} className="p-2 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div>
+                <div className="font-bold text-sm">Pague o PIX</div>
                 <div className="text-[10px] text-muted-foreground uppercase tracking-widest">
-                  R$ {plan.amountBrl} · {plan.days} {plan.days === 1 ? "dia" : "dias"} de acesso
+                  R$ {paymentData.amountBrl} · Plano {paymentData.plan.label}
                 </div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-5">
-              <div>
-                <p className="text-sm text-foreground font-medium">Escolha um suporte para continuar</p>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Fale com um dos nossos atendentes no Telegram. A mensagem já será preenchida automaticamente.
-                </p>
+              {/* QR Code */}
+              <div className="flex flex-col items-center gap-3">
+                <div className="rounded-2xl p-3 bg-white">
+                  <img
+                    src={paymentData.qrcode_base64.startsWith("data:") ? paymentData.qrcode_base64 : `data:image/png;base64,${paymentData.qrcode_base64}`}
+                    alt="QR Code PIX"
+                    className="w-48 h-48 block"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">Escaneie o QR Code com seu banco</p>
               </div>
 
-              <div className="grid gap-3">
-                {CONTACTS.map(c => (
-                  <motion.a
-                    key={c.handle}
-                    href={tgMessage(c.handle)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="flex items-center gap-4 p-4 rounded-xl border border-white/10 bg-black/30 hover:bg-sky-500/10 hover:border-sky-500/30 hover:text-sky-300 text-muted-foreground transition-all"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-sky-500/15 border border-sky-500/20 flex items-center justify-center text-sky-400 shrink-0">
-                      {TG_ICON}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-sm text-foreground">{c.handle}</div>
-                      <div className="text-[10px] uppercase tracking-widest text-muted-foreground mt-0.5">Suporte Telegram</div>
-                    </div>
-                    <svg className="w-4 h-4 shrink-0 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M7 17L17 7M17 7H7M17 7v10" />
-                    </svg>
-                  </motion.a>
-                ))}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/5" />
+                <span className="text-[10px] uppercase tracking-widest text-muted-foreground">ou</span>
+                <div className="flex-1 h-px bg-white/5" />
               </div>
 
-              <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Mensagem que será enviada</div>
-                <p className="text-xs text-muted-foreground/80 italic">
-                  "Olá! Quero contratar o plano <span className="text-foreground font-medium">{plan.label}</span> (R$ <span className="text-foreground font-medium">{plan.amountBrl}</span>) do Infinity Search."
-                </p>
+              {/* Pix Copia e Cola */}
+              <div className="space-y-2">
+                <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Pix Copia e Cola</div>
+                <div className="flex items-stretch gap-2">
+                  <div className="flex-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2.5 text-[11px] text-muted-foreground font-mono break-all leading-relaxed min-h-0 overflow-hidden" style={{ maxHeight: "80px", overflowY: "auto" }}>
+                    {paymentData.pixCopiaECola}
+                  </div>
+                  <CopyButton text={paymentData.pixCopiaECola} />
+                </div>
               </div>
+
+              {/* Status */}
+              {paymentStatus === "pending" && (
+                <div className="flex items-center gap-2 justify-center py-2 rounded-xl bg-amber-500/5 border border-amber-500/20">
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                  <span className="text-xs text-amber-300">Aguardando confirmação do pagamento...</span>
+                </div>
+              )}
+              {paymentStatus === "failed" && (
+                <div className="text-center text-xs text-red-400 py-2 rounded-xl bg-red-500/5 border border-red-500/20">
+                  Pagamento expirado ou cancelado. <button className="underline" onClick={() => setStep("plans")}>Tentar novamente</button>
+                </div>
+              )}
+
+              {paymentData.taxa !== undefined && (
+                <p className="text-center text-[10px] text-muted-foreground/50">
+                  Taxa da plataforma: R$ {paymentData.taxa?.toFixed(2)} · Acesso ativado automaticamente após confirmação
+                </p>
+              )}
             </div>
           </motion.div>
         )}
+
+        {/* ── Step 4: Success ── */}
+        {step === "success" && paymentData && (
+          <motion.div key="success" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-4">
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 backdrop-blur-2xl p-8 flex flex-col items-center text-center gap-4">
+              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200, damping: 15 }}>
+                <CheckCircle2 className="w-16 h-16 text-emerald-400" />
+              </motion.div>
+              <div>
+                <div className="text-xl font-bold text-emerald-300">Pagamento confirmado!</div>
+                <div className="text-sm text-muted-foreground mt-1">
+                  Plano <span className="text-foreground font-medium">{paymentData.plan.label}</span> ativado com sucesso.
+                </div>
+              </div>
+              {paymentData.username && (
+                <div className="rounded-xl bg-black/30 border border-white/10 px-5 py-3 text-sm">
+                  Sua conta <span className="text-primary font-bold">@{paymentData.username}</span> está ativa por <span className="font-bold">{paymentData.plan.days} {paymentData.plan.days === 1 ? "dia" : "dias"}</span>.
+                </div>
+              )}
+              <a
+                href="/login"
+                className="flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm uppercase tracking-[0.2em] text-black transition-all"
+                style={{ background: "var(--color-primary)" }}
+              >
+                {isLoggedIn ? "Ir para o painel" : "Fazer login"}
+              </a>
+            </div>
+          </motion.div>
+        )}
+
       </AnimatePresence>
     </div>
   );

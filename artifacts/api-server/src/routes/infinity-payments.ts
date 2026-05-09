@@ -8,11 +8,9 @@ import { loginLimiter } from "../middlewares/rateLimit.js";
 
 const router: IRouter = Router();
 
-const NEDPAY_BASE = "https://nedpayapp.com";
-const NEDPAY_PUBLIC_KEY = process.env.NEDPAY_PUBLIC_KEY ?? "";
-const NEDPAY_PRIVATE_KEY = process.env.NEDPAY_PRIVATE_KEY ?? "";
+const PROMST_BASE = "https://promstpagamentos.discloud.app";
 
-// ─── Plans (hardcoded) ────────────────────────────────────────────────────────
+// ─── Plans ────────────────────────────────────────────────────────────────────
 export interface Plan {
   id: string;
   label: string;
@@ -22,40 +20,51 @@ export interface Plan {
 }
 
 export const PLANS: Plan[] = [
-  { id: "7d",   label: "7 dias",   days: 7,  amountCents: 1990 },
-  { id: "30d",  label: "30 dias",  days: 30, amountCents: 4990, highlight: true },
-  { id: "90d",  label: "90 dias",  days: 90, amountCents: 9990 },
+  { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500 },
+  { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000 },
+  { id: "14d", label: "14 Dias", days: 14, amountCents: 7000, highlight: true },
+  { id: "30d", label: "30 Dias", days: 30, amountCents: 10000 },
 ];
 
 function getPlan(id: string): Plan | undefined {
   return PLANS.find(p => p.id === id);
 }
 
-// ─── NedPay signature ─────────────────────────────────────────────────────────
-function nedpaySign(method: string, path: string, body: Record<string, unknown>, timestamp: string): string {
-  const sortedKeys = Object.keys(body).sort();
-  const bodyStr = sortedKeys.map(k => `${k}=${String(body[k])}`).join("&");
-  const payload = `${method}${path}${bodyStr}${timestamp}`;
-  return crypto.createHmac("sha256", NEDPAY_PRIVATE_KEY).update(payload).digest("hex");
+// ─── Promst Pagamentos API ─────────────────────────────────────────────────────
+interface PromstCreateResponse {
+  txid: string;
+  pixCopiaECola: string;
+  qrcode_base64: string;
+  status: string;
+  amount: number;
+  taxa: number;
+  valor_liquido: number;
 }
 
-async function nedpayRequest(method: string, path: string, body?: Record<string, unknown>) {
-  const timestamp = String(Date.now());
-  const signature = nedpaySign(method, path, body ?? {}, timestamp);
-  const res = await fetch(`${NEDPAY_BASE}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": NEDPAY_PUBLIC_KEY,
-      "X-API-Signature": signature,
-      "X-API-Timestamp": timestamp,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json: unknown;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  return { ok: res.ok, status: res.status, data: json };
+interface PromstVerifyResponse {
+  payment_id: string;
+  status_pagamento: string;
+  valor: number;
+  valor_liquido: number;
+}
+
+async function createPromstPayment(userId: number, valor: number): Promise<PromstCreateResponse> {
+  const url = `${PROMST_BASE}/create_payment?user_id=${userId}&valor=${valor.toFixed(2)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Promst API error: ${res.status}`);
+  return res.json() as Promise<PromstCreateResponse>;
+}
+
+async function verifyPromstPayment(txid: string): Promise<PromstVerifyResponse> {
+  const url = `${PROMST_BASE}/verify_payment?payment_id=${txid}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Promst verify error: ${res.status}`);
+  return res.json() as Promise<PromstVerifyResponse>;
+}
+
+function generateUserId(seed: string): number {
+  const hash = crypto.createHash("sha256").update(seed).digest("hex");
+  return parseInt(hash.slice(0, 9), 16) % 2000000000 + 1000000000;
 }
 
 // ─── GET /plans ───────────────────────────────────────────────────────────────
@@ -70,8 +79,7 @@ router.get("/plans", (_req, res) => {
   })));
 });
 
-// ─── POST /payments/create ─────────────────────────────────────────────────────
-// For logged-in users renewing their own plan
+// ─── POST /payments/create — logged-in user renewing ─────────────────────────
 router.post("/payments/create", requireAuth, async (req, res) => {
   const { planId } = req.body ?? {};
   const plan = getPlan(String(planId ?? ""));
@@ -79,49 +87,43 @@ router.post("/payments/create", requireAuth, async (req, res) => {
 
   const username = req.infinityUser!.username;
   const paymentId = crypto.randomBytes(16).toString("hex");
+  const userId = generateUserId(username + paymentId);
 
-  // Create NedPay payment
-  const nedBody = {
-    amount: plan.amountCents,
-    currency: "BRL",
-    description: `Infinity Search - ${plan.label}`,
-    externalId: paymentId,
-    paymentMethod: "PIX",
-  };
-
-  const nedRes = await nedpayRequest("POST", "/api/gateway/payments", nedBody);
-  if (!nedRes.ok) {
-    res.status(502).json({ error: "Falha ao criar pagamento PIX", details: nedRes.data });
+  let promstData: PromstCreateResponse;
+  try {
+    promstData = await createPromstPayment(userId, plan.amountCents / 100);
+  } catch (err) {
+    res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
   }
 
-  const nedData = nedRes.data as Record<string, unknown>;
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1h to pay
 
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
   await db.insert(infinityPaymentsTable).values({
     id: paymentId,
     username,
     planId: plan.id,
     amountCents: plan.amountCents,
     status: "pending",
-    nedpayId: String(nedData.id ?? nedData.paymentId ?? ""),
-    pixCode: String(nedData.pixCode ?? nedData.qrCode ?? nedData.code ?? ""),
-    pixQr:   String(nedData.pixQr ?? nedData.qrCodeImage ?? nedData.qrImage ?? ""),
+    nedpayId: promstData.txid,
+    pixCode: promstData.pixCopiaECola,
+    pixQr: promstData.qrcode_base64,
     expiresAt,
   });
 
   res.json({
     paymentId,
-    pixCode: nedData.pixCode ?? nedData.qrCode ?? nedData.code ?? null,
-    pixQr:   nedData.pixQr ?? nedData.qrCodeImage ?? nedData.qrImage ?? null,
+    txid: promstData.txid,
+    pixCopiaECola: promstData.pixCopiaECola,
+    qrcode_base64: promstData.qrcode_base64,
     amountBrl: (plan.amountCents / 100).toFixed(2),
+    taxa: promstData.taxa,
     plan: { id: plan.id, label: plan.label, days: plan.days },
     expiresAt: expiresAt.toISOString(),
   });
 });
 
-// ─── POST /payments/create-guest ───────────────────────────────────────────────
-// For new users on the login page picking a plan before registration
+// ─── POST /payments/create-guest — new user registering + paying ──────────────
 router.post("/payments/create-guest", loginLimiter, async (req, res) => {
   const { planId, username, password, email } = req.body ?? {};
 
@@ -143,7 +145,7 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
   const plan = getPlan(String(planId));
   if (!plan) { res.status(400).json({ error: "Plano inválido" }); return; }
 
-  // Check if username already taken (active user)
+  // Check if username already taken
   const existingUser = await db.select({ username: infinityUsersTable.username })
     .from(infinityUsersTable)
     .where(eq(infinityUsersTable.username, usernameStr))
@@ -153,7 +155,16 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     return;
   }
 
-  // Check if there's already a pending account with this username
+  // Clean up old rejected/expired pending records for this username
+  await db.delete(infinityPendingAccountsTable)
+    .where(
+      and(
+        eq(infinityPendingAccountsTable.username, usernameStr),
+        eq(infinityPendingAccountsTable.status, "rejected")
+      )
+    );
+
+  // Check for existing pending
   const existingPending = await db.select({ id: infinityPendingAccountsTable.id, status: infinityPendingAccountsTable.status })
     .from(infinityPendingAccountsTable)
     .where(eq(infinityPendingAccountsTable.username, usernameStr))
@@ -165,31 +176,22 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
       res.status(409).json({ error: "Já existe uma solicitação para este usuário" });
       return;
     }
-    // Remove old rejected/pending_payment record so they can retry
     await db.delete(infinityPendingAccountsTable).where(eq(infinityPendingAccountsTable.username, usernameStr));
   }
 
   const paymentId = crypto.randomBytes(16).toString("hex");
   const passwordHash = await bcrypt.hash(passwordStr, 10);
+  const userId = generateUserId(usernameStr + paymentId);
 
-  // Create NedPay payment
-  const nedBody = {
-    amount: plan.amountCents,
-    currency: "BRL",
-    description: `Infinity Search - ${plan.label} - @${usernameStr}`,
-    externalId: paymentId,
-    paymentMethod: "PIX",
-  };
-
-  const nedRes = await nedpayRequest("POST", "/api/gateway/payments", nedBody);
-  if (!nedRes.ok) {
-    res.status(502).json({ error: "Falha ao criar pagamento PIX", details: nedRes.data });
+  let promstData: PromstCreateResponse;
+  try {
+    promstData = await createPromstPayment(userId, plan.amountCents / 100);
+  } catch {
+    res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
   }
 
-  const nedData = nedRes.data as Record<string, unknown>;
-
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
   await db.insert(infinityPaymentsTable).values({
     id: paymentId,
@@ -197,9 +199,9 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     planId: plan.id,
     amountCents: plan.amountCents,
     status: "pending",
-    nedpayId: String(nedData.id ?? nedData.paymentId ?? ""),
-    pixCode: String(nedData.pixCode ?? nedData.qrCode ?? nedData.code ?? ""),
-    pixQr:   String(nedData.pixQr ?? nedData.qrCodeImage ?? nedData.qrImage ?? ""),
+    nedpayId: promstData.txid,
+    pixCode: promstData.pixCopiaECola,
+    pixQr: promstData.qrcode_base64,
     expiresAt,
   });
 
@@ -214,9 +216,11 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
 
   res.json({
     paymentId,
-    pixCode: nedData.pixCode ?? nedData.qrCode ?? nedData.code ?? null,
-    pixQr:   nedData.pixQr ?? nedData.qrCodeImage ?? nedData.qrImage ?? null,
+    txid: promstData.txid,
+    pixCopiaECola: promstData.pixCopiaECola,
+    qrcode_base64: promstData.qrcode_base64,
     amountBrl: (plan.amountCents / 100).toFixed(2),
+    taxa: promstData.taxa,
     plan: { id: plan.id, label: plan.label, days: plan.days },
     username: usernameStr,
     expiresAt: expiresAt.toISOString(),
@@ -230,20 +234,22 @@ router.get("/payments/:id/status", async (req, res) => {
   if (rows.length === 0) { res.status(404).json({ error: "Pagamento não encontrado" }); return; }
   const payment = rows[0];
 
-  // If already confirmed/failed, just return cached status
-  if (payment.status === "paid" || payment.status === "failed" || payment.status === "expired") {
-    res.json({ status: payment.status, paidAt: payment.paidAt?.toISOString() ?? null });
+  if (payment.status === "paid") {
+    res.json({ status: "paid", paidAt: payment.paidAt?.toISOString() ?? null });
+    return;
+  }
+  if (payment.status === "failed" || payment.status === "expired") {
+    res.json({ status: payment.status, paidAt: null });
     return;
   }
 
-  // Poll NedPay for status
+  // Poll promst for status
   if (payment.nedpayId) {
-    const nedRes = await nedpayRequest("GET", `/api/gateway/payments/${payment.nedpayId}`, {});
-    if (nedRes.ok) {
-      const nedData = nedRes.data as Record<string, unknown>;
-      const nedStatus = String(nedData.status ?? "").toLowerCase();
-      if (nedStatus === "paid" || nedStatus === "completed" || nedStatus === "approved") {
-        // Payment confirmed — mark and handle
+    try {
+      const verifyData = await verifyPromstPayment(payment.nedpayId);
+      const st = String(verifyData.status_pagamento ?? "").toUpperCase();
+
+      if (st === "CONCLUIDA" || st === "PAID" || st === "COMPLETED") {
         await db.update(infinityPaymentsTable)
           .set({ status: "paid", paidAt: new Date() })
           .where(eq(infinityPaymentsTable.id, paymentId));
@@ -251,34 +257,38 @@ router.get("/payments/:id/status", async (req, res) => {
         await handlePaymentConfirmed(payment.id, payment.username, payment.planId);
         res.json({ status: "paid", paidAt: new Date().toISOString() });
         return;
-      } else if (nedStatus === "expired" || nedStatus === "cancelled" || nedStatus === "failed") {
+      }
+
+      if (st === "EXPIRADA" || st === "EXPIRED" || st === "CANCELLED" || st === "FAILED") {
         await db.update(infinityPaymentsTable)
           .set({ status: "failed" })
           .where(eq(infinityPaymentsTable.id, paymentId));
         res.json({ status: "failed", paidAt: null });
         return;
       }
+    } catch {
+      // API temporarily unavailable — return pending
     }
   }
 
   res.json({ status: payment.status, paidAt: null });
 });
 
-// ─── Payment confirmed handler ────────────────────────────────────────────────
+// ─── Payment confirmed: auto-activate ─────────────────────────────────────────
 async function handlePaymentConfirmed(paymentId: string, username: string | null, planId: string) {
   const plan = getPlan(planId);
   if (!plan || !username) return;
 
-  // Check if this is a guest (pending account) or existing user
+  // Check if existing user → extend account
   const existingUser = await db.select({ username: infinityUsersTable.username, accountExpiresAt: infinityUsersTable.accountExpiresAt })
     .from(infinityUsersTable)
     .where(eq(infinityUsersTable.username, username))
     .limit(1);
 
   if (existingUser.length > 0) {
-    // Existing user — extend their account
-    const currentExpiry = existingUser[0].accountExpiresAt;
-    const base = currentExpiry && currentExpiry > new Date() ? currentExpiry : new Date();
+    const base = existingUser[0].accountExpiresAt && existingUser[0].accountExpiresAt > new Date()
+      ? existingUser[0].accountExpiresAt
+      : new Date();
     const newExpiry = new Date(base.getTime() + plan.days * 24 * 60 * 60 * 1000);
     await db.update(infinityUsersTable)
       .set({ accountExpiresAt: newExpiry })
@@ -286,20 +296,35 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
     return;
   }
 
-  // Guest — move pending account to pending_approval
+  // Guest: auto-create account immediately (no manual approval needed)
   const pendingRows = await db.select().from(infinityPendingAccountsTable)
     .where(and(eq(infinityPendingAccountsTable.username, username), eq(infinityPendingAccountsTable.paymentId, paymentId)))
     .limit(1);
 
-  if (pendingRows.length > 0) {
+  if (pendingRows.length === 0) return;
+
+  const pending = pendingRows[0];
+  const accountExpiresAt = new Date(Date.now() + plan.days * 24 * 60 * 60 * 1000);
+
+  try {
+    await db.insert(infinityUsersTable).values({
+      username: pending.username,
+      passwordHash: pending.passwordHash,
+      role: "user",
+      accountExpiresAt,
+    });
     await db.update(infinityPendingAccountsTable)
-      .set({ status: "pending_approval", updatedAt: new Date() })
-      .where(eq(infinityPendingAccountsTable.id, pendingRows[0].id));
+      .set({ status: "approved", updatedAt: new Date() })
+      .where(eq(infinityPendingAccountsTable.id, pending.id));
+  } catch {
+    // User may have been created in a race — just mark approved
+    await db.update(infinityPendingAccountsTable)
+      .set({ status: "approved", updatedAt: new Date() })
+      .where(eq(infinityPendingAccountsTable.id, pending.id));
   }
 }
 
-// ─── GET /pending-account/status?username= ────────────────────────────────────
-// Polling endpoint for the "waiting" screen after payment
+// ─── GET /pending-account/status ──────────────────────────────────────────────
 router.get("/pending-account/status", async (req, res) => {
   const username = String(req.query.username ?? "").trim().toLowerCase();
   if (!username) { res.status(400).json({ error: "username obrigatório" }); return; }
@@ -309,16 +334,11 @@ router.get("/pending-account/status", async (req, res) => {
     .limit(1);
 
   if (rows.length === 0) {
-    // Check if user was approved and now exists in users table
     const user = await db.select({ username: infinityUsersTable.username })
       .from(infinityUsersTable)
       .where(eq(infinityUsersTable.username, username))
       .limit(1);
-    if (user.length > 0) {
-      res.json({ status: "approved" });
-    } else {
-      res.json({ status: "not_found" });
-    }
+    res.json({ status: user.length > 0 ? "approved" : "not_found" });
     return;
   }
 
@@ -331,110 +351,74 @@ router.get("/pending-account/status", async (req, res) => {
   });
 });
 
-// ─── Admin: list pending accounts ─────────────────────────────────────────────
+// ─── Admin routes ──────────────────────────────────────────────────────────────
 router.get("/pending-accounts", requireAdmin, async (_req, res) => {
   const rows = await db.select().from(infinityPendingAccountsTable)
     .where(eq(infinityPendingAccountsTable.status, "pending_approval"))
     .orderBy(desc(infinityPendingAccountsTable.createdAt));
-
   res.json(rows.map(r => ({
-    id: r.id,
-    username: r.username,
-    email: r.email,
-    planId: r.planId,
-    paymentId: r.paymentId,
-    status: r.status,
-    createdAt: r.createdAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
+    id: r.id, username: r.username, email: r.email, planId: r.planId,
+    paymentId: r.paymentId, status: r.status,
+    createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
   })));
 });
 
-// ─── Admin: approve pending account ───────────────────────────────────────────
 router.post("/pending-accounts/:id/approve", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const rows = await db.select().from(infinityPendingAccountsTable)
-    .where(eq(infinityPendingAccountsTable.id, id))
-    .limit(1);
+    .where(eq(infinityPendingAccountsTable.id, id)).limit(1);
   if (rows.length === 0) { res.status(404).json({ error: "Conta não encontrada" }); return; }
 
   const pending = rows[0];
   const plan = getPlan(pending.planId);
   if (!plan) { res.status(400).json({ error: "Plano inválido" }); return; }
 
-  // Check if username already exists
-  const existing = await db.select({ username: infinityUsersTable.username })
-    .from(infinityUsersTable)
-    .where(eq(infinityUsersTable.username, pending.username))
-    .limit(1);
+  const existing = await db.select({ username: infinityUsersTable.username, accountExpiresAt: infinityUsersTable.accountExpiresAt })
+    .from(infinityUsersTable).where(eq(infinityUsersTable.username, pending.username)).limit(1);
+
   if (existing.length > 0) {
-    // Already exists — just mark as approved and extend
-    const user = await db.select({ accountExpiresAt: infinityUsersTable.accountExpiresAt })
-      .from(infinityUsersTable)
-      .where(eq(infinityUsersTable.username, pending.username))
-      .limit(1);
-    const base = user[0]?.accountExpiresAt && user[0].accountExpiresAt > new Date()
-      ? user[0].accountExpiresAt
-      : new Date();
+    const base = existing[0].accountExpiresAt && existing[0].accountExpiresAt > new Date()
+      ? existing[0].accountExpiresAt : new Date();
     const newExpiry = new Date(base.getTime() + plan.days * 24 * 60 * 60 * 1000);
-    await db.update(infinityUsersTable)
-      .set({ accountExpiresAt: newExpiry })
-      .where(eq(infinityUsersTable.username, pending.username));
-    await db.update(infinityPendingAccountsTable)
-      .set({ status: "approved", updatedAt: new Date() })
-      .where(eq(infinityPendingAccountsTable.id, id));
+    await db.update(infinityUsersTable).set({ accountExpiresAt: newExpiry }).where(eq(infinityUsersTable.username, pending.username));
+    await db.update(infinityPendingAccountsTable).set({ status: "approved", updatedAt: new Date() }).where(eq(infinityPendingAccountsTable.id, id));
     res.json({ ok: true, username: pending.username });
     return;
   }
 
   const accountExpiresAt = new Date(Date.now() + plan.days * 24 * 60 * 60 * 1000);
-
   try {
     await db.insert(infinityUsersTable).values({
-      username: pending.username,
-      passwordHash: pending.passwordHash,
-      role: "user",
-      accountExpiresAt,
+      username: pending.username, passwordHash: pending.passwordHash,
+      role: "user", accountExpiresAt,
     });
-    await db.update(infinityPendingAccountsTable)
-      .set({ status: "approved", updatedAt: new Date() })
-      .where(eq(infinityPendingAccountsTable.id, id));
+    await db.update(infinityPendingAccountsTable).set({ status: "approved", updatedAt: new Date() }).where(eq(infinityPendingAccountsTable.id, id));
     res.json({ ok: true, username: pending.username });
   } catch {
     res.status(400).json({ error: "Falha ao criar usuário" });
   }
 });
 
-// ─── Admin: reject pending account ────────────────────────────────────────────
 router.post("/pending-accounts/:id/reject", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const { reason } = req.body ?? {};
   const rows = await db.select().from(infinityPendingAccountsTable)
-    .where(eq(infinityPendingAccountsTable.id, id))
-    .limit(1);
+    .where(eq(infinityPendingAccountsTable.id, id)).limit(1);
   if (rows.length === 0) { res.status(404).json({ error: "Conta não encontrada" }); return; }
-
   await db.update(infinityPendingAccountsTable)
     .set({ status: "rejected", rejectedReason: reason ? String(reason).slice(0, 200) : null, updatedAt: new Date() })
     .where(eq(infinityPendingAccountsTable.id, id));
-
   res.json({ ok: true });
 });
 
-// ─── Admin: list all payments ──────────────────────────────────────────────────
 router.get("/payments", requireAdmin, async (_req, res) => {
   const rows = await db.select().from(infinityPaymentsTable)
-    .orderBy(desc(infinityPaymentsTable.createdAt))
-    .limit(100);
-
+    .orderBy(desc(infinityPaymentsTable.createdAt)).limit(100);
   res.json(rows.map(r => ({
-    id: r.id,
-    username: r.username,
-    planId: r.planId,
+    id: r.id, username: r.username, planId: r.planId,
     amountBrl: (r.amountCents / 100).toFixed(2),
-    status: r.status,
-    nedpayId: r.nedpayId,
-    createdAt: r.createdAt.toISOString(),
-    paidAt: r.paidAt?.toISOString() ?? null,
+    status: r.status, nedpayId: r.nedpayId,
+    createdAt: r.createdAt.toISOString(), paidAt: r.paidAt?.toISOString() ?? null,
   })));
 });
 
