@@ -18,6 +18,12 @@ uri = "file://attached_assets/promo_investigation.png"
 type = "image"
 title = "infinity search investigation promo"
 
+[[generated]]
+id = "FymcYgJVvHW79EUiuuCOD"
+uri = "file://attached_assets/infinity_update_banner.png"
+type = "image"
+title = "infinity search update banner"
+
 [[outputs]]
 id = "a85vI9pYbZAWXxCRhEj7S"
 uri = "file://attached_assets/promo_hacker.png"
@@ -53,3 +59,9 @@ id = "QFDbFVcGjKN0hclnkZFri"
 uri = "file://screenshots/promo.jpg"
 type = "image"
 title = "Imagem de Divulgação — Infinity Search Painel"
+
+[[outputs]]
+id = "f3SgzMF61pVbgRrCJUz4u"
+uri = "file://attached_assets/infinity_update_banner.png"
+type = "image"
+title = "Banner de Atualização — Infinity Search"
