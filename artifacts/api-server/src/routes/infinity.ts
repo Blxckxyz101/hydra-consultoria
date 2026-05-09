@@ -1102,6 +1102,12 @@ function parseSkylers(data: unknown): Parsed {
   const wrappers = ["data", "result", "resposta", "response", "content", "retorno", "dados"];
   for (const w of wrappers) {
     if (d[w] && typeof d[w] === "object" && !Array.isArray(d[w])) {
+      const innerObj = d[w] as Record<string, unknown>;
+      // Skip if the inner object is itself an error response or contains HTML
+      const innerLower = Object.fromEntries(Object.entries(innerObj).map(([k, v]) => [k.toLowerCase(), v]));
+      const innerIsErr = !!(innerLower.error || innerLower.err || innerLower.success === false ||
+        (typeof innerLower.content === "string" && /^<(!doctype|html)/i.test(String(innerLower.content).trimStart())));
+      if (innerIsErr) continue;
       const inner = parseSkylers(d[w]);
       if (inner.fields.length > 0 || inner.sections.length > 0) return { ...inner, raw };
     }
@@ -1157,6 +1163,8 @@ function parseSkylers(data: unknown): Parsed {
 
     } else {
       const s = String(v).trim();
+      // Skip HTML values — provider returned an error page instead of data
+      if (/^<(!doctype|html)/i.test(s)) continue;
       if (s && !JUNK_VALUES.has(s)) {
         // Check if this field itself is a base64 photo (or already a data URI)
         // Also catches keys that don't match BASE64_PHOTO_KEYS (e.g. "dados", "imagem_cnhh") by
@@ -1275,12 +1283,20 @@ async function callSkylers(
       skylersCircuit.recordSuccess();
       return { ok: false, error: "Sem dados retornados para esta consulta", parsed };
     }
-    // Detect error-only results that survived as a single field (e.g. nested {"Err":"CPF inválido."})
-    if (parsed.fields.length === 1 && parsed.sections.length === 0) {
-      const fk = parsed.fields[0].key.toLowerCase();
-      if (fk === "err" || fk === "error" || fk === "erro" || fk === "erros" || fk === "resultado") {
-        skylersCircuit.recordSuccess(); // server is up, just a bad query
-        return { ok: false, error: parsed.fields[0].value, parsed: { fields: [], sections: [], raw: parsed.raw } };
+    // Detect error-only results that survived parsing (e.g. nested {"Err":"CPF inválido."} or {"content":"<html>","error":"..."})
+    if (parsed.sections.length === 0) {
+      const ERROR_FIELD_KEYS = new Set(["err", "error", "erro", "erros", "resultado"]);
+      const NOISE_FIELD_KEYS = new Set(["err", "error", "erro", "erros", "resultado", "content", "message", "msg"]);
+      const errField = parsed.fields.find(f => ERROR_FIELD_KEYS.has(f.key.toLowerCase()));
+      // Single error field
+      if (parsed.fields.length === 1 && errField) {
+        skylersCircuit.recordSuccess();
+        return { ok: false, error: errField.value, parsed: { fields: [], sections: [], raw: parsed.raw } };
+      }
+      // All remaining fields are noise keys (content + error pattern) — extract error message
+      if (errField && parsed.fields.length > 0 && parsed.fields.every(f => NOISE_FIELD_KEYS.has(f.key.toLowerCase()))) {
+        skylersCircuit.recordSuccess();
+        return { ok: false, error: errField.value, parsed: { fields: [], sections: [], raw: parsed.raw } };
       }
     }
     skylersCircuit.recordSuccess();
