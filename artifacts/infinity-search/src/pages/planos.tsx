@@ -126,7 +126,7 @@ export default function Planos() {
   const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid" | "failed">("pending");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem("infinity_token");
@@ -149,27 +149,38 @@ export default function Planos() {
     });
   }, []);
 
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
+  const stopPolling = useCallback(() => { abortRef.current?.abort(); abortRef.current = null; }, []);
 
   const startPolling = useCallback((paymentId: string) => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    (async () => {
       try {
-        const r = await apiFetch(`/payments/${paymentId}/status`);
-        const data = await r.json() as { status: string };
-        if (data.status === "paid") {
-          setPaymentStatus("paid");
-          setStep("success");
-          stopPolling();
-        } else if (data.status === "failed" || data.status === "expired") {
-          setPaymentStatus("failed");
-          stopPolling();
+        const r = await fetch(`${BASE}/api/infinity/payments/${paymentId}/watch`, { signal: ctrl.signal });
+        if (!r.ok || !r.body) return;
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split("\n\n"); buf = parts.pop() ?? "";
+          for (const part of parts) {
+            const line = part.split("\n").find(l => l.startsWith("data: "));
+            if (!line) continue;
+            try {
+              const data = JSON.parse(line.slice(6)) as { status: string };
+              if (data.status === "paid") { setPaymentStatus("paid"); setStep("success"); return; }
+              if (data.status === "failed" || data.status === "expired") { setPaymentStatus("failed"); return; }
+            } catch {}
+          }
         }
       } catch {}
-    }, 3000);
-  }, [stopPolling]);
+    })();
+  }, []);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 

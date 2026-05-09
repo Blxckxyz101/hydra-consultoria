@@ -131,7 +131,7 @@ export default function Registro() {
   const [regLoading, setRegLoading] = useState(false);
 
   const [payment, setPayment] = useState<PaymentData | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [polling, setPolling] = useState(false);
   const [countdown, setCountdown] = useState(180);
 
@@ -150,26 +150,44 @@ export default function Registro() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
 
   const startPolling = useCallback((paymentId: string) => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setPolling(true);
     setCountdown(180);
-    let ticks = 0;
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
-    pollRef.current = setInterval(async () => {
-      ticks++;
-      if (ticks > 60) { clearInterval(pollRef.current!); clearInterval(cdInt); setPolling(false); return; }
+
+    (async () => {
       try {
-        const r = await apiFetch(`/payments/${paymentId}/status`);
-        const d = await r.json() as { status: string };
-        if (d.status === "paid") {
-          clearInterval(pollRef.current!); clearInterval(cdInt); setPolling(false); setStep("success");
+        const r = await fetch(`${BASE}/api/infinity/payments/${paymentId}/watch`, { signal: ctrl.signal });
+        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); return; }
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split("\n\n"); buf = parts.pop() ?? "";
+          for (const part of parts) {
+            const line = part.split("\n").find(l => l.startsWith("data: "));
+            if (!line) continue;
+            try {
+              const d = JSON.parse(line.slice(6)) as { status: string };
+              if (d.status === "paid") { clearInterval(cdInt); setPolling(false); setStep("success"); return; }
+              if (d.status === "expired" || d.status === "failed") { clearInterval(cdInt); setPolling(false); return; }
+            } catch {}
+          }
         }
       } catch {}
-    }, 3000);
+      clearInterval(cdInt);
+      setPolling(false);
+    })();
   }, []);
 
   const handleRegister = async (e: React.FormEvent) => {

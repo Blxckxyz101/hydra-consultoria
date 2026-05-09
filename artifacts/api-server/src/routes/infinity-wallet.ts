@@ -127,4 +127,63 @@ router.get("/wallet/topup/:paymentId/status", requireAuth, async (req, res) => {
   res.json({ status: payment.status });
 });
 
+// ─── GET /wallet/topup/:paymentId/watch (SSE — substitui polling a cada 3s) ────
+router.get("/wallet/topup/:paymentId/watch", requireAuth, async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const username = req.infinityUser!.username;
+  const paymentId = String(req.params.paymentId);
+  const TIMEOUT_MS = 3 * 60 * 1000;
+  const INTERVAL_MS = 3000;
+  const startedAt = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const finish = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!res.writableEnded) res.end();
+  };
+  req.on("close", finish);
+
+  const tick = async () => {
+    if (res.writableEnded) return;
+    if (Date.now() - startedAt > TIMEOUT_MS) {
+      res.write(`data: ${JSON.stringify({ status: "expired" })}\n\n`);
+      finish(); return;
+    }
+    try {
+      const [payment] = await db.select().from(infinityPaymentsTable)
+        .where(and(eq(infinityPaymentsTable.id, paymentId), eq(infinityPaymentsTable.username, username))).limit(1);
+      if (!payment) { finish(); return; }
+      if (payment.status === "paid") {
+        res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
+        finish(); return;
+      }
+      if (payment.nedpayId) {
+        const r = await fetch(`${PROMST_BASE}/verify_payment?payment_id=${encodeURIComponent(payment.nedpayId)}`);
+        if (r.ok) {
+          const d = await r.json() as { status_pagamento: string };
+          if (d.status_pagamento === "CONCLUIDA") {
+            await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() })
+              .where(eq(infinityPaymentsTable.id, paymentId));
+            await creditWallet(username, payment.amountCents, `Depósito PIX — R$ ${(payment.amountCents / 100).toFixed(2)}`, paymentId);
+            res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
+            finish(); return;
+          }
+        }
+      }
+    } catch {}
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ status: "pending" })}\n\n`);
+      timer = setTimeout(tick, INTERVAL_MS);
+    }
+  };
+
+  res.write(`: keepalive\n\n`);
+  timer = setTimeout(tick, INTERVAL_MS);
+});
+
 export default router;

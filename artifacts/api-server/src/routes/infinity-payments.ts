@@ -278,6 +278,70 @@ router.get("/payments/:id/status", async (req, res) => {
   res.json({ status: payment.status, paidAt: null });
 });
 
+// ─── GET /payments/:id/watch (SSE — substitui polling a cada 3s) ──────────────
+router.get("/payments/:id/watch", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const paymentId = req.params.id;
+  const TIMEOUT_MS = 3 * 60 * 1000;
+  const INTERVAL_MS = 3000;
+  const startedAt = Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const finish = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!res.writableEnded) res.end();
+  };
+  req.on("close", finish);
+
+  const tick = async () => {
+    if (res.writableEnded) return;
+    if (Date.now() - startedAt > TIMEOUT_MS) {
+      res.write(`data: ${JSON.stringify({ status: "expired" })}\n\n`);
+      finish(); return;
+    }
+    try {
+      const rows = await db.select().from(infinityPaymentsTable).where(eq(infinityPaymentsTable.id, paymentId)).limit(1);
+      if (rows.length === 0) { finish(); return; }
+      const payment = rows[0];
+      if (payment.status === "paid") {
+        res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
+        finish(); return;
+      }
+      if (payment.status === "failed" || payment.status === "expired") {
+        res.write(`data: ${JSON.stringify({ status: payment.status })}\n\n`);
+        finish(); return;
+      }
+      if (payment.nedpayId) {
+        const verifyData = await verifyPromstPayment(payment.nedpayId);
+        const st = String(verifyData.status_pagamento ?? "").toUpperCase();
+        if (st === "CONCLUIDA" || st === "PAID" || st === "COMPLETED") {
+          await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() }).where(eq(infinityPaymentsTable.id, paymentId));
+          await handlePaymentConfirmed(payment.id, payment.username, payment.planId);
+          res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
+          finish(); return;
+        }
+        if (st === "EXPIRADA" || st === "EXPIRED" || st === "CANCELLED" || st === "FAILED") {
+          await db.update(infinityPaymentsTable).set({ status: "failed" }).where(eq(infinityPaymentsTable.id, paymentId));
+          res.write(`data: ${JSON.stringify({ status: "failed" })}\n\n`);
+          finish(); return;
+        }
+      }
+    } catch {}
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ status: "pending" })}\n\n`);
+      timer = setTimeout(tick, INTERVAL_MS);
+    }
+  };
+
+  res.write(`: keepalive\n\n`);
+  timer = setTimeout(tick, INTERVAL_MS);
+});
+
 // ─── Referral bonus ────────────────────────────────────────────────────────────
 async function applyReferralBonus(referredUsername: string, referredBy: string) {
   try {
