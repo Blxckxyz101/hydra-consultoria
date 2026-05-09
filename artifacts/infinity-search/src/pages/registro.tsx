@@ -263,7 +263,7 @@ export default function Registro() {
                 {plans.length === 0 ? (
                   <div className="flex items-center justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3 mb-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
                     {plans.map(p => (
                       <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
                     ))}
@@ -336,7 +336,14 @@ export default function Registro() {
                 <div className="flex flex-col items-center gap-4 mb-5">
                   {payment.qrcode_base64 ? (
                     <div className="p-3 rounded-2xl bg-white shadow-xl">
-                      <img src={`data:image/png;base64,${payment.qrcode_base64}`} alt="QR Code PIX" className="w-48 h-48" />
+                      <img
+                        src={
+                          payment.qrcode_base64.startsWith("http") ? payment.qrcode_base64 :
+                          payment.qrcode_base64.startsWith("data:") ? payment.qrcode_base64 :
+                          `data:image/png;base64,${payment.qrcode_base64}`
+                        }
+                        alt="QR Code PIX" className="w-48 h-48"
+                      />
                     </div>
                   ) : (
                     <div className="w-48 h-48 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">

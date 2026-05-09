@@ -17,7 +17,6 @@ import { AdminGuard } from "@/components/layout/AdminGuard";
 import Personalizar, { initSavedTheme } from "@/pages/personalizar";
 import Skylers from "@/pages/skylers";
 import Suporte from "@/pages/suporte";
-import Planos from "@/pages/planos";
 import Historico from "@/pages/historico";
 import Registro from "@/pages/registro";
 import Afiliados from "@/pages/afiliados";
@@ -69,7 +68,7 @@ function Router() {
               <Route path="/api-promo" component={SkylersPromo} />
               <Route path="/suporte" component={Suporte} />
               <Route path="/historico" component={Historico} />
-              <Route path="/planos" component={Planos} />
+              <Route path="/planos">{() => { window.location.replace("/registro"); return null; }}</Route>
               <Route path="/afiliados" component={Afiliados} />
               <Route path="/carteira" component={Carteira} />
               <Route component={NotFound} />
