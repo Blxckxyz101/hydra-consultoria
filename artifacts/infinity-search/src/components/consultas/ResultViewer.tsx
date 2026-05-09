@@ -155,17 +155,26 @@ function isUselessValue(value: string): boolean {
 }
 
 function isImportantField(key: string): boolean {
-  const k = key.toUpperCase();
-  return [
-    "NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "RAZAO SOCIAL",
-    "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG",
-    "DATA NASCIMENTO", "NASCIMENTO", "NASC",
+  const k = key.toUpperCase().trim();
+  // For compound keys (A · B), only the leaf (rightmost) part is checked —
+  // prevents "RESIDENTE EXTERIOR · NOME PAIS" from matching as a person name
+  const leaf = k.includes("·") ? k.split("·").pop()!.trim() : k;
+
+  // Exact matches on the leaf — avoids e.g. "NOME PAIS" matching "NOME"
+  const EXACT = new Set(["NOME", "CPF", "CNPJ", "RG", "FOTO_URL"]);
+  if (EXACT.has(leaf)) return true;
+
+  // Substring matches that are safe even in compound keys
+  const CONTAINS = [
+    "RAZÃO SOCIAL", "RAZAO SOCIAL", "PLACA", "CHASSI",
+    "TELEFONE", "EMAIL",
+    "DATA NASCIMENTO", "DATA DE NASCIMENTO", "NASCIMENTO", "DATA NASC",
     "NOME MÃE", "NOME MAE", "NOME DA MAE", "NOME DA MÃE",
     "NOME PAI", "NOME DO PAI",
     "SEXO", "GENERO", "GÊNERO",
-    "SITUAÇÃO", "SITUACAO",
-    "FOTO_URL",
-  ].some(imp => k.includes(imp));
+    "SITUAÇÃO CADASTRAL", "SITUACAO CADASTRAL",
+  ];
+  return CONTAINS.some(imp => leaf.includes(imp));
 }
 
 function getFieldIcon(key: string): LucideIcon {
