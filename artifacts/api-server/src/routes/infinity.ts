@@ -2197,44 +2197,51 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   }
 });
 
-// ─── AI chat (streaming via SSE, with tool-calling for consultations) ────────
+// ─── AI chat (streaming via SSE, with multi-step tool-calling) ───────────────
 const CONSULTA_TOOL = {
   type: "function" as const,
   function: {
     name: "consultar_infinity",
     description:
-      "Executa uma consulta OSINT no Infinity Search. Use quando o usuário pedir para buscar/consultar CPF, CNPJ, telefone, placa, nome, foto CNH, score, benefícios, dívidas, IRPF, título de eleitor, processos, etc.",
+      "Executa uma consulta OSINT no banco de dados do Infinity Search. " +
+      "Use SEMPRE que o usuário pedir para buscar, consultar, pesquisar ou investigar qualquer dado sobre pessoas, veículos, empresas, crédito ou governo brasileiro. " +
+      "Nunca invente dados — consulte sempre a ferramenta.",
     parameters: {
       type: "object",
       properties: {
         tipo: {
           type: "string",
           enum: [
-            "cpf", "cpfbasico", "nome", "rg", "mae", "pai", "parentes", "obito",
-            "placa", "chassi", "telefone", "pix", "nis", "cns",
-            "cep", "frota", "cnpj", "fucionarios", "socios", "empregos",
-            "cnh", "cnhfull", "renavam", "motor", "vacinas", "email",
-            "titulo", "score", "irpf", "beneficios", "mandado",
-            "dividas", "bens", "processos", "spc", "iptu", "certidoes",
+            "cpf", "nome", "rg", "mae", "pai", "parentes", "obito",
+            "telefone", "email", "pix", "cep",
+            "placa", "chassi", "frota", "cnh", "cnhfull", "renavam",
+            "cnpj", "fucionarios",
+            "nis", "cns", "titulo", "irpf", "beneficios", "mandado",
+            "score", "dividas", "bens", "processos", "spc",
             "foto", "biometria",
           ],
           description:
-            "Tipo de consulta OSINT. " +
-            "Use 'foto' ou 'biometria' para foto/imagem biométrica de uma pessoa pelo CPF (via Skylers) — sempre que o usuário pedir foto, imagem, rosto, biometria ou qualquer variante. " +
-            "Use 'cpf' para dados gerais de uma pessoa. " +
-            "Use 'score' para score de crédito. " +
-            "Use 'irpf' para declaração de imposto de renda. " +
-            "Use 'beneficios' para Bolsa Família/BPC. " +
-            "Use 'dividas' para dívidas BACEN/FGTS. " +
-            "Use 'titulo' para título de eleitor. " +
-            "Use 'mandado' para mandado de prisão. " +
-            "Tipos exclusivos Skylers (base='skylers'): titulo, score, irpf, beneficios, mandado, dividas, bens, processos, spc, iptu, certidoes, cnhfull, foto, biometria, cpfbasico.",
+            "Tipo da consulta:\n" +
+            "PESSOA: cpf (dados completos de uma pessoa pelo CPF), nome (busca por nome completo), rg, mae (dados da mãe pelo CPF), pai, parentes (família e parentes), obito (verifica óbito)\n" +
+            "CONTATO: telefone (titular do número), email, pix (titular da chave), cep (endereço por CEP)\n" +
+            "VEÍCULO: placa (dados do veículo e proprietário), chassi, frota (todos os veículos de uma pessoa/empresa), cnh (habilitação por CPF), cnhfull (CNH completa com foto), renavam\n" +
+            "EMPRESA: cnpj (dados da empresa, sócios, endereço), fucionarios (funcionários da empresa)\n" +
+            "GOVERNO: nis, cns, titulo (título de eleitor), irpf (imposto de renda), beneficios (Bolsa Família/BPC), mandado (mandado de prisão)\n" +
+            "FINANCEIRO: score (score de crédito), dividas (dívidas BACEN/FGTS), bens, processos (judiciais), spc\n" +
+            "FOTO/BIOMETRIA: Use 'foto' ou 'biometria' quando o usuário pedir foto, imagem, rosto, selfie ou biometria de uma pessoa. Sempre requer CPF como dados.",
         },
-        dados: { type: "string", description: "O dado a ser consultado (CPF, placa, nome, CNPJ, etc.)" },
-        base: {
+        dados: {
           type: "string",
-          enum: ["geass", "skylers"],
-          description: "Base de dados. Para tipos exclusivos Skylers, a base é definida automaticamente. Para tipos comuns, use 'skylers' para consultar na Skylers API.",
+          description:
+            "O valor a ser consultado. " +
+            "Para CPF: somente dígitos (ex: 12345678900). " +
+            "Para placa: formato ABC1234 ou ABC1D23. " +
+            "Para CNPJ: somente dígitos. " +
+            "Para nome: nome completo da pessoa. " +
+            "Para telefone: DDD + número (ex: 11999999999). " +
+            "Para CEP: somente dígitos. " +
+            "Para email: endereço completo. " +
+            "Para foto/biometria: CPF da pessoa.",
         },
       },
       required: ["tipo", "dados"],
@@ -2243,6 +2250,12 @@ const CONSULTA_TOOL = {
 };
 
 const GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+
+// Tipos that must always use Skylers
+const AI_SKYLERS_ONLY = new Set([
+  "titulo", "score", "irpf", "beneficios", "mandado", "dividas", "bens",
+  "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "cpfbasico",
+]);
 
 async function streamGroq(
   apiKey: string,
@@ -2321,161 +2334,225 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é a Infinity IA, assistente de inteligência do painel Infinity Search — plataforma OSINT brasileira. " +
-    "IDIOMA: sempre responda em português brasileiro. " +
-    "FERRAMENTA: use consultar_infinity SEMPRE que o usuário pedir busca/consulta de CPF, CNPJ, telefone, placa, nome, email, foto, score, benefícios, dívidas, IRPF, título, mandado, processos, CNH, RG, CEP, veículo, endereço, etc. Não invente dados — nunca. " +
-    "FOTO/BIOMETRIA: quando o usuário pedir foto, imagem, rosto ou biometria de uma pessoa, use tipo='foto' e base='skylers'. A foto JÁ É exibida automaticamente no chat; NÃO inclua URL de foto na resposta. " +
-    "FORMATO DA RESPOSTA: após receber o resultado da ferramenta, apresente os dados de forma organizada usando bullet points (- Campo: Valor). Agrupe informações relacionadas. Seja direto — não repita o que o usuário perguntou. " +
-    "Se o resultado tiver muitos dados, mostre os mais relevantes (nome, CPF, nascimento, filiação, endereço, telefone) e mencione que há mais dados disponíveis. " +
-    "Se não encontrar resultado, informe claramente e sugira verificar se o dado está correto. " +
-    "Para saudações e perguntas genéricas, responda brevemente SEM usar a ferramenta.";
+    "Você é a Infinity IA — assistente de inteligência da plataforma OSINT brasileira Infinity Search. Responda SEMPRE em português brasileiro.\n\n" +
 
-  const cleanMessages = messages.filter(
-    (m: { role?: string; content?: string }) => m && typeof m.content === "string"
+    "REGRA FUNDAMENTAL: Nunca invente, assuma ou deduza dados pessoais. Use SEMPRE a ferramenta consultar_infinity para obter informações reais.\n\n" +
+
+    "QUANDO USAR A FERRAMENTA:\n" +
+    "Use consultar_infinity sempre que o usuário pedir para buscar, consultar, pesquisar ou investigar qualquer dado sobre:\n" +
+    "- Pessoa: CPF, nome, RG, mãe, pai, parentes, óbito\n" +
+    "- Contato: telefone, email, PIX, CEP, endereço\n" +
+    "- Veículo: placa, chassi, frota, CNH, renavam\n" +
+    "- Empresa: CNPJ, funcionários, sócios\n" +
+    "- Crédito/Financeiro: score, dívidas, bens, SPC, processos\n" +
+    "- Governo: NIS, CNS, IRPF, benefícios, título de eleitor, mandado de prisão\n" +
+    "- Foto/Biometria: foto, imagem, rosto, selfie, biometria de uma pessoa\n" +
+    "NÃO use a ferramenta para saudações ou perguntas genéricas sobre o que você pode fazer.\n\n" +
+
+    "FOTO E BIOMETRIA:\n" +
+    "Quando o usuário pedir foto, imagem, rosto ou biometria:\n" +
+    "→ Use tipo='foto' com o CPF como dados\n" +
+    "→ A foto aparece automaticamente no chat — NÃO inclua URLs na resposta\n" +
+    "→ Após a foto, apresente os dados complementares (nome, CNH, etc.)\n\n" +
+
+    "DOSSIÊ COMPLETO:\n" +
+    "Quando pedirem dossiê completo, perfil completo ou investigação de uma pessoa:\n" +
+    "→ Faça múltiplas consultas sequenciais: cpf (dados pessoais) → score (crédito) → foto (biometria)\n" +
+    "→ Compile todos os resultados numa resposta única organizada\n\n" +
+
+    "FORMATAÇÃO DA RESPOSTA:\n" +
+    "- Organize os dados em seções com ### e emoji: ### 👤 Dados Pessoais, ### 📍 Endereço, ### 📱 Contato, ### 🚗 Veículos, ### 💳 Financeiro\n" +
+    "- Use **negrito** para campos importantes\n" +
+    "- Use listas com - para múltiplos valores\n" +
+    "- Mostre os dados mais relevantes primeiro (nome, CPF, nascimento, filiação, endereço, telefone)\n" +
+    "- Se não encontrar resultado: informe claramente e sugira verificar o dado consultado\n" +
+    "- Nunca repita a pergunta do usuário na resposta";
+
+  const cleanMessages = (messages as Array<{ role?: string; content?: string }>).filter(
+    (m) => m && (typeof m.content === "string" || m.content === null)
   );
 
   type AnyMsg = Record<string, unknown>;
+  type ToolCall = { id: string; function: { name: string; arguments: string } };
+
   let finalMessages: AnyMsg[] = [
     { role: "system", content: systemPrompt },
     ...cleanMessages,
   ];
 
-  try {
-    // Phase 1: tool-call detection — try each model until one succeeds (429 fallback)
-    let phase1Resp: Response | null = null;
-    for (let mi = 0; mi < GROQ_MODELS.length; mi++) {
-      const phase1Ctrl = new AbortController();
-      const phase1Timer = setTimeout(() => phase1Ctrl.abort(), 20_000);
-      const attempt = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: GROQ_MODELS[mi],
-          stream: false,
-          messages: finalMessages,
-          tools: [CONSULTA_TOOL],
-          tool_choice: "auto",
-          max_tokens: 512,
-        }),
-        signal: phase1Ctrl.signal,
-      });
-      clearTimeout(phase1Timer);
-      if (attempt.status === 429 && mi < GROQ_MODELS.length - 1) {
-        await new Promise(r => setTimeout(r, 600));
-        continue;
+  // ── Helper: execute one tool call and return the text content for the tool role
+  let capturedPhotoUrl: string | undefined;
+
+  function buildToolContent(
+    p: { fields: Array<{key:string;value:string}>; sections: Array<{name:string;items:string[]}>; raw: string },
+    tipo: string,
+  ): string {
+    const lines: string[] = [];
+    const priorityFields: string[] = [];
+    const otherFields: string[] = [];
+
+    for (const f of p.fields) {
+      if (f.key === "FOTO_URL") {
+        // Convert base64 to served URL; direct URLs pass through
+        if (!capturedPhotoUrl) {
+          if (f.value.startsWith("data:image")) {
+            const fotoId = storeFoto(f.value);
+            capturedPhotoUrl = `/api/infinity/foto/${fotoId}`;
+          } else if (f.value.startsWith("http")) {
+            capturedPhotoUrl = f.value;
+          }
+        }
+        continue; // never add raw FOTO_URL to tool content
       }
-      phase1Resp = attempt;
-      break;
+      const kl = f.key.toLowerCase();
+      const isPriority = /nome|cpf|rg|nascimento|mãe|mae|pai|endereço|endereco|telefone|email|score|situação|situacao/.test(kl);
+      if (isPriority) priorityFields.push(`${f.key}: ${f.value}`);
+      else otherFields.push(`${f.key}: ${f.value}`);
     }
 
-    if (phase1Resp?.ok) {
-      type ToolCall = { id: string; function: { name: string; arguments: string } };
+    if (capturedPhotoUrl) lines.push("[FOTO CAPTURADA — será exibida automaticamente no chat acima desta resposta]");
+    lines.push(`Consulta: ${tipo.toUpperCase()}`);
+    if (priorityFields.length) lines.push("", "--- Dados principais ---", ...priorityFields);
+    if (otherFields.length) {
+      lines.push("", "--- Dados adicionais ---", ...otherFields.slice(0, 25));
+      if (otherFields.length > 25) lines.push(`... e mais ${otherFields.length - 25} campos`);
+    }
+
+    for (const s of p.sections) {
+      const shown = s.items.slice(0, 10);
+      lines.push("", `--- ${s.name} (${s.items.length} registros) ---`, ...shown.map(it => `• ${it}`));
+      if (s.items.length > 10) lines.push(`... e mais ${s.items.length - 10} registros`);
+    }
+
+    const result = lines.join("\n").trim();
+    return result || `Sem dados detalhados. Raw: ${p.raw.slice(0, 400)}`;
+  }
+
+  async function executeTool(toolCall: ToolCall, stepNum: number): Promise<string> {
+    let args: { tipo?: string; dados?: string } = {};
+    try { args = JSON.parse(toolCall.function.arguments); } catch {}
+    const tipo = String(args.tipo ?? "").toLowerCase().trim();
+    const dados = String(args.dados ?? "").trim();
+
+    if (!tipo || !dados) return "Parâmetros inválidos para a consulta.";
+
+    const useSkylers = AI_SKYLERS_ONLY.has(tipo);
+    const stepSuffix = stepNum > 1 ? ` (passo ${stepNum})` : "";
+    res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${useSkylers ? " via Skylers" : ""}…${stepSuffix}` })}\n\n`);
+
+    // For photo: send the SSE event immediately once captured
+    const prevPhoto = capturedPhotoUrl;
+
+    let toolContent = "";
+    if (useSkylers) {
+      const modulo = TIPO_TO_SKYLERS[tipo];
+      if (modulo) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 22_000);
+        const sk = await callSkylers(modulo, dados, ctrl.signal);
+        clearTimeout(timer);
+        if (sk.ok && sk.parsed) {
+          toolContent = buildToolContent(sk.parsed, tipo);
+        } else {
+          toolContent = `Sem resultado para ${tipo}: ${sk.error ?? "dado não encontrado ou não disponível"}`;
+        }
+      } else {
+        // tipo Skylers-only but no module mapping — try geass fallback
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 15_000);
+        const fb = await callProvider(tipo, dados, ctrl.signal);
+        clearTimeout(timer);
+        toolContent = fb.ok && fb.parsed
+          ? buildToolContent(fb.parsed, tipo)
+          : `Sem resultado para ${tipo}: ${fb.error ?? "não encontrado"}`;
+      }
+    } else {
+      // Try Geass first, Skylers as fallback if available
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15_000);
+      const g = await callProvider(tipo, dados, ctrl.signal);
+      clearTimeout(timer);
+      if (g.ok && g.parsed) {
+        toolContent = buildToolContent(g.parsed, tipo);
+      } else {
+        // Try Skylers fallback if the tipo is mapped
+        const modulo = TIPO_TO_SKYLERS[tipo];
+        if (modulo) {
+          const ctrl2 = new AbortController();
+          const timer2 = setTimeout(() => ctrl2.abort(), 15_000);
+          const sk = await callSkylers(modulo, dados, ctrl2.signal);
+          clearTimeout(timer2);
+          toolContent = sk.ok && sk.parsed
+            ? buildToolContent(sk.parsed, tipo)
+            : `Sem resultado para ${tipo}: ${sk.error ?? g.error ?? "dado não encontrado"}`;
+        } else {
+          toolContent = `Sem resultado para ${tipo}: ${g.error ?? "dado não encontrado"}`;
+        }
+      }
+    }
+
+    // If we just captured a photo URL (changed from prev), send SSE immediately
+    if (capturedPhotoUrl && capturedPhotoUrl !== prevPhoto) {
+      res.write(`data: ${JSON.stringify({ photo: capturedPhotoUrl })}\n\n`);
+    }
+
+    return toolContent;
+  }
+
+  // ── Multi-step tool calling loop (up to 4 sequential tool calls)
+  const MAX_TOOL_STEPS = 4;
+  try {
+    for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+      // Non-streaming call to detect tool calls
+      let phase1Resp: Response | null = null;
+      for (let mi = 0; mi < GROQ_MODELS.length; mi++) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 25_000);
+        const attempt = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: GROQ_MODELS[mi],
+            stream: false,
+            messages: finalMessages,
+            tools: [CONSULTA_TOOL],
+            tool_choice: "auto",
+            max_tokens: 600,
+            temperature: 0.1,
+          }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (attempt.status === 429 && mi < GROQ_MODELS.length - 1) {
+          await new Promise(r => setTimeout(r, 800));
+          continue;
+        }
+        phase1Resp = attempt;
+        break;
+      }
+
+      if (!phase1Resp?.ok) break;
+
       type Phase1Choice = { finish_reason: string; message: { content: string | null; tool_calls?: ToolCall[] } };
       const phase1Data = await phase1Resp.json() as { choices?: Phase1Choice[] };
       const choice = phase1Data.choices?.[0];
 
-      if (choice?.finish_reason === "tool_calls" && choice.message.tool_calls?.length) {
-        const toolCall = choice.message.tool_calls[0];
-        let args: { tipo?: string; dados?: string } = {};
-        try { args = JSON.parse(toolCall.function.arguments); } catch {}
-        const tipo = String(args.tipo ?? "");
-        const dados = String(args.dados ?? "");
+      // No tool call — LLM wants to respond directly; break and stream
+      if (!choice || choice.finish_reason !== "tool_calls" || !choice.message.tool_calls?.length) break;
 
-        if (tipo && dados) {
-          const SKYLERS_ONLY_AI = new Set(["titulo", "score", "irpf", "beneficios", "mandado", "dividas", "bens", "processos", "spc", "iptu", "certidoes", "cnhfull", "foto", "biometria", "cpfbasico"]);
-          const rawBase = String((args as { base?: string }).base ?? "geass");
-          const base = SKYLERS_ONLY_AI.has(tipo) ? "skylers" : rawBase;
-          res.write(`data: ${JSON.stringify({ status: `🔍 Consultando ${tipo.toUpperCase()}${base === "skylers" ? " via Skylers" : ""}…` })}\n\n`);
-          let toolContent = "";
-          let capturedPhotoUrl: string | undefined;
+      const toolCall = choice.message.tool_calls[0]!;
+      const toolContent = await executeTool(toolCall, step + 1);
 
-          function buildToolContent(p: { fields: Array<{key:string;value:string}>; sections: Array<{name:string;items:string[]}>; raw: string }): string {
-            const lines: string[] = [];
-            // Priority fields shown first if present
-            const PRIORITY = ["Nome", "CPF", "RG", "Nascimento", "Mãe", "Pai", "Endereço", "Telefone", "Email", "Score", "Situação"];
-            const priorityFields: string[] = [];
-            const otherFields: string[] = [];
-
-            p.fields.forEach((f) => {
-              if (f.key === "FOTO_URL") {
-                if (f.value.startsWith("data:image")) {
-                  const fotoId = storeFoto(f.value);
-                  capturedPhotoUrl = `/api/infinity/foto/${fotoId}`;
-                } else if (f.value) {
-                  capturedPhotoUrl = f.value;
-                }
-              } else {
-                const isPriority = PRIORITY.some((p) => f.key.toLowerCase().includes(p.toLowerCase()));
-                if (isPriority) priorityFields.push(`- ${f.key}: ${f.value}`);
-                else otherFields.push(`- ${f.key}: ${f.value}`);
-              }
-            });
-
-            if (capturedPhotoUrl) lines.push("[FOTO ENCONTRADA — exibida automaticamente no chat]");
-            lines.push(...priorityFields);
-            lines.push(...otherFields.slice(0, 20));
-            if (otherFields.length > 20) lines.push(`... e mais ${otherFields.length - 20} campos adicionais`);
-
-            p.sections.forEach((s) => {
-              const shown = s.items.slice(0, 8);
-              lines.push(`\n${s.name} (${s.items.length} registros):`);
-              shown.forEach((it) => lines.push(`  • ${it}`));
-              if (s.items.length > 8) lines.push(`  ... e mais ${s.items.length - 8} registros`);
-            });
-
-            return lines.join("\n") || p.raw.slice(0, 600);
-          }
-
-          if (base === "skylers") {
-            const modulo = TIPO_TO_SKYLERS[tipo.toLowerCase()];
-            if (modulo) {
-              const aiSkCtrl = new AbortController();
-              const aiSkTimer = setTimeout(() => aiSkCtrl.abort(), 10_000);
-              const sk = await callSkylers(modulo, dados, aiSkCtrl.signal);
-              clearTimeout(aiSkTimer);
-              if (sk.ok && sk.parsed) {
-                toolContent = buildToolContent(sk.parsed);
-              } else {
-                toolContent = `Sem resultado Skylers: ${sk.error ?? "dado não encontrado"}`;
-              }
-            } else {
-              toolContent = `Tipo '${tipo}' não suportado pela Skylers API, usando base principal.`;
-              const aiFbCtrl = new AbortController();
-              const aiFbTimer = setTimeout(() => aiFbCtrl.abort(), 10_000);
-              const fallback = await callProvider(tipo, dados, aiFbCtrl.signal);
-              clearTimeout(aiFbTimer);
-              if (fallback.ok && fallback.parsed) {
-                toolContent = buildToolContent(fallback.parsed);
-              }
-            }
-          } else {
-            const aiCtrl = new AbortController();
-            const aiTimer = setTimeout(() => aiCtrl.abort(), 10_000);
-            const consultResult = await callProvider(tipo, dados, aiCtrl.signal);
-            clearTimeout(aiTimer);
-            if (consultResult.ok && consultResult.parsed) {
-              toolContent = buildToolContent(consultResult.parsed);
-            } else {
-              toolContent = `Sem resultado: ${consultResult.error ?? "dado não encontrado"}`;
-            }
-          }
-
-          // Send photo as a dedicated SSE event BEFORE the AI response stream
-          if (capturedPhotoUrl) {
-            res.write(`data: ${JSON.stringify({ photo: capturedPhotoUrl })}\n\n`);
-          }
-
-          finalMessages = [
-            { role: "system", content: systemPrompt },
-            ...cleanMessages,
-            { role: "assistant", content: null, tool_calls: [toolCall] },
-            { role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: toolContent },
-          ];
-        }
-      }
+      // Add tool exchange to message history for next iteration
+      finalMessages = [
+        ...finalMessages,
+        { role: "assistant", content: null, tool_calls: [toolCall] },
+        { role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: toolContent },
+      ];
     }
-  } catch { /* phase 1 failed — fall through to normal streaming */ }
+  } catch { /* tool loop error — fall through to stream with whatever messages we have */ }
 
+  // ── Stream final LLM response
   await streamGroq(apiKey, finalMessages, res);
 });
 
@@ -2872,7 +2949,7 @@ router.delete("/notifications/:id", requireAuth, async (req, res) => {
   try {
     const deleted = await db
       .delete(infinityNotificationsTable)
-      .where(eq(infinityNotificationsTable.id, req.params.id))
+      .where(eq(infinityNotificationsTable.id, String(req.params.id)))
       .returning();
     if (deleted.length === 0) { res.status(404).json({ error: "Notificação não encontrada" }); return; }
     res.json({ ok: true });

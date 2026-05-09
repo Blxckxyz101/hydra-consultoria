@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, Mic, MicOff, Sparkles, Trash2, Plus,
   MessageSquare, Clock, Copy, Check, Search,
-  X, Volume2, VolumeX, Star, IdCard, Phone, Building2, Car,
+  X, Volume2, VolumeX, Star, IdCard, Phone, Building2, Car, CreditCard, Camera, FileSearch,
 } from "lucide-react";
 import robotUrl from "@/assets/robot.png";
 import { VoiceOrb, type OrbState } from "@/components/ui/VoiceOrb";
@@ -43,7 +43,7 @@ function getVoicesAsync(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-const IMAGE_URL_RE = /(?:https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?|(?:https?:)?\/\/[^\s]+\/api\/infinity\/foto\/[a-f0-9]{24}|\/api\/infinity\/foto\/[a-f0-9]{24})/i;
+const IMAGE_URL_RE = /(?:https?:\/\/\S+\.(?:jpg|jpeg|png|webp|gif)(?:\?\S*)?|(?:https?:)?\/\/[^\s]+\/api\/infinity\/foto\/[a-f0-9]+|\/api\/infinity\/foto\/[a-f0-9]+)/i;
 
 function renderMarkdown(text: string) {
   const lines = text.split("\n");
@@ -71,24 +71,43 @@ function renderMarkdown(text: string) {
           <div className="relative inline-block">
             <img
               src={imgMatch[0]}
-              alt="Foto"
-              className="max-w-[240px] w-full rounded-2xl border-2 border-white/10 shadow-[0_0_30px_rgba(0,0,0,0.5)]"
+              alt="Foto biométrica"
+              className="max-w-[200px] w-full rounded-2xl border-2 border-white/15 shadow-[0_0_40px_rgba(0,0,0,0.6)]"
               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
             />
             <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/10 pointer-events-none" />
+            <div className="absolute bottom-2 left-2 right-2 text-center">
+              <span className="text-[9px] bg-black/70 text-white/60 px-2 py-0.5 rounded-full uppercase tracking-widest">Foto biométrica</span>
+            </div>
           </div>
-          <p className="text-[9px] text-muted-foreground/40 mt-1.5 uppercase tracking-widest">Foto · Skylers</p>
         </div>
       );
       i++; continue;
     }
-    if (line.startsWith("### "))      result.push(<p key={i} className="font-bold text-primary text-sm mt-3 mb-1">{inlineRender(line.slice(4))}</p>);
-    else if (line.startsWith("## ")) result.push(<p key={i} className="font-bold text-base mt-3 mb-1">{inlineRender(line.slice(3))}</p>);
-    else if (line.startsWith("# "))  result.push(<p key={i} className="font-bold text-lg mt-3 mb-1">{inlineRender(line.slice(2))}</p>);
-    else if (line.startsWith("- ") || line.startsWith("• "))
-      result.push(<div key={i} className="flex gap-2 items-start my-0.5"><span className="text-primary/50 mt-0.5 shrink-0 text-[10px]">▸</span><span>{inlineRender(line.replace(/^[-•]\s*/, ""))}</span></div>);
-    else if (line === "") result.push(<div key={i} className="h-1.5" />);
-    else result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
+    if (line.startsWith("### ")) {
+      result.push(
+        <div key={i} className="flex items-center gap-2 mt-4 mb-2 pb-1.5 border-b border-white/[0.06]">
+          <span className="text-sm font-bold text-foreground/90">{inlineRender(line.slice(4))}</span>
+        </div>
+      );
+    } else if (line.startsWith("## ")) {
+      result.push(<p key={i} className="font-bold text-base mt-3 mb-1 text-foreground">{inlineRender(line.slice(3))}</p>);
+    } else if (line.startsWith("# ")) {
+      result.push(<p key={i} className="font-bold text-lg mt-3 mb-1 text-foreground">{inlineRender(line.slice(2))}</p>);
+    } else if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("→ ")) {
+      result.push(
+        <div key={i} className="flex gap-2 items-start my-0.5">
+          <span className="text-primary/50 mt-0.5 shrink-0 text-[10px]">▸</span>
+          <span className="flex-1">{inlineRender(line.replace(/^[-•→]\s*/, ""))}</span>
+        </div>
+      );
+    } else if (line === "---" || line === "___") {
+      result.push(<hr key={i} className="border-white/[0.06] my-2" />);
+    } else if (line === "") {
+      result.push(<div key={i} className="h-1.5" />);
+    } else {
+      result.push(<p key={i} className="leading-relaxed">{inlineRender(line)}</p>);
+    }
     i++;
   }
   return <div className="text-sm space-y-0.5">{result}</div>;
@@ -134,12 +153,14 @@ function ThinkingDots() {
 }
 
 const SUGGESTIONS = [
-  { icon: IdCard, label: "Consultar CPF", text: "Consulte o CPF 11144477735", color: "text-sky-300", bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/18" },
-  { icon: Phone, label: "Consultar telefone", text: "Consulte o telefone 62999173029", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/18" },
-  { icon: Building2, label: "Consultar CNPJ", text: "Consulte o CNPJ 00000000000191", color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/18" },
-  { icon: Car, label: "Consultar Placa", text: "Consulte a placa ABC1234", color: "text-amber-300", bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/18" },
-  { icon: Star, label: "Dossiê completo", text: "Faça um dossiê completo sobre o CPF 11144477735", color: "text-rose-300", bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/18" },
-  { icon: Sparkles, label: "O que posso fazer?", text: "O que você consegue consultar e pesquisar?", color: "text-primary", bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
+  { icon: IdCard,     label: "Consultar CPF",      text: "Consulte o CPF 11144477735",                           color: "text-sky-300",    bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/18" },
+  { icon: Phone,      label: "Consultar telefone",  text: "Consulte o telefone 11999887766",                      color: "text-emerald-300",bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/18" },
+  { icon: Building2,  label: "Consultar CNPJ",      text: "Consulte o CNPJ 00000000000191",                       color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/18" },
+  { icon: Car,        label: "Consultar placa",     text: "Consulte a placa ABC1234",                             color: "text-amber-300",  bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/18" },
+  { icon: Camera,     label: "Foto biométrica",     text: "Consulte a foto biométrica do CPF 11144477735",        color: "text-rose-300",   bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/18" },
+  { icon: CreditCard, label: "Score de crédito",    text: "Qual o score de crédito do CPF 11144477735?",          color: "text-orange-300", bg: "bg-orange-400/10 border-orange-400/20 hover:bg-orange-400/18" },
+  { icon: FileSearch, label: "Dossiê completo",     text: "Faça um dossiê completo sobre o CPF 11144477735",      color: "text-indigo-300", bg: "bg-indigo-400/10 border-indigo-400/20 hover:bg-indigo-400/18" },
+  { icon: Sparkles,   label: "O que você faz?",     text: "O que você consegue consultar e pesquisar?",           color: "text-primary",    bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
 ];
 
 function WaveformBars({ color = "sky" }: { color?: string }) {
@@ -723,7 +744,7 @@ export default function IA() {
 
               <div className="w-full max-w-md">
                 <p className="text-[9px] uppercase tracking-[0.45em] text-muted-foreground/35 text-center mb-3">Sugestões</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {SUGGESTIONS.map((s, i) => {
                     const Icon = s.icon;
                     return (
@@ -731,15 +752,15 @@ export default function IA() {
                         key={i}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.18 + i * 0.06, type: "spring", stiffness: 260, damping: 22 }}
+                        transition={{ delay: 0.14 + i * 0.04, type: "spring", stiffness: 260, damping: 22 }}
                         whileHover={{ y: -2, transition: { duration: 0.12 } }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => sendMessage(s.text)}
                         disabled={isStreaming}
-                        className={`flex flex-col items-start gap-2.5 p-3.5 rounded-2xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
+                        className={`flex flex-col items-start gap-2 p-3 rounded-2xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
                       >
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center bg-black/20`}>
-                          <Icon size={14} className={s.color} />
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-black/20">
+                          <Icon size={13} className={s.color} />
                         </div>
                         <span className="text-[10px] font-semibold text-foreground/80 leading-snug">{s.label}</span>
                       </motion.button>
@@ -838,7 +859,7 @@ export default function IA() {
         {/* Quick suggestions (shown when messages exist) */}
         {messages.length > 0 && !isStreaming && (
           <div className="px-4 pb-2 flex gap-2 overflow-x-auto no-scrollbar shrink-0">
-            {SUGGESTIONS.slice(0, 4).map((s, i) => {
+            {SUGGESTIONS.map((s, i) => {
               const Icon = s.icon;
               return (
                 <button

@@ -44,9 +44,7 @@ function Router() {
         <Registro />
       </Route>
       <Route path="/planos">
-        <TermsGuard>
-          <Planos />
-        </TermsGuard>
+        <Registro />
       </Route>
       <Route>
         <AuthGuard>
