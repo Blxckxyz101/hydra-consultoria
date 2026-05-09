@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Card</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1080px;
+    height: 1080px;
+    background: #020812;
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .card {
+    width: 1080px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 20% 20%, #0a1628 0%, #020812 60%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 70px;
+  }
+
+  /* Animated grid background */
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,200,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,200,255,0.04) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  /* Glow orbs */
+  .orb1 {
+    position: absolute;
+    width: 600px; height: 600px;
+    top: -200px; left: -100px;
+    background: radial-gradient(circle, rgba(0, 180, 255, 0.12) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .orb2 {
+    position: absolute;
+    width: 500px; height: 500px;
+    bottom: -150px; right: -100px;
+    background: radial-gradient(circle, rgba(0, 100, 220, 0.10) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .orb3 {
+    position: absolute;
+    width: 300px; height: 300px;
+    top: 40%; left: 60%;
+    background: radial-gradient(circle, rgba(0, 220, 180, 0.06) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+
+  /* Top line accent */
+  .top-accent {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, #00c8ff, #0066ff, #00c8ff, transparent);
+  }
+
+  /* Content */
+  .content {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* Badge */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0,200,255,0.08);
+    border: 1px solid rgba(0,200,255,0.25);
+    border-radius: 100px;
+    padding: 8px 20px;
+    margin-bottom: 32px;
+    color: #00c8ff;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .badge-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #00c8ff;
+    box-shadow: 0 0 8px #00c8ff;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  /* Logo row */
+  .logo-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .logo-icon {
+    width: 52px; height: 52px;
+    background: linear-gradient(135deg, #00c8ff, #0066ff);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    box-shadow: 0 0 30px rgba(0,200,255,0.3);
+  }
+  .logo-text {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+  .logo-sub {
+    font-size: 10px;
+    letter-spacing: 0.5em;
+    text-transform: uppercase;
+    color: rgba(0,200,255,0.5);
+  }
+
+  /* Main title */
+  .main-title {
+    font-size: 72px;
+    font-weight: 900;
+    line-height: 1;
+    text-align: center;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #ffffff 0%, #b0e0ff 50%, #00c8ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+  }
+  .version {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3em;
+    color: rgba(0,200,255,0.5);
+    text-transform: uppercase;
+    margin-bottom: 52px;
+  }
+
+  /* Features grid */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    width: 100%;
+    margin-bottom: 52px;
+  }
+  .feature {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 20px;
+    padding: 28px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.2s;
+  }
+  .feature::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(0,200,255,0.05) 0%, transparent 60%);
+    border-radius: 20px;
+  }
+  .feature-icon {
+    font-size: 30px;
+    margin-bottom: 14px;
+    display: block;
+  }
+  .feature-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+    line-height: 1.2;
+  }
+  .feature-desc {
+    font-size: 12.5px;
+    color: rgba(255,255,255,0.45);
+    line-height: 1.6;
+    font-weight: 400;
+  }
+  .feature-tag {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(0,200,255,0.12);
+    border: 1px solid rgba(0,200,255,0.2);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #00c8ff;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* Bottom CTA */
+  .cta-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .cta-url {
+    font-size: 16px;
+    font-weight: 600;
+    color: rgba(0,200,255,0.7);
+    letter-spacing: 0.1em;
+  }
+  .cta-sep {
+    width: 4px; height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 50%;
+  }
+  .cta-date {
+    font-size: 13px;
+    color: rgba(255,255,255,0.25);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* Bottom border */
+  .bottom-accent {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(0,100,220,0.4), rgba(0,200,255,0.6), rgba(0,100,220,0.4), transparent);
+  }
+
+  /* Corner decorations */
+  .corner {
+    position: absolute;
+    width: 60px; height: 60px;
+  }
+  .corner-tl { top: 24px; left: 24px; border-top: 1.5px solid rgba(0,200,255,0.3); border-left: 1.5px solid rgba(0,200,255,0.3); border-radius: 8px 0 0 0; }
+  .corner-tr { top: 24px; right: 24px; border-top: 1.5px solid rgba(0,200,255,0.3); border-right: 1.5px solid rgba(0,200,255,0.3); border-radius: 0 8px 0 0; }
+  .corner-bl { bottom: 24px; left: 24px; border-bottom: 1.5px solid rgba(0,200,255,0.3); border-left: 1.5px solid rgba(0,200,255,0.3); border-radius: 0 0 0 8px; }
+  .corner-br { bottom: 24px; right: 24px; border-bottom: 1.5px solid rgba(0,200,255,0.3); border-right: 1.5px solid rgba(0,200,255,0.3); border-radius: 0 0 8px 0; }
+
+  /* Scan line */
+  .scan {
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,200,255,0.15), transparent);
+    top: 35%;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="grid"></div>
+  <div class="orb1"></div>
+  <div class="orb2"></div>
+  <div class="orb3"></div>
+  <div class="top-accent"></div>
+  <div class="bottom-accent"></div>
+  <div class="scan"></div>
+  <div class="corner corner-tl"></div>
+  <div class="corner corner-tr"></div>
+  <div class="corner corner-bl"></div>
+  <div class="corner corner-br"></div>
+
+  <div class="content">
+    <div class="badge">
+      <div class="badge-dot"></div>
+      Nova atualização disponível
+    </div>
+
+    <div class="logo-row">
+      <div class="logo-icon">∞</div>
+      <div>
+        <div class="logo-text">Infinity Search</div>
+        <div class="logo-sub">OSINT Platform</div>
+      </div>
+    </div>
+
+    <div class="main-title">O QUE HÁ DE<br>NOVO</div>
+    <div class="version">Versão — Maio 2025</div>
+
+    <div class="features">
+      <div class="feature">
+        <div class="feature-tag">NOVO</div>
+        <span class="feature-icon">🎁</span>
+        <div class="feature-title">Gift Card &<br>Afiliados</div>
+        <div class="feature-desc">Compre pacotes de códigos com desconto e distribua para seus clientes. Lucre na margem.</div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-tag">NOVO</div>
+        <span class="feature-icon">💰</span>
+        <div class="feature-title">Carteira<br>Digital</div>
+        <div class="feature-desc">Adicione saldo via PIX e use para compras instantâneas, sem gerar novo QR Code a cada vez.</div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-tag">NOVO</div>
+        <span class="feature-icon">👥</span>
+        <div class="feature-title">Sistema de<br>Indicação</div>
+        <div class="feature-desc">Indique amigos com seu link exclusivo e ganhe +7 dias no plano por cada ativação confirmada.</div>
+      </div>
+    </div>
+
+    <div class="cta-row">
+      <span class="cta-url">infinitysearch.pro</span>
+      <div class="cta-sep"></div>
+      <span class="cta-date">Disponível agora</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>
