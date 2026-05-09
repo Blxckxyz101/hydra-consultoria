@@ -1,0 +1,37 @@
+uploads = []
+
+[[generated]]
+id = "R7pfJorguYnHImuY3VttE"
+uri = "file://attached_assets/promo_hacker.png"
+type = "image"
+title = "infinity search hacker promo"
+
+[[generated]]
+id = "Vd7r7parWXqnA6t0b11pf"
+uri = "file://attached_assets/promo_clean.png"
+type = "image"
+title = "infinity search clean promo"
+
+[[generated]]
+id = "_1QU7uoKKEW7cfEuNcR24"
+uri = "file://attached_assets/promo_investigation.png"
+type = "image"
+title = "infinity search investigation promo"
+
+[[outputs]]
+id = "a85vI9pYbZAWXxCRhEj7S"
+uri = "file://attached_assets/promo_hacker.png"
+type = "image"
+title = "Versão Hacker/Cyberpunk (9:16 — Stories/Status)"
+
+[[outputs]]
+id = "kEReGatmZOAhQSj78xwbp"
+uri = "file://attached_assets/promo_clean.png"
+type = "image"
+title = "Versão Clean/Premium (9:16 — Stories/Status)"
+
+[[outputs]]
+id = "hDPnw3TysZVO6Bc9ad7aR"
+uri = "file://attached_assets/promo_investigation.png"
+type = "image"
+title = "Versão Investigação (4:3 — Post/Feed)"
