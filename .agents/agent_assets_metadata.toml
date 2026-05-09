@@ -35,3 +35,9 @@ id = "hDPnw3TysZVO6Bc9ad7aR"
 uri = "file://attached_assets/promo_investigation.png"
 type = "image"
 title = "Versão Investigação (4:3 — Post/Feed)"
+
+[[outputs]]
+id = "yrOSqCZ86jfflchJH2PVr"
+uri = "file://screenshots/update_registro.jpg"
+type = "image"
+title = "Infinity Search — Novas Funcionalidades"
