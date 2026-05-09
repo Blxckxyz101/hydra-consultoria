@@ -47,3 +47,9 @@ id = "wk8t9z4Jle91rTiz1Cmwb"
 uri = "file://screenshots/update-card.jpg"
 type = "image"
 title = "Card de Atualização — Infinity Search"
+
+[[outputs]]
+id = "QFDbFVcGjKN0hclnkZFri"
+uri = "file://screenshots/promo.jpg"
+type = "image"
+title = "Imagem de Divulgação — Infinity Search Painel"

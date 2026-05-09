@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1080px; height: 1080px; overflow: hidden; background: #020810; font-family: -apple-system, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif; }
+
+  .wrap {
+    width: 1080px; height: 1080px; position: relative; overflow: hidden;
+    background:
+      radial-gradient(ellipse 800px 600px at 50% -10%, rgba(0,140,255,0.22) 0%, transparent 65%),
+      radial-gradient(ellipse 500px 500px at 10% 100%, rgba(0,60,180,0.15) 0%, transparent 60%),
+      radial-gradient(ellipse 400px 400px at 90% 80%, rgba(0,100,200,0.10) 0%, transparent 60%),
+      #020810;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    padding: 56px 72px 52px;
+  }
+
+  /* ── BG decorations ────────────── */
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,150,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,150,255,0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at 50% 30%, black 30%, transparent 75%);
+  }
+  .glow-top {
+    position: absolute; top: -120px; left: 50%; transform: translateX(-50%);
+    width: 700px; height: 300px;
+    background: radial-gradient(ellipse, rgba(0,160,255,0.18) 0%, transparent 70%);
+    border-radius: 50%;
+  }
+  .accent-top {
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, transparent 5%, #00aaff 25%, #0055ff 50%, #00aaff 75%, transparent 95%);
+  }
+  .accent-bottom {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent 10%, rgba(0,110,255,0.5) 40%, rgba(0,170,255,0.75) 50%, rgba(0,110,255,0.5) 60%, transparent 90%);
+  }
+  .c { position: absolute; width: 50px; height: 50px; }
+  .c-tl { top: 20px; left: 20px; border-top: 2px solid rgba(0,180,255,0.4); border-left: 2px solid rgba(0,180,255,0.4); border-radius: 8px 0 0 0; }
+  .c-tr { top: 20px; right: 20px; border-top: 2px solid rgba(0,180,255,0.4); border-right: 2px solid rgba(0,180,255,0.4); border-radius: 0 8px 0 0; }
+  .c-bl { bottom: 20px; left: 20px; border-bottom: 2px solid rgba(0,180,255,0.4); border-left: 2px solid rgba(0,180,255,0.4); border-radius: 0 0 0 8px; }
+  .c-br { bottom: 20px; right: 20px; border-bottom: 2px solid rgba(0,180,255,0.4); border-right: 2px solid rgba(0,180,255,0.4); border-radius: 0 0 8px 0; }
+
+  /* ── TOP BAR ────────────────────── */
+  .topbar {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%;
+  }
+  .logo-row { display: flex; align-items: center; gap: 14px; }
+  .logo-box {
+    width: 48px; height: 48px;
+    background: linear-gradient(145deg, #007bff, #0044cc);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; color: white; font-weight: 900;
+    box-shadow: 0 0 28px rgba(0,120,255,0.5);
+    border: 1px solid rgba(0,180,255,0.3);
+  }
+  .logo-name { font-size: 17px; font-weight: 800; letter-spacing: 0.3em; text-transform: uppercase; color: #fff; display: block; }
+  .logo-tag { font-size: 9px; font-weight: 600; letter-spacing: 0.5em; text-transform: uppercase; color: rgba(0,180,255,0.5); }
+  .price-pill {
+    background: rgba(0,200,100,0.1);
+    border: 1px solid rgba(0,200,100,0.3);
+    border-radius: 100px;
+    padding: 10px 22px;
+    text-align: right;
+  }
+  .price-from { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(0,220,120,0.6); display: block; }
+  .price-val { font-size: 22px; font-weight: 900; color: #00dd88; line-height: 1.1; }
+  .price-period { font-size: 10px; color: rgba(0,200,100,0.6); font-weight: 500; }
+
+  /* ── HERO HEADLINE ─────────────── */
+  .hero { position: relative; z-index: 10; text-align: center; width: 100%; }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(0,150,255,0.09); border: 1px solid rgba(0,150,255,0.22);
+    border-radius: 100px; padding: 7px 18px; margin-bottom: 20px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.25em; text-transform: uppercase; color: #44bbff;
+  }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: #00ccff; box-shadow: 0 0 8px #00ccff; animation: p 1.8s ease-in-out infinite; }
+  @keyframes p { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.3;transform:scale(.7)} }
+
+  .hero-title {
+    font-size: 78px; font-weight: 900; line-height: 0.92; letter-spacing: -0.03em;
+    text-transform: uppercase; margin-bottom: 18px;
+  }
+  .hero-title .line1 { display: block; color: #ffffff; }
+  .hero-title .line2 { display: block; background: linear-gradient(90deg, #44aaff, #0077ff, #44ccff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .hero-title .line3 { display: block; color: rgba(255,255,255,0.88); }
+
+  .hero-sub {
+    font-size: 15px; font-weight: 400; color: rgba(255,255,255,0.42); line-height: 1.6; max-width: 600px; margin: 0 auto;
+  }
+
+  /* ── MOCK UI PANEL ─────────────── */
+  .mock {
+    position: relative; z-index: 10;
+    width: 100%;
+    background: rgba(4, 16, 36, 0.95);
+    border: 1px solid rgba(0,140,255,0.18);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 0 60px rgba(0,100,255,0.12), 0 0 120px rgba(0,60,200,0.08), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  /* Window chrome */
+  .mock-bar {
+    display: flex; align-items: center; gap: 0;
+    padding: 11px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.055);
+    background: rgba(255,255,255,0.025);
+  }
+  .mock-dots { display: flex; gap: 6px; }
+  .mock-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .mock-dot:nth-child(1) { background: #ff5f57; }
+  .mock-dot:nth-child(2) { background: #ffbd2e; }
+  .mock-dot:nth-child(3) { background: #28c840; }
+  .mock-url {
+    flex: 1; text-align: center;
+    font-size: 11px; color: rgba(255,255,255,0.28); letter-spacing: 0.05em;
+    font-family: monospace;
+  }
+  .mock-lock { font-size: 11px; color: rgba(0,200,100,0.5); margin-right: 6px; }
+
+  /* Mock content */
+  .mock-body {
+    padding: 16px 20px;
+    display: flex; gap: 16px;
+  }
+
+  /* Sidebar */
+  .mock-sidebar {
+    width: 130px; flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .mock-s-logo {
+    font-size: 11px; font-weight: 800; letter-spacing: 0.2em; color: rgba(0,180,255,0.7);
+    text-transform: uppercase; padding: 4px 8px; margin-bottom: 8px;
+  }
+  .mock-nav {
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .mock-nav-item {
+    padding: 7px 10px; border-radius: 8px;
+    font-size: 11px; font-weight: 500;
+    color: rgba(255,255,255,0.35);
+    display: flex; align-items: center; gap: 7px;
+  }
+  .mock-nav-item.active {
+    background: rgba(0,140,255,0.15);
+    color: #44aaff; border: 1px solid rgba(0,140,255,0.2);
+  }
+  .mock-nav-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.6; flex-shrink: 0; }
+
+  /* Main area */
+  .mock-main { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+
+  /* Search bar */
+  .mock-search {
+    height: 32px; background: rgba(0,140,255,0.07); border: 1px solid rgba(0,140,255,0.2);
+    border-radius: 9px; display: flex; align-items: center; padding: 0 12px; gap: 8px;
+  }
+  .mock-search-icon { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid rgba(0,180,255,0.4); position: relative; }
+  .mock-search-text { font-size: 10px; color: rgba(255,255,255,0.25); font-style: italic; }
+  .mock-search-pills { margin-left: auto; display: flex; gap: 4px; }
+  .mock-pill {
+    padding: 2px 8px; border-radius: 100px; font-size: 8.5px; font-weight: 700;
+    background: rgba(0,140,255,0.12); border: 1px solid rgba(0,140,255,0.2); color: #44aaff;
+  }
+  .mock-pill.active { background: rgba(0,140,255,0.22); color: #66ccff; }
+
+  /* Stats row */
+  .mock-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .mock-stat {
+    background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 9px 10px;
+  }
+  .mock-stat-val { font-size: 16px; font-weight: 800; color: #fff; line-height: 1; margin-bottom: 3px; }
+  .mock-stat-val.cyan { color: #44bbff; }
+  .mock-stat-val.green { color: #44dd88; }
+  .mock-stat-val.amber { color: #ffbb44; }
+  .mock-stat-label { font-size: 8px; color: rgba(255,255,255,0.3); text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; }
+
+  /* Results grid */
+  .mock-results { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mock-result {
+    background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .mock-result-head { font-size: 9px; color: rgba(0,180,255,0.6); text-transform: uppercase; letter-spacing: 0.15em; font-weight: 700; margin-bottom: 5px; }
+  .mock-result-line { height: 7px; border-radius: 3px; background: rgba(255,255,255,0.07); margin-bottom: 4px; }
+  .mock-result-line.w80 { width: 80%; }
+  .mock-result-line.w60 { width: 60%; }
+  .mock-result-line.w90 { width: 90%; }
+  .mock-result-line.w45 { width: 45%; }
+  .mock-result-line.w70 { width: 70%; }
+  .mock-result-tag { display: inline-block; padding: 2px 7px; border-radius: 100px; font-size: 8px; font-weight: 700; background: rgba(0,180,255,0.12); border: 1px solid rgba(0,180,255,0.2); color: #44aaff; margin-top: 4px; }
+  .mock-result-tag.green { background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.2); color: #44dd88; }
+
+  /* ── FEATURES ROW ──────────────── */
+  .features {
+    position: relative; z-index: 10;
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 12px; width: 100%;
+  }
+  .feat {
+    background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.065);
+    border-radius: 16px; padding: 18px 16px 16px;
+    text-align: center; position: relative; overflow: hidden;
+  }
+  .feat::after {
+    content: ''; position: absolute; top: 0; left: 20%; right: 20%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,180,255,0.25), transparent);
+  }
+  .feat-ico { font-size: 24px; margin-bottom: 8px; display: block; }
+  .feat-label { font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.75); line-height: 1.3; }
+
+  /* ── CTA ROW ───────────────────── */
+  .cta-row {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%;
+  }
+  .cta-left { display: flex; flex-direction: column; gap: 4px; }
+  .cta-tagline { font-size: 13px; color: rgba(255,255,255,0.3); font-weight: 400; }
+  .cta-url { font-size: 20px; font-weight: 800; background: linear-gradient(90deg, #55bbff, #0088ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; letter-spacing: 0.04em; }
+  .cta-btn {
+    background: linear-gradient(135deg, #0088ff, #0044dd);
+    border-radius: 14px; padding: 16px 40px;
+    font-size: 15px; font-weight: 800; color: white;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    box-shadow: 0 0 40px rgba(0,120,255,0.45), 0 0 16px rgba(0,80,220,0.3);
+    border: 1px solid rgba(0,180,255,0.3);
+  }
+  .cta-reviews {
+    display: flex; flex-direction: column; gap: 3px; align-items: center;
+  }
+  .cta-stars { color: #ffcc44; font-size: 16px; letter-spacing: 2px; }
+  .cta-review-text { font-size: 10px; color: rgba(255,255,255,0.28); letter-spacing: 0.12em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="grid"></div>
+  <div class="glow-top"></div>
+  <div class="accent-top"></div>
+  <div class="accent-bottom"></div>
+  <div class="c c-tl"></div><div class="c c-tr"></div>
+  <div class="c c-bl"></div><div class="c c-br"></div>
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="logo-row">
+      <div class="logo-box">∞</div>
+      <div>
+        <span class="logo-name">Infinity Search</span>
+        <span class="logo-tag">Plataforma OSINT</span>
+      </div>
+    </div>
+    <div class="price-pill">
+      <span class="price-from">A partir de</span>
+      <span class="price-val">R$ 15<span class="price-period">/acesso</span></span>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-eyebrow"><div class="pulse"></div>24 tipos de consulta disponíveis</div>
+    <div class="hero-title">
+      <span class="line1">CONSULTE</span>
+      <span class="line2">QUALQUER DADO</span>
+      <span class="line3">EM SEGUNDOS</span>
+    </div>
+    <div class="hero-sub">CPF · CNPJ · Telefone · Placa · PIX · Nome · E-mail · Endereço · Score · e muito mais</div>
+  </div>
+
+  <!-- MOCK PANEL -->
+  <div class="mock">
+    <div class="mock-bar">
+      <div class="mock-dots">
+        <div class="mock-dot"></div><div class="mock-dot"></div><div class="mock-dot"></div>
+      </div>
+      <div class="mock-url"><span class="mock-lock">🔒</span>infinitysearch.pro/consultas</div>
+      <div style="width:54px"></div>
+    </div>
+    <div class="mock-body">
+      <!-- Sidebar -->
+      <div class="mock-sidebar">
+        <div class="mock-s-logo">∞ Infinity</div>
+        <div class="mock-nav">
+          <div class="mock-nav-item"><div class="mock-nav-dot"></div>Overview</div>
+          <div class="mock-nav-item active"><div class="mock-nav-dot"></div>Consultas</div>
+          <div class="mock-nav-item"><div class="mock-nav-dot"></div>Dossiê</div>
+          <div class="mock-nav-item"><div class="mock-nav-dot"></div>Histórico</div>
+          <div class="mock-nav-item"><div class="mock-nav-dot"></div>Assistente IA</div>
+        </div>
+      </div>
+      <!-- Main -->
+      <div class="mock-main">
+        <!-- Search -->
+        <div class="mock-search">
+          <div class="mock-search-icon"></div>
+          <div class="mock-search-text">Digite CPF, nome, telefone, placa...</div>
+          <div class="mock-search-pills">
+            <div class="mock-pill active">CPF</div>
+            <div class="mock-pill">Telefone</div>
+            <div class="mock-pill">Placa</div>
+            <div class="mock-pill">CNPJ</div>
+          </div>
+        </div>
+        <!-- Stats -->
+        <div class="mock-stats">
+          <div class="mock-stat"><div class="mock-stat-val cyan">247</div><div class="mock-stat-label">Consultas hoje</div></div>
+          <div class="mock-stat"><div class="mock-stat-val green">98.4%</div><div class="mock-stat-label">Taxa de acerto</div></div>
+          <div class="mock-stat"><div class="mock-stat-val amber">0.4s</div><div class="mock-stat-label">Tempo médio</div></div>
+          <div class="mock-stat"><div class="mock-stat-val">24</div><div class="mock-stat-label">Tipos de busca</div></div>
+        </div>
+        <!-- Results -->
+        <div class="mock-results">
+          <div class="mock-result">
+            <div class="mock-result-head">Pessoa encontrada</div>
+            <div class="mock-result-line w80"></div>
+            <div class="mock-result-line w60"></div>
+            <div class="mock-result-line w90"></div>
+            <div class="mock-result-tag green">✓ Validado</div>
+          </div>
+          <div class="mock-result">
+            <div class="mock-result-head">Dados cadastrais</div>
+            <div class="mock-result-line w70"></div>
+            <div class="mock-result-line w45"></div>
+            <div class="mock-result-line w80"></div>
+            <div class="mock-result-tag">CPF · Score · Endereço</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features">
+    <div class="feat"><span class="feat-ico">🔍</span><div class="feat-label">24 Tipos de Consulta</div></div>
+    <div class="feat"><span class="feat-ico">🤖</span><div class="feat-label">Assistente IA</div></div>
+    <div class="feat"><span class="feat-ico">📁</span><div class="feat-label">Dossiê Completo</div></div>
+    <div class="feat"><span class="feat-ico">⚡</span><div class="feat-label">Resposta em &lt;1s</div></div>
+    <div class="feat"><span class="feat-ico">🔒</span><div class="feat-label">100% Seguro</div></div>
+  </div>
+
+  <!-- CTA -->
+  <div class="cta-row">
+    <div class="cta-left">
+      <div class="cta-tagline">Acesse agora e comece a consultar</div>
+      <div class="cta-url">infinitysearch.pro</div>
+    </div>
+    <div class="cta-reviews">
+      <div class="cta-stars">★★★★★</div>
+      <div class="cta-review-text">Usado por centenas de clientes</div>
+    </div>
+    <div class="cta-btn">TESTAR AGORA →</div>
+  </div>
+</div>
+</body>
+</html>
