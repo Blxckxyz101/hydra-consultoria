@@ -2594,11 +2594,17 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
       const toolCall = choice.message.tool_calls[0]!;
       const toolContent = await executeTool(toolCall, step + 1);
 
+      // Cap tool content sent to Groq to avoid 413 on multi-step calls
+      const MAX_TOOL_CONTENT = 1800;
+      const toolContentForGroq = toolContent.length > MAX_TOOL_CONTENT
+        ? toolContent.slice(0, MAX_TOOL_CONTENT) + "\n… [truncado para caber no contexto]"
+        : toolContent;
+
       // Add tool exchange to message history for next iteration
       finalMessages = [
         ...finalMessages,
         { role: "assistant", content: null, tool_calls: [toolCall] },
-        { role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: toolContent },
+        { role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: toolContentForGroq },
       ];
     }
   } catch { /* tool loop error — fall through to stream with whatever messages we have */ }
