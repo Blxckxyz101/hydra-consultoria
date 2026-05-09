@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import crypto from "node:crypto";
-import { db, infinityPaymentsTable, infinityPendingAccountsTable, infinityUsersTable } from "@workspace/db";
+import { db, infinityPaymentsTable, infinityPendingAccountsTable, infinityUsersTable, infinityReferralsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "../lib/infinity-auth.js";
@@ -126,7 +126,7 @@ router.post("/payments/create", requireAuth, async (req, res) => {
 
 // ─── POST /payments/create-guest — new user registering + paying ──────────────
 router.post("/payments/create-guest", loginLimiter, async (req, res) => {
-  const { planId, username, password, email } = req.body ?? {};
+  const { planId, username, password, email, referralCode } = req.body ?? {};
 
   if (!planId || !username || !password) {
     res.status(400).json({ error: "planId, username e password obrigatórios" });
@@ -206,6 +206,8 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     expiresAt,
   });
 
+  const refBy = referralCode ? String(referralCode).trim().toLowerCase() : null;
+
   await db.insert(infinityPendingAccountsTable).values({
     username: usernameStr,
     passwordHash,
@@ -213,6 +215,7 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     planId: plan.id,
     paymentId,
     status: "pending_payment",
+    referredBy: refBy !== usernameStr ? refBy : null,
   });
 
   res.json({
@@ -275,6 +278,24 @@ router.get("/payments/:id/status", async (req, res) => {
   res.json({ status: payment.status, paidAt: null });
 });
 
+// ─── Referral bonus ────────────────────────────────────────────────────────────
+async function applyReferralBonus(referredUsername: string, referredBy: string) {
+  try {
+    const [referrer] = await db.select({ username: infinityUsersTable.username, accountExpiresAt: infinityUsersTable.accountExpiresAt })
+      .from(infinityUsersTable).where(eq(infinityUsersTable.username, referredBy)).limit(1);
+    if (!referrer) return;
+    const [existing] = await db.select().from(infinityReferralsTable)
+      .where(eq(infinityReferralsTable.referredUsername, referredUsername)).limit(1);
+    if (existing) return;
+    await db.insert(infinityReferralsTable).values({
+      referrerUsername: referredBy, referredUsername, bonusDays: 7, appliedAt: new Date(),
+    });
+    const base = referrer.accountExpiresAt && referrer.accountExpiresAt > new Date() ? referrer.accountExpiresAt : new Date();
+    const newExpiry = new Date(base.getTime() + 7 * 86400_000);
+    await db.update(infinityUsersTable).set({ accountExpiresAt: newExpiry }).where(eq(infinityUsersTable.username, referredBy));
+  } catch {}
+}
+
 // ─── Payment confirmed: auto-activate ─────────────────────────────────────────
 async function handlePaymentConfirmed(paymentId: string, username: string | null, planId: string) {
   const plan = getPlan(planId);
@@ -326,6 +347,11 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
         planLabel: plan.label,
         expiresAt: accountExpiresAt,
       });
+    }
+
+    // Apply referral bonus if invited
+    if (pending.referredBy) {
+      void applyReferralBonus(pending.username, pending.referredBy);
     }
   } catch {
     // User may have been created in a race — just mark approved

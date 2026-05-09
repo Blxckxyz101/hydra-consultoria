@@ -63,6 +63,9 @@ export const infinityPaymentsTable = pgTable(
     expiresAt:     timestamp("expires_at", { withTimezone: true }),
     paidAt:        timestamp("paid_at", { withTimezone: true }),
     createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Purpose field for multi-use payments
+    purpose:       text("purpose").notNull().default("subscription"),
+    purposeMeta:   text("purpose_meta"),
   },
   (t) => ({
     byUsername: index("infinity_payments_username_idx").on(t.username),
@@ -81,6 +84,7 @@ export const infinityPendingAccountsTable = pgTable(
     paymentId:    text("payment_id").notNull(),
     status:       text("status").notNull().default("pending_payment"),
     rejectedReason: text("rejected_reason"),
+    referredBy:   text("referred_by"),
     createdAt:    timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt:    timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -89,11 +93,97 @@ export const infinityPendingAccountsTable = pgTable(
   }),
 );
 
+// ─── Wallet ────────────────────────────────────────────────────────────────────
+
+export const infinityWalletTable = pgTable("infinity_wallet", {
+  username:     text("username").primaryKey(),
+  balanceCents: integer("balance_cents").notNull().default(0),
+  updatedAt:    timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const infinityWalletTxnsTable = pgTable(
+  "infinity_wallet_txns",
+  {
+    id:          serial("id").primaryKey(),
+    username:    text("username").notNull(),
+    direction:   text("direction").notNull(), // "credit" | "debit"
+    amountCents: integer("amount_cents").notNull(),
+    description: text("description").notNull(),
+    refId:       text("ref_id"),
+    createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byUser: index("infinity_wallet_txns_user_idx").on(t.username),
+  }),
+);
+
+// ─── Gift Cards ────────────────────────────────────────────────────────────────
+
+export const infinityGiftPurchasesTable = pgTable(
+  "infinity_gift_purchases",
+  {
+    id:            serial("id").primaryKey(),
+    username:      text("username").notNull(),
+    packId:        text("pack_id").notNull(),
+    codesCount:    integer("codes_count").notNull(),
+    amountCents:   integer("amount_cents").notNull(),
+    paymentMethod: text("payment_method").notNull(), // "pix" | "wallet"
+    paymentId:     text("payment_id"),
+    status:        text("status").notNull().default("pending"), // "pending" | "completed" | "cancelled"
+    completedAt:   timestamp("completed_at", { withTimezone: true }),
+    createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byUser:   index("infinity_gift_purchases_user_idx").on(t.username),
+    byStatus: index("infinity_gift_purchases_status_idx").on(t.status),
+  }),
+);
+
+export const infinityGiftCodesTable = pgTable(
+  "infinity_gift_codes",
+  {
+    code:        text("code").primaryKey(), // INFY-XXXX-XXXX-XXXX
+    packId:      text("pack_id").notNull(),
+    days:        integer("days").notNull(),
+    ownedBy:     text("owned_by").notNull(),
+    purchaseId:  integer("purchase_id").notNull(),
+    redeemedBy:  text("redeemed_by"),
+    redeemedAt:  timestamp("redeemed_at", { withTimezone: true }),
+    expiresAt:   timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byOwner:    index("infinity_gift_codes_owner_idx").on(t.ownedBy),
+    byPurchase: index("infinity_gift_codes_purchase_idx").on(t.purchaseId),
+  }),
+);
+
+// ─── Referrals ─────────────────────────────────────────────────────────────────
+
+export const infinityReferralsTable = pgTable(
+  "infinity_referrals",
+  {
+    id:               serial("id").primaryKey(),
+    referrerUsername: text("referrer_username").notNull(),
+    referredUsername: text("referred_username").notNull().unique(),
+    bonusDays:        integer("bonus_days").notNull().default(7),
+    appliedAt:        timestamp("applied_at", { withTimezone: true }),
+    createdAt:        timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byReferrer: index("infinity_referrals_referrer_idx").on(t.referrerUsername),
+  }),
+);
+
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);
-export type InsertInfinityUser = z.infer<typeof insertInfinityUserSchema>;
-export type InfinityUserRow    = typeof infinityUsersTable.$inferSelect;
-export type InfinitySessionRow = typeof infinitySessionsTable.$inferSelect;
-export type InfinityConsultaRow = typeof infinityConsultasTable.$inferSelect;
-export type InfinityPinRow     = typeof infinityPinsTable.$inferSelect;
-export type InfinityPaymentRow = typeof infinityPaymentsTable.$inferSelect;
+export type InsertInfinityUser        = z.infer<typeof insertInfinityUserSchema>;
+export type InfinityUserRow           = typeof infinityUsersTable.$inferSelect;
+export type InfinitySessionRow        = typeof infinitySessionsTable.$inferSelect;
+export type InfinityConsultaRow       = typeof infinityConsultasTable.$inferSelect;
+export type InfinityPinRow            = typeof infinityPinsTable.$inferSelect;
+export type InfinityPaymentRow        = typeof infinityPaymentsTable.$inferSelect;
 export type InfinityPendingAccountRow = typeof infinityPendingAccountsTable.$inferSelect;
+export type InfinityWalletRow         = typeof infinityWalletTable.$inferSelect;
+export type InfinityGiftCodeRow       = typeof infinityGiftCodesTable.$inferSelect;
+export type InfinityGiftPurchaseRow   = typeof infinityGiftPurchasesTable.$inferSelect;
+export type InfinityReferralRow       = typeof infinityReferralsTable.$inferSelect;

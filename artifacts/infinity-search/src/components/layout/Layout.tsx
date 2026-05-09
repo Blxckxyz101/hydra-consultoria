@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, CreditCard, History, AlertTriangle } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, CreditCard, History, AlertTriangle, Gift, Wallet } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/logo.png";
@@ -235,6 +235,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/favoritos", label: "Favoritos", icon: Star },
     ...(isAdmin ? [{ href: "/bases", label: "Monitor de Bases", icon: Server }] : []),
     { href: "/planos", label: "Planos", icon: CreditCard },
+    { href: "/afiliados", label: "Afiliados", icon: Gift },
+    { href: "/carteira", label: "Carteira", icon: Wallet },
     { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
     { href: "/perfil", label: "Perfil", icon: UserCircle },
     { href: "/configuracoes", label: "Configurações", icon: Settings },
