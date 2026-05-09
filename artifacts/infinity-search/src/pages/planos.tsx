@@ -331,7 +331,12 @@ export default function Planos() {
               <div className="flex flex-col items-center gap-3">
                 <div className="rounded-2xl p-2 sm:p-3 bg-white mx-auto">
                   <img
-                    src={paymentData.qrcode_base64.startsWith("data:") ? paymentData.qrcode_base64 : `data:image/png;base64,${paymentData.qrcode_base64}`}
+                    src={
+                      !paymentData.qrcode_base64 ? "" :
+                      paymentData.qrcode_base64.startsWith("http") ? paymentData.qrcode_base64 :
+                      paymentData.qrcode_base64.startsWith("data:") ? paymentData.qrcode_base64 :
+                      `data:image/png;base64,${paymentData.qrcode_base64}`
+                    }
                     alt="QR Code PIX"
                     className="w-36 h-36 sm:w-48 sm:h-48 block"
                   />

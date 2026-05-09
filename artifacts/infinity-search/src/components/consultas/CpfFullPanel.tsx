@@ -191,11 +191,15 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const f = mergeFields(sources.map(k => results[k]));
   const raw = mergeRaw(sources.map(k => results[k]));
 
+  const BOGUS_NOME_RE = /^(brasil|brazil|brasileir[ao]|português[ao]?|portuguesa?|masculino|feminino|masc|fem|desconhecido|nao\s+consta|não\s+consta|sem\s+informacao|sem\s+informação|nao\s+informado|não\s+informado)$/i;
+  const cleanNome = (v: string) => (!v || BOGUS_NOME_RE.test(v.trim()) ? "" : v);
+
   // ── NOME: exact match FIRST to avoid "NOME" matching "NOMEMAE" / "NOMEPAI"
-  const nome =
+  const nome = cleanNome(
     gfExact(f, "NOME", "NOME COMPLETO", "NOMECOMPLETO", "NOME DO CONTRIBUINTE", "NOMECONTRIBUINTE") ||
     gf(f, "NOME COMPLETO", "NOMECOMPLETO", "NOME DO CONTRIBUINTE", "NOMECONTRIBUINTE") ||
-    rxv(raw, "NOME COMPLETO", "NOME DO CONTRIBUINTE");
+    rxv(raw, "NOME COMPLETO", "NOME DO CONTRIBUINTE")
+  );
 
   const cpfVal = gfExact(f, "CPF", "NUMERO CPF", "NUMEROCPF") || gf(f, "CPF", "NUMEROCPF") || rxv(raw, "CPF");
   const rg     = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE") || rxv(raw,"RG","IDENTIDADE");
@@ -206,10 +210,12 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const rawPai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2") ||
                 gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
                 rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
+  const BOGUS_NAME_RE = /^(brasil|brazil|brasil[ei]iro?a?|portuguesa?|argentina|paraguai|bolivian?|chile|colombi[ao]|venezuela|peru|equador|uruguai|desconhecido|nao\s+consta|não\s+consta|sem\s+informacao|sem\s+informação|nao\s+informado|não\s+informado|nao\s+declarado|não\s+declarado|nao\s+encontrado|não\s+encontrado|nao\s+cadastrado|não\s+cadastrado|constam\s+como|consta\s+como|masculino|feminino|masc|fem)$/i;
   const isValidParent = (v: string, subj: string) =>
     v.length >= 5 &&
     !/^https?:\/\//i.test(v) &&
     v.toUpperCase() !== subj.toUpperCase() &&
+    !BOGUS_NAME_RE.test(v.trim()) &&
     !/\b(NAO\s+ENCONTRADO|NÃO\s+ENCONTRADO|NAO\s+CONSTA|NÃO\s+CONSTA|SEM\s+INFORMACAO|SEM\s+INFORMAÇÃO|NAO\s+INFORMADO|NÃO\s+INFORMADO|DESCONHECIDO|NAO\s+DECLARADO|NÃO\s+DECLARADO|CONSTAM\s+COMO|CONSTA\s+COMO|NAO\s+CADASTRADO|NÃO\s+CADASTRADO)\b/i.test(v);
   // Resolve nome early for validation (use fields directly to avoid circular call)
   const nomeForVal = (gfExact(f,"NOME","NOME COMPLETO","NOMECOMPLETO") || "").toUpperCase();
@@ -1172,8 +1178,10 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
   relatives: Relative[]; photos: Record<string, string>;
   loadingPhotos: Set<string>; identity: Identity; mainPhoto: string | null;
 }) {
+  const BOGUS_REL_NAME_RE = /^(brasil|brazil|brasileir[ao]|portuguesa?|desconhecido|masculino|feminino|masc|fem|nao\s+consta|não\s+consta|sem\s+informacao|sem\s+informação)$/i;
+  const validRelatives = relatives.filter(r => r.nome && !BOGUS_REL_NAME_RE.test(r.nome.trim()) && r.nome.trim().length >= 4);
   const cats: Record<RelCat, Relative[]> = { pai:[], mae:[], conjuge:[], filho:[], filha:[], irmao:[], irma:[], outro:[] };
-  for (const r of relatives) cats[categorizeRel(r)].push(r);
+  for (const r of validRelatives) cats[categorizeRel(r)].push(r);
   const np = (r: Relative) => ({ photo: r.cpf ? photos[r.cpf] : undefined, loading: r.cpf ? loadingPhotos.has(r.cpf) : false });
 
   type ParentEntry = { nome: string; cpf: string; nasc: string; label: string; rel?: Relative };
