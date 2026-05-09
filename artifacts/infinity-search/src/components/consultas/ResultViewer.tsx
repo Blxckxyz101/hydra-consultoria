@@ -156,8 +156,16 @@ function isUselessValue(value: string): boolean {
 
 function isImportantField(key: string): boolean {
   const k = key.toUpperCase();
-  return ["NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "RAZAO SOCIAL", "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG", "DATA NASCIMENTO", "NASCIMENTO", "NOME MÃE", "NOME PAI", "FOTO_URL"]
-    .some(imp => k.includes(imp));
+  return [
+    "NOME", "CPF", "CNPJ", "RAZÃO SOCIAL", "RAZAO SOCIAL",
+    "PLACA", "CHASSI", "TELEFONE", "EMAIL", "RG",
+    "DATA NASCIMENTO", "NASCIMENTO", "NASC",
+    "NOME MÃE", "NOME MAE", "NOME DA MAE", "NOME DA MÃE",
+    "NOME PAI", "NOME DO PAI",
+    "SEXO", "GENERO", "GÊNERO",
+    "SITUAÇÃO", "SITUACAO",
+    "FOTO_URL",
+  ].some(imp => k.includes(imp));
 }
 
 function getFieldIcon(key: string): LucideIcon {

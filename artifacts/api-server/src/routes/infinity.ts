@@ -1323,16 +1323,16 @@ async function callSkylers(
 // Priority groups for pessoa-type results (lower index = higher priority).
 // Each group is an array of aliases — if a field key matches ANY alias, it gets that group's rank.
 const PESSOA_PRIORITY_GROUPS: string[][] = [
-  ["nome", "nome completo", "nome_completo"],
-  ["data de nascimento", "data_nascimento", "nascimento", "dt_nascimento", "dt nascimento", "nasc", "data nasc"],
-  ["nome da mãe", "nome_mae", "nome mãe", "nome da mae", "nome mae", "filiacao · nome mae", "mae", "mãe"],
-  ["nome do pai", "nome_pai", "nome pai", "filiacao · nome pai", "pai"],
-  ["cpf", "rg"],
-  ["sexo", "genero", "gênero", "idade"],
-  ["situação", "situacao", "status"],
-  ["email"],
-  ["telefone", "celular"],
-  ["logradouro", "endereço", "endereco", "bairro", "cidade", "uf", "cep"],
+  ["nome", "nome completo", "nome_completo", "nome civil", "nome social"],
+  ["data de nascimento", "data_nascimento", "nascimento", "dt_nascimento", "dt nascimento", "nasc", "data nasc", "data nasc.", "dt nasc", "datanascimento"],
+  ["nome da mãe", "nome_mae", "nome mãe", "nome da mae", "nome mae", "filiacao · nome mae", "mae", "mãe", "nome_mae", "filiacao mae", "filiacao · mae"],
+  ["nome do pai", "nome_pai", "nome pai", "filiacao · nome pai", "pai", "nome_pai", "filiacao pai", "filiacao · pai"],
+  ["cpf", "rg", "documento", "doc"],
+  ["sexo", "genero", "gênero", "idade", "sexo/gênero"],
+  ["situação", "situacao", "status", "situação cadastral", "situacao cadastral"],
+  ["email", "e-mail"],
+  ["telefone", "celular", "fone", "ddd", "telefone celular", "tel"],
+  ["logradouro", "endereço", "endereco", "bairro", "cidade", "uf", "cep", "municipio", "município"],
 ];
 
 function sortFieldsByPriority(fields: { key: string; value: string }[]): { key: string; value: string }[] {
@@ -2063,7 +2063,13 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   clearTimeout(timer);
 
   const success = provider.ok && !!provider.parsed;
-  const data = provider.parsed ?? { fields: [], sections: [], raw: "" };
+  // Apply pessoa-type field priority sorting for CPF/person modules
+  const skyModulo = String(modulo ?? ep ?? "").toLowerCase();
+  const isSkylersPessoa = /cpf|nome|mae|pai|rg|pessoa|dados|iseek|full|basico/i.test(skyModulo);
+  const sortedParsed = (provider.parsed && isSkylersPessoa)
+    ? { ...provider.parsed, fields: sortFieldsByPriority(provider.parsed.fields) }
+    : provider.parsed;
+  const data = sortedParsed ?? { fields: [], sections: [], raw: "" };
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
   bumpCaches(username);
