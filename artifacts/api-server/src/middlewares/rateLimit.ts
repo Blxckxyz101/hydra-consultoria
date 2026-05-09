@@ -88,3 +88,12 @@ export const imageLimiter = rateLimit({
   keyGenerator:    ip,
   message:         { error: "Image generation rate limit — maximum 10 images per minute. The Geass needs time to paint." },
 });
+
+export const aiLimiter = rateLimit({
+  windowMs:        60_000,
+  max:             12,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    ip,
+  message:         { error: "Limite de mensagens atingido. Aguarde 1 minuto antes de enviar outra mensagem para a IA." },
+});

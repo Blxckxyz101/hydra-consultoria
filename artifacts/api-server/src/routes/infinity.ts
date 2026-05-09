@@ -9,7 +9,7 @@ import {
   requireAuth,
   requireAdmin,
 } from "../lib/infinity-auth.js";
-import { loginLimiter, consultaLimiter, panelAuthLimiter } from "../middlewares/rateLimit.js";
+import { loginLimiter, consultaLimiter, panelAuthLimiter, aiLimiter } from "../middlewares/rateLimit.js";
 import crypto from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import http from "node:http";
@@ -2241,19 +2241,28 @@ const CONSULTA_TOOL = {
   },
 };
 
+const GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+
 async function streamGroq(
   apiKey: string,
   messages: unknown[],
-  res: import("express").Response
+  res: import("express").Response,
+  modelIndex = 0
 ): Promise<void> {
+  const model = GROQ_MODELS[modelIndex] ?? GROQ_MODELS[GROQ_MODELS.length - 1];
   try {
     const upstream = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: "llama-3.3-70b-versatile", stream: true, messages, max_tokens: 1536 }),
+      body: JSON.stringify({ model, stream: true, messages, max_tokens: 1536 }),
     });
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "");
+      // On 429 try next model in fallback chain
+      if (upstream.status === 429 && modelIndex < GROQ_MODELS.length - 1) {
+        await new Promise(r => setTimeout(r, 600));
+        return streamGroq(apiKey, messages, res, modelIndex + 1);
+      }
       res.write(`data: ${JSON.stringify({ error: `Groq HTTP ${upstream.status}`, detail: text.slice(0, 200) })}\n\n`);
       res.end();
       return;
@@ -2292,7 +2301,7 @@ async function streamGroq(
   }
 }
 
-router.post("/ai/chat", requireAuth, async (req, res) => {
+router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   const messages = req.body?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
     res.status(400).json({ error: "messages obrigatório" });
@@ -2331,24 +2340,34 @@ router.post("/ai/chat", requireAuth, async (req, res) => {
   ];
 
   try {
-    const phase1Ctrl = new AbortController();
-    const phase1Timer = setTimeout(() => phase1Ctrl.abort(), 20_000);
-    const phase1Resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        stream: false,
-        messages: finalMessages,
-        tools: [CONSULTA_TOOL],
-        tool_choice: "auto",
-        max_tokens: 512,
-      }),
-      signal: phase1Ctrl.signal,
-    });
-    clearTimeout(phase1Timer);
+    // Phase 1: tool-call detection — try each model until one succeeds (429 fallback)
+    let phase1Resp: Response | null = null;
+    for (let mi = 0; mi < GROQ_MODELS.length; mi++) {
+      const phase1Ctrl = new AbortController();
+      const phase1Timer = setTimeout(() => phase1Ctrl.abort(), 20_000);
+      const attempt = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: GROQ_MODELS[mi],
+          stream: false,
+          messages: finalMessages,
+          tools: [CONSULTA_TOOL],
+          tool_choice: "auto",
+          max_tokens: 512,
+        }),
+        signal: phase1Ctrl.signal,
+      });
+      clearTimeout(phase1Timer);
+      if (attempt.status === 429 && mi < GROQ_MODELS.length - 1) {
+        await new Promise(r => setTimeout(r, 600));
+        continue;
+      }
+      phase1Resp = attempt;
+      break;
+    }
 
-    if (phase1Resp.ok) {
+    if (phase1Resp?.ok) {
       type ToolCall = { id: string; function: { name: string; arguments: string } };
       type Phase1Choice = { finish_reason: string; message: { content: string | null; tool_calls?: ToolCall[] } };
       const phase1Data = await phase1Resp.json() as { choices?: Phase1Choice[] };
