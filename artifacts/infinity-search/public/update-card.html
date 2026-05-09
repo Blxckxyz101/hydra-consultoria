@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 1080px;
+    height: 1080px;
+    overflow: hidden;
+    background: #020c1b;
+    font-family: -apple-system, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  }
+
+  .card {
+    width: 1080px;
+    height: 1080px;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 900px 700px at 15% 10%, rgba(0,100,220,0.20) 0%, transparent 60%),
+      radial-gradient(ellipse 600px 600px at 85% 90%, rgba(0,60,160,0.14) 0%, transparent 60%),
+      radial-gradient(ellipse 400px 400px at 60% 50%, rgba(0,180,255,0.05) 0%, transparent 60%),
+      #020c1b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 60px 80px 56px;
+  }
+
+  /* Grid BG */
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,160,255,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,160,255,0.045) 1px, transparent 1px);
+    background-size: 54px 54px;
+    mask-image: radial-gradient(ellipse at 50% 50%, black 40%, transparent 80%);
+  }
+
+  /* Accents */
+  .accent-top {
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, transparent 5%, #00aaff 30%, #0066ff 50%, #00aaff 70%, transparent 95%);
+  }
+  .accent-bottom {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent 10%, rgba(0,120,255,0.5) 40%, rgba(0,180,255,0.8) 50%, rgba(0,120,255,0.5) 60%, transparent 90%);
+  }
+
+  /* Corners */
+  .c { position: absolute; width: 46px; height: 46px; }
+  .c-tl { top: 22px; left: 22px; border-top: 2px solid rgba(0,180,255,0.35); border-left: 2px solid rgba(0,180,255,0.35); border-radius: 7px 0 0 0; }
+  .c-tr { top: 22px; right: 22px; border-top: 2px solid rgba(0,180,255,0.35); border-right: 2px solid rgba(0,180,255,0.35); border-radius: 0 7px 0 0; }
+  .c-bl { bottom: 22px; left: 22px; border-bottom: 2px solid rgba(0,180,255,0.35); border-left: 2px solid rgba(0,180,255,0.35); border-radius: 0 0 0 7px; }
+  .c-br { bottom: 22px; right: 22px; border-bottom: 2px solid rgba(0,180,255,0.35); border-right: 2px solid rgba(0,180,255,0.35); border-radius: 0 0 7px 0; }
+
+  /* Glow scan line */
+  .scan {
+    position: absolute; left: 0; right: 0; height: 200px; top: 38%;
+    background: linear-gradient(180deg, transparent, rgba(0,160,255,0.02), rgba(0,100,255,0.03), rgba(0,160,255,0.02), transparent);
+  }
+
+  /* ─── TOP SECTION ─────────────────────────── */
+  .top {
+    position: relative; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; gap: 0;
+    width: 100%;
+  }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 9px;
+    background: rgba(0,180,255,0.09);
+    border: 1px solid rgba(0,180,255,0.28);
+    border-radius: 100px;
+    padding: 9px 22px;
+    margin-bottom: 30px;
+    color: #44ccff;
+    font-size: 11.5px; font-weight: 700;
+    letter-spacing: 0.22em; text-transform: uppercase;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #00ccff;
+    box-shadow: 0 0 10px #00ccff;
+  }
+
+  .logo {
+    display: flex; align-items: center; gap: 18px;
+  }
+  .logo-box {
+    width: 60px; height: 60px;
+    background: linear-gradient(145deg, #0088ff, #0044cc);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; color: white; font-weight: 900; line-height: 1;
+    box-shadow: 0 0 36px rgba(0,136,255,0.5);
+    border: 1px solid rgba(0,180,255,0.3);
+  }
+  .logo-name {
+    font-size: 21px; font-weight: 800;
+    letter-spacing: 0.32em; text-transform: uppercase; color: #fff;
+    display: block; margin-bottom: 4px;
+  }
+  .logo-tag {
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.5em; text-transform: uppercase;
+    color: rgba(0,190,255,0.5);
+  }
+
+  /* ─── MIDDLE SECTION ─────────────────────────── */
+  .middle {
+    position: relative; z-index: 10;
+    display: flex; flex-direction: column; align-items: center;
+    width: 100%;
+  }
+
+  .heading {
+    font-size: 108px; font-weight: 900;
+    line-height: 0.9; letter-spacing: -0.03em;
+    text-align: center;
+    margin-bottom: 16px;
+    background: linear-gradient(150deg, #ffffff 0%, #c8e8ff 35%, #55bbff 70%, #0088ff 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    text-transform: uppercase;
+  }
+  .subheading {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: 0.38em; text-transform: uppercase;
+    color: rgba(0,180,255,0.38);
+  }
+
+  /* ─── FEATURES ─────────────────────────── */
+  .features {
+    position: relative; z-index: 10;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 20px; width: 100%;
+  }
+  .feat {
+    background: rgba(255,255,255,0.027);
+    border: 1px solid rgba(255,255,255,0.075);
+    border-radius: 24px;
+    padding: 32px 28px 30px;
+    position: relative; overflow: hidden;
+  }
+  .feat::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(140deg, rgba(0,140,255,0.08) 0%, transparent 55%);
+    border-radius: 24px;
+  }
+  .feat::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 12%; right: 12%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,180,255,0.3), transparent);
+  }
+  .feat-new {
+    position: absolute; top: 18px; right: 18px;
+    background: rgba(0,180,255,0.15); border: 1px solid rgba(0,180,255,0.25);
+    border-radius: 7px; padding: 4px 10px;
+    font-size: 9px; font-weight: 800; color: #44bbff;
+    letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  .feat-emoji { font-size: 36px; margin-bottom: 18px; display: block; line-height: 1; }
+  .feat-title { font-size: 19px; font-weight: 800; color: #fff; margin-bottom: 12px; line-height: 1.2; }
+  .feat-desc { font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.7; font-weight: 400; }
+
+  /* ─── BOTTOM SECTION ─────────────────────────── */
+  .bottom {
+    position: relative; z-index: 10;
+    display: flex; align-items: center; flex-direction: column; gap: 12px;
+    width: 100%;
+  }
+  .divider {
+    width: 100%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+    margin-bottom: 4px;
+  }
+  .bottom-row {
+    display: flex; align-items: center;
+  }
+  .bottom-url {
+    font-size: 18px; font-weight: 700;
+    background: linear-gradient(90deg, #55bbff, #0088ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    letter-spacing: 0.06em;
+  }
+  .bottom-sep {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.15); margin: 0 16px;
+  }
+  .bottom-avail {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: rgba(255,255,255,0.22);
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="grid"></div>
+  <div class="scan"></div>
+  <div class="accent-top"></div>
+  <div class="accent-bottom"></div>
+  <div class="c c-tl"></div>
+  <div class="c c-tr"></div>
+  <div class="c c-bl"></div>
+  <div class="c c-br"></div>
+
+  <!-- TOP -->
+  <div class="top">
+    <div class="badge"><div class="dot"></div>Nova atualização disponível</div>
+    <div class="logo">
+      <div class="logo-box">∞</div>
+      <div>
+        <span class="logo-name">Infinity Search</span>
+        <span class="logo-tag">OSINT Platform</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDDLE -->
+  <div class="middle">
+    <div class="heading">O QUE HÁ<br>DE NOVO</div>
+    <div class="subheading">Versão — Maio 2025</div>
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features">
+    <div class="feat">
+      <span class="feat-new">NOVO</span>
+      <span class="feat-emoji">🎁</span>
+      <div class="feat-title">Gift Card &<br>Afiliados</div>
+      <div class="feat-desc">Compre pacotes de códigos com desconto e distribua. Lucre na margem sem burocracia.</div>
+    </div>
+    <div class="feat">
+      <span class="feat-new">NOVO</span>
+      <span class="feat-emoji">💰</span>
+      <div class="feat-title">Carteira<br>Digital</div>
+      <div class="feat-desc">Adicione saldo via PIX e pague compras no painel instantaneamente, sem novo QR Code.</div>
+    </div>
+    <div class="feat">
+      <span class="feat-new">NOVO</span>
+      <span class="feat-emoji">👥</span>
+      <div class="feat-title">Sistema de<br>Indicação</div>
+      <div class="feat-desc">Indique amigos com seu link. Ganhe +7 dias no plano por cada ativação confirmada.</div>
+    </div>
+  </div>
+
+  <!-- BOTTOM -->
+  <div class="bottom">
+    <div class="divider"></div>
+    <div class="bottom-row">
+      <div class="bottom-url">infinitysearch.pro</div>
+      <div class="bottom-sep"></div>
+      <div class="bottom-avail">Disponível agora</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

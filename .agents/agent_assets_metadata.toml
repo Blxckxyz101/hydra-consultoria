@@ -41,3 +41,9 @@ id = "yrOSqCZ86jfflchJH2PVr"
 uri = "file://screenshots/update_registro.jpg"
 type = "image"
 title = "Infinity Search — Novas Funcionalidades"
+
+[[outputs]]
+id = "wk8t9z4Jle91rTiz1Cmwb"
+uri = "file://screenshots/update-card.jpg"
+type = "image"
+title = "Card de Atualização — Infinity Search"
