@@ -329,11 +329,11 @@ export default function Planos() {
             <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-5">
               {/* QR Code */}
               <div className="flex flex-col items-center gap-3">
-                <div className="rounded-2xl p-3 bg-white">
+                <div className="rounded-2xl p-2 sm:p-3 bg-white mx-auto">
                   <img
                     src={paymentData.qrcode_base64.startsWith("data:") ? paymentData.qrcode_base64 : `data:image/png;base64,${paymentData.qrcode_base64}`}
                     alt="QR Code PIX"
-                    className="w-48 h-48 block"
+                    className="w-36 h-36 sm:w-48 sm:h-48 block"
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">Escaneie o QR Code com seu banco</p>
@@ -348,11 +348,13 @@ export default function Planos() {
               {/* Pix Copia e Cola */}
               <div className="space-y-2">
                 <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Pix Copia e Cola</div>
-                <div className="flex items-stretch gap-2">
-                  <div className="flex-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2.5 text-[11px] text-muted-foreground font-mono break-all leading-relaxed min-h-0 overflow-hidden" style={{ maxHeight: "80px", overflowY: "auto" }}>
+                <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                  <div className="flex-1 rounded-xl bg-black/40 border border-white/10 px-3 py-2.5 text-[11px] text-muted-foreground font-mono break-all leading-relaxed overflow-hidden" style={{ maxHeight: "72px", overflowY: "auto" }}>
                     {paymentData.pixCopiaECola}
                   </div>
-                  <CopyButton text={paymentData.pixCopiaECola} />
+                  <div className="sm:self-start">
+                    <CopyButton text={paymentData.pixCopiaECola} />
+                  </div>
                 </div>
               </div>
 

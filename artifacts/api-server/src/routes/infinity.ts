@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
-import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable } from "@workspace/db";
+import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable } from "@workspace/db";
 import { eq, desc, sql, gte, and, isNull } from "drizzle-orm";
 import {
   createSession,
@@ -98,16 +98,7 @@ function storeFoto(dataUri: string): string {
   return id;
 }
 
-// ─── Notifications store ─────────────────────────────────────────────────────
-interface Notification {
-  id: string;
-  title: string;
-  body: string;
-  imageUrl?: string;
-  createdAt: string;
-  authorName: string;
-}
-const notifications: Notification[] = [];
+// ─── Notifications store (persisted in DB) ────────────────────────────────────
 
 // ─── Theme store ────────────────────────────────────────────────────────────
 let globalTheme = "sky";
@@ -2827,36 +2818,67 @@ router.post("/notifications/upload", requireAuth, (req, res) => {
 });
 
 // ─── Notification endpoints ──────────────────────────────────────────────────
-router.get("/notifications", requireAuth, (_req, res) => {
-  res.json([...notifications].reverse());
+router.get("/notifications", requireAuth, async (_req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(infinityNotificationsTable)
+      .orderBy(desc(infinityNotificationsTable.createdAt))
+      .limit(50);
+    res.json(rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      body: r.body,
+      imageUrl: r.imageUrl ?? undefined,
+      createdAt: r.createdAt.toISOString(),
+      authorName: r.authorName,
+    })));
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao buscar notificações" });
+  }
 });
 
-router.post("/notifications", requireAuth, (req, res) => {
+router.post("/notifications", requireAuth, async (req, res) => {
   const user = req.infinityUser;
   if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem enviar novidades" }); return; }
   const { title, body, imageUrl } = req.body as { title?: string; body?: string; imageUrl?: string };
   if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e mensagem são obrigatórios" }); return; }
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, c => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#039;": "'" }[c] ?? c));
-  const notif: Notification = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    title: stripHtml(title.trim()).slice(0, 120),
-    body: stripHtml(body.trim()).slice(0, 1000),
-    imageUrl: imageUrl?.trim() || undefined,
-    createdAt: new Date().toISOString(),
-    authorName: user.username,
-  };
-  notifications.push(notif);
-  if (notifications.length > 50) notifications.splice(0, notifications.length - 50);
-  res.status(201).json(notif);
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const [row] = await db.insert(infinityNotificationsTable).values({
+      id,
+      title: stripHtml(title.trim()).slice(0, 120),
+      body: stripHtml(body.trim()).slice(0, 1000),
+      imageUrl: imageUrl?.trim() || null,
+      authorName: user.username,
+    }).returning();
+    res.status(201).json({
+      id: row.id,
+      title: row.title,
+      body: row.body,
+      imageUrl: row.imageUrl ?? undefined,
+      createdAt: row.createdAt.toISOString(),
+      authorName: row.authorName,
+    });
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao salvar notificação" });
+  }
 });
 
-router.delete("/notifications/:id", requireAuth, (req, res) => {
+router.delete("/notifications/:id", requireAuth, async (req, res) => {
   const user = req.infinityUser;
   if (!user || user.role !== "admin") { res.status(403).json({ error: "Apenas admins podem remover novidades" }); return; }
-  const idx = notifications.findIndex(n => n.id === req.params.id);
-  if (idx === -1) { res.status(404).json({ error: "Notificação não encontrada" }); return; }
-  notifications.splice(idx, 1);
-  res.json({ ok: true });
+  try {
+    const deleted = await db
+      .delete(infinityNotificationsTable)
+      .where(eq(infinityNotificationsTable.id, req.params.id))
+      .returning();
+    if (deleted.length === 0) { res.status(404).json({ error: "Notificação não encontrada" }); return; }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao remover notificação" });
+  }
 });
 
 export default router;

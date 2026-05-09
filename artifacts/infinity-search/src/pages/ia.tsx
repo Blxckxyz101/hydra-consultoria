@@ -173,7 +173,7 @@ export default function IA() {
   const [speaking, setSpeaking] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem("infinity_ia_sound") !== "0");
   const [intensity, setIntensity] = useState(0);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 640);
   const [historySearch, setHistorySearch] = useState("");
   const [voiceMuted, setVoiceMuted] = useState(false);
   const [consultingStatus, setConsultingStatus] = useState<string | null>(null);
@@ -529,18 +529,33 @@ export default function IA() {
 
   /* ── Main Chat View ──────────────────────────────────────────────────────── */
   return (
-    <div className="flex gap-3 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
+    <div className="relative flex gap-3 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
+
+      {/* ── Mobile backdrop ──────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSidebarOpen(false)}
+            className="sm:hidden absolute inset-0 bg-black/60 z-40 rounded-2xl"
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── Sessions Sidebar ─────────────────────────────────────────────── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
             key="sidebar"
-            initial={{ opacity: 0, x: -12, width: 0 }}
-            animate={{ opacity: 1, x: 0, width: 252 }}
-            exit={{ opacity: 0, x: -12, width: 0 }}
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
             transition={{ type: "spring", stiffness: 300, damping: 28 }}
-            className="shrink-0 flex flex-col rounded-2xl border border-white/8 bg-black/50 backdrop-blur-2xl overflow-hidden"
+            style={{ width: 252 }}
+            className="absolute top-0 left-0 bottom-0 z-50 sm:relative sm:inset-auto sm:z-auto shrink-0 flex flex-col rounded-2xl border border-white/8 bg-[#07091d]/95 sm:bg-black/50 backdrop-blur-2xl overflow-hidden"
           >
             {/* Header */}
             <div className="px-4 pt-4 pb-3 flex items-center justify-between gap-2 border-b border-white/[0.06]">

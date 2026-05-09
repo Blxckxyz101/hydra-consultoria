@@ -1558,7 +1558,7 @@ export function CpfFullPanel({ cpf }: Props) {
   const hasCNH       = mResults["cnh"]?.status === "done" && (mResults["cnh"]?.data?.fields.length ?? 0) > 0;
   const hasObito     = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
   const hasLegal     = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
-  const hasParentes  = relatives.length > 0 || identityFull.mae || identityFull.pai || mResults["parentes"]?.status === "done";
+  const hasParentes  = relatives.length > 0 || !!(identityFull.mae) || !!(identityFull.pai);
   const extras       = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)

@@ -158,6 +158,25 @@ export const infinityGiftCodesTable = pgTable(
   }),
 );
 
+// ─── Notifications ───────────────────────────────────────────────────────────
+
+export const infinityNotificationsTable = pgTable(
+  "infinity_notifications",
+  {
+    id:          text("id").primaryKey(),
+    title:       text("title").notNull(),
+    body:        text("body").notNull(),
+    imageUrl:    text("image_url"),
+    authorName:  text("author_name").notNull(),
+    createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byCreated: index("infinity_notifications_created_idx").on(t.createdAt),
+  }),
+);
+
+export type InfinityNotificationRow = typeof infinityNotificationsTable.$inferSelect;
+
 // ─── Referrals ─────────────────────────────────────────────────────────────────
 
 export const infinityReferralsTable = pgTable(

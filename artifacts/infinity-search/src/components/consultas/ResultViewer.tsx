@@ -357,6 +357,22 @@ function SectionCard({ sec, idx, filterText = "" }: { sec: ParsedSection; idx: n
   );
 }
 
+// ─── Photo URL normalization ──────────────────────────────────────────────────
+const PHOTO_KEY_RE = /^(FOTO|IMAGEM|IMAGE|PHOTO|PIC|THUMB|FACE|BASE64|FOTOGRAFIA|RETRATO|BIOMETRIA|SELFIE|ROSTO|FIGURA)/i;
+const RAW_BASE64_RE = /^[A-Za-z0-9+/]{500,}={0,2}$/;
+
+function normalizePhotoUrl(v: string): string | null {
+  if (!v || typeof v !== "string") return null;
+  const trimmed = v.trim();
+  if (trimmed.startsWith("data:image")) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const clean = trimmed.replace(/\s/g, "");
+  if (clean.length >= 500 && RAW_BASE64_RE.test(clean.slice(0, 600))) {
+    return `data:image/jpeg;base64,${clean}`;
+  }
+  return null;
+}
+
 // ─── Main ResultViewer ────────────────────────────────────────────────────────
 export function ResultViewer({ tipo, query = "", result }: Props) {
   const [showRaw, setShowRaw] = useState(false);
@@ -367,8 +383,41 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   const parsed: Parsed = useMemo(() => {
     if (isParsed(result.data)) {
       const d = result.data as Parsed;
-      const cleanFields = d.fields.filter(f => f.key !== "FOTO_URL" && !isUselessValue(f.value)).map(f => ({ key: humanizeKey(f.key), value: f.value }));
-      const fotoField = d.fields.find(f => f.key === "FOTO_URL");
+
+      // ── Detect photo: explicit FOTO_URL first, then photo-named keys, then any base64 value ──
+      let fotoValue: string | null = null;
+
+      const explicitFoto = d.fields.find(f => f.key === "FOTO_URL");
+      if (explicitFoto) fotoValue = normalizePhotoUrl(explicitFoto.value);
+
+      if (!fotoValue) {
+        for (const f of d.fields) {
+          if (f.key !== "FOTO_URL" && PHOTO_KEY_RE.test(f.key)) {
+            const n = normalizePhotoUrl(f.value);
+            if (n) { fotoValue = n; break; }
+          }
+        }
+      }
+
+      if (!fotoValue) {
+        for (const f of d.fields) {
+          const n = normalizePhotoUrl(f.value);
+          if (n) { fotoValue = n; break; }
+        }
+      }
+
+      // Suppress fields that are: FOTO_URL, photo-key fields with base64, or whose value IS the detected photo
+      const cleanFields = d.fields
+        .filter(f => {
+          if (f.key === "FOTO_URL") return false;
+          if (isUselessValue(f.value)) return false;
+          if (fotoValue && normalizePhotoUrl(f.value) === fotoValue) return false;
+          if (PHOTO_KEY_RE.test(f.key) && normalizePhotoUrl(f.value)) return false;
+          return true;
+        })
+        .map(f => ({ key: humanizeKey(f.key), value: f.value }));
+
+      const fotoField: ParsedField | null = fotoValue ? { key: "FOTO_URL", value: fotoValue } : null;
       return { fields: fotoField ? [fotoField, ...cleanFields] : cleanFields, sections: d.sections, raw: d.raw };
     }
     return { fields: [], sections: [], raw: typeof result.data === "string" ? result.data : JSON.stringify(result.data ?? {}) };
