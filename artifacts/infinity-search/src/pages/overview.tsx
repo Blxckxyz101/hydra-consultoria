@@ -75,6 +75,7 @@ type OverviewData = {
   totalConsultas: number;
   consultasHoje: number;
   consultasSemana: number;
+  consultasMes: number;
   usuariosAtivos: number;
   consultasPorTipo: TipoPct[];
   consultasPorOperador: OperadorPct[];
@@ -232,9 +233,9 @@ export default function Overview() {
   ];
 
   const clientStatCards = [
-    { label: "Minhas Consultas", value: data.totalConsultas, icon: Activity, hint: "histórico completo", chartVar: "--color-chart-1" },
+    { label: "Total", value: data.totalConsultas, icon: Activity, hint: "histórico completo", chartVar: "--color-chart-1" },
     { label: "Hoje", value: data.consultasHoje, icon: Clock, hint: "últimas 24h", chartVar: "--color-chart-2" },
-    { label: "Esta Semana", value: data.consultasSemana, icon: Search, hint: "últimos 7 dias", chartVar: "--color-chart-4" },
+    { label: "Este Mês", value: data.consultasMes, icon: Search, hint: "no mês atual", chartVar: "--color-chart-4" },
     { label: "Taxa de Sucesso", value: mySuccessRate, icon: TrendingUp, hint: "no período selecionado", chartVar: "--color-chart-3", suffix: "%" },
   ];
 

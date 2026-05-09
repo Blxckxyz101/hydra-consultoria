@@ -5,6 +5,7 @@ import { eq, and, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "../lib/infinity-auth.js";
 import { loginLimiter } from "../middlewares/rateLimit.js";
+import { sendWelcomeEmail } from "../lib/email.js";
 
 const router: IRouter = Router();
 
@@ -316,6 +317,16 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
     await db.update(infinityPendingAccountsTable)
       .set({ status: "approved", updatedAt: new Date() })
       .where(eq(infinityPendingAccountsTable.id, pending.id));
+
+    // Send welcome email if the user provided one
+    if (pending.email) {
+      void sendWelcomeEmail({
+        to: pending.email,
+        username: pending.username,
+        planLabel: plan.label,
+        expiresAt: accountExpiresAt,
+      });
+    }
   } catch {
     // User may have been created in a race — just mark approved
     await db.update(infinityPendingAccountsTable)

@@ -18,6 +18,8 @@ import Personalizar, { initSavedTheme } from "@/pages/personalizar";
 import Skylers from "@/pages/skylers";
 import Suporte from "@/pages/suporte";
 import Planos from "@/pages/planos";
+import Historico from "@/pages/historico";
+import Registro from "@/pages/registro";
 
 // Apply saved color theme immediately on load
 initSavedTheme();
@@ -37,6 +39,10 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
+      {/* /registro is public — new user sign-up wizard */}
+      <Route path="/registro">
+        <Registro />
+      </Route>
       {/* /planos is public — accessible without login */}
       <Route path="/planos">
         <TermsGuard>
@@ -62,6 +68,7 @@ function Router() {
               <Route path="/skylers" component={Skylers} />
               <Route path="/api-promo" component={SkylersPromo} />
               <Route path="/suporte" component={Suporte} />
+              <Route path="/historico" component={Historico} />
               {/* /planos also inside layout for logged-in users */}
               <Route path="/planos" component={Planos} />
               <Route component={NotFound} />

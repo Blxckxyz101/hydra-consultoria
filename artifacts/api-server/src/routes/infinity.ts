@@ -1778,6 +1778,15 @@ router.get("/overview", requireAuth, async (req, res) => {
       gte(infinityConsultasTable.createdAt, weekAgo),
     ));
 
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const [{ mes }] = await db
+    .select({ mes: sql<number>`count(*)::int` })
+    .from(infinityConsultasTable)
+    .where(and(
+      eq(infinityConsultasTable.username, username),
+      gte(infinityConsultasTable.createdAt, startOfMonth),
+    ));
+
   const [{ usuarios }] = await db
     .select({ usuarios: sql<number>`count(*)::int` })
     .from(infinityUsersTable);
@@ -1823,6 +1832,7 @@ router.get("/overview", requireAuth, async (req, res) => {
     totalConsultas: total ?? 0,
     consultasHoje: hoje ?? 0,
     consultasSemana: semana ?? 0,
+    consultasMes: mes ?? 0,
     usuariosAtivos: usuarios ?? 0,
     consultasPorTipo: porTipo.map((p) => ({ tipo: p.tipo, count: p.count })),
     consultasPorOperador: porOperador.map((p) => ({ username: p.username, count: p.count })),

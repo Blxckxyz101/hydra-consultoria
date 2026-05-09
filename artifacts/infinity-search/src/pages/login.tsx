@@ -339,13 +339,21 @@ export default function Login() {
 
           <div className="px-10 py-5 border-t border-white/5 bg-black/20 space-y-3">
             {step === "credentials" && (
-              <a
-                href="/planos"
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/30 text-primary hover:bg-primary/15 hover:border-primary/50 transition-all text-xs font-bold uppercase tracking-[0.25em]"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                Ver planos disponíveis
-              </a>
+              <div className="flex gap-2">
+                <a
+                  href="/registro"
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-black text-xs font-bold uppercase tracking-[0.2em] transition-all"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  Criar conta
+                </a>
+                <a
+                  href="/planos"
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/30 text-primary hover:bg-primary/15 hover:border-primary/50 transition-all text-xs font-bold uppercase tracking-[0.2em]"
+                >
+                  Ver planos
+                </a>
+              </div>
             )}
             <div className="flex gap-2">
               <a

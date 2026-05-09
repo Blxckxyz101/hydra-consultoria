@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, CreditCard } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, CreditCard, History, AlertTriangle } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/logo.png";
@@ -145,6 +145,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [bellOpen, setBellOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [suporteNovo, setSuporteNovo] = useState(false);
+  const [expiryDismissed, setExpiryDismissed] = useState(false);
   const bellDesktopRef = useRef<HTMLDivElement>(null);
   const bellMobileRef = useRef<HTMLDivElement>(null);
 
@@ -229,6 +230,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { href: "/consultas", label: "Consultas", icon: Search },
     { href: "/api-promo", label: "🌟 API", icon: Zap },
     { href: "/ia", label: "Assistente IA", icon: Bot },
+    { href: "/historico", label: "Histórico", icon: History },
     { href: "/dossie", label: "Dossiê", icon: FolderOpen },
     { href: "/favoritos", label: "Favoritos", icon: Star },
     ...(isAdmin ? [{ href: "/bases", label: "Monitor de Bases", icon: Server }] : []),
@@ -473,6 +475,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
     </>
   );
 
+  function getExpiryWarning(u: { role?: string; accountExpiresAt?: string | null } | undefined): number | null {
+    if (!u || u.role === "admin") return null;
+    const exp = (u as any).accountExpiresAt;
+    if (!exp) return null;
+    const ms = new Date(exp).getTime() - Date.now();
+    const days = Math.ceil(ms / 86400000);
+    if (days > 0 && days <= 3) return days;
+    return null;
+  }
+
+  const expiryWarningDays = getExpiryWarning(user as any);
+
   if (isAccountExpired(user as any)) {
     return <LockScreen />;
   }
@@ -561,6 +575,33 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </AnimatePresence>
 
       <main className="flex-1 h-screen overflow-y-auto z-10 pt-14 lg:pt-0">
+        {/* Expiry warning banner */}
+        <AnimatePresence>
+          {expiryWarningDays !== null && !expiryDismissed && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mx-4 mt-3 lg:mx-6 lg:mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-amber-400/30 bg-amber-400/8 backdrop-blur-xl"
+            >
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <p className="text-xs text-amber-200 flex-1">
+                <span className="font-bold">Atenção —</span> seu plano vence em{" "}
+                <span className="font-semibold">{expiryWarningDays === 1 ? "1 dia" : `${expiryWarningDays} dias`}</span>.{" "}
+                <Link href="/planos" className="underline underline-offset-2 hover:text-amber-100 transition-colors">
+                  Renovar agora →
+                </Link>
+              </p>
+              <button
+                onClick={() => setExpiryDismissed(true)}
+                className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-amber-400/60 hover:text-amber-400 transition-colors shrink-0"
+                aria-label="Fechar"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <motion.div
           key={location}
           initial={{ opacity: 0, y: 8 }}
