@@ -378,9 +378,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="font-semibold text-sm truncate">{(user as any)?.displayName ?? user?.username}</div>
-              {(user as any)?.displayName && (
-                <div className="text-[8px] text-muted-foreground/30 font-mono truncate">@{user?.username}</div>
-              )}
+              <div className="text-[8px] text-muted-foreground/30 font-mono truncate">
+                {localStorage.getItem("infinity_hide_username") === "true"
+                  ? "@infinitysearch"
+                  : `@${user?.username ?? ""}`}
+              </div>
               <div
                 className="text-[9px] uppercase tracking-[0.3em]"
                 style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}
@@ -419,11 +421,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             }}
           >
             <MessageCircle className="w-4 h-4" />
-            <span>Suporte</span>
-            <span className="ml-auto text-[9px] text-muted-foreground/50">@Blxckxyz</span>
+            <span>Precisa de ajuda?</span>
           </a>
           <a
-            href="https://t.me/xxmathexx"
+            href="https://t.me/infinitysearchchannel"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
@@ -440,31 +441,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
               el.style.borderColor = "";
             }}
           >
-            <MessageCircle className="w-4 h-4" />
-            <span>Suporte</span>
-            <span className="ml-auto text-[9px] text-muted-foreground/50">@xxmathexx</span>
-          </a>
-          <a
-            href="https://t.me/piancooz"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
-            onMouseEnter={e => {
-              const el = e.currentTarget as HTMLElement;
-              el.style.background = "color-mix(in srgb, var(--color-primary) 10%, transparent)";
-              el.style.color = "var(--color-primary)";
-              el.style.borderColor = "color-mix(in srgb, var(--color-primary) 30%, transparent)";
-            }}
-            onMouseLeave={e => {
-              const el = e.currentTarget as HTMLElement;
-              el.style.background = "";
-              el.style.color = "";
-              el.style.borderColor = "";
-            }}
-          >
-            <MessageCircle className="w-4 h-4" />
-            <span>Suporte</span>
-            <span className="ml-auto text-[9px] text-muted-foreground/50">@piancooz</span>
+            <Bell className="w-4 h-4" />
+            <span>Canal de Atualizações</span>
           </a>
         </div>
 

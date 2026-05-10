@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, Trash2, Save, CheckCircle2,
-  User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil,
+  User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil, AtSign,
 } from "lucide-react";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
@@ -11,6 +11,7 @@ const LS_BANNER   = "infinity_profile_banner";
 const LS_BIO      = "infinity_profile_bio";
 const LS_STATUS   = "infinity_profile_status";
 const LS_STATUS_MSG = "infinity_profile_status_msg";
+const LS_HIDE_USERNAME = "infinity_hide_username";
 
 type StatusType = "online" | "busy" | "away" | "offline";
 
@@ -39,7 +40,7 @@ function StatusDot({ status, size = 14 }: { status: StatusType; size?: number })
         />
       )}
       <span
-        className="relative rounded-full border-2 border-[#06091a]"
+        className="relative rounded-full border-2 border-background"
         style={{ width: size, height: size, background: color }}
       />
     </span>
@@ -80,6 +81,17 @@ export default function Perfil() {
   const [pinSaving, setPinSaving] = useState(false);
   const [pinSaved, setPinSaved] = useState(false);
   const [pinErr, setPinErr] = useState("");
+
+  // ── Hide username ─────────────────────────────────────────────────────────
+  const [hideUsername, setHideUsername] = useState<boolean>(
+    () => localStorage.getItem(LS_HIDE_USERNAME) === "true"
+  );
+  const toggleHideUsername = () => {
+    const next = !hideUsername;
+    setHideUsername(next);
+    next ? localStorage.setItem(LS_HIDE_USERNAME, "true") : localStorage.removeItem(LS_HIDE_USERNAME);
+    dispatchUpdate();
+  };
   const [showPins, setShowPins] = useState(false);
 
   useEffect(() => {
@@ -218,9 +230,9 @@ export default function Perfil() {
               <div
                 className="w-24 h-24 rounded-full overflow-hidden border-4 flex items-center justify-center font-bold text-3xl cursor-pointer group relative"
                 style={{
-                  borderColor: "#06091a",
+                  borderColor: "var(--color-background)",
                   background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))",
-                  color: "#06091a",
+                  color: "var(--color-background)",
                   boxShadow: "0 0 0 2px color-mix(in srgb, var(--color-primary) 40%, transparent)",
                 }}
                 onClick={() => photoRef.current?.click()}
@@ -242,7 +254,7 @@ export default function Perfil() {
               {photo && (
                 <button
                   onClick={() => setPhoto(null)}
-                  className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-destructive/90 flex items-center justify-center border-2 border-[#06091a] hover:bg-destructive transition-colors z-10"
+                  className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-destructive/90 flex items-center justify-center border-2 border-background hover:bg-destructive transition-colors z-10"
                 >
                   <Trash2 className="w-2.5 h-2.5 text-white" />
                 </button>
@@ -314,7 +326,7 @@ export default function Perfil() {
                     transition={{ duration: 1.5, repeat: Infinity }}
                   />
                 )}
-                <span className="w-3.5 h-3.5 rounded-full block border-2 border-[#06091a]" style={{ background: opt.color }} />
+                <span className="w-3.5 h-3.5 rounded-full block border-2 border-background" style={{ background: opt.color }} />
               </span>
               <span className="text-[11px] font-semibold" style={{ color: status === opt.v ? opt.color : "rgba(255,255,255,0.5)" }}>
                 {opt.label}
@@ -371,6 +383,55 @@ export default function Perfil() {
         </div>
         <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest">Exibido na visão geral em vez do nome de usuário</p>
         {dnErr && <p className="text-xs text-destructive">{dnErr}</p>}
+      </motion.div>
+
+      {/* ── Privacidade do @ ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="rounded-2xl border border-white/8 p-5"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 25%, transparent)" }}
+            >
+              <AtSign className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-foreground">Ocultar seu @usuário</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">
+                {hideUsername
+                  ? <>Aparece como <span style={{ color: "var(--color-primary)" }}>@infinitysearch</span> para você</>
+                  : <>Mostra seu @ real — <span className="text-white/40">somente você vê isso</span></>}
+              </div>
+            </div>
+          </div>
+          {/* Toggle switch */}
+          <button
+            onClick={toggleHideUsername}
+            className="relative shrink-0 w-12 h-6 rounded-full transition-all duration-300 focus:outline-none"
+            style={{
+              background: hideUsername
+                ? "color-mix(in srgb, var(--color-primary) 85%, transparent)"
+                : "rgba(255,255,255,0.12)",
+              boxShadow: hideUsername
+                ? "0 0 12px color-mix(in srgb, var(--color-primary) 50%, transparent)"
+                : "none",
+            }}
+            aria-pressed={hideUsername}
+            title={hideUsername ? "Mostrar @ real" : "Ocultar @"}
+          >
+            <motion.span
+              className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-md"
+              animate={{ left: hideUsername ? "calc(100% - 1.375rem)" : "0.125rem" }}
+              transition={{ type: "spring", stiffness: 500, damping: 35 }}
+            />
+          </button>
+        </div>
       </motion.div>
 
       {/* ── PIN de acesso ── */}
@@ -525,7 +586,7 @@ export default function Perfil() {
               boxShadow: "0 0 30px rgba(34,197,94,0.4)",
             } : {
               background: "var(--color-primary)",
-              color: "#06091a",
+              color: "#000",
               boxShadow: "0 0 30px color-mix(in srgb, var(--color-primary) 35%, transparent)",
             }}
           >

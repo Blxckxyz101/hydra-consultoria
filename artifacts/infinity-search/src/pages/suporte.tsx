@@ -21,25 +21,18 @@ function markSuporteSeen(latestId: string) {
 
 const LINKS = [
   {
-    label: "@Blxckxyz",
-    desc: "Suporte principal",
+    label: "Entre em contato conosco",
+    desc: "Precisa de ajuda? Fale com o suporte",
     url: "https://t.me/Blxckxyz",
     icon: "💬",
     color: "--color-primary",
   },
   {
-    label: "@xxmathexx",
-    desc: "Suporte auxiliar",
-    url: "https://t.me/xxmathexx",
-    icon: "💬",
-    color: "--color-chart-2",
-  },
-  {
-    label: "@piancooz",
-    desc: "Suporte auxiliar",
-    url: "https://t.me/piancooz",
-    icon: "💬",
-    color: "--color-chart-3",
+    label: "Canal de Atualizações",
+    desc: "Novidades oficiais da plataforma",
+    url: "https://t.me/infinitysearchchannel",
+    icon: "📢",
+    color: "--color-chart-4",
   },
   {
     label: "Canal Free",
@@ -47,13 +40,6 @@ const LINKS = [
     url: "https://t.me/+7sBxmhOFPhJlYzcx",
     icon: "🔍",
     color: "--color-chart-3",
-  },
-  {
-    label: "Atualizações",
-    desc: "Canal oficial de novidades",
-    url: "https://t.me/infinitysearchchannel",
-    icon: "📢",
-    color: "--color-chart-4",
   },
 ];
 
@@ -232,8 +218,8 @@ export default function Suporte() {
         <div>
           <p className="text-sm font-semibold text-foreground mb-1">Como entrar em contato</p>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Para dúvidas, problemas de acesso ou suporte técnico, entre em contato diretamente com <strong>@Blxckxyz</strong> ou <strong>@xxmathexx</strong> no Telegram.
-            Para consultas gratuitas, acesse o canal free. Novidades e atualizações do sistema são publicadas no canal de atualizações.
+            Para dúvidas, problemas de acesso ou suporte técnico, clique em <strong>Entre em contato conosco</strong> acima.
+            Acompanhe novidades e atualizações do sistema pelo canal oficial da Infinity no Telegram.
           </p>
         </div>
       </motion.div>

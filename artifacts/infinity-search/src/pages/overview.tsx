@@ -269,26 +269,27 @@ export default function Overview() {
           />
         </div>
 
-        <div className="relative px-6 sm:px-10 -mt-10 mb-2 flex items-end gap-4">
+        <div className="relative px-6 sm:px-10 -mt-12 mb-2 flex items-end gap-4">
           <div className="relative shrink-0">
-            {/* Pulsing glow ring behind avatar */}
+            {/* Outer pulse ring */}
             <motion.div
               aria-hidden
-              className="absolute -inset-1.5 rounded-2xl pointer-events-none"
+              className="absolute -inset-2 rounded-full pointer-events-none"
               style={{
                 boxShadow: [
-                  "0 0 0 2px color-mix(in srgb, var(--color-primary) 75%, transparent)",
-                  "0 0 18px 4px color-mix(in srgb, var(--color-primary) 45%, transparent)",
-                  "0 0 40px 10px color-mix(in srgb, var(--color-primary) 20%, transparent)",
+                  "0 0 0 2.5px color-mix(in srgb, var(--color-primary) 80%, transparent)",
+                  "0 0 22px 6px color-mix(in srgb, var(--color-primary) 50%, transparent)",
+                  "0 0 50px 14px color-mix(in srgb, var(--color-primary) 22%, transparent)",
                 ].join(", "),
               }}
-              animate={{ opacity: [0.75, 1, 0.75] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+              animate={{ opacity: [0.7, 1, 0.7] }}
+              transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
             />
             <div
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden flex items-center justify-center text-black font-bold text-2xl relative z-10"
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden flex items-center justify-center text-black font-bold text-2xl relative z-10"
               style={{
                 background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, var(--color-chart-2)))",
+                border: "2.5px solid color-mix(in srgb, var(--color-primary) 85%, transparent)",
               }}>
               {profilePhoto ? (
                 <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" />
@@ -296,14 +297,16 @@ export default function Overview() {
                 <span>{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
               )}
             </div>
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-background shadow z-20" />
+            <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-emerald-400 border-2 border-background shadow z-20" />
           </div>
           <div className="pb-2 min-w-0">
             <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.displayName ?? me?.username ?? "operador"}</div>
-            {me?.displayName && (
-              <div className="text-[10px] text-muted-foreground/60 font-mono truncate">@{me?.username}</div>
-            )}
-            <div className="text-[10px] uppercase tracking-[0.35em] text-primary/70">{me?.role === "vip" ? "VIP" : me?.role ?? "user"}</div>
+            <div className="text-[10px] font-mono truncate" style={{ color: "var(--color-primary)" }}>
+              {typeof window !== "undefined" && localStorage.getItem("infinity_hide_username") === "true"
+                ? "@infinitysearch"
+                : `@${me?.username ?? ""}`}
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.35em] text-white/40 mt-0.5">{me?.role === "vip" ? "VIP" : me?.role ?? "user"}</div>
           </div>
         </div>
 
