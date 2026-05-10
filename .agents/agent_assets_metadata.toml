@@ -65,3 +65,9 @@ id = "f3SgzMF61pVbgRrCJUz4u"
 uri = "file://attached_assets/infinity_update_banner.png"
 type = "image"
 title = "Banner de Atualização — Infinity Search"
+
+[[outputs]]
+id = "IY2GwzgqPEoPVlVZng1nN"
+uri = "file://screenshots/infinity-suporte-telegram.jpg"
+type = "image"
+title = "Infinity Search — Imagem Suporte Telegram (1080×1080)"

@@ -12,6 +12,13 @@ export const infinityUsersTable = pgTable("infinity_users", {
   lastLoginAt:      timestamp("last_login_at", { withTimezone: true }),
   accountExpiresAt: timestamp("account_expires_at", { withTimezone: true }),
   queryDailyLimit:  integer("query_daily_limit"),
+  // Profile fields (synced to DB)
+  profilePhoto:     text("profile_photo"),
+  profileBanner:    text("profile_banner"),
+  profileBio:       text("profile_bio"),
+  profileStatus:    text("profile_status").default("online"),
+  profileStatusMsg: text("profile_status_msg"),
+  hideUsername:     boolean("hide_username").notNull().default(false),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {
@@ -157,6 +164,26 @@ export const infinityGiftCodesTable = pgTable(
     byPurchase: index("infinity_gift_codes_purchase_idx").on(t.purchaseId),
   }),
 );
+
+// ─── Profile Presets ─────────────────────────────────────────────────────────
+
+export const infinityProfilePresetsTable = pgTable(
+  "infinity_profile_presets",
+  {
+    id:        serial("id").primaryKey(),
+    username:  text("username").notNull(),
+    name:      text("name").notNull(),
+    theme:     text("theme"),
+    photo:     text("photo"),
+    banner:    text("banner"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byUser: index("infinity_profile_presets_user_idx").on(t.username),
+  }),
+);
+
+export type InfinityProfilePresetRow = typeof infinityProfilePresetsTable.$inferSelect;
 
 // ─── Notifications ───────────────────────────────────────────────────────────
 

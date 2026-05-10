@@ -51,7 +51,10 @@ const THEMES: ThemeDef[] = [
 
 const LS_KEY = "infinity_theme";
 
-function applyTheme(t: ThemeDef) {
+export { THEMES };
+export type { ThemeDef };
+
+export function applyTheme(t: ThemeDef) {
   const root = document.documentElement;
   const p = `hsl(${t.primary})`;
   const a = `hsl(${t.accent})`;

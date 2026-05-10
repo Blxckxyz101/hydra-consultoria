@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
-import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable } from "@workspace/db";
+import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable, infinityProfilePresetsTable } from "@workspace/db";
 import { eq, desc, sql, gte, and, isNull } from "drizzle-orm";
 import {
   createSession,
@@ -361,7 +361,7 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null }) {
+function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null; profilePhoto?: string | null; profileBanner?: string | null; profileBio?: string | null; profileStatus?: string | null; profileStatusMsg?: string | null; hideUsername?: boolean | null }) {
   return {
     username: row.username,
     displayName: row.displayName ?? null,
@@ -371,6 +371,12 @@ function serializeUser(row: { username: string; role: string; createdAt: Date; l
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
     accountExpiresAt: row.accountExpiresAt ? row.accountExpiresAt.toISOString() : null,
     queryDailyLimit: row.queryDailyLimit ?? null,
+    profilePhoto: row.profilePhoto ?? null,
+    profileBanner: row.profileBanner ?? null,
+    profileBio: row.profileBio ?? null,
+    profileStatus: row.profileStatus ?? "online",
+    profileStatusMsg: row.profileStatusMsg ?? null,
+    hideUsername: row.hideUsername ?? false,
   };
 }
 
@@ -1532,6 +1538,61 @@ router.patch("/me/pin", requireAuth, async (req, res) => {
   if (!ok) { res.status(401).json({ error: "PIN atual incorreto" }); return; }
   const pinHash = await bcrypt.hash(String(newPin), 10);
   await db.update(infinityUsersTable).set({ accountPin: pinHash }).where(eq(infinityUsersTable.username, username));
+  res.json({ ok: true });
+});
+
+// ─── PATCH /me/profile ───────────────────────────────────────────────────────
+router.patch("/me/profile", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const body = req.body ?? {};
+  const updates: Record<string, unknown> = {};
+  if ("profilePhoto" in body)     updates["profilePhoto"]     = body.profilePhoto === null ? null : String(body.profilePhoto).slice(0, 2_000_000);
+  if ("profileBanner" in body)    updates["profileBanner"]    = body.profileBanner === null ? null : String(body.profileBanner).slice(0, 2_000_000);
+  if ("profileBio" in body)       updates["profileBio"]       = body.profileBio === null ? null : String(body.profileBio).slice(0, 500);
+  if ("profileStatus" in body)    updates["profileStatus"]    = ["online","busy","away","offline"].includes(String(body.profileStatus)) ? String(body.profileStatus) : "online";
+  if ("profileStatusMsg" in body) updates["profileStatusMsg"] = body.profileStatusMsg === null ? null : String(body.profileStatusMsg).slice(0, 80);
+  if ("hideUsername" in body)     updates["hideUsername"]     = Boolean(body.hideUsername);
+  if (Object.keys(updates).length === 0) { res.status(400).json({ error: "Nenhum campo para atualizar" }); return; }
+  const [updated] = await db.update(infinityUsersTable).set(updates).where(eq(infinityUsersTable.username, username)).returning();
+  res.json(serializeUser(updated!));
+});
+
+// ─── Presets ─────────────────────────────────────────────────────────────────
+router.get("/me/presets", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const presets = await db.select().from(infinityProfilePresetsTable).where(eq(infinityProfilePresetsTable.username, username)).orderBy(desc(infinityProfilePresetsTable.createdAt));
+  res.json(presets.map(p => ({ id: p.id, name: p.name, theme: p.theme, hasPhoto: !!p.photo, hasBanner: !!p.banner, createdAt: p.createdAt.toISOString() })));
+});
+
+router.post("/me/presets", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const { name, theme, photo, banner } = req.body ?? {};
+  if (!name || typeof name !== "string") { res.status(400).json({ error: "name obrigatório" }); return; }
+  // max 10 presets per user
+  const existing = await db.select({ id: infinityProfilePresetsTable.id }).from(infinityProfilePresetsTable).where(eq(infinityProfilePresetsTable.username, username));
+  if (existing.length >= 10) { res.status(400).json({ error: "Limite de 10 presets atingido" }); return; }
+  const [preset] = await db.insert(infinityProfilePresetsTable).values({
+    username,
+    name: String(name).slice(0, 40),
+    theme: theme ? String(theme) : null,
+    photo: photo ? String(photo).slice(0, 2_000_000) : null,
+    banner: banner ? String(banner).slice(0, 2_000_000) : null,
+  }).returning();
+  res.json({ id: preset!.id, name: preset!.name, theme: preset!.theme, hasPhoto: !!preset!.photo, hasBanner: !!preset!.banner, createdAt: preset!.createdAt.toISOString() });
+});
+
+router.post("/me/presets/:id/apply", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const id = Number(req.params.id);
+  const [preset] = await db.select().from(infinityProfilePresetsTable).where(and(eq(infinityProfilePresetsTable.id, id), eq(infinityProfilePresetsTable.username, username))).limit(1);
+  if (!preset) { res.status(404).json({ error: "Preset não encontrado" }); return; }
+  res.json({ theme: preset.theme, photo: preset.photo, banner: preset.banner });
+});
+
+router.delete("/me/presets/:id", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const id = Number(req.params.id);
+  await db.delete(infinityProfilePresetsTable).where(and(eq(infinityProfilePresetsTable.id, id), eq(infinityProfilePresetsTable.username, username)));
   res.json({ ok: true });
 });
 

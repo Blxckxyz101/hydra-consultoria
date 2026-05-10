@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera, Image as ImageIcon, Trash2, Save, CheckCircle2,
   User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil, AtSign,
+  Bookmark, BookmarkPlus, Play, Plus, X as XIcon,
 } from "lucide-react";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
+import { THEMES, applyTheme } from "@/pages/personalizar";
 
 const LS_PHOTO    = "infinity_profile_photo";
 const LS_BANNER   = "infinity_profile_banner";
@@ -12,6 +14,21 @@ const LS_BIO      = "infinity_profile_bio";
 const LS_STATUS   = "infinity_profile_status";
 const LS_STATUS_MSG = "infinity_profile_status_msg";
 const LS_HIDE_USERNAME = "infinity_hide_username";
+const LS_THEME    = "infinity_theme";
+
+interface PresetSummary {
+  id: number;
+  name: string;
+  theme: string | null;
+  hasPhoto: boolean;
+  hasBanner: boolean;
+  createdAt: string;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("infinity_token");
+  return token ? { Authorization: `Bearer ${token}` } : {} as Record<string, string>;
+}
 
 type StatusType = "online" | "busy" | "away" | "offline";
 
@@ -91,19 +108,111 @@ export default function Perfil() {
     setHideUsername(next);
     next ? localStorage.setItem(LS_HIDE_USERNAME, "true") : localStorage.removeItem(LS_HIDE_USERNAME);
     dispatchUpdate();
+    // Persist to server
+    fetch("/api/infinity/me/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ hideUsername: next }),
+    }).catch(() => {});
   };
   const [showPins, setShowPins] = useState(false);
 
+  // ── Presets ───────────────────────────────────────────────────────────────
+  const [presets, setPresets] = useState<PresetSummary[]>([]);
+  const [presetSaving, setPresetSaving] = useState(false);
+  const [presetApplying, setPresetApplying] = useState<number | null>(null);
+  const [showPresetInput, setShowPresetInput] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+
+  const loadPresets = useCallback(async () => {
+    try {
+      const r = await fetch("/api/infinity/me/presets", { headers: authHeaders() });
+      if (r.ok) setPresets(await r.json() as PresetSummary[]);
+    } catch { /* silent */ }
+  }, []);
+
+  const savePreset = async () => {
+    if (!newPresetName.trim()) return;
+    setPresetSaving(true);
+    try {
+      const r = await fetch("/api/infinity/me/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          name: newPresetName.trim(),
+          theme: localStorage.getItem(LS_THEME) ?? "sky",
+          photo: photo ?? null,
+          banner: banner ?? null,
+        }),
+      });
+      if (r.ok) {
+        const p = await r.json() as PresetSummary;
+        setPresets(prev => [p, ...prev]);
+        setNewPresetName("");
+        setShowPresetInput(false);
+      }
+    } catch { /* silent */ }
+    finally { setPresetSaving(false); }
+  };
+
+  const applyPreset = async (preset: PresetSummary) => {
+    setPresetApplying(preset.id);
+    try {
+      const r = await fetch(`/api/infinity/me/presets/${preset.id}/apply`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!r.ok) return;
+      const data = await r.json() as { theme: string | null; photo: string | null; banner: string | null };
+      // Apply photo + banner
+      if (data.photo !== undefined) {
+        setPhoto(data.photo);
+        data.photo ? localStorage.setItem(LS_PHOTO, data.photo) : localStorage.removeItem(LS_PHOTO);
+      }
+      if (data.banner !== undefined) {
+        setBanner(data.banner);
+        data.banner ? localStorage.setItem(LS_BANNER, data.banner) : localStorage.removeItem(LS_BANNER);
+      }
+      // Apply theme
+      if (data.theme) {
+        localStorage.setItem(LS_THEME, data.theme);
+        const t = THEMES.find(x => x.key === data.theme);
+        if (t) applyTheme(t);
+      }
+      dispatchUpdate();
+    } catch { /* silent */ }
+    finally { setPresetApplying(null); }
+  };
+
+  const deletePreset = async (id: number) => {
+    try {
+      await fetch(`/api/infinity/me/presets/${id}`, { method: "DELETE", headers: authHeaders() });
+      setPresets(prev => prev.filter(p => p.id !== id));
+    } catch { /* silent */ }
+  };
+
   useEffect(() => {
-    const token = localStorage.getItem("infinity_token");
-    fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
+    fetch("/api/infinity/me", { headers: authHeaders() })
       .then(r => r.json())
-      .then((d: { displayName?: string | null; pinSet?: boolean }) => {
+      .then((d: {
+        displayName?: string | null; pinSet?: boolean;
+        profilePhoto?: string | null; profileBanner?: string | null;
+        profileBio?: string | null; profileStatus?: string | null;
+        profileStatusMsg?: string | null; hideUsername?: boolean;
+      }) => {
         setDisplayName(d.displayName ?? "");
         setHasPinSet(d.pinSet ?? false);
+        // Load profile from server (overrides localStorage)
+        if (d.profilePhoto !== undefined) { setPhoto(d.profilePhoto); if (d.profilePhoto) localStorage.setItem(LS_PHOTO, d.profilePhoto); else localStorage.removeItem(LS_PHOTO); }
+        if (d.profileBanner !== undefined) { setBanner(d.profileBanner); if (d.profileBanner) localStorage.setItem(LS_BANNER, d.profileBanner); else localStorage.removeItem(LS_BANNER); }
+        if (d.profileBio !== undefined) { setBio(d.profileBio ?? ""); localStorage.setItem(LS_BIO, d.profileBio ?? ""); }
+        if (d.profileStatus) { setStatus(d.profileStatus as StatusType); localStorage.setItem(LS_STATUS, d.profileStatus); }
+        if (d.profileStatusMsg !== undefined) { setStatusMsg(d.profileStatusMsg ?? ""); localStorage.setItem(LS_STATUS_MSG, d.profileStatusMsg ?? ""); }
+        if (d.hideUsername !== undefined) { setHideUsername(d.hideUsername); d.hideUsername ? localStorage.setItem(LS_HIDE_USERNAME, "true") : localStorage.removeItem(LS_HIDE_USERNAME); }
       })
       .catch(() => {});
-  }, []);
+    loadPresets();
+  }, [loadPresets]);
 
   const saveDisplayName = async () => {
     setDnSaving(true); setDnErr(""); setDnSaved(false);
@@ -161,13 +270,26 @@ export default function Perfil() {
     setBanner(await readFile(f));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // Save to localStorage (instant feedback)
     photo  ? localStorage.setItem(LS_PHOTO, photo)   : localStorage.removeItem(LS_PHOTO);
     banner ? localStorage.setItem(LS_BANNER, banner)  : localStorage.removeItem(LS_BANNER);
     localStorage.setItem(LS_BIO, bio.slice(0, 160));
     localStorage.setItem(LS_STATUS, status);
     localStorage.setItem(LS_STATUS_MSG, statusMsg.slice(0, 80));
     dispatchUpdate();
+    // Persist to server (best-effort)
+    fetch("/api/infinity/me/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        profilePhoto: photo ?? null,
+        profileBanner: banner ?? null,
+        profileBio: bio.slice(0, 160) || null,
+        profileStatus: status,
+        profileStatusMsg: statusMsg.slice(0, 80) || null,
+      }),
+    }).catch(() => {});
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   };
@@ -537,6 +659,126 @@ export default function Perfil() {
         <p className="text-[9px] text-muted-foreground/30 text-right">{bio.length}/160</p>
       </motion.div>
 
+      {/* ── Presets ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.19 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bookmark className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Presets</h2>
+            <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded-full font-bold text-black" style={{ background: "var(--color-primary)" }}>
+              {presets.length}/10
+            </span>
+          </div>
+          <button
+            onClick={() => setShowPresetInput(v => !v)}
+            disabled={presets.length >= 10}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold uppercase tracking-wider border transition-all disabled:opacity-40"
+            style={{ borderColor: "color-mix(in srgb, var(--color-primary) 40%, transparent)", color: "var(--color-primary)", background: "color-mix(in srgb, var(--color-primary) 8%, transparent)" }}
+          >
+            <Plus className="w-3 h-3" /> Salvar atual
+          </button>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest -mt-1">
+          Salve seu tema + foto + banner atual como um preset reutilizável
+        </p>
+
+        {/* Name input */}
+        <AnimatePresence>
+          {showPresetInput && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="flex gap-2 pt-1">
+                <input
+                  autoFocus
+                  value={newPresetName}
+                  onChange={e => setNewPresetName(e.target.value)}
+                  maxLength={40}
+                  placeholder="Nome do preset (ex: Dark VIP)"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
+                  onKeyDown={e => { if (e.key === "Enter") void savePreset(); if (e.key === "Escape") setShowPresetInput(false); }}
+                />
+                <button
+                  onClick={() => void savePreset()}
+                  disabled={presetSaving || !newPresetName.trim()}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50"
+                  style={{ background: "var(--color-primary)", color: "#000" }}
+                >
+                  {presetSaving ? "..." : <Check className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={() => { setShowPresetInput(false); setNewPresetName(""); }}
+                  className="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                >
+                  <XIcon className="w-4 h-4 text-muted-foreground" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Preset list */}
+        {presets.length > 0 ? (
+          <div className="space-y-2">
+            {presets.map(p => (
+              <motion.div
+                key={p.id}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/4 border border-white/8"
+              >
+                {/* Theme color dot */}
+                <div
+                  className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center"
+                  style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
+                >
+                  <Bookmark className="w-3.5 h-3.5" style={{ color: "var(--color-primary)" }} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-foreground truncate">{p.name}</div>
+                  <div className="text-[10px] text-muted-foreground/60 flex items-center gap-2 mt-0.5">
+                    {p.theme && <span className="capitalize">{p.theme}</span>}
+                    {p.hasPhoto && <span>· foto</span>}
+                    {p.hasBanner && <span>· banner</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => void applyPreset(p)}
+                    disabled={presetApplying === p.id}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all disabled:opacity-50"
+                    style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
+                  >
+                    {presetApplying === p.id ? "..." : <><Play className="w-3 h-3" /> Aplicar</>}
+                  </button>
+                  <button
+                    onClick={() => void deletePreset(p.id)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 hover:bg-destructive/20 hover:border-destructive/40 transition-colors"
+                  >
+                    <Trash2 className="w-3 h-3 text-muted-foreground/60" />
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-6 text-muted-foreground/40 text-sm">
+            <BookmarkPlus className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-xs">Nenhum preset salvo. Configure seu tema e fotos, depois salve como preset!</p>
+          </div>
+        )}
+      </motion.div>
+
       {/* ── Photo controls ── */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -569,7 +811,7 @@ export default function Perfil() {
         </div>
 
         <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest">
-          Imagens e preferências salvas localmente no navegador
+          Salvo automaticamente na nuvem — disponível em qualquer dispositivo
         </p>
 
         <AnimatePresence mode="wait">
