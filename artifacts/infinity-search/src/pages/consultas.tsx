@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -212,6 +212,7 @@ export default function Consultas() {
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("Pessoa");
   const [showBaseSelector, setShowBaseSelector] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<{ tipo: Tipo; dados: string } | null>(null);
+  const baseSelectorRef = useRef<HTMLDivElement>(null);
   const [cpfFullQuery, setCpfFullQuery] = useState<string | null>(null);
   const [moduleSearch, setModuleSearch] = useState("");
   const queryClient = useQueryClient();
@@ -251,6 +252,15 @@ export default function Consultas() {
     const id = setInterval(fetchPing, 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // Scroll base selector into view on desktop when it appears
+  useEffect(() => {
+    if (showBaseSelector && baseSelectorRef.current) {
+      setTimeout(() => {
+        baseSelectorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 80);
+    }
+  }, [showBaseSelector]);
 
   const historyKey = ["infinity-history", 20] as const;
   const { data: history } = useQuery<Historico>({
@@ -662,6 +672,7 @@ export default function Consultas() {
           {showBaseSelector && pendingQuery && !pending && (
             <motion.div
               key="base-selector"
+              ref={baseSelectorRef}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
