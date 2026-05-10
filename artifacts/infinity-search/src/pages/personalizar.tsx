@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Palette, Check, Waves, Zap, Leaf, Crown, Heart, Flame, Moon,
   Terminal, Sparkles, Droplets, Radio, Monitor, Sun, Activity,
-  Search, User, type LucideIcon,
+  Search, User, Smartphone, type LucideIcon,
 } from "lucide-react";
 
 interface ThemeDef {
@@ -14,9 +14,26 @@ interface ThemeDef {
   primary: string;
   accent: string;
   ring: string;
+  bgOverride?: string;
+  cardOverride?: string;
+  borderOverride?: string;
+  mutedOverride?: string;
 }
 
 const THEMES: ThemeDef[] = [
+  {
+    key: "amoled",
+    name: "AMOLED Black",
+    icon: Smartphone,
+    desc: "Preto puro · ciano elétrico",
+    primary: "191 100% 50%",
+    accent:  "191 100% 11%",
+    ring:    "191 100% 50%",
+    bgOverride:     "0 0% 0%",
+    cardOverride:   "0 0% 4%",
+    borderOverride: "0 0% 10%",
+    mutedOverride:  "0 0% 13%",
+  },
   { key: "sky",        name: "Sky Infinity",   icon: Waves,    desc: "Padrão · oceano de dados",      primary: "195 90% 55%",  accent: "195 90% 20%",  ring: "195 90% 55%"  },
   { key: "violeta",    name: "Violeta Zero",   icon: Zap,      desc: "Poder do Geass",                primary: "270 80% 65%",  accent: "270 80% 20%",  ring: "270 80% 65%"  },
   { key: "esmeralda",  name: "Esmeralda",      icon: Leaf,     desc: "Vida nos dados",                primary: "160 70% 50%",  accent: "160 70% 18%",  ring: "160 70% 50%"  },
@@ -46,6 +63,11 @@ function applyTheme(t: ThemeDef) {
   const bgSat = sat < 8 ? 0 : 22;
   const cardSat = sat < 8 ? 0 : 18;
 
+  const bgHsl   = t.bgOverride     ?? `${hue} ${bgSat}% 6%`;
+  const cardHsl = t.cardOverride   ?? `${hue} ${cardSat}% 9%`;
+  const brdHsl  = t.borderOverride ?? `${hue} 25% 15%`;
+  const mutHsl  = t.mutedOverride  ?? `${hue} 20% 15%`;
+
   root.style.setProperty("--primary", t.primary);
   root.style.setProperty("--accent", t.accent);
   root.style.setProperty("--ring", t.ring);
@@ -53,10 +75,15 @@ function applyTheme(t: ThemeDef) {
   root.style.setProperty("--sidebar-ring", t.ring);
   root.style.setProperty("--chart-1", t.primary);
 
-  root.style.setProperty("--background", `${hue} ${bgSat}% 6%`);
-  root.style.setProperty("--sidebar", `${hue} ${bgSat}% 6%`);
-  root.style.setProperty("--card", `${hue} ${cardSat}% 9%`);
-  root.style.setProperty("--popover", `${hue} ${cardSat}% 9%`);
+  root.style.setProperty("--background", bgHsl);
+  root.style.setProperty("--sidebar", bgHsl);
+  root.style.setProperty("--card", cardHsl);
+  root.style.setProperty("--popover", cardHsl);
+  root.style.setProperty("--border", brdHsl);
+  root.style.setProperty("--input", brdHsl);
+  root.style.setProperty("--muted", mutHsl);
+  root.style.setProperty("--sidebar-border", brdHsl);
+  root.style.setProperty("--sidebar-accent", mutHsl);
 
   root.style.setProperty("--color-primary", p);
   root.style.setProperty("--color-primary-foreground", "hsl(220 30% 10%)");
@@ -67,10 +94,13 @@ function applyTheme(t: ThemeDef) {
   root.style.setProperty("--color-sidebar-ring", r);
   root.style.setProperty("--color-chart-1", p);
   root.style.setProperty("--color-primary-border", p);
-  root.style.setProperty("--color-background", `hsl(${hue} ${bgSat}% 6%)`);
-  root.style.setProperty("--color-sidebar", `hsl(${hue} ${bgSat}% 6%)`);
-  root.style.setProperty("--color-card", `hsl(${hue} ${cardSat}% 9%)`);
-  root.style.setProperty("--color-popover", `hsl(${hue} ${cardSat}% 9%)`);
+  root.style.setProperty("--color-background", `hsl(${bgHsl})`);
+  root.style.setProperty("--color-sidebar", `hsl(${bgHsl})`);
+  root.style.setProperty("--color-card", `hsl(${cardHsl})`);
+  root.style.setProperty("--color-popover", `hsl(${cardHsl})`);
+  root.style.setProperty("--color-border", `hsl(${brdHsl})`);
+  root.style.setProperty("--color-input", `hsl(${brdHsl})`);
+  root.style.setProperty("--color-muted", `hsl(${mutHsl})`);
 
   root.setAttribute("data-theme-hsl", t.primary);
 }
@@ -184,6 +214,20 @@ export default function Personalizar() {
                     />
                   )}
                 </AnimatePresence>
+
+                {/* AMOLED "NOVO" pill — shown when not active */}
+                {t.key === "amoled" && !isActive && (
+                  <div
+                    className="absolute top-3 right-3 text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full z-10"
+                    style={{
+                      background: "linear-gradient(90deg,hsl(191 100% 50%/0.18),hsl(191 100% 50%/0.08))",
+                      border: "1px solid hsl(191 100% 50%/0.4)",
+                      color: "hsl(191 100% 60%)",
+                    }}
+                  >
+                    NOVO
+                  </div>
+                )}
 
                 {/* Check badge */}
                 <AnimatePresence>
