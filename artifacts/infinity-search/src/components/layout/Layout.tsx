@@ -70,7 +70,7 @@ function NotifPanel({ onClose }: { onClose: () => void }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -6, scale: 0.97 }}
       transition={{ duration: 0.16 }}
-      className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#070b1a]/95 backdrop-blur-2xl shadow-2xl z-50 overflow-hidden"
+      className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 backdrop-blur-2xl shadow-2xl z-50 overflow-hidden" style={{ background: "color-mix(in srgb, var(--color-card) 95%, transparent)" }}
     >
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
         <div className="flex items-center gap-2">
@@ -372,7 +372,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <span
-                className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#06091a]"
+                className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-background"
                 style={{ background: profileStatus === "online" ? "#22c55e" : profileStatus === "busy" ? "#ef4444" : profileStatus === "away" ? "#f59e0b" : "#6b7280" }}
               />
             </div>
@@ -560,7 +560,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 280, damping: 32 }}
-              className="lg:hidden fixed inset-y-0 left-0 w-[78%] max-w-[320px] z-50 flex flex-col border-r border-white/10 bg-[#06091a]/95 backdrop-blur-2xl"
+              className="lg:hidden fixed inset-y-0 left-0 w-[78%] max-w-[320px] z-50 flex flex-col border-r border-white/10 backdrop-blur-2xl" style={{ background: "color-mix(in srgb, var(--color-background) 95%, transparent)" }}
             >
               <button
                 onClick={() => setMobileOpen(false)}

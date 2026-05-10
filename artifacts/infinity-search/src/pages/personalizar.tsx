@@ -103,6 +103,7 @@ function applyTheme(t: ThemeDef) {
   root.style.setProperty("--color-muted", `hsl(${mutHsl})`);
 
   root.setAttribute("data-theme-hsl", t.primary);
+  root.setAttribute("data-theme", t.key);
 }
 
 function loadThemeKey(): string { return localStorage.getItem(LS_KEY) ?? "sky"; }

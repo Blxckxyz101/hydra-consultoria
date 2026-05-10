@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import bgUrl from "@/assets/background.png";
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
@@ -20,6 +20,17 @@ function getThemeRgb(): [number, number, number] {
 
 export function AnimatedBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isAmoled, setIsAmoled] = useState(
+    () => document.documentElement.getAttribute("data-theme") === "amoled"
+  );
+
+  useEffect(() => {
+    const obs = new MutationObserver(() => {
+      setIsAmoled(document.documentElement.getAttribute("data-theme") === "amoled");
+    });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -72,12 +83,15 @@ export function AnimatedBackground() {
     let t = 0;
     let frameCount = 0;
     let rgb: [number, number, number] = getThemeRgb();
+    let curIsAmoled = document.documentElement.getAttribute("data-theme") === "amoled";
 
     const render = () => {
       t += 0.005;
       frameCount++;
-      // Re-read theme color every 30 frames (~0.5s) to catch theme changes
-      if (frameCount % 30 === 0) rgb = getThemeRgb();
+      if (frameCount % 30 === 0) {
+        rgb = getThemeRgb();
+        curIsAmoled = document.documentElement.getAttribute("data-theme") === "amoled";
+      }
 
       mouseX += (targetX - mouseX) * 0.06;
       mouseY += (targetY - mouseY) * 0.06;
@@ -86,15 +100,16 @@ export function AnimatedBackground() {
 
       const [rr, gg, bb] = rgb;
 
-      // Subtle radial vignette glow following cursor
-      const g = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 520);
-      g.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, 0.18)`);
-      g.addColorStop(0.5, `rgba(${Math.round(rr * 0.8)}, ${Math.round(gg * 0.65)}, ${Math.round(bb * 0.87)}, 0.06)`);
+      // cursor glow — tighter and more vivid on AMOLED
+      const glowRadius = curIsAmoled ? 400 : 520;
+      const glowAlpha = curIsAmoled ? 0.28 : 0.18;
+      const g = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, glowRadius);
+      g.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, ${glowAlpha})`);
+      g.addColorStop(0.5, `rgba(${Math.round(rr * 0.8)}, ${Math.round(gg * 0.65)}, ${Math.round(bb * 0.87)}, ${curIsAmoled ? 0.09 : 0.06})`);
       g.addColorStop(1, "rgba(0, 0, 0, 0)");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, width, height);
 
-      // Connecting + drifting particles
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
         const dx = p.x - mouseX;
@@ -117,26 +132,29 @@ export function AnimatedBackground() {
         const twinkle = 0.45 + Math.sin(t * 3 + p.phase) * 0.35;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        // Lighter version of primary for particles
-        const lr = Math.min(255, Math.round(rr + (255 - rr) * 0.45));
-        const lg = Math.min(255, Math.round(gg + (255 - gg) * 0.45));
-        const lb = Math.min(255, Math.round(bb + (255 - bb) * 0.45));
-        ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, ${twinkle * 0.7})`;
+        const particleAlpha = curIsAmoled ? twinkle * 0.9 : twinkle * 0.7;
+        if (curIsAmoled) {
+          ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${particleAlpha})`;
+        } else {
+          const lr = Math.min(255, Math.round(rr + (255 - rr) * 0.45));
+          const lg = Math.min(255, Math.round(gg + (255 - gg) * 0.45));
+          const lb = Math.min(255, Math.round(bb + (255 - bb) * 0.45));
+          ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, ${particleAlpha})`;
+        }
         ctx.fill();
 
-        // connect nearby
         for (let j = i + 1; j < particles.length; j++) {
           const q = particles[j];
           const ddx = p.x - q.x;
           const ddy = p.y - q.y;
           const dd = ddx * ddx + ddy * ddy;
           if (dd < 11000) {
-            const alpha = (1 - dd / 11000) * 0.18;
+            const alpha = (1 - dd / 11000) * (curIsAmoled ? 0.28 : 0.18);
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(q.x, q.y);
             ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha})`;
-            ctx.lineWidth = 0.6;
+            ctx.lineWidth = curIsAmoled ? 0.8 : 0.6;
             ctx.stroke();
           }
         }
@@ -155,24 +173,32 @@ export function AnimatedBackground() {
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-[-3] pointer-events-none"
-        style={{
-          backgroundImage: `url(${bgUrl})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-        }}
-        aria-hidden
-      />
+      {/* Background image — hidden on AMOLED for true black */}
+      {!isAmoled && (
+        <div
+          className="fixed inset-0 z-[-3] pointer-events-none"
+          style={{
+            backgroundImage: `url(${bgUrl})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+          }}
+          aria-hidden
+        />
+      )}
+
+      {/* Overlay — pure black for AMOLED, navy gradient otherwise */}
       <div
         className="fixed inset-0 z-[-2] pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse at top, rgba(8,15,40,0.55), rgba(2,6,18,0.85) 60%, rgba(2,6,18,0.92))",
+          background: isAmoled
+            ? "#000000"
+            : "radial-gradient(ellipse at top, rgba(8,15,40,0.55), rgba(2,6,18,0.85) 60%, rgba(2,6,18,0.92))",
+          transition: "background 0.4s ease",
         }}
         aria-hidden
       />
+
       <canvas ref={canvasRef} className="fixed inset-0 z-[-1] pointer-events-none" aria-hidden />
     </>
   );

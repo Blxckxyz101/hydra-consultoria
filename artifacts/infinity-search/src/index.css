@@ -166,3 +166,20 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }
+
+/* ── AMOLED Black: force true black on all backgrounds ──────────────────── */
+[data-theme="amoled"] body,
+[data-theme="amoled"] .min-h-screen {
+  background: #000000 !important;
+}
+
+[data-theme="amoled"] .glass-panel {
+  background: rgba(0, 0, 0, 0.85) !important;
+  border-color: color-mix(in srgb, var(--color-primary) 20%, transparent) !important;
+}
+
+[data-theme="amoled"] .glass-card-glow {
+  box-shadow: 0 0 20px color-mix(in srgb, var(--color-primary) 35%, transparent),
+              inset 0 0 10px color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+}

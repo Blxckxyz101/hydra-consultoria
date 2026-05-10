@@ -271,10 +271,24 @@ export default function Overview() {
 
         <div className="relative px-6 sm:px-10 -mt-10 mb-2 flex items-end gap-4">
           <div className="relative shrink-0">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-4 border-[#06091a] overflow-hidden flex items-center justify-center text-black font-bold text-2xl"
+            {/* Pulsing glow ring behind avatar */}
+            <motion.div
+              aria-hidden
+              className="absolute -inset-1.5 rounded-2xl pointer-events-none"
+              style={{
+                boxShadow: [
+                  "0 0 0 2px color-mix(in srgb, var(--color-primary) 75%, transparent)",
+                  "0 0 18px 4px color-mix(in srgb, var(--color-primary) 45%, transparent)",
+                  "0 0 40px 10px color-mix(in srgb, var(--color-primary) 20%, transparent)",
+                ].join(", "),
+              }}
+              animate={{ opacity: [0.75, 1, 0.75] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <div
+              className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden flex items-center justify-center text-black font-bold text-2xl relative z-10"
               style={{
                 background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, var(--color-chart-2)))",
-                boxShadow: "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)",
               }}>
               {profilePhoto ? (
                 <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" />
@@ -282,7 +296,7 @@ export default function Overview() {
                 <span>{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
               )}
             </div>
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-[#06091a] shadow" />
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-400 border-2 border-background shadow z-20" />
           </div>
           <div className="pb-2 min-w-0">
             <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.displayName ?? me?.username ?? "operador"}</div>
