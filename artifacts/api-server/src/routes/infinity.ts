@@ -2054,21 +2054,41 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20_000);
 
-  const provider = await callSkylers(
-    String(modulo ?? ""),
-    String(valor).trim(),
-    ctrl.signal,
-    ep,
-  );
+  const skyModulo = String(modulo ?? ep ?? "").toLowerCase();
+
+  // For iseek-cpf: also query iseek-cpfbasico in parallel to get nome/nascimento/mae/pai
+  // Merge results: basic identity fields first, then enrichment fields from iseek-cpf
+  const ENRICH_PAIRS: Record<string, string> = {
+    "iseek-cpf": "iseek-cpfbasico",
+  };
+  const enrichWith = modulo && ENRICH_PAIRS[String(modulo)];
+
+  const [provider, basicProvider] = await Promise.all([
+    callSkylers(String(modulo ?? ""), String(valor).trim(), ctrl.signal, ep),
+    enrichWith ? callSkylers(enrichWith, String(valor).trim(), ctrl.signal) : Promise.resolve(null),
+  ]);
   clearTimeout(timer);
 
-  const success = provider.ok && !!provider.parsed;
+  // Merge: basic fields first (nome/nascimento/mae/pai), then enrichment fields (deduped by key)
+  let mergedParsed = provider.parsed;
+  if (basicProvider?.ok && basicProvider.parsed && provider.parsed) {
+    const existingKeys = new Set(provider.parsed.fields.map(f => f.key.toLowerCase()));
+    const newFields = basicProvider.parsed.fields.filter(f => !existingKeys.has(f.key.toLowerCase()));
+    mergedParsed = {
+      fields: [...newFields, ...provider.parsed.fields],
+      sections: [...(basicProvider.parsed.sections ?? []), ...(provider.parsed.sections ?? [])],
+      raw: provider.parsed.raw,
+    };
+  } else if (basicProvider?.ok && basicProvider.parsed && !provider.parsed) {
+    mergedParsed = basicProvider.parsed;
+  }
+
+  const success = (provider.ok || !!basicProvider?.ok) && !!mergedParsed;
   // Apply pessoa-type field priority sorting for CPF/person modules
-  const skyModulo = String(modulo ?? ep ?? "").toLowerCase();
   const isSkylersPessoa = /cpf|nome|mae|pai|rg|pessoa|dados|iseek|full|basico/i.test(skyModulo);
-  const sortedParsed = (provider.parsed && isSkylersPessoa)
-    ? { ...provider.parsed, fields: sortFieldsByPriority(provider.parsed.fields) }
-    : provider.parsed;
+  const sortedParsed = (mergedParsed && isSkylersPessoa)
+    ? { ...mergedParsed, fields: sortFieldsByPriority(mergedParsed.fields) }
+    : mergedParsed;
   const data = sortedParsed ?? { fields: [], sections: [], raw: "" };
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
