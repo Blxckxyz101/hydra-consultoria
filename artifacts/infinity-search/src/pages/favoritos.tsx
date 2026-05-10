@@ -311,7 +311,7 @@ export default function Favoritos() {
       )}
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-2">
-        Made by blxckxyz · Infinity Search
+        Infinity Search
       </div>
     </div>
   );

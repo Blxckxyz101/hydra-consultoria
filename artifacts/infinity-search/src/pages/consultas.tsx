@@ -881,8 +881,8 @@ export default function Consultas() {
           </div>
         )}
         <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
-          <span>Made by blxckxyz</span>
-          <span className="text-primary/60">Infinity Search</span>
+          <span>Infinity Search</span>
+          <span className="text-primary/60">v1.0</span>
         </div>
       </div>
     </div>

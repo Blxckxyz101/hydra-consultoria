@@ -120,7 +120,7 @@ export function LockScreen() {
 
           {/* Footer */}
           <div className="mt-8 pt-5 border-t border-white/5 text-[9px] uppercase tracking-[0.4em] text-muted-foreground/30">
-            Made by blxckxyz · Infinity Search
+            Infinity Search
           </div>
         </div>
       </motion.div>

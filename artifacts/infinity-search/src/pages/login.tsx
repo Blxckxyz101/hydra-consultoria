@@ -385,7 +385,7 @@ export default function Login() {
               </a>
             </div>
             <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.35em] text-muted-foreground/60">
-              <span>Made by blxckxyz</span>
+              <span>Infinity Search</span>
               <span className="text-primary/60">v1.0</span>
             </div>
           </div>

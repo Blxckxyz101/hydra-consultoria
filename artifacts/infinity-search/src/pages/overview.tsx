@@ -756,7 +756,7 @@ export default function Overview() {
       </motion.div>
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-4">
-        Made by blxckxyz · Infinity Search
+        Infinity Search
       </div>
     </div>
   );

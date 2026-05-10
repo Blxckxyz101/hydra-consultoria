@@ -77,7 +77,7 @@ function buildReport(dossie: Dossie): string {
     lines.push("");
   });
   lines.push("═══════════════════════════════════════");
-  lines.push("Made by blxckxyz · Infinity Search");
+  lines.push("Infinity Search");
   return lines.join("\n");
 }
 
@@ -178,7 +178,7 @@ function exportPdf(dossie: Dossie) {
     <div class="stat"><div class="label">Seções Total</div><div class="value">${dossie.items.reduce((s, it) => s + it.sections.length, 0)}</div></div>
   </div>
   ${itemsHtml}
-  <div class="footer">Made by blxckxyz · Infinity Search · Confidencial</div>
+  <div class="footer">Infinity Search · Confidencial</div>
   <script>window.onload=()=>{window.print();}</script>
 </body>
 </html>`;
@@ -536,7 +536,7 @@ export default function Dossie() {
       )}
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-2">
-        Made by blxckxyz · Infinity Search
+        Infinity Search
       </div>
     </div>
   );

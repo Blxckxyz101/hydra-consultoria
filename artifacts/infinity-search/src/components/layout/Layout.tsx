@@ -469,7 +469,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">
-          <span>by blxckxyz</span>
+          <span>Infinity Search</span>
           <span>v1.0</span>
         </div>
       </div>

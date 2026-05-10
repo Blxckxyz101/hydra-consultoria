@@ -478,7 +478,7 @@ export default function Skylers() {
 
       {/* Footer */}
       <div className="pt-4 border-t border-white/5 flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
-        <span>Made by blxckxyz</span>
+        <span>Infinity Search</span>
         <span className="text-primary/60">Skylers API · {MODULES.length} módulos</span>
       </div>
     </div>

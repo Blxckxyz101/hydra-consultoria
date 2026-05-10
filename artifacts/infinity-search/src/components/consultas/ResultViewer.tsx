@@ -452,7 +452,7 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       else lines.push(`${f.key}: ${f.value}`);
     });
     parsed.sections.forEach(s => { lines.push(""); lines.push(`━ ${s.name} (${s.items.length}) ━`); s.items.forEach(it => lines.push(`  • ${it}`)); });
-    lines.push(""); lines.push("Made by blxckxyz · Infinity Search");
+    lines.push(""); lines.push("Infinity Search");
     return lines.join("\n");
   }, [parsed, tipo]);
 
@@ -475,7 +475,7 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
 <div class="meta"><div><strong>Tipo:</strong> ${tipo.toUpperCase()}</div><div><strong>Consulta:</strong> ${query}</div><div><strong>Data:</strong> ${date}</div><div><strong>Campos:</strong> ${parsed.fields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div></div></div>
 ${fotoForPdf ? `<div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;padding:12px;border:1px solid #e0f2f8;border-radius:8px;background:#f4fbfd;"><img src="${fotoForPdf.value}" alt="Foto" style="width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid #0891b2;" onerror="this.style.display='none'" /><div><div style="font-weight:700;color:#0e7490;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Foto Biométrica</div></div></div>` : ""}
 ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
-<div class="footer">Made by blxckxyz · Infinity Search · ${date}</div>
+<div class="footer">Infinity Search · ${date}</div>
 <script>setTimeout(()=>window.print(),300)</script></body></html>`;
     const win = window.open("", "_blank", "width=900,height=700");
     if (win) { win.document.write(html); win.document.close(); }
@@ -846,7 +846,7 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-center gap-2 pt-1 pb-2">
         <Zap className="w-2.5 h-2.5 opacity-30" style={{ color: "var(--color-primary)" }} />
-        <span className="text-[9px] uppercase tracking-[0.6em] text-muted-foreground/30">Made by blxckxyz · Infinity Search</span>
+        <span className="text-[9px] uppercase tracking-[0.6em] text-muted-foreground/30">Infinity Search</span>
         <Zap className="w-2.5 h-2.5 opacity-30" style={{ color: "var(--color-primary)" }} />
       </div>
     </motion.div>
