@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Send, X, Globe, AtSign, Crown, Shield,
-  ChevronRight, Users, Loader2, Gift, Image as ImageIcon, UserCircle, UserPlus, MessageSquareDiff
+  ChevronRight, Users, Loader2, Gift, Image as ImageIcon,
+  UserCircle, UserPlus, MessageSquareDiff, Search, CornerUpLeft,
 } from "lucide-react";
 import { useInfinityMe } from "@workspace/api-client-react";
 import { Link } from "wouter";
@@ -31,11 +32,13 @@ interface ChatMsg {
   id: number; roomSlug: string; username: string; displayName: string | null;
   photo: string | null; role: string; accentColor: string | null;
   content: string; createdAt: string; reactions: Reaction[];
+  replyToId?: number | null; replyToUsername?: string | null; replyToContent?: string | null;
 }
 interface MiniUser {
   username: string; displayName: string | null; photo: string | null;
   role: string; bio: string | null; accentColor: string | null;
 }
+interface ReplyTo { id: number; username: string; displayName: string | null; content: string }
 
 function RoleBadge({ role }: { role: string }) {
   if (role === "admin") return <Crown className="w-3 h-3 inline-block ml-1" style={{ color: "#f59e0b" }} />;
@@ -73,10 +76,11 @@ function renderContent(content: string, accent: string) {
   });
 }
 
-function MessageBubble({ msg, prev, myUsername, onReact, onUserClick }: {
+function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply }: {
   msg: ChatMsg; prev?: ChatMsg; myUsername: string;
   onReact: (msgId: number, emoji: string) => void;
   onUserClick: (user: MiniUser) => void;
+  onReply: (r: ReplyTo) => void;
 }) {
   const isConsecutive = prev && prev.username === msg.username &&
     (new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 5 * 60 * 1000;
@@ -85,14 +89,7 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick }: {
   const [showReact, setShowReact] = useState(false);
 
   const handleUserClick = () => {
-    onUserClick({
-      username: msg.username,
-      displayName: msg.displayName,
-      photo: msg.photo,
-      role: msg.role,
-      bio: null,
-      accentColor: msg.accentColor,
-    });
+    onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor });
   };
 
   return (
@@ -118,6 +115,15 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick }: {
             <span className="text-[10px] text-muted-foreground/40">{time}</span>
           </div>
         )}
+        {msg.replyToUsername && msg.replyToContent && (
+          <div className="flex items-start gap-1.5 mb-1 pl-2 border-l-2 rounded" style={{ borderColor: accent + "60" }}>
+            <CornerUpLeft className="w-3 h-3 shrink-0 mt-0.5 opacity-40" />
+            <div className="min-w-0">
+              <span className="text-[10px] font-semibold opacity-60" style={{ color: accent }}>@{msg.replyToUsername}</span>
+              <p className="text-[11px] text-muted-foreground/50 truncate">{msg.replyToContent}</p>
+            </div>
+          </div>
+        )}
         <div className="text-sm text-foreground/90 break-words leading-relaxed">
           {renderContent(msg.content, accent)}
         </div>
@@ -136,11 +142,19 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick }: {
         )}
       </div>
       {showReact && (
-        <div className="absolute right-2 top-0 -translate-y-1/2 flex gap-0.5 bg-[hsl(220_35%_8%)] border border-white/10 rounded-xl px-2 py-1.5 shadow-xl z-20 opacity-0 group-hover:opacity-100 transition-opacity">
-          {QUICK_EMOJIS.slice(0, 6).map(e => (
+        <div className="absolute right-2 top-0 -translate-y-1/2 flex gap-0.5 bg-[hsl(220_35%_8%)] border border-white/10 rounded-xl px-1.5 py-1.5 shadow-xl z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+          {QUICK_EMOJIS.slice(0, 5).map(e => (
             <button key={e} onClick={() => onReact(msg.id, e)}
               className="text-base hover:scale-125 transition-transform cursor-pointer leading-none px-0.5">{e}</button>
           ))}
+          <div className="w-px bg-white/10 mx-0.5" />
+          <button
+            onClick={() => onReply({ id: msg.id, username: msg.username, displayName: msg.displayName, content: msg.content })}
+            className="flex items-center justify-center w-6 h-6 hover:scale-110 transition-transform text-muted-foreground hover:text-primary"
+            title="Responder"
+          >
+            <CornerUpLeft className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>
@@ -197,7 +211,6 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
             </div>
           </div>
         </div>
-
         <div className="pt-10 px-4 pb-4">
           <div className="flex items-center gap-1.5 mb-0.5">
             <span className="font-bold text-base" style={{ color: accent }}>{user.displayName ?? user.username}</span>
@@ -205,11 +218,10 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
           </div>
           <p className="text-xs text-muted-foreground/50 mb-3">@{user.username}</p>
           {user.bio && <p className="text-xs text-muted-foreground/70 mb-3 line-clamp-2 leading-relaxed">{user.bio}</p>}
-
           <div className={`grid gap-2 mt-2 ${isSelf ? "grid-cols-1" : "grid-cols-3"}`}>
             <Link href={`/u/${user.username}`} onClick={onClose}>
               <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors w-full">
-                <UserCircle className="w-4.5 h-4.5 text-muted-foreground" />
+                <UserCircle className="w-4 h-4 text-muted-foreground" />
                 <span className="text-[9px] text-muted-foreground font-medium">Ver Perfil</span>
               </button>
             </Link>
@@ -219,13 +231,10 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
                 disabled={friendStatus !== "none"}
                 className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60"
               >
-                {friendStatus === "sending"
-                  ? <Loader2 className="w-4.5 h-4.5 animate-spin text-muted-foreground" />
-                  : friendStatus === "sent"
-                    ? <span className="text-green-400 text-sm font-bold">✓</span>
-                    : friendStatus === "error"
-                      ? <span className="text-red-400 text-sm">!</span>
-                      : <UserPlus className="w-4.5 h-4.5 text-muted-foreground" />
+                {friendStatus === "sending" ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                  : friendStatus === "sent" ? <span className="text-green-400 text-sm font-bold">✓</span>
+                  : friendStatus === "error" ? <span className="text-red-400 text-sm">!</span>
+                  : <UserPlus className="w-4 h-4 text-muted-foreground" />
                 }
                 <span className="text-[9px] text-muted-foreground font-medium">
                   {friendStatus === "sent" ? "Enviado!" : friendStatus === "error" ? "Erro" : "Add Amigo"}
@@ -236,7 +245,7 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
               <Link href={`/dm/${user.username}`} onClick={onClose}>
                 <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl w-full transition-colors"
                   style={{ background: "color-mix(in srgb, var(--color-primary) 16%, transparent)" }}>
-                  <AtSign className="w-4.5 h-4.5" style={{ color: "var(--color-primary)" }} />
+                  <AtSign className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
                   <span className="text-[9px] font-medium" style={{ color: "var(--color-primary)" }}>Enviar DM</span>
                 </button>
               </Link>
@@ -359,6 +368,96 @@ function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => void; onC
   );
 }
 
+function SearchUsersModal({ onClose, onUserClick }: { onClose: () => void; onUserClick: (u: MiniUser) => void }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<MiniUser[]>([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    if (q.length < 2) { setResults([]); return; }
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/infinity/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+        if (r.ok) setResults(await r.json() as MiniUser[]);
+      } catch {}
+      finally { setLoading(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-20"
+      onClick={onClose}>
+      <motion.div initial={{ scale: 0.95, y: -20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: -20 }}
+        className="w-full max-w-sm rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
+        style={{ background: "color-mix(in srgb, var(--color-card) 98%, transparent)" }}
+        onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-white/5 flex items-center gap-3">
+          <Search className="w-4 h-4 text-muted-foreground/60 shrink-0" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Buscar usuários..."
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/40"
+          />
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 shrink-0" />}
+          <button onClick={onClose} className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="max-h-72 overflow-y-auto">
+          {q.length < 2 && <p className="text-xs text-muted-foreground/40 text-center py-6">Digite ao menos 2 caracteres</p>}
+          {q.length >= 2 && !loading && results.length === 0 && <p className="text-xs text-muted-foreground/40 text-center py-6">Nenhum usuário encontrado</p>}
+          {results.map(u => (
+            <button key={u.username} onClick={() => { onUserClick(u); onClose(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left">
+              <Avatar username={u.username} photo={u.photo} size={9} />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate" style={{ color: u.accentColor ?? "var(--color-primary)" }}>
+                  {u.displayName ?? u.username}
+                </div>
+                <div className="text-[10px] text-muted-foreground/50">@{u.username}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function TypingIndicator({ typingUsers }: { typingUsers: Map<string, string> }) {
+  const list = Array.from(typingUsers.entries());
+  if (list.length === 0) return null;
+
+  const names = list.map(([, dn]) => dn);
+  const text = names.length === 1
+    ? `${names[0]} está digitando`
+    : names.length === 2
+    ? `${names[0]} e ${names[1]} estão digitando`
+    : `${names[0]} e mais ${names.length - 1} estão digitando`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+      className="flex items-center gap-2 px-4 py-1.5"
+    >
+      <div className="flex gap-0.5">
+        {[0, 1, 2].map(i => (
+          <motion.span key={i} className="w-1 h-1 rounded-full bg-muted-foreground/50 inline-block"
+            animate={{ y: [0, -3, 0] }}
+            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+        ))}
+      </div>
+      <span className="text-[10px] text-muted-foreground/50 italic">{text}...</span>
+    </motion.div>
+  );
+}
+
 export default function Comunidade() {
   const { data: me } = useInfinityMe({});
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -372,11 +471,18 @@ export default function Comunidade() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const [selectedUser, setSelectedUser] = useState<MiniUser | null>(null);
   const [imgUploading, setImgUploading] = useState(false);
+  const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
+  const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<{ username: string; displayName: string | null }[]>([]);
+  const [showSearch, setShowSearch] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingUserTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const myUsername = me?.username ?? "";
 
   useEffect(() => {
@@ -399,6 +505,7 @@ export default function Comunidade() {
   useEffect(() => {
     if (!activeRoom) return;
     setMessages([]);
+    setReplyTo(null);
     loadMessages(activeRoom.slug);
   }, [activeRoom, loadMessages]);
 
@@ -411,43 +518,77 @@ export default function Comunidade() {
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data as string) as Record<string, unknown>;
+
         if (data.type === "message") {
           const msg = data as unknown as ChatMsg;
           setMessages(prev => {
             if (prev.find(m => m.id === msg.id)) return prev;
             return [...prev, { ...msg, reactions: (msg as any).reactions ?? [] }];
           });
+          const from = String(data.username ?? "");
+          if (from) {
+            setTypingUsers(prev => {
+              const next = new Map(prev);
+              next.delete(from);
+              return next;
+            });
+            const t = typingUserTimers.current.get(from);
+            if (t) { clearTimeout(t); typingUserTimers.current.delete(from); }
+          }
         }
+
         if (data.type === "reaction_update") {
           const { messageId, reactions } = data as { messageId: number; reactions: Reaction[] };
           setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions } : m));
+        }
+
+        if (data.type === "typing") {
+          const from = String(data.username ?? "");
+          const displayName = String(data.displayName ?? from);
+          if (from && from !== myUsername) {
+            const old = typingUserTimers.current.get(from);
+            if (old) clearTimeout(old);
+            setTypingUsers(prev => { const next = new Map(prev); next.set(from, displayName); return next; });
+            const t = setTimeout(() => {
+              setTypingUsers(prev => { const next = new Map(prev); next.delete(from); return next; });
+              typingUserTimers.current.delete(from);
+            }, 3500);
+            typingUserTimers.current.set(from, t);
+          }
         }
       } catch {}
     };
     const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25000);
     return () => { clearInterval(ping); ws.close(); wsRef.current = null; };
-  }, [me]);
+  }, [me, myUsername]);
 
   useEffect(() => {
     if (!activeRoom || !wsRef.current || wsRef.current.readyState !== 1) return;
     wsRef.current.send(JSON.stringify({ type: "join", roomSlug: activeRoom.slug }));
+    setTypingUsers(new Map());
   }, [activeRoom, wsReady]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendTyping = useCallback(() => {
+    if (!activeRoom || wsRef.current?.readyState !== 1) return;
+    wsRef.current.send(JSON.stringify({ type: "typing", roomSlug: activeRoom.slug }));
+  }, [activeRoom]);
+
+  const sendMessage = useCallback(async (content: string, rToId?: number) => {
     const trimmed = content.trim();
     if (!trimmed || !activeRoom || sending) return;
-    setInput(""); setSending(false);
+    setInput(""); setReplyTo(null);
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     if (wsRef.current?.readyState === 1) {
-      wsRef.current.send(JSON.stringify({ type: "message", roomSlug: activeRoom.slug, content: trimmed }));
+      wsRef.current.send(JSON.stringify({ type: "message", roomSlug: activeRoom.slug, content: trimmed, replyToId: rToId ?? null }));
     } else {
       setSending(true);
       try {
         await fetch(`/api/infinity/chat/rooms/${activeRoom.slug}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ content: trimmed }),
+          body: JSON.stringify({ content: trimmed, replyToId: rToId ?? null }),
         });
         await loadMessages(activeRoom.slug);
       } catch {}
@@ -455,6 +596,46 @@ export default function Comunidade() {
     }
     inputRef.current?.focus();
   }, [activeRoom, sending, loadMessages]);
+
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => sendTyping(), 500);
+
+    const atMatch = value.match(/@(\w*)$/);
+    if (atMatch) {
+      setMentionQuery(atMatch[1] ?? "");
+    } else {
+      setMentionQuery(null);
+      setMentionSuggestions([]);
+    }
+  }, [sendTyping]);
+
+  useEffect(() => {
+    if (mentionQuery === null || !activeRoom) { setMentionSuggestions([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/infinity/chat/rooms/${activeRoom.slug}/members`, { headers: authHeaders() });
+        if (r.ok) {
+          const members = await r.json() as { username: string; displayName: string | null }[];
+          const q = mentionQuery.toLowerCase();
+          setMentionSuggestions(members.filter(m =>
+            m.username.toLowerCase().includes(q) || (m.displayName ?? "").toLowerCase().includes(q)
+          ).slice(0, 6));
+        }
+      } catch {}
+    }, 200);
+    return () => clearTimeout(t);
+  }, [mentionQuery, activeRoom]);
+
+  const insertMention = useCallback((username: string) => {
+    const newVal = input.replace(/@(\w*)$/, `@${username} `);
+    setInput(newVal);
+    setMentionQuery(null);
+    setMentionSuggestions([]);
+    inputRef.current?.focus();
+  }, [input]);
 
   const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -475,12 +656,11 @@ export default function Comunidade() {
       });
       if (r.ok) {
         const { url } = await r.json() as { url: string };
-        const fullUrl = `${window.location.origin}${url}`;
-        await sendMessage(fullUrl);
+        await sendMessage(`${window.location.origin}${url}`, replyTo?.id);
       }
     } catch {}
     finally { setImgUploading(false); }
-  }, [sendMessage]);
+  }, [sendMessage, replyTo]);
 
   const handleReact = async (messageId: number, emoji: string) => {
     try {
@@ -498,7 +678,6 @@ export default function Comunidade() {
 
   return (
     <div className="flex h-[calc(100vh-3.5rem-76px)] lg:h-screen overflow-hidden">
-      {/* Rooms sidebar */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
@@ -506,20 +685,24 @@ export default function Comunidade() {
             transition={{ duration: 0.2 }}
             className="shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden"
             style={{ background: "rgba(2,6,18,0.4)", backdropFilter: "blur(16px)" }}>
-            <div className="px-4 py-4 border-b border-white/5">
-              <div className="flex items-center justify-between mb-3">
+            <div className="px-3 py-3 border-b border-white/5">
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
-                  <span className="font-bold text-sm uppercase tracking-[0.2em]">Salas</span>
+                  <span className="font-bold text-sm uppercase tracking-[0.15em]">Salas</span>
                 </div>
-                <button onClick={() => setShowCreate(true)}
-                  className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors" title="Criar sala">
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setShowSearch(true)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors" title="Buscar usuários">
+                    <Search className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => setShowCreate(true)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors" title="Criar sala">
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full ${wsReady ? "bg-green-400 animate-pulse" : "bg-yellow-400"}`} />
-                <span className="text-[10px] text-muted-foreground/50">{wsReady ? "Tempo real ativo" : "Reconectando..."}</span>
+                <span className="text-[10px] text-muted-foreground/50">{wsReady ? "Ao vivo" : "Reconectando..."}</span>
               </div>
             </div>
 
@@ -527,7 +710,7 @@ export default function Comunidade() {
               {rooms.map(room => {
                 const isActive = activeRoom?.slug === room.slug;
                 return (
-                  <button key={room.slug} onClick={() => setActiveRoom(room)}
+                  <button key={room.slug} onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
                     className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all ${isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
                     style={isActive ? { background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent)" } : {}}>
                     <span className="text-base w-5 text-center shrink-0">{room.icon ?? "#"}</span>
@@ -546,7 +729,7 @@ export default function Comunidade() {
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 border border-dashed border-white/10 hover:border-white/20 transition-all">
                 <Plus className="w-3.5 h-3.5" /> Nova sala
               </button>
-              <Link href={`/dm/${myUsername ? "..." : "amigo"}`}>
+              <Link href="/dm/...">
                 <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all">
                   <MessageSquareDiff className="w-3.5 h-3.5" /> Nova DM
                 </button>
@@ -556,30 +739,32 @@ export default function Comunidade() {
         )}
       </AnimatePresence>
 
-      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="shrink-0 px-4 py-3 border-b border-white/5 flex items-center gap-3"
+        <div className="shrink-0 px-3 py-2.5 border-b border-white/5 flex items-center gap-3"
           style={{ background: "rgba(2,6,18,0.3)", backdropFilter: "blur(12px)" }}>
           <button onClick={() => setSidebarOpen(v => !v)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground">
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground shrink-0">
             <ChevronRight className={`w-4 h-4 transition-transform ${sidebarOpen ? "rotate-180" : ""}`} />
           </button>
           {activeRoom ? (
             <>
               <span className="text-xl">{activeRoom.icon ?? "💬"}</span>
-              <div>
-                <div className="font-bold text-sm">{activeRoom.name}</div>
-                {activeRoom.description && <div className="text-[10px] text-muted-foreground/50">{activeRoom.description}</div>}
+              <div className="min-w-0">
+                <div className="font-bold text-sm truncate">{activeRoom.name}</div>
+                {activeRoom.description && <div className="text-[10px] text-muted-foreground/50 truncate">{activeRoom.description}</div>}
               </div>
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                <button onClick={() => setShowSearch(true)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground/50 hover:text-primary transition-colors" title="Buscar usuários">
+                  <Search className="w-3.5 h-3.5" />
+                </button>
                 <span className={`w-2 h-2 rounded-full ${wsReady ? "bg-green-400" : "bg-yellow-400"}`} />
-                <span className="text-[10px] text-muted-foreground/40">{wsReady ? "ao vivo" : "offline"}</span>
+                <span className="text-[10px] text-muted-foreground/40 hidden sm:block">{wsReady ? "ao vivo" : "offline"}</span>
               </div>
             </>
           ) : <span className="text-sm text-muted-foreground">Selecione uma sala</span>}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 py-4">
+        <div className="flex-1 overflow-y-auto px-1 sm:px-2 py-3">
           {!activeRoom && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
               <div className="text-4xl">💬</div>
@@ -601,77 +786,122 @@ export default function Comunidade() {
               myUsername={myUsername}
               onReact={handleReact}
               onUserClick={setSelectedUser}
+              onReply={r => { setReplyTo(r); inputRef.current?.focus(); }}
             />
           ))}
+          <AnimatePresence>
+            <TypingIndicator typingUsers={typingUsers} />
+          </AnimatePresence>
           <div ref={bottomRef} />
         </div>
 
-        <AnimatePresence>
-          {showGif && activeRoom && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-              <GifPicker onSelect={(url) => sendMessage(url)} onClose={() => setShowGif(false)} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {showGif && activeRoom && (
+          <GifPicker
+            onSelect={url => sendMessage(url, replyTo?.id)}
+            onClose={() => setShowGif(false)}
+          />
+        )}
 
-        {activeRoom && (
-          <div className="shrink-0 px-4 py-3 border-t border-white/5" style={{ background: "rgba(2,6,18,0.3)" }}>
-            <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl border border-white/10 bg-white/[0.03]">
-              <button onClick={() => setShowGif(g => !g)} title="GIF"
-                className="text-muted-foreground/50 hover:text-primary transition-colors shrink-0">
-                <Gift className="w-4.5 h-4.5" />
-              </button>
-              <button
-                onClick={() => imgInputRef.current?.click()}
-                disabled={imgUploading}
-                title="Foto / Imagem"
-                className="text-muted-foreground/50 hover:text-primary transition-colors shrink-0 disabled:opacity-40"
-              >
-                {imgUploading
-                  ? <Loader2 className="w-4.5 h-4.5 animate-spin" />
-                  : <ImageIcon className="w-4.5 h-4.5" />
-                }
-              </button>
-              <input
-                ref={imgInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                className="hidden"
-                onChange={handleImageUpload}
-              />
-              <Avatar username={myUsername || "?"} photo={null} size={6} />
+        <div className="shrink-0 border-t border-white/[0.06]"
+          style={{ background: "rgba(2,6,18,0.5)", backdropFilter: "blur(12px)" }}>
+
+          <AnimatePresence>
+            {mentionSuggestions.length > 0 && mentionQuery !== null && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+                className="border-t border-white/5 bg-[hsl(220_35%_6%)] divide-y divide-white/[0.04]">
+                {mentionSuggestions.map(u => (
+                  <button key={u.username} onClick={() => insertMention(u.username)}
+                    className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-white/5 text-left transition-colors">
+                    <Avatar username={u.username} photo={null} size={6} />
+                    <div>
+                      <span className="text-sm font-semibold">{u.displayName ?? u.username}</span>
+                      <span className="text-xs text-muted-foreground/50 ml-1.5">@{u.username}</span>
+                    </div>
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {replyTo && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                className="flex items-center gap-3 px-4 py-2 bg-white/[0.02] border-t border-white/[0.04]">
+                <CornerUpLeft className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] font-semibold" style={{ color: "var(--color-primary)" }}>@{replyTo.username}</span>
+                  <p className="text-[11px] text-muted-foreground/50 truncate">{replyTo.content}</p>
+                </div>
+                <button onClick={() => setReplyTo(null)} className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground/40">
+                  <X className="w-3 h-3" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex items-center gap-2 px-3 py-3">
+            <button onClick={() => setShowGif(v => !v)}
+              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${showGif ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+              title="GIF" disabled={!activeRoom}>
+              <Gift className="w-4.5 h-4.5" />
+            </button>
+            <button onClick={() => imgInputRef.current?.click()}
+              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
+              title="Enviar foto" disabled={!activeRoom || imgUploading}>
+              {imgUploading ? <Loader2 className="w-4.5 h-4.5 animate-spin" /> : <ImageIcon className="w-4.5 h-4.5" />}
+            </button>
+            <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+
+            <div className="flex-1 relative">
               <input
                 ref={inputRef}
                 value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-                placeholder={`Mensagem em ${activeRoom.icon ?? "#"}${activeRoom.name}...`}
-                className="flex-1 bg-transparent text-sm outline-none placeholder-muted-foreground/30 min-w-0"
-                maxLength={2000}
+                onChange={e => handleInputChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (mentionSuggestions.length > 0) { insertMention(mentionSuggestions[0]!.username); }
+                    else { void sendMessage(input, replyTo?.id); }
+                  }
+                  if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); }
+                }}
+                placeholder={activeRoom ? `Mensagem em #${activeRoom.name}...` : "Selecione uma sala"}
+                disabled={!activeRoom || sending}
+                className="w-full bg-white/[0.06] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/30 disabled:opacity-50"
               />
-              {input.trim() && (
-                <motion.button initial={{ scale: 0 }} animate={{ scale: 1 }}
-                  onClick={() => sendMessage(input)} disabled={sending}
-                  className="w-8 h-8 rounded-xl flex items-center justify-center transition-all shrink-0"
-                  style={{ background: "var(--color-primary)", color: "#000" }}>
-                  {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                </motion.button>
-              )}
             </div>
-            <p className="text-[9px] text-muted-foreground/25 mt-1 text-center">Enter para enviar • clique no avatar para ver perfil • 📎 foto até 2MB</p>
+
+            <button
+              onClick={() => { if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username); else void sendMessage(input, replyTo?.id); }}
+              disabled={!input.trim() || !activeRoom || sending}
+              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all disabled:opacity-30"
+              style={{ background: "var(--color-primary)", color: "#000" }}
+            >
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
       <AnimatePresence>
         {showCreate && (
-          <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={(room) => setRooms(prev => [...prev, room])} />
+          <CreateRoomModal
+            onClose={() => setShowCreate(false)}
+            onCreated={r => setRooms(prev => [...prev, r])}
+          />
         )}
       </AnimatePresence>
-
       <AnimatePresence>
         {selectedUser && (
           <UserPopup user={selectedUser} onClose={() => setSelectedUser(null)} myUsername={myUsername} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showSearch && (
+          <SearchUsersModal
+            onClose={() => setShowSearch(false)}
+            onUserClick={u => { setSelectedUser(u); }}
+          />
         )}
       </AnimatePresence>
     </div>

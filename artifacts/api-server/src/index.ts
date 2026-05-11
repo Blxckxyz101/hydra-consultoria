@@ -122,7 +122,7 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
 
       ws.on("message", async (raw) => {
         try {
-          const msg = JSON.parse(raw.toString()) as { type: string; roomSlug?: string; content?: string };
+          const msg = JSON.parse(raw.toString()) as { type: string; roomSlug?: string; content?: string; replyToId?: number };
 
           if (msg.type === "join" && msg.roomSlug) {
             client.rooms.add(msg.roomSlug);
@@ -133,14 +133,33 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
             client.rooms.delete(msg.roomSlug);
           }
 
+          if (msg.type === "typing" && msg.roomSlug) {
+            broadcast(msg.roomSlug, {
+              type: "typing",
+              username: client.username,
+              displayName: client.displayName,
+              roomSlug: msg.roomSlug,
+            }, ws);
+          }
+
           if (msg.type === "message" && msg.roomSlug && msg.content) {
             const content = msg.content.trim().slice(0, 2000);
             if (!content) return;
+
+            let replyToUsername: string | null = null;
+            let replyToContent: string | null = null;
+            if (msg.replyToId) {
+              const orig = await db.select({ username: infinityChatMessagesTable.username, content: infinityChatMessagesTable.content }).from(infinityChatMessagesTable).where(eq(infinityChatMessagesTable.id, msg.replyToId)).limit(1);
+              if (orig[0]) { replyToUsername = orig[0].username; replyToContent = orig[0].content.slice(0, 200); }
+            }
 
             const [saved] = await db.insert(infinityChatMessagesTable).values({
               roomSlug: msg.roomSlug,
               username: client.username,
               content,
+              replyToId: replyToUsername ? (msg.replyToId ?? null) : null,
+              replyToUsername,
+              replyToContent,
             }).returning();
 
             const fullMsg = {
@@ -153,10 +172,12 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
               role: client.role,
               accentColor: client.accentColor,
               content,
+              replyToId: saved!.replyToId ?? null,
+              replyToUsername: saved!.replyToUsername ?? null,
+              replyToContent: saved!.replyToContent ?? null,
               createdAt: saved!.createdAt,
             };
 
-            // Send to all clients in this room (including sender)
             broadcast(msg.roomSlug, fullMsg);
           }
 

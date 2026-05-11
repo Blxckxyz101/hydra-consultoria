@@ -381,6 +381,9 @@ router.get("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<
         roomSlug: infinityChatMessagesTable.roomSlug,
         username: infinityChatMessagesTable.username,
         content: infinityChatMessagesTable.content,
+        replyToId: infinityChatMessagesTable.replyToId,
+        replyToUsername: infinityChatMessagesTable.replyToUsername,
+        replyToContent: infinityChatMessagesTable.replyToContent,
         createdAt: infinityChatMessagesTable.createdAt,
         displayName: infinityUsersTable.displayName,
         photo: infinityUsersTable.profilePhoto,
@@ -393,7 +396,6 @@ router.get("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<
       .orderBy(desc(infinityChatMessagesTable.id))
       .limit(limit);
 
-    // Fetch reactions for these messages
     const msgIds = msgs.map(m => m.id);
     let reactionsMap: Record<number, { emoji: string; count: number; users: string[] }[]> = {};
     if (msgIds.length > 0) {
@@ -413,10 +415,40 @@ router.get("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<
   }
 });
 
+router.get("/chat/rooms/:slug/members", requireAuth, async (req, res): Promise<void> => {
+  const { slug } = req.params as { slug: string };
+  try {
+    const recent = await db
+      .select({
+        username: infinityChatMessagesTable.username,
+        displayName: infinityUsersTable.displayName,
+        photo: infinityUsersTable.profilePhoto,
+        accentColor: infinityUsersTable.profileAccentColor,
+      })
+      .from(infinityChatMessagesTable)
+      .leftJoin(infinityUsersTable, eq(infinityUsersTable.username, infinityChatMessagesTable.username))
+      .where(eq(infinityChatMessagesTable.roomSlug, slug))
+      .orderBy(desc(infinityChatMessagesTable.id))
+      .limit(200);
+    const seen = new Set<string>();
+    const members: { username: string; displayName: string | null; photo: string | null; accentColor: string | null }[] = [];
+    for (const r of recent) {
+      if (!seen.has(r.username)) {
+        seen.add(r.username);
+        members.push(r);
+      }
+    }
+    res.json(members.slice(0, 50));
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch room members");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
 router.post("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const { slug } = req.params as { slug: string };
-  const { content } = req.body as { content?: string };
+  const { content, replyToId } = req.body as { content?: string; replyToId?: number };
   if (!content || typeof content !== "string" || content.trim().length === 0) { res.status(400).json({ error: "Mensagem vazia" }); return; }
   if (content.trim().length > 2000) { res.status(400).json({ error: "Mensagem muito longa (máx 2000 chars)" }); return; }
 
@@ -427,7 +459,14 @@ router.post("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise
     const userRows = await db.select({ displayName: infinityUsersTable.displayName, photo: infinityUsersTable.profilePhoto, role: infinityUsersTable.role, accentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(eq(infinityUsersTable.username, me)).limit(1);
     const userProfile = userRows[0];
 
-    const [msg] = await db.insert(infinityChatMessagesTable).values({ roomSlug: slug, username: me, content: content.trim() }).returning();
+    let replyToUsername: string | null = null;
+    let replyToContent: string | null = null;
+    if (replyToId && typeof replyToId === "number") {
+      const orig = await db.select({ username: infinityChatMessagesTable.username, content: infinityChatMessagesTable.content }).from(infinityChatMessagesTable).where(eq(infinityChatMessagesTable.id, replyToId)).limit(1);
+      if (orig[0]) { replyToUsername = orig[0].username; replyToContent = orig[0].content.slice(0, 200); }
+    }
+
+    const [msg] = await db.insert(infinityChatMessagesTable).values({ roomSlug: slug, username: me, content: content.trim(), replyToId: replyToUsername ? (replyToId ?? null) : null, replyToUsername, replyToContent }).returning();
     const fullMsg = { ...msg, displayName: userProfile?.displayName ?? me, photo: userProfile?.photo ?? null, role: userProfile?.role ?? "user", accentColor: userProfile?.accentColor ?? null, reactions: [] };
 
     if (globalThis.__chatBroadcast) globalThis.__chatBroadcast(slug, { type: "message", ...fullMsg });
@@ -540,6 +579,36 @@ router.get("/chat/img/:id", (req, res): void => {
   res.setHeader("Content-Type", entry.mimeType);
   res.setHeader("Cache-Control", "public, max-age=1800");
   res.end(Buffer.from(entry.data, "base64"));
+});
+
+// ── User search ───────────────────────────────────────────────────────────────
+
+router.get("/users/search", requireAuth, async (req, res): Promise<void> => {
+  const q = ((req.query as Record<string, string>).q ?? "").trim().toLowerCase();
+  if (q.length < 2) { res.json([]); return; }
+  try {
+    const rows = await db
+      .select({
+        username: infinityUsersTable.username,
+        displayName: infinityUsersTable.displayName,
+        photo: infinityUsersTable.profilePhoto,
+        role: infinityUsersTable.role,
+        accentColor: infinityUsersTable.profileAccentColor,
+        bio: infinityUsersTable.profileBio,
+      })
+      .from(infinityUsersTable)
+      .where(
+        or(
+          sql`lower(${infinityUsersTable.username}) like ${"%" + q + "%"}`,
+          sql`lower(${infinityUsersTable.displayName}) like ${"%" + q + "%"}`
+        )
+      )
+      .limit(15);
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, "Failed to search users");
+    res.status(500).json({ error: "Erro interno" });
+  }
 });
 
 // ── Notifications ─────────────────────────────────────────────────────────────

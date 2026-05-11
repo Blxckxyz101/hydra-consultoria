@@ -11,8 +11,200 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode } from "lucide-react";
+import QRCode from "qrcode";
 
+
+function TotpSection() {
+  const [status, setStatus] = useState<"idle" | "loading" | "enabled" | "disabled">("idle");
+  const [phase, setPhase] = useState<"none" | "setup" | "confirm-enable" | "confirm-disable">("none");
+  const [qrDataUrl, setQrDataUrl] = useState<string>("");
+  const [secretB32, setSecretB32] = useState<string>("");
+  const [code, setCode] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  const token = localStorage.getItem("infinity_token") ?? "";
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const fetchStatus = useCallback(async () => {
+    setStatus("loading");
+    try {
+      const r = await fetch("/api/infinity/totp/status", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" });
+      if (r.ok) { const d = await r.json() as { enabled: boolean }; setStatus(d.enabled ? "enabled" : "disabled"); }
+    } catch { setStatus("disabled"); }
+  }, []);
+
+  useEffect(() => { void fetchStatus(); }, [fetchStatus]);
+
+  const startSetup = async () => {
+    setMsg(null); setSaving(true);
+    try {
+      const r = await fetch("/api/infinity/totp/setup", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" });
+      if (!r.ok) { setMsg({ text: "Erro ao configurar 2FA", ok: false }); return; }
+      const d = await r.json() as { uri: string; secret: string };
+      setSecretB32(d.secret);
+      const dataUrl = await QRCode.toDataURL(d.uri, { width: 200, margin: 1, color: { dark: "#fff", light: "#00000000" } });
+      setQrDataUrl(dataUrl);
+      setPhase("setup");
+      setCode("");
+    } catch { setMsg({ text: "Erro de conexão", ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  const handleEnable = async () => {
+    if (!/^\d{6}$/.test(code)) { setMsg({ text: "Código deve ter 6 dígitos", ok: false }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch("/api/infinity/totp/enable", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      if (r.ok && d.ok) {
+        setMsg({ text: "2FA ativado com sucesso!", ok: true });
+        setPhase("none"); setStatus("enabled"); setCode(""); setQrDataUrl("");
+      } else {
+        setMsg({ text: d.error ?? "Código incorreto", ok: false });
+      }
+    } catch { setMsg({ text: "Erro de conexão", ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  const handleDisable = async () => {
+    if (!/^\d{6}$/.test(code)) { setMsg({ text: "Código deve ter 6 dígitos", ok: false }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch("/api/infinity/totp/disable", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      if (r.ok && d.ok) {
+        setMsg({ text: "2FA desativado.", ok: true });
+        setPhase("none"); setStatus("disabled"); setCode("");
+      } else {
+        setMsg({ text: d.error ?? "Código incorreto", ok: false });
+      }
+    } catch { setMsg({ text: "Erro de conexão", ok: false }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+            style={{ background: status === "enabled" ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.04)", border: status === "enabled" ? "1px solid rgba(34,197,94,0.3)" : "1px solid rgba(255,255,255,0.08)" }}>
+            <Smartphone className="w-5 h-5" style={{ color: status === "enabled" ? "#4ade80" : "var(--color-muted-foreground)" }} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Autenticação de 2 Fatores</h2>
+              {status === "enabled" && (
+                <span className="text-[9px] px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/30 text-green-400 uppercase tracking-widest font-semibold">Ativo</span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground/50 mt-0.5">
+              {status === "enabled"
+                ? "Proteção extra: código TOTP necessário ao fazer login."
+                : "Proteja sua conta com um aplicativo autenticador (Google Authenticator, Authy, etc.)."
+              }
+            </p>
+          </div>
+        </div>
+        {status === "loading" && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/40" />}
+        {status === "disabled" && phase === "none" && (
+          <button onClick={startSetup} disabled={saving}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50"
+            style={{ background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.3)", color: "var(--color-primary)" }}>
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ScanLine className="w-3.5 h-3.5" />}
+            Ativar 2FA
+          </button>
+        )}
+        {status === "enabled" && phase === "none" && (
+          <button onClick={() => { setPhase("confirm-disable"); setCode(""); setMsg(null); }}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border border-destructive/30 text-destructive hover:bg-destructive/10">
+            <X className="w-3.5 h-3.5" /> Desativar
+          </button>
+        )}
+      </div>
+
+      <AnimatePresence>
+        {phase === "setup" && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+            className="mt-5 pt-5 border-t border-white/5 space-y-4">
+            <div className="flex items-start gap-5 flex-wrap">
+              {qrDataUrl && (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="p-3 rounded-2xl bg-white/5 border border-white/10">
+                    <img src={qrDataUrl} alt="QR Code" className="w-36 h-36 rounded-xl" />
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/50">
+                    <QrCode className="w-3 h-3" /> Escaneie com seu app
+                  </div>
+                </div>
+              )}
+              <div className="flex-1 min-w-0 space-y-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground/60 mb-1.5">Chave manual</p>
+                  <div className="font-mono text-xs bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 break-all text-muted-foreground/70 select-all">{secretB32}</div>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground/60 mb-1.5">Código do app (6 dígitos)</p>
+                  <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    inputMode="numeric" maxLength={6} autoFocus
+                    placeholder="······"
+                    className="w-full font-mono text-center text-xl tracking-[0.5em] bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/20 placeholder:tracking-[0.5em]"
+                    onKeyDown={e => { if (e.key === "Enter") void handleEnable(); }}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={handleEnable} disabled={saving || code.length !== 6}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-40"
+                    style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", color: "#4ade80" }}>
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Confirmar e ativar
+                  </button>
+                  <button onClick={() => { setPhase("none"); setCode(""); setMsg(null); }}
+                    className="px-4 py-2.5 rounded-xl text-xs border border-white/10 text-muted-foreground hover:bg-white/5 transition-colors">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {phase === "confirm-disable" && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+            className="mt-5 pt-5 border-t border-white/5 space-y-3">
+            <p className="text-xs text-muted-foreground/70">Insira o código atual do seu app autenticador para desativar o 2FA:</p>
+            <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric" maxLength={6} autoFocus placeholder="······"
+              className="w-full font-mono text-center text-xl tracking-[0.5em] bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-primary/60 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/20 placeholder:tracking-[0.5em]"
+              onKeyDown={e => { if (e.key === "Enter") void handleDisable(); }}
+            />
+            <div className="flex gap-2">
+              <button onClick={handleDisable} disabled={saving || code.length !== 6}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest border border-destructive/30 text-destructive hover:bg-destructive/10 transition-all disabled:opacity-40">
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                Desativar 2FA
+              </button>
+              <button onClick={() => { setPhase("none"); setCode(""); setMsg(null); }}
+                className="px-4 py-2.5 rounded-xl text-xs border border-white/10 text-muted-foreground hover:bg-white/5 transition-colors">
+                Cancelar
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {msg && (
+        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+          className={`mt-4 px-4 py-2.5 rounded-xl text-xs border font-medium flex items-center gap-2 ${msg.ok ? "bg-green-500/10 border-green-500/30 text-green-300" : "bg-destructive/10 border-destructive/30 text-destructive"}`}>
+          {msg.ok ? <Check className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+          {msg.text}
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}
 
 const ROLE_CONFIG = {
   admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
@@ -740,6 +932,8 @@ export default function Configuracoes() {
           </button>
         </div>
       </motion.div>
+
+      <TotpSection />
 
       {!isAdmin ? (
         <motion.div

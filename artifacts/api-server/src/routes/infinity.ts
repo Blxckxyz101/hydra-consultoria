@@ -11,6 +11,7 @@ import {
   requireAdmin,
 } from "../lib/infinity-auth.js";
 import { loginLimiter, consultaLimiter, panelAuthLimiter, aiLimiter } from "../middlewares/rateLimit.js";
+import { logger } from "../lib/logger.js";
 import crypto from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import http from "node:http";
@@ -318,7 +319,7 @@ async function getUserSkylersDailyByTipo(username: string, tipoKey: string): Pro
 const SKYLERS_TOTAL_LIMIT = 25;
 
 // ─── Temp tokens for 2-step PIN login ───────────────────────────────────────
-interface TempToken { username: string; step: "setup-pin" | "verify-pin"; expiresAt: number }
+interface TempToken { username: string; step: "setup-pin" | "verify-pin" | "verify-totp"; expiresAt: number }
 const _tempTokens = new Map<string, TempToken>();
 
 function cleanTempTokens(): void {
@@ -326,14 +327,14 @@ function cleanTempTokens(): void {
   for (const [k, v] of _tempTokens) { if (v.expiresAt < now) _tempTokens.delete(k); }
 }
 
-function createTempToken(username: string, step: "setup-pin" | "verify-pin"): string {
+function createTempToken(username: string, step: "setup-pin" | "verify-pin" | "verify-totp"): string {
   cleanTempTokens();
   const token = crypto.randomBytes(32).toString("hex");
   _tempTokens.set(token, { username, step, expiresAt: Date.now() + 5 * 60 * 1000 });
   return token;
 }
 
-function consumeTempToken(token: string, expectedStep: "setup-pin" | "verify-pin"): string | null {
+function consumeTempToken(token: string, expectedStep: "setup-pin" | "verify-pin" | "verify-totp"): string | null {
   cleanTempTokens();
   const t = _tempTokens.get(token);
   if (!t || t.expiresAt < Date.now() || t.step !== expectedStep) return null;
@@ -1543,6 +1544,30 @@ router.post("/verify-pin", loginLimiter, async (req, res) => {
     res.status(401).json({ error: "PIN incorreto" });
     return;
   }
+  // If 2FA is enabled, issue a totp temp token instead of session
+  if (u.totpEnabled && u.totpSecret) {
+    const totpTempToken = createTempToken(username, "verify-totp");
+    res.json({ step: "totp", tempToken: totpTempToken });
+    return;
+  }
+  await db.update(infinityUsersTable).set({ lastLoginAt: new Date() }).where(eq(infinityUsersTable.username, username));
+  const { token } = await createSession(username);
+  res.json({ token, user: serializeUser({ ...u, lastLoginAt: new Date() }) });
+});
+
+router.post("/verify-totp", loginLimiter, async (req, res) => {
+  const { tempToken, code } = req.body ?? {};
+  if (!tempToken || !code) { res.status(400).json({ error: "tempToken e code obrigatórios" }); return; }
+  if (!/^\d{6}$/.test(String(code))) { res.status(400).json({ error: "Código deve ter 6 dígitos" }); return; }
+  const username = consumeTempToken(String(tempToken), "verify-totp");
+  if (!username) { res.status(401).json({ error: "Token inválido ou expirado. Faça login novamente." }); return; }
+  const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+  const u = rows[0];
+  if (!u || !u.totpSecret) { res.status(401).json({ error: "2FA não configurado" }); return; }
+  const { TOTP, Secret } = await import("otpauth");
+  const totp = new TOTP({ issuer: "Hydra Consultoria", label: username, algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(u.totpSecret) });
+  const delta = totp.validate({ token: String(code), window: 1 });
+  if (delta === null) { res.status(401).json({ error: "Código incorreto ou expirado" }); return; }
   await db.update(infinityUsersTable).set({ lastLoginAt: new Date() }).where(eq(infinityUsersTable.username, username));
   const { token } = await createSession(username);
   res.json({ token, user: serializeUser({ ...u, lastLoginAt: new Date() }) });
@@ -3214,6 +3239,80 @@ router.post("/admin/sales-channel/fake-recharge", requireAdmin, async (_req, res
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Falha ao enviar notificação" });
+  }
+});
+
+// ─── 2FA / TOTP ────────────────────────────────────────────────────────────────
+
+import * as OTPAuth from "otpauth";
+
+router.post("/totp/setup", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  try {
+    const secret = new OTPAuth.Secret({ size: 20 });
+    const totp = new OTPAuth.TOTP({
+      issuer: "Hydra Consultoria",
+      label: username,
+      algorithm: "SHA1",
+      digits: 6,
+      period: 30,
+      secret,
+    });
+    const uri = totp.toString();
+    const b32 = secret.base32;
+    await db.update(infinityUsersTable).set({ totpSecret: b32, totpEnabled: false }).where(eq(infinityUsersTable.username, username));
+    res.json({ uri, secret: b32 });
+  } catch (e) {
+    logger.error({ e }, "TOTP setup failed");
+    res.status(500).json({ error: "Erro ao configurar 2FA" });
+  }
+});
+
+router.post("/totp/enable", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const { code } = req.body as { code?: string };
+  if (!code || !/^\d{6}$/.test(String(code))) { res.status(400).json({ error: "Código inválido" }); return; }
+  try {
+    const rows = await db.select({ totpSecret: infinityUsersTable.totpSecret }).from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+    const secret = rows[0]?.totpSecret;
+    if (!secret) { res.status(400).json({ error: "Execute /totp/setup primeiro" }); return; }
+    const totp = new OTPAuth.TOTP({ issuer: "Hydra Consultoria", label: username, algorithm: "SHA1", digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) });
+    const delta = totp.validate({ token: String(code), window: 1 });
+    if (delta === null) { res.status(400).json({ error: "Código incorreto" }); return; }
+    await db.update(infinityUsersTable).set({ totpEnabled: true }).where(eq(infinityUsersTable.username, username));
+    res.json({ ok: true });
+  } catch (e) {
+    logger.error({ e }, "TOTP enable failed");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.post("/totp/disable", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  const { code } = req.body as { code?: string };
+  if (!code || !/^\d{6}$/.test(String(code))) { res.status(400).json({ error: "Código inválido" }); return; }
+  try {
+    const rows = await db.select({ totpSecret: infinityUsersTable.totpSecret, totpEnabled: infinityUsersTable.totpEnabled }).from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+    const { totpSecret, totpEnabled } = rows[0] ?? {};
+    if (!totpEnabled || !totpSecret) { res.status(400).json({ error: "2FA não está habilitado" }); return; }
+    const totp = new OTPAuth.TOTP({ issuer: "Hydra Consultoria", label: username, algorithm: "SHA1", digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(totpSecret) });
+    const delta = totp.validate({ token: String(code), window: 1 });
+    if (delta === null) { res.status(400).json({ error: "Código incorreto" }); return; }
+    await db.update(infinityUsersTable).set({ totpEnabled: false, totpSecret: null }).where(eq(infinityUsersTable.username, username));
+    res.json({ ok: true });
+  } catch (e) {
+    logger.error({ e }, "TOTP disable failed");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.post("/totp/status", requireAuth, async (req, res) => {
+  const username = req.infinityUser!.username;
+  try {
+    const rows = await db.select({ totpEnabled: infinityUsersTable.totpEnabled }).from(infinityUsersTable).where(eq(infinityUsersTable.username, username)).limit(1);
+    res.json({ enabled: rows[0]?.totpEnabled ?? false });
+  } catch (e) {
+    res.status(500).json({ error: "Erro interno" });
   }
 });
 

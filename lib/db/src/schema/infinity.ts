@@ -31,6 +31,9 @@ export const infinityUsersTable = pgTable("infinity_users", {
   planType:           text("plan_type").default("free"),        // "free" | "pro"
   planExpiresAt:      timestamp("plan_expires_at", { withTimezone: true }),
   cardTheme:          text("card_theme").default("default"),    // theme slug
+  // 2FA TOTP
+  totpSecret:         text("totp_secret"),
+  totpEnabled:        boolean("totp_enabled").notNull().default(false),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {
@@ -280,11 +283,14 @@ export type InfinityChatRoomRow = typeof infinityChatRoomsTable.$inferSelect;
 export const infinityChatMessagesTable = pgTable(
   "infinity_chat_messages",
   {
-    id:        serial("id").primaryKey(),
-    roomSlug:  text("room_slug").notNull(),
-    username:  text("username").notNull(),
-    content:   text("content").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    id:              serial("id").primaryKey(),
+    roomSlug:        text("room_slug").notNull(),
+    username:        text("username").notNull(),
+    content:         text("content").notNull(),
+    replyToId:       integer("reply_to_id"),
+    replyToUsername: text("reply_to_username"),
+    replyToContent:  text("reply_to_content"),
+    createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     byRoom:    index("infinity_chat_messages_room_idx").on(t.roomSlug),
