@@ -67,12 +67,12 @@ const TABS: TabDef[] = [
   { id: "rg",         label: "RG",           category: "Pessoa", placeholder: "RG ou identidade",    hint: "texto/numérico",                           icon: ScrollText },
   { id: "mae",        label: "Mãe",          category: "Pessoa", placeholder: "CPF do filho(a)",     hint: "11 dígitos — busca pela mãe",              inputMode: "numeric", icon: Heart,         sanitize: cpf11 },
   { id: "pai",        label: "Pai",          category: "Pessoa", placeholder: "CPF do filho(a)",     hint: "11 dígitos — busca pelo pai",              inputMode: "numeric", icon: Heart,         sanitize: cpf11 },
-  { id: "nasc",       label: "Nascimento",   category: "Pessoa", placeholder: "00000000000",         hint: "CPF · data de nascimento · Skylers",       inputMode: "numeric", icon: Calendar,      sanitize: cpf11 },
+  { id: "nasc",       label: "Nascimento",   category: "Pessoa", placeholder: "Digite o CPF",         hint: "Informe o CPF para obter a data de nascimento cadastrada · Skylers",       inputMode: "numeric", icon: Calendar,      sanitize: cpf11 },
   { id: "parentes",   label: "Parentes",     category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos — rede familiar",               inputMode: "numeric", icon: Users,         sanitize: cpf11 },
   { id: "obito",      label: "Óbito",        category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos",                               inputMode: "numeric", icon: Skull,         sanitize: cpf11 },
   { id: "email",      label: "Email",        category: "Pessoa", placeholder: "exemplo@dominio.com", hint: "texto livre",                              icon: Mail },
   { id: "telefone",   label: "Telefone",     category: "Pessoa", placeholder: "5511999999999",       hint: "DDI + DDD + número",                       inputMode: "numeric", icon: Phone,         sanitize: (s) => s.replace(/\D/g, "").slice(0, 13) },
-  { id: "pix",        label: "PIX",          category: "Pessoa", placeholder: "Chave PIX",           hint: "CPF/email/telefone/aleatória",             icon: Wallet },
+  { id: "pix",        label: "PIX",          category: "Pessoa", placeholder: "CPF, email, telefone ou chave aleatória",           hint: "ex: 12345678900 · email@dominio.com · +5511999999999 · chave-uuid",             icon: Wallet },
   { id: "endereco",   label: "Endereço",     category: "Pessoa", placeholder: "00000000000",         hint: "CPF · endereço residencial · Skylers",     inputMode: "numeric", icon: MapPin,        sanitize: cpf11 },
   { id: "cep",        label: "CEP",          category: "Pessoa", placeholder: "00000000",            hint: "8 dígitos",                                inputMode: "numeric", icon: MapPin,        sanitize: (s) => s.replace(/\D/g, "").slice(0, 8) },
   { id: "nis",        label: "NIS/PIS",      category: "Pessoa", placeholder: "NIS/PIS",             hint: "11 dígitos",                               inputMode: "numeric", icon: CreditCard,    sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
@@ -179,6 +179,31 @@ const CATEGORY_GRADIENT: Record<string, string> = {
 };
 
 type Historico = Array<{ id: number; tipo: string; query: string; username: string; success: boolean; result: unknown | null; createdAt: string }>;
+
+const INTERNO_TO_TIPO: Record<string, string> = {
+  "iseek-cpf": "cpf", "iseek-cpfbasico": "cpfbasico",
+  "iseek-dados---nasc": "nasc", "iseek-dados---parentes": "parentes",
+  "iseek-dados---mae": "mae", "iseek-dados---pai": "pai",
+  "iseek-dados---obito": "obito", "iseek-dados---nis": "nis",
+  "iseek-dados---catcpf": "catcpf", "iseek-dados---catnumero": "catnumero",
+  "iseek-dados---rg": "rg", "iseek-dados---vacinas": "vacinas",
+  "iseek-dados---endereco": "endereco", "iseek-dados---registro": "registro",
+  "iseek-dados---assessoria": "assessoria", "iseek-dados---score": "score",
+  "iseek-dados---titulo": "titulo", "iseek-dados---irpf": "irpf",
+  "iseek-dados---beneficios": "beneficios", "iseek-dados---mandado": "mandado",
+  "iseek-dados---dividas": "dividas", "iseek-dados---bens": "bens",
+  "iseek-dados---processos": "processos", "credilink": "credilink",
+  "cnh-full": "cnhfull", "placa-fipe": "placafipe",
+  "iseek-fotos---fotocnh": "foto", "iseek-fotos---biometria": "biometria",
+  "unknown": "consulta",
+};
+
+function friendlyTipo(rawTipo: string): string {
+  const stripped = rawTipo.replace(/^skylers:/, "");
+  const mapped = INTERNO_TO_TIPO[stripped] ?? stripped;
+  const tab = TABS.find(t => t.id === mapped);
+  return (tab?.label ?? mapped).toUpperCase();
+}
 
 const PANEL_EXTERNAL_TIPOS = new Set<Tipo>([
   "cpf", "nome", "rg", "mae", "pai", "parentes", "obito", "nis", "cns", "vacinas",
@@ -523,7 +548,7 @@ export default function Consultas() {
                   onClick={() => repeatQuery(h.tipo, h.query)}
                   className="group flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/8 bg-white/4 hover:bg-primary/10 hover:border-primary/30 text-muted-foreground hover:text-primary transition-all text-[10px]"
                 >
-                  <span className="font-bold uppercase tracking-wide text-primary/50 group-hover:text-primary/80 transition-colors">{h.tipo}</span>
+                  <span className="font-bold uppercase tracking-wide text-primary/50 group-hover:text-primary/80 transition-colors">{friendlyTipo(h.tipo)}</span>
                   <span className="text-muted-foreground/30">·</span>
                   <span className="font-mono">{h.query.length > 16 ? h.query.slice(0, 16) + "…" : h.query}</span>
                 </button>
@@ -861,7 +886,7 @@ export default function Consultas() {
                 className="bg-black/30 border border-white/5 rounded-xl p-3 sm:p-4 flex items-center justify-between hover:border-primary/30 hover:bg-black/40 transition-all group"
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-md shrink-0">{item.tipo}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary bg-primary/10 border border-primary/20 px-2 py-1 rounded-md shrink-0">{friendlyTipo(item.tipo)}</span>
                   <span className="font-mono text-sm truncate">{item.query}</span>
                   <span className="text-xs text-muted-foreground truncate hidden md:inline">— {item.username}</span>
                 </div>

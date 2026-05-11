@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle, Copy, Check, Download, FileJson, Eye, EyeOff,
@@ -440,6 +440,12 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     return { fields: [], sections: [], raw: typeof result.data === "string" ? result.data : JSON.stringify(result.data ?? {}) };
   }, [result.data]);
 
+  useEffect(() => {
+    if (result.success && parsed.fields.length === 0 && parsed.sections.length === 0 && !!parsed.raw) {
+      setShowRaw(true);
+    }
+  }, [result, parsed]);
+
   const photoUrl     = parsed.fields.find(f => f.key === "FOTO_URL")?.value;
   const displayFields = parsed.fields.filter(f => f.key !== "FOTO_URL");
   const headlineFields = displayFields.filter(f => isImportantField(f.key)).slice(0, 4);
@@ -482,18 +488,30 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
   };
 
   // ── No result ──────────────────────────────────────────────────────────────
-  if (!result.success && parsed.fields.length === 0 && parsed.sections.length === 0) {
+  const hasUsefulData = displayFields.length > 0 || parsed.sections.length > 0;
+  const hasMeaningfulRaw = !!parsed.raw && parsed.raw !== "{}" && parsed.raw.length > 5;
+  const showNoResult = !result.success && !hasUsefulData && !hasMeaningfulRaw;
+  const showSuccessEmpty = result.success && !hasUsefulData && !hasMeaningfulRaw;
+
+  if (showNoResult || showSuccessEmpty) {
+    const isKnownEmpty = showSuccessEmpty;
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-        className="mt-6 rounded-2xl border border-amber-400/25 p-5 sm:p-6"
-        style={{ background: "color-mix(in srgb, #fbbf24 6%, transparent)", backdropFilter: "blur(20px)" }}>
+        className={`mt-6 rounded-2xl border p-5 sm:p-6 ${isKnownEmpty ? "border-slate-400/20" : "border-amber-400/25"}`}
+        style={{ background: isKnownEmpty ? "color-mix(in srgb, #64748b 6%, transparent)" : "color-mix(in srgb, #fbbf24 6%, transparent)", backdropFilter: "blur(20px)" }}>
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-400/15 border border-amber-400/30 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5 text-amber-300" />
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isKnownEmpty ? "bg-slate-400/15 border border-slate-400/30" : "bg-amber-400/15 border border-amber-400/30"}`}>
+            <AlertTriangle className={`w-5 h-5 ${isKnownEmpty ? "text-slate-300" : "text-amber-300"}`} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold uppercase tracking-widest text-amber-200">Sem resultado</div>
-            <p className="text-xs text-amber-100/70 mt-1.5 leading-relaxed">{result.error ?? "O provedor não retornou dados para esta consulta."}</p>
+            <div className={`text-sm font-bold uppercase tracking-widest ${isKnownEmpty ? "text-slate-200" : "text-amber-200"}`}>
+              {isKnownEmpty ? "Nenhum registro encontrado" : "Sem resultado"}
+            </div>
+            <p className={`text-xs mt-1.5 leading-relaxed ${isKnownEmpty ? "text-slate-300/70" : "text-amber-100/70"}`}>
+              {isKnownEmpty
+                ? "A consulta foi processada, mas não há dados cadastrados para este registro no provedor."
+                : (result.error ?? "O provedor não retornou dados para esta consulta.")}
+            </p>
           </div>
         </div>
       </motion.div>

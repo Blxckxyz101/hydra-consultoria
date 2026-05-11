@@ -2805,19 +2805,26 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const success = provider.ok && !!provider.parsed;
     // Serialize parsed result as compact string for the base-selector "raw" display
     const rawText = provider.parsed?.raw ?? "";
+    // Translate raw Skylers auth errors into user-friendly messages
+    const isAuthError = (provider.error ?? "").match(/token|inválido|expirado|401|403/i);
+    const errorMsg = !success && isAuthError
+      ? tipoLower === "credilink"
+        ? "CrediLink temporariamente indisponível. O módulo requer acesso especial — contate o suporte."
+        : "Autenticação com a Skylers API falhou. Tente novamente em instantes ou acesse pela base Infinity."
+      : provider.error ?? "Sem resultado";
     // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
     if (!res.headersSent) {
       if (success) {
         res.json({ success: true, data: provider.parsed });
       } else {
-        res.json({ success: false, error: provider.error ?? "Sem resultado", data: { fields: [], sections: [], raw: rawText } });
+        res.json({ success: false, error: errorMsg, data: { fields: [], sections: [], raw: rawText } });
       }
     }
     if (req.infinityUser && !skipLog) {
       bumpCaches(req.infinityUser.username);
       bumpSkylersTipoCache(req.infinityUser.username, extTipoKey);
       void logConsulta({
-        tipo: `skylers:${modulo}`,
+        tipo,
         query: dadosStr,
         username: req.infinityUser.username,
         success,
