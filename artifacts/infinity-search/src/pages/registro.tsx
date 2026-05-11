@@ -250,8 +250,8 @@ export default function Registro() {
         className="relative w-full max-w-lg z-10"
       >
         <div className="flex items-center justify-center gap-3 mb-8">
-          <img src={logoUrl} alt="" className="w-10 h-10 object-contain"
-            style={{ mixBlendMode: "screen", filter: "drop-shadow(0 0 14px color-mix(in srgb, var(--color-primary) 80%, transparent)) brightness(1.15)" }} />
+          <img src={logoUrl} alt="" className="w-10 h-10"
+            style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }} />
           <div>
             <div className="font-bold tracking-[0.3em] text-lg">HYDRA</div>
             <div className="text-[9px] uppercase tracking-[0.5em] text-primary/60">CONSULTORIA</div>

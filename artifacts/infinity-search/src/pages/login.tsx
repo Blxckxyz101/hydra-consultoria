@@ -115,13 +115,13 @@ export default function Login() {
                 transition={{ delay: 0.15, type: "spring", stiffness: 180, damping: 14 }}
                 className="relative mb-4"
               >
-                <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-2xl scale-125" />
-                <div className="relative w-24 h-24 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(56,189,248,0.2)", boxShadow: "0 0 28px rgba(56,189,248,0.35), inset 0 0 12px rgba(56,189,248,0.08)" }}>
+                <div className="absolute inset-0 rounded-2xl bg-primary/25 blur-2xl scale-125" />
+                <div className="relative w-24 h-24 flex items-center justify-center">
                   <img
                     src={logoUrl}
                     alt="Hydra Consultoria"
-                    className="w-full h-full object-cover"
-                    style={{ filter: "brightness(1.15)" }}
+                    className="w-24 h-24"
+                    style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
                   />
                 </div>
               </motion.div>

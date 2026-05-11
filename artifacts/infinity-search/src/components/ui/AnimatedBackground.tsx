@@ -99,14 +99,10 @@ export function AnimatedBackground() {
       x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, active: false,
     }));
 
-    let scanY = -height;
-    let scanActive = false;
-    let scanTimer = 0;
-    const scanInterval = isMob ? 12000 : 8000;
+    let shootTimer = 0;
 
     let t = 0;
     let frameCount = 0;
-    let lastScan = performance.now();
     let rgb: [number, number, number] = getThemeRgb();
 
     function spawnShootingStar(s: ShootingStar) {
@@ -242,29 +238,10 @@ export function AnimatedBackground() {
       }
 
       // Shoot star spawner
-      if (now - scanTimer > 4000 + Math.random() * 6000) {
+      if (now - shootTimer > 4000 + Math.random() * 6000) {
         const idle = shootingStars.find(s => !s.active);
         if (idle && !isMob) { spawnShootingStar(idle); }
-        scanTimer = now;
-      }
-
-      // Horizontal scan line sweep
-      if (!scanActive && now - lastScan > scanInterval) {
-        scanActive = true;
-        scanY = -4;
-        lastScan = now;
-      }
-      if (scanActive) {
-        scanY += isMob ? 4 : 3;
-        if (scanY > height + 10) { scanActive = false; scanY = -10; }
-        const scanGrad = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
-        scanGrad.addColorStop(0, "rgba(0,0,0,0)");
-        scanGrad.addColorStop(0.4, `rgba(${rr}, ${gg}, ${bb}, 0.07)`);
-        scanGrad.addColorStop(0.5, `rgba(${rr}, ${gg}, ${bb}, 0.18)`);
-        scanGrad.addColorStop(0.6, `rgba(${rr}, ${gg}, ${bb}, 0.07)`);
-        scanGrad.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = scanGrad;
-        ctx.fillRect(0, scanY - 12, width, 24);
+        shootTimer = now;
       }
 
       animationFrameId = requestAnimationFrame(render);

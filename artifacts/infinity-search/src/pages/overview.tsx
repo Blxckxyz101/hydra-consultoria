@@ -479,7 +479,7 @@ export default function Overview() {
               el.style.borderColor = "";
             }}
           >
-            <div className="absolute inset-0 bg-black/30" />
+            <div className="absolute inset-0 bg-black/10" />
             <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none rounded-2xl"
               style={{ background: `radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(${stat.chartVar}) 15%, transparent) 0%, transparent 70%)` }} />
             <div className="relative flex items-start justify-between gap-2">

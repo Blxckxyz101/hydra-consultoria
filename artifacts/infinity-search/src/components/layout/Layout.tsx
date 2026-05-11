@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, type LucideIcon } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/hydra-icon.jpg";
@@ -225,21 +225,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isAdmin = user?.role === "admin";
 
-  const navItems = [
-    { href: "/", label: "Visão Geral", icon: Activity },
-    { href: "/consultas", label: "Consultas", icon: Search },
-    { href: "/api-promo", label: "🌟 API", icon: Zap },
-    { href: "/ia", label: "Assistente IA", icon: Bot },
-    { href: "/historico", label: "Histórico", icon: History },
-    { href: "/dossie", label: "Dossiê", icon: FolderOpen },
-    { href: "/favoritos", label: "Favoritos", icon: Star },
-    ...(isAdmin ? [{ href: "/bases", label: "Monitor de Bases", icon: Server }] : []),
-    { href: "/afiliados", label: "Afiliados", icon: Gift },
-    { href: "/carteira", label: "Carteira", icon: Wallet },
-    { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
-    { href: "/perfil", label: "Perfil", icon: UserCircle },
-    { href: "/configuracoes", label: "Configurações", icon: Settings },
-    { href: "/personalizar", label: "Personalizar", icon: Palette },
+  type NavItem = { href: string; label: string; icon: LucideIcon; badge?: string };
+  const navGroups: { label: string; items: NavItem[] }[] = [
+    {
+      label: "Principal",
+      items: [
+        { href: "/", label: "Visão Geral", icon: Activity },
+        { href: "/consultas", label: "Consultas", icon: Search },
+        { href: "/api-promo", label: "🌟 API", icon: Zap },
+        { href: "/ia", label: "Assistente IA", icon: Bot },
+      ],
+    },
+    {
+      label: "Ferramentas",
+      items: [
+        { href: "/historico", label: "Histórico", icon: History },
+        { href: "/dossie", label: "Dossiê", icon: FolderOpen },
+        { href: "/favoritos", label: "Favoritos", icon: Star },
+        ...(isAdmin ? [{ href: "/bases", label: "Monitor de Bases", icon: Server }] : []),
+      ],
+    },
+    {
+      label: "Conta",
+      items: [
+        { href: "/afiliados", label: "Afiliados", icon: Gift },
+        { href: "/carteira", label: "Carteira", icon: Wallet },
+        { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
+        { href: "/perfil", label: "Perfil", icon: UserCircle },
+        { href: "/configuracoes", label: "Configurações", icon: Settings },
+        { href: "/personalizar", label: "Personalizar", icon: Palette },
+      ],
+    },
   ];
 
   const roleLabel = (role: string) => {
@@ -248,108 +264,120 @@ export function Layout({ children }: { children: React.ReactNode }) {
     return role;
   };
 
-  const SidebarBody = (
+  const renderSidebar = (onClose?: () => void) => (
     <>
-      <div className="px-6 pt-6 pb-6 flex items-center gap-3 border-b border-white/5">
-        <div className="relative w-11 h-11 rounded-xl overflow-hidden shrink-0" style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 25%, transparent)" }}>
+      {/* Header */}
+      <div className="px-5 pt-5 pb-5 flex items-center gap-3 border-b border-white/5">
+        <div className="relative w-11 h-11 shrink-0 flex items-center justify-center">
           <div
-            className="absolute inset-0 rounded-xl blur-xl scale-110"
-            style={{ background: "color-mix(in srgb, var(--color-primary) 25%, transparent)" }}
+            className="absolute inset-0 rounded-xl blur-lg"
+            style={{ background: "color-mix(in srgb, var(--color-primary) 28%, transparent)" }}
           />
           <img
             src={logoUrl}
             alt="Hydra Consultoria"
-            className="relative w-full h-full object-cover"
-            style={{ filter: "drop-shadow(0 0 14px color-mix(in srgb, var(--color-primary) 80%, transparent)) brightness(1.1)" }}
+            className="relative w-11 h-11"
+            style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
           />
         </div>
         <div className="flex flex-col flex-1 min-w-0">
-          <span className="font-bold tracking-[0.25em] text-base text-foreground">HYDRA</span>
-          <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>CONSULTORIA</span>
+          <span className="font-bold tracking-[0.25em] text-base text-foreground leading-none">HYDRA</span>
+          <span className="text-[9px] uppercase tracking-[0.4em] mt-0.5" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>CONSULTORIA</span>
         </div>
-        {/* Bell — desktop sidebar header */}
-        <div ref={bellDesktopRef} className="relative shrink-0">
+        {onClose ? (
           <button
-            onClick={openBell}
-            className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20 transition-colors"
-            aria-label="Novidades"
+            onClick={onClose}
+            className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+            aria-label="Fechar menu"
           >
-            <Bell className="w-4 h-4" />
-            {unreadCount > 0 && (
-              <span
-                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
-                style={{ background: "var(--color-primary)" }}
-              >
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
+            <X className="w-4 h-4" />
           </button>
-          <AnimatePresence>
-            {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
-          </AnimatePresence>
-        </div>
+        ) : (
+          <div ref={bellDesktopRef} className="relative shrink-0">
+            <button
+              onClick={openBell}
+              className="relative w-9 h-9 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20 transition-colors"
+              aria-label="Novidades"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <AnimatePresence>
+              {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
-      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-        {navItems.map((item, i) => {
-          const isActive = location === item.href;
-          const Icon = item.icon;
-          return (
-            <motion.div
-              key={item.href}
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.04 }}
-            >
-              <Link
-                href={item.href}
-                className={`group flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 relative overflow-hidden ${
-                  isActive
-                    ? "text-primary border"
-                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground border border-transparent"
-                }`}
-                style={isActive ? {
-                  background: "color-mix(in srgb, var(--color-primary) 12%, transparent)",
-                  borderColor: "color-mix(in srgb, var(--color-primary) 30%, transparent)",
-                  boxShadow: "0 0 25px -5px color-mix(in srgb, var(--color-primary) 35%, transparent)",
-                } : {}}
-                onMouseEnter={e => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLElement).style.boxShadow = "0 0 18px -6px color-mix(in srgb, var(--color-primary) 25%, transparent)";
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (!isActive) (e.currentTarget as HTMLElement).style.boxShadow = "";
-                }}
-              >
-                {isActive && (
+      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+        {navGroups.map((group, gi) => (
+          <div key={group.label} className={gi > 0 ? "mt-4 pt-4 border-t border-white/[0.06]" : ""}>
+            <div className="px-3 mb-2">
+              <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40 font-semibold">{group.label}</span>
+            </div>
+            <div className="space-y-0.5">
+              {group.items.map((item, i) => {
+                const isActive = location === item.href;
+                const Icon = item.icon;
+                return (
                   <motion.div
-                    layoutId="activePill"
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 rounded-r-full"
-                    style={{
-                      background: "var(--color-primary)",
-                      boxShadow: "0 0 12px color-mix(in srgb, var(--color-primary) 80%, transparent)",
-                    }}
-                  />
-                )}
-                <Icon
-                  className={`w-4 h-4 transition-all duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}
-                  style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : {}}
-                />
-                <span className="font-medium text-sm flex-1">{item.label}</span>
-                {(item as any).badge && !isActive && (
-                  <span
-                    className="text-[8px] font-bold tracking-widest px-1.5 py-0.5 rounded-full text-black animate-pulse"
-                    style={{ background: "var(--color-primary)" }}
+                    key={item.href}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: (gi * 4 + i) * 0.035 }}
                   >
-                    {(item as any).badge}
-                  </span>
-                )}
-                {isActive && <ChevronRight className="w-3 h-3" />}
-              </Link>
-            </motion.div>
-          );
-        })}
+                    <Link
+                      href={item.href}
+                      onClick={onClose}
+                      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 relative overflow-hidden ${
+                        isActive
+                          ? "text-primary border"
+                          : "text-muted-foreground hover:bg-white/[0.06] hover:text-foreground border border-transparent"
+                      }`}
+                      style={isActive ? {
+                        background: "color-mix(in srgb, var(--color-primary) 12%, transparent)",
+                        borderColor: "color-mix(in srgb, var(--color-primary) 28%, transparent)",
+                        boxShadow: "0 0 22px -6px color-mix(in srgb, var(--color-primary) 35%, transparent)",
+                      } : {}}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activePill"
+                          className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 rounded-r-full"
+                          style={{
+                            background: "var(--color-primary)",
+                            boxShadow: "0 0 10px color-mix(in srgb, var(--color-primary) 80%, transparent)",
+                          }}
+                        />
+                      )}
+                      <Icon
+                        className={`w-4 h-4 shrink-0 transition-all duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}
+                        style={isActive ? { filter: "drop-shadow(0 0 5px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : {}}
+                      />
+                      <span className="font-medium text-sm flex-1 truncate">{item.label}</span>
+                      {item.badge && !isActive && (
+                        <span
+                          className="text-[8px] font-bold tracking-widest px-1.5 py-0.5 rounded-full text-black animate-pulse shrink-0"
+                          style={{ background: "var(--color-primary)" }}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                      {isActive && <ChevronRight className="w-3 h-3 shrink-0" />}
+                    </Link>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="p-4 border-t border-white/5 space-y-3">
@@ -475,8 +503,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <AnimatedBackground />
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-72 flex-col z-10 shrink-0 border-r border-white/5 bg-black/30 backdrop-blur-2xl">
-        {SidebarBody}
+      <aside className="hidden lg:flex w-72 flex-col z-10 shrink-0 border-r border-white/[0.07] backdrop-blur-2xl" style={{ background: "rgba(5,11,28,0.45)" }}>
+        {renderSidebar()}
       </aside>
 
       {/* Mobile top bar */}
@@ -489,12 +517,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex items-center gap-2">
-          <div className="relative w-7 h-7 rounded-lg overflow-hidden shrink-0">
+          <div className="relative w-7 h-7 shrink-0 flex items-center justify-center">
             <img
               src={logoUrl}
               alt=""
-              className="w-full h-full object-cover"
-              style={{ filter: "brightness(1.1)" }}
+              className="w-7 h-7"
+              style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
             />
           </div>
           <span className="font-bold tracking-[0.2em] text-sm">HYDRA</span>
@@ -540,16 +568,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 280, damping: 32 }}
-              className="lg:hidden fixed inset-y-0 left-0 w-[78%] max-w-[320px] z-50 flex flex-col border-r border-white/10 backdrop-blur-2xl" style={{ background: "color-mix(in srgb, var(--color-background) 95%, transparent)" }}
+              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(5,11,28,0.72)" }}
             >
-              <button
-                onClick={() => setMobileOpen(false)}
-                className="absolute top-4 right-4 w-8 h-8 rounded-lg flex items-center justify-center bg-white/5 border border-white/10"
-                aria-label="Fechar"
-              >
-                <X className="w-4 h-4" />
-              </button>
-              {SidebarBody}
+              {renderSidebar(() => setMobileOpen(false))}
             </motion.aside>
           </>
         )}
