@@ -177,7 +177,7 @@ async function fetchModule(tipo: string, dados: string, skylers: boolean, skipLo
     } else if (typeof json.data === "string") {
       parsed = { fields: [], sections: [], raw: json.data };
     }
-    if (!json.success && !parsed?.fields.length && !parsed?.sections.length && !parsed?.raw)
+    if (!json.success && !parsed?.fields.length && !parsed?.sections.length)
       return { status: "error", error: json.error ?? "Sem resultado" };
     return { status: parsed ? "done" : "error", data: parsed, error: json.success ? undefined : (json.error ?? undefined) };
   } catch (e) {

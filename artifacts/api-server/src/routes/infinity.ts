@@ -1127,6 +1127,22 @@ function parseSkylers(data: unknown): Parsed {
     if (JUNK_KEYS_SKYLERS.has(k.toLowerCase())) continue;
     if (!isUseful(v) && !Array.isArray(v) && typeof v !== "object") continue;
 
+    // ── Special case: dados_basicos is the Skylers identity payload ──────────
+    // Promote its contents to top-level fields so module-specific data
+    // (beneficios, dividas, bens…) is not shadowed by it.
+    if (k.toLowerCase() === "dados_basicos" && typeof v === "object" && !Array.isArray(v) && v !== null) {
+      const sub = v as Record<string, unknown>;
+      for (const [sk, sv] of Object.entries(sub)) {
+        if (JUNK_KEYS_SKYLERS.has(sk.toLowerCase())) continue;
+        if (!isUseful(sv)) continue;
+        const sStr = String(sv).trim();
+        if (sStr && !JUNK_VALUES.has(sStr)) {
+          result.fields.push({ key: humanizeKey(sk), value: sStr });
+        }
+      }
+      continue; // do not fall through to section creation
+    }
+
     if (Array.isArray(v)) {
       if (v.length === 0) continue;
       const secItems = processArray(v as unknown[], fotoUrl);
@@ -1318,6 +1334,38 @@ async function callSkylers(
     }
 
     skylersCircuit.recordSuccess();
+
+    // ── Identity-only guard ────────────────────────────────────────────────
+    // For module-specific tipos (not iseek-cpf / iseek-cpfbasico), if Skylers
+    // returned only dados_basicos identity fields (no actual module sections),
+    // treat as "not found" so we don't display CPF data under a beneficios/
+    // dividas/bens/titulo card.
+    const IDENTITY_MODULES = new Set(["iseek-cpf", "iseek-cpfbasico"]);
+    if (!endpoint && !IDENTITY_MODULES.has(modulo) && parsed.sections.length === 0 && parsed.fields.length > 0) {
+      const IDENTITY_KEYS = new Set([
+        "cpf", "nome", "nome completo", "data nascimento", "data de nascimento",
+        "data nasc", "dt nascimento", "nasc", "nascimento",
+        "nome mae", "nome mãe", "nome da mae", "nome da mãe",
+        "filiacao nome mae", "filiacao · nome mae", "mae", "mãe",
+        "nome pai", "nome do pai", "filiacao nome pai", "filiacao · nome pai", "pai",
+        "sexo", "genero", "gênero", "situacao cadastral", "situação cadastral",
+        "rg", "registro geral", "municipio nascimento", "município nascimento",
+        "municipio de nascimento", "município de nascimento", "estado civil",
+        "titulo eleitoral", "titulo eleitor", "naturalidade", "idade",
+      ]);
+      const nonIdentityFields = parsed.fields.filter(
+        f => f.key !== "FOTO_URL" &&
+          !IDENTITY_KEYS.has(f.key.toLowerCase().replace(/[·_]/g, " ").trim()),
+      );
+      if (nonIdentityFields.length === 0) {
+        return {
+          ok: false,
+          error: "Não encontrado na base para este módulo",
+          parsed: { fields: [], sections: [], raw: parsed.raw },
+        };
+      }
+    }
+
     return { ok: true, parsed };
   } catch (e) {
     // Only count as circuit failure for actual network errors (ECONNREFUSED, timeout)
