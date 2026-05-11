@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Hash, Plus, Send, X, Globe, Smile, AtSign, Crown, Shield,
-  ChevronRight, Users, Loader2, Gift, Image, MessageSquareDiff
+  Plus, Send, X, Globe, AtSign, Crown, Shield,
+  ChevronRight, Users, Loader2, Gift, Image as ImageIcon, UserCircle, UserPlus, MessageSquareDiff
 } from "lucide-react";
 import { useInfinityMe } from "@workspace/api-client-react";
 import { Link } from "wouter";
@@ -32,6 +32,10 @@ interface ChatMsg {
   photo: string | null; role: string; accentColor: string | null;
   content: string; createdAt: string; reactions: Reaction[];
 }
+interface MiniUser {
+  username: string; displayName: string | null; photo: string | null;
+  role: string; bio: string | null; accentColor: string | null;
+}
 
 function RoleBadge({ role }: { role: string }) {
   if (role === "admin") return <Crown className="w-3 h-3 inline-block ml-1" style={{ color: "#f59e0b" }} />;
@@ -45,14 +49,15 @@ function Avatar({ username, photo, size = 8 }: { username: string; photo: string
 }
 
 function renderContent(content: string, accent: string) {
-  const urlRegex = /https?:\/\/\S+/g;
-  const imgRegex = /https?:\/\/\S+\.(gif|jpg|jpeg|png|webp)(\?[^\s]*)?\b/i;
-  const parts = content.split(/(https?:\/\/\S+)/g);
+  const imgRegex = /(?:https?:\/\/\S+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*)?\b|\/api\/infinity\/chat\/img\/[a-f0-9]+)/i;
+  const splitRegex = /((?:https?:\/\/\S+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*)?\b|\/api\/infinity\/chat\/img\/[a-f0-9]+|https?:\/\/\S+))/gi;
+  const parts = content.split(splitRegex);
   return parts.map((part, i) => {
     if (imgRegex.test(part)) {
+      const src = part.startsWith("/") ? `${window.location.origin}${part}` : part;
       return (
         <div key={i} className="mt-1">
-          <img src={part} alt="" className="max-w-[240px] max-h-48 rounded-xl object-cover border border-white/10" onError={e => { e.currentTarget.style.display = "none"; }} />
+          <img src={src} alt="" className="max-w-[240px] max-h-48 rounded-xl object-cover border border-white/10" onError={e => { e.currentTarget.style.display = "none"; }} />
         </div>
       );
     }
@@ -68,14 +73,27 @@ function renderContent(content: string, accent: string) {
   });
 }
 
-function MessageBubble({ msg, prev, myUsername, onReact }: {
-  msg: ChatMsg; prev?: ChatMsg; myUsername: string; onReact: (msgId: number, emoji: string) => void;
+function MessageBubble({ msg, prev, myUsername, onReact, onUserClick }: {
+  msg: ChatMsg; prev?: ChatMsg; myUsername: string;
+  onReact: (msgId: number, emoji: string) => void;
+  onUserClick: (user: MiniUser) => void;
 }) {
   const isConsecutive = prev && prev.username === msg.username &&
     (new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 5 * 60 * 1000;
   const time = new Date(msg.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const accent = msg.accentColor ?? "var(--color-primary)";
   const [showReact, setShowReact] = useState(false);
+
+  const handleUserClick = () => {
+    onUserClick({
+      username: msg.username,
+      displayName: msg.displayName,
+      photo: msg.photo,
+      role: msg.role,
+      bio: null,
+      accentColor: msg.accentColor,
+    });
+  };
 
   return (
     <div
@@ -84,14 +102,18 @@ function MessageBubble({ msg, prev, myUsername, onReact }: {
       onMouseLeave={() => setShowReact(false)}
     >
       <div className="w-8 shrink-0">
-        {!isConsecutive && <Avatar username={msg.username} photo={msg.photo} size={8} />}
+        {!isConsecutive && (
+          <button onClick={handleUserClick} className="focus:outline-none" title={`Ver perfil de ${msg.username}`}>
+            <Avatar username={msg.username} photo={msg.photo} size={8} />
+          </button>
+        )}
       </div>
       <div className="flex-1 min-w-0">
         {!isConsecutive && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <Link href={`/u/${msg.username}`}>
-              <span className="font-semibold text-sm cursor-pointer hover:underline" style={{ color: accent }}>{msg.displayName ?? msg.username}</span>
-            </Link>
+            <button onClick={handleUserClick} className="focus:outline-none hover:underline font-semibold text-sm" style={{ color: accent }}>
+              {msg.displayName ?? msg.username}
+            </button>
             <RoleBadge role={msg.role} />
             <span className="text-[10px] text-muted-foreground/40">{time}</span>
           </div>
@@ -99,7 +121,6 @@ function MessageBubble({ msg, prev, myUsername, onReact }: {
         <div className="text-sm text-foreground/90 break-words leading-relaxed">
           {renderContent(msg.content, accent)}
         </div>
-        {/* Reactions display */}
         {msg.reactions.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {msg.reactions.map(r => (
@@ -114,7 +135,6 @@ function MessageBubble({ msg, prev, myUsername, onReact }: {
           </div>
         )}
       </div>
-      {/* Quick react on hover */}
       {showReact && (
         <div className="absolute right-2 top-0 -translate-y-1/2 flex gap-0.5 bg-[hsl(220_35%_8%)] border border-white/10 rounded-xl px-2 py-1.5 shadow-xl z-20 opacity-0 group-hover:opacity-100 transition-opacity">
           {QUICK_EMOJIS.slice(0, 6).map(e => (
@@ -124,6 +144,107 @@ function MessageBubble({ msg, prev, myUsername, onReact }: {
         </div>
       )}
     </div>
+  );
+}
+
+function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () => void; myUsername: string }) {
+  const [friendStatus, setFriendStatus] = useState<"none" | "sending" | "sent" | "error">("none");
+  const accent = user.accentColor ?? "var(--color-primary)";
+  const isSelf = user.username === myUsername;
+
+  const sendFriendRequest = async () => {
+    if (friendStatus !== "none" || isSelf) return;
+    setFriendStatus("sending");
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/friends/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username: user.username }),
+      });
+      setFriendStatus(r.ok || r.status === 409 ? "sent" : "error");
+    } catch {
+      setFriendStatus("error");
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 12 }}
+        transition={{ type: "spring", stiffness: 380, damping: 28 }}
+        className="w-full max-w-xs rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
+        style={{ background: "color-mix(in srgb, var(--color-card) 98%, transparent)" }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="h-16 relative" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 28%, transparent), color-mix(in srgb, hsl(220 35% 8%) 85%, transparent))` }}>
+          <button onClick={onClose} className="absolute top-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center hover:bg-black/25 text-white/60 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+          <div className="absolute -bottom-8 left-4">
+            <div className="w-16 h-16 rounded-2xl overflow-hidden ring-4" style={{ boxShadow: `0 0 0 4px hsl(220 35% 8%)` }}>
+              {user.photo
+                ? <img src={user.photo} alt="" className="w-full h-full object-cover" />
+                : <div className="w-full h-full flex items-center justify-center text-2xl font-bold" style={{ background: hashColor(user.username), color: "#000" }}>
+                    {(user.displayName ?? user.username)[0]?.toUpperCase()}
+                  </div>
+              }
+            </div>
+          </div>
+        </div>
+
+        <div className="pt-10 px-4 pb-4">
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="font-bold text-base" style={{ color: accent }}>{user.displayName ?? user.username}</span>
+            <RoleBadge role={user.role} />
+          </div>
+          <p className="text-xs text-muted-foreground/50 mb-3">@{user.username}</p>
+          {user.bio && <p className="text-xs text-muted-foreground/70 mb-3 line-clamp-2 leading-relaxed">{user.bio}</p>}
+
+          <div className={`grid gap-2 mt-2 ${isSelf ? "grid-cols-1" : "grid-cols-3"}`}>
+            <Link href={`/u/${user.username}`} onClick={onClose}>
+              <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors w-full">
+                <UserCircle className="w-4.5 h-4.5 text-muted-foreground" />
+                <span className="text-[9px] text-muted-foreground font-medium">Ver Perfil</span>
+              </button>
+            </Link>
+            {!isSelf && (
+              <button
+                onClick={sendFriendRequest}
+                disabled={friendStatus !== "none"}
+                className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60"
+              >
+                {friendStatus === "sending"
+                  ? <Loader2 className="w-4.5 h-4.5 animate-spin text-muted-foreground" />
+                  : friendStatus === "sent"
+                    ? <span className="text-green-400 text-sm font-bold">✓</span>
+                    : friendStatus === "error"
+                      ? <span className="text-red-400 text-sm">!</span>
+                      : <UserPlus className="w-4.5 h-4.5 text-muted-foreground" />
+                }
+                <span className="text-[9px] text-muted-foreground font-medium">
+                  {friendStatus === "sent" ? "Enviado!" : friendStatus === "error" ? "Erro" : "Add Amigo"}
+                </span>
+              </button>
+            )}
+            {!isSelf && (
+              <Link href={`/dm/${user.username}`} onClick={onClose}>
+                <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl w-full transition-colors"
+                  style={{ background: "color-mix(in srgb, var(--color-primary) 16%, transparent)" }}>
+                  <AtSign className="w-4.5 h-4.5" style={{ color: "var(--color-primary)" }} />
+                  <span className="text-[9px] font-medium" style={{ color: "var(--color-primary)" }}>Enviar DM</span>
+                </button>
+              </Link>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -249,13 +370,15 @@ export default function Comunidade() {
   const [showGif, setShowGif] = useState(false);
   const [wsReady, setWsReady] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
+  const [selectedUser, setSelectedUser] = useState<MiniUser | null>(null);
+  const [imgUploading, setImgUploading] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const myUsername = me?.username ?? "";
 
-  // Load rooms
   useEffect(() => {
     fetch("/api/infinity/chat/rooms", { headers: authHeaders() })
       .then(r => r.json())
@@ -279,7 +402,6 @@ export default function Comunidade() {
     loadMessages(activeRoom.slug);
   }, [activeRoom, loadMessages]);
 
-  // WebSocket
   useEffect(() => {
     if (!me) return;
     const ws = new WebSocket(getWsUrl());
@@ -306,13 +428,11 @@ export default function Comunidade() {
     return () => { clearInterval(ping); ws.close(); wsRef.current = null; };
   }, [me]);
 
-  // Join active room
   useEffect(() => {
     if (!activeRoom || !wsRef.current || wsRef.current.readyState !== 1) return;
     wsRef.current.send(JSON.stringify({ type: "join", roomSlug: activeRoom.slug }));
   }, [activeRoom, wsReady]);
 
-  // Auto-scroll
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const sendMessage = useCallback(async (content: string) => {
@@ -335,6 +455,32 @@ export default function Comunidade() {
     }
     inputRef.current?.focus();
   }, [activeRoom, sending, loadMessages]);
+
+  const handleImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setImgUploading(true);
+    try {
+      const dataUri = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/chat/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ dataUri }),
+      });
+      if (r.ok) {
+        const { url } = await r.json() as { url: string };
+        const fullUrl = `${window.location.origin}${url}`;
+        await sendMessage(fullUrl);
+      }
+    } catch {}
+    finally { setImgUploading(false); }
+  }, [sendMessage]);
 
   const handleReact = async (messageId: number, emoji: string) => {
     try {
@@ -412,7 +558,6 @@ export default function Comunidade() {
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat header */}
         <div className="shrink-0 px-4 py-3 border-b border-white/5 flex items-center gap-3"
           style={{ background: "rgba(2,6,18,0.3)", backdropFilter: "blur(12px)" }}>
           <button onClick={() => setSidebarOpen(v => !v)}
@@ -434,7 +579,6 @@ export default function Comunidade() {
           ) : <span className="text-sm text-muted-foreground">Selecione uma sala</span>}
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto px-2 py-4">
           {!activeRoom && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
@@ -450,12 +594,18 @@ export default function Comunidade() {
             </div>
           )}
           {messages.map((msg, i) => (
-            <MessageBubble key={msg.id} msg={msg} prev={messages[i - 1]} myUsername={myUsername} onReact={handleReact} />
+            <MessageBubble
+              key={msg.id}
+              msg={msg}
+              prev={messages[i - 1]}
+              myUsername={myUsername}
+              onReact={handleReact}
+              onUserClick={setSelectedUser}
+            />
           ))}
           <div ref={bottomRef} />
         </div>
 
-        {/* GIF picker */}
         <AnimatePresence>
           {showGif && activeRoom && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
@@ -464,7 +614,6 @@ export default function Comunidade() {
           )}
         </AnimatePresence>
 
-        {/* Input bar */}
         {activeRoom && (
           <div className="shrink-0 px-4 py-3 border-t border-white/5" style={{ background: "rgba(2,6,18,0.3)" }}>
             <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl border border-white/10 bg-white/[0.03]">
@@ -472,6 +621,24 @@ export default function Comunidade() {
                 className="text-muted-foreground/50 hover:text-primary transition-colors shrink-0">
                 <Gift className="w-4.5 h-4.5" />
               </button>
+              <button
+                onClick={() => imgInputRef.current?.click()}
+                disabled={imgUploading}
+                title="Foto / Imagem"
+                className="text-muted-foreground/50 hover:text-primary transition-colors shrink-0 disabled:opacity-40"
+              >
+                {imgUploading
+                  ? <Loader2 className="w-4.5 h-4.5 animate-spin" />
+                  : <ImageIcon className="w-4.5 h-4.5" />
+                }
+              </button>
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                className="hidden"
+                onChange={handleImageUpload}
+              />
               <Avatar username={myUsername || "?"} photo={null} size={6} />
               <input
                 ref={inputRef}
@@ -491,7 +658,7 @@ export default function Comunidade() {
                 </motion.button>
               )}
             </div>
-            <p className="text-[9px] text-muted-foreground/25 mt-1 text-center">Enter para enviar • passe o mouse para reagir • cole imagem URL</p>
+            <p className="text-[9px] text-muted-foreground/25 mt-1 text-center">Enter para enviar • clique no avatar para ver perfil • 📎 foto até 2MB</p>
           </div>
         )}
       </div>
@@ -499,6 +666,12 @@ export default function Comunidade() {
       <AnimatePresence>
         {showCreate && (
           <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={(room) => setRooms(prev => [...prev, room])} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedUser && (
+          <UserPopup user={selectedUser} onClose={() => setSelectedUser(null)} myUsername={myUsername} />
         )}
       </AnimatePresence>
     </div>

@@ -3,6 +3,7 @@ import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTabl
 import { eq, or, and, desc, asc, ne, sql, inArray, lt } from "drizzle-orm";
 import { requireAuth } from "../lib/infinity-auth.js";
 import { logger } from "../lib/logger.js";
+import { randomBytes } from "node:crypto";
 
 const router: IRouter = Router();
 
@@ -500,6 +501,45 @@ router.post("/chat/messages/:id/react", requireAuth, async (req, res): Promise<v
     logger.error({ err }, "Failed to toggle reaction");
     res.status(500).json({ error: "Erro interno" });
   }
+});
+
+// ── Chat image upload (temp in-memory store, 30 min TTL) ──────────────────────
+interface ChatImgEntry { mimeType: string; data: string; expires: number }
+const _chatImgStore = new Map<string, ChatImgEntry>();
+const CHAT_IMG_TTL = 30 * 60 * 1000;
+function cleanChatImgStore() {
+  const now = Date.now();
+  for (const [k, v] of _chatImgStore) if (v.expires < now) _chatImgStore.delete(k);
+}
+
+router.post("/chat/upload", requireAuth, async (req, res): Promise<void> => {
+  const { dataUri } = req.body as { dataUri?: string };
+  if (!dataUri || typeof dataUri !== "string") {
+    res.status(400).json({ error: "dataUri obrigatório" }); return;
+  }
+  const match = /^data:(image\/(jpeg|jpg|png|gif|webp));base64,(.+)$/.exec(dataUri);
+  if (!match) {
+    res.status(400).json({ error: "Formato inválido. Use PNG, JPEG, GIF ou WEBP." }); return;
+  }
+  const mimeType = match[1]!;
+  const base64Data = match[3]!;
+  if (base64Data.length > 3_000_000) {
+    res.status(413).json({ error: "Imagem muito grande (máximo ~2MB)." }); return;
+  }
+  cleanChatImgStore();
+  const id = randomBytes(16).toString("hex");
+  _chatImgStore.set(id, { mimeType, data: base64Data, expires: Date.now() + CHAT_IMG_TTL });
+  res.json({ url: `/api/infinity/chat/img/${id}` });
+});
+
+router.get("/chat/img/:id", (req, res): void => {
+  const entry = _chatImgStore.get((req.params as { id: string }).id);
+  if (!entry || entry.expires < Date.now()) {
+    res.status(404).json({ error: "Imagem não encontrada ou expirada" }); return;
+  }
+  res.setHeader("Content-Type", entry.mimeType);
+  res.setHeader("Cache-Control", "public, max-age=1800");
+  res.end(Buffer.from(entry.data, "base64"));
 });
 
 // ── Notifications ─────────────────────────────────────────────────────────────

@@ -344,7 +344,17 @@ export default function Consultas() {
       } finally {
         clearTimeout(fetchTimer);
       }
-      const data = await r.json() as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
+      const ct = r.headers.get("content-type") ?? "";
+      if (!ct.includes("application/json")) {
+        const txt = await r.text().catch(() => "");
+        throw new Error(
+          txt.includes("<!DOCTYPE") || txt.includes("<html")
+            ? "Serviços temporariamente indisponíveis. Tente novamente em instantes."
+            : txt.slice(0, 200) || "Resposta inválida do servidor",
+        );
+      }
+      const rawData = await r.json() as Record<string, unknown>;
+      const data = { success: r.ok, ...rawData } as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
       if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
         toast.error("Limite diário atingido.");
