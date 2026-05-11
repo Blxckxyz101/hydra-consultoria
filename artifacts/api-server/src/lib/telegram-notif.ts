@@ -65,18 +65,39 @@ export async function sendSaleNotification(params: SaleNotifParams): Promise<voi
   const valor = "R$ " + (amountCents / 100).toFixed(2).replace(".", ",");
   const validade = fmtDateBR(expiresAt);
 
-  const header = isRenewal
-    ? "🔄 <b>RECARGA VIP</b> 🔥"
-    : "🎉 <b>NOVO CLIENTE VIP</b> 🎉";
+  const divider = "━━━━━━━━━━━━━━━━━━━━━";
 
-  const text = [
-    header,
-    "",
-    `🆔 <b>ID:</b> <code>${maskedId}</code>`,
-    `💰 <b>Valor:</b> ${valor}`,
-    `📱 <b>Plano:</b> ${planLabel}`,
-    `📅 <b>Validade:</b> ${validade}`,
-  ].join("\n");
+  let text: string;
+
+  if (isRenewal) {
+    text = [
+      divider,
+      `⚡ <b>RENOVAÇÃO CONFIRMADA</b>`,
+      `<b>∞ Infinity Search</b>`,
+      divider,
+      ``,
+      `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,
+      `💳 <b>Valor ······</b> <b>${valor}</b>`,
+      `📦 <b>Plano ······</b> <b>${planLabel}</b>`,
+      `⏳ <b>Válido até ·</b> <code>${validade}</code>`,
+      ``,
+      `<blockquote>Renovação processada com sucesso. Continue explorando sem limites. 🔁</blockquote>`,
+    ].join("\n");
+  } else {
+    text = [
+      divider,
+      `🔓 <b>NOVO ACESSO VIP</b>`,
+      `<b>∞ Infinity Search</b>`,
+      divider,
+      ``,
+      `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,
+      `💳 <b>Valor ······</b> <b>${valor}</b>`,
+      `📦 <b>Plano ······</b> <b>${planLabel}</b>`,
+      `⏳ <b>Válido até ·</b> <code>${validade}</code>`,
+      ``,
+      `<blockquote>Acesso ao painel mais completo do Brasil. Bem-vindo ao time. 🇧🇷</blockquote>`,
+    ].join("\n");
+  }
 
   await sendToChannel(text);
 }

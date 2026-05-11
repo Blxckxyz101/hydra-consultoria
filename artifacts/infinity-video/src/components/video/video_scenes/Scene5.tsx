@@ -100,14 +100,14 @@ export function Scene5() {
         >
           <div className="flex items-center gap-2">
             <span className="w-12 h-px bg-[#0ea5e9]/40" />
-            <span className="text-[10px] font-mono text-[#0ea5e9]/70 tracking-[0.25em] uppercase">entre em contato</span>
+            <span className="text-[10px] font-mono text-[#0ea5e9]/70 tracking-[0.25em] uppercase">entre em contato conosco</span>
             <span className="w-12 h-px bg-[#0ea5e9]/40" />
           </div>
           <p className="text-[11px] text-white/50 tracking-widest font-mono">
             🌐 <span className="text-[#38bdf8]">infinitysearch.pro</span>
           </p>
           <p className="text-[11px] text-white/50 tracking-widest font-mono">
-            ✉️ <span className="text-[#38bdf8]">Telegram: @Blxckxyz</span>
+            💬 <span className="text-[#38bdf8]">Entre em contato via WhatsApp</span>
           </p>
         </motion.div>
       </div>
