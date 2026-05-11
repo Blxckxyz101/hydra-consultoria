@@ -4,13 +4,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   MapPin, Music, ExternalLink, Eye, Crown, Shield, UserPlus, Check, Loader2,
   Instagram, Twitter, Youtube, Github, Twitch, Globe, MessageCircle, ArrowLeft,
-  Users, Calendar, UserCheck,
+  Users, Calendar, UserCheck, Copy, CheckCheck, Share2,
 } from "lucide-react";
-import { useInfinityMe } from "@workspace/api-client-react";
 
+// Fetch with optional auth
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("infinity_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function isLoggedIn(): boolean {
+  return !!localStorage.getItem("infinity_token");
 }
 
 function hashColor(str: string): string {
@@ -45,7 +49,7 @@ function SocialIcon({ type }: { type: string }) {
   if (t === "github") return <Github className="w-4 h-4" />;
   if (t === "twitch") return <Twitch className="w-4 h-4" />;
   if (t === "discord") return <MessageCircle className="w-4 h-4" />;
-  if (t === "tiktok") return <span className="text-sm font-bold">TT</span>;
+  if (t === "tiktok") return <span className="text-xs font-bold">TT</span>;
   if (t === "roblox") return <span className="text-xs font-bold">RB</span>;
   return <Globe className="w-4 h-4" />;
 }
@@ -64,10 +68,34 @@ function socialUrl(link: SocialLink): string {
   return `https://${link.value}`;
 }
 
+function SpotifyEmbed({ url }: { url: string }) {
+  // Try to extract a Spotify embed URL
+  const match = url.match(/spotify\.com\/(track|album|playlist|artist)\/([A-Za-z0-9]+)/);
+  if (!match) return null;
+  const embedUrl = `https://open.spotify.com/embed/${match[1]}/${match[2]}?utm_source=generator&theme=0`;
+  return (
+    <iframe
+      src={embedUrl}
+      width="100%"
+      height="80"
+      frameBorder="0"
+      allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+      loading="lazy"
+      className="rounded-xl"
+    />
+  );
+}
+
 export default function PerfilPublico() {
   const [, params] = useRoute("/u/:username");
   const username = params?.username ?? "";
-  const { data: me } = useInfinityMe({});
+  const loggedIn = isLoggedIn();
+  const meUsername = loggedIn ? (() => {
+    try {
+      const payload = localStorage.getItem("infinity_token")?.split(".")?.[1];
+      return payload ? JSON.parse(atob(payload))?.username : null;
+    } catch { return null; }
+  })() : null;
 
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,22 +103,35 @@ export default function PerfilPublico() {
   const [friendStatus, setFriendStatus] = useState<"none" | "sent" | "accepted" | "received">("none");
   const [friendId, setFriendId] = useState<number | null>(null);
   const [friendLoading, setFriendLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const isMe = me?.username === username.toLowerCase();
+  // Get own username from /me if logged in
+  const [myUsername, setMyUsername] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!loggedIn) return;
+    fetch("/api/infinity/me", { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { username?: string } | null) => { if (d?.username) setMyUsername(d.username); })
+      .catch(() => {});
+  }, [loggedIn]);
+
+  const isMe = myUsername ? myUsername === username.toLowerCase() : false;
+
+  // Load profile (no auth needed)
   useEffect(() => {
     if (!username) return;
     setLoading(true); setNotFound(false);
-    fetch(`/api/infinity/u/${username}`, { headers: authHeaders() })
+    fetch(`/api/infinity/u/${username}`)
       .then(r => { if (r.status === 404) { setNotFound(true); return null; } return r.json(); })
       .then((data: PublicProfile | null) => { if (data) setProfile(data); })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [username]);
 
-  // Load friendship status
+  // Load friendship status (only if logged in)
   useEffect(() => {
-    if (!me || isMe) return;
+    if (!loggedIn || isMe || !myUsername) return;
     fetch("/api/infinity/friends", { headers: authHeaders() })
       .then(r => r.json())
       .then((list: { id: number; username: string; status: string; direction: string }[]) => {
@@ -103,7 +144,7 @@ export default function PerfilPublico() {
         else setFriendStatus("none");
       })
       .catch(() => {});
-  }, [me, username, isMe]);
+  }, [loggedIn, myUsername, username, isMe]);
 
   const sendFriendRequest = async () => {
     setFriendLoading(true);
@@ -126,197 +167,307 @@ export default function PerfilPublico() {
     } finally { setFriendLoading(false); }
   };
 
+  const copyLink = async () => {
+    const url = `${window.location.origin}/u/${profile?.username ?? username}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // fallback
+      const el = document.createElement("textarea");
+      el.value = url;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  // ── States ────────────────────────────────────────────────────────────────
+
   if (loading) return (
-    <div className="flex items-center justify-center h-[calc(100vh-3.5rem)] lg:h-screen">
-      <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--color-primary)" }} />
+    <div className="min-h-screen flex items-center justify-center" style={{ background: "hsl(220 35% 4%)" }}>
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
+        <p className="text-xs text-white/40 uppercase tracking-widest">Carregando perfil...</p>
+      </div>
     </div>
   );
 
   if (notFound || !profile) return (
-    <div className="flex flex-col items-center justify-center h-[calc(100vh-3.5rem)] lg:h-screen gap-4 text-center px-4">
-      <div className="text-5xl">👤</div>
-      <h1 className="text-2xl font-bold">Usuário não encontrado</h1>
-      <p className="text-muted-foreground text-sm">@{username} não existe na plataforma.</p>
-      <Link href="/"><button className="px-4 py-2 rounded-xl text-sm font-medium border border-white/10 hover:bg-white/5 transition-colors">← Voltar</button></Link>
+    <div className="min-h-screen flex flex-col items-center justify-center gap-5 text-center px-4" style={{ background: "hsl(220 35% 4%)" }}>
+      <div className="text-6xl">👤</div>
+      <h1 className="text-2xl font-bold text-white">Usuário não encontrado</h1>
+      <p className="text-white/40 text-sm">@{username} não existe na plataforma.</p>
+      <a href="/" className="px-5 py-2.5 rounded-xl text-sm font-medium border border-white/10 hover:bg-white/5 transition-colors text-white/70">
+        ← Ir para Hydra Consultoria
+      </a>
     </div>
   );
 
-  const accent = profile.accentColor ?? "var(--color-primary)";
+  const accent = profile.accentColor ?? "#00d9ff";
   const statusColor = STATUS_COLOR[profile.status] ?? "#6b7280";
   const joinDate = new Date(profile.createdAt).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const isSpotify = profile.musicUrl?.includes("spotify.com");
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] lg:min-h-screen flex flex-col items-center justify-center py-8 px-4">
-      <div className="w-full max-w-md">
-        {/* Back button */}
-        <button onClick={() => window.history.back()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-4 transition-colors">
-          <ArrowLeft className="w-3.5 h-3.5" /> Voltar
-        </button>
+    <div
+      className="min-h-screen flex flex-col items-center justify-center py-10 px-4 relative overflow-hidden"
+      style={{ background: "hsl(220 35% 4%)" }}
+    >
+      {/* Ambient background glow */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full opacity-[0.06] blur-[120px]"
+          style={{ background: accent }} />
+      </div>
 
-        {/* Profile card — guns.lol style */}
+      <div className="w-full max-w-sm relative z-10">
+        {/* Back / nav links */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = "/")}
+            className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/70 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Voltar
+          </button>
+          <div className="flex items-center gap-2">
+            {/* Copy link button */}
+            <motion.button
+              onClick={copyLink}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-medium border transition-all"
+              style={{
+                borderColor: copied ? `${accent}60` : "rgba(255,255,255,0.1)",
+                color: copied ? accent : "rgba(255,255,255,0.4)",
+                background: copied ? `${accent}10` : "transparent",
+              }}
+            >
+              {copied ? <CheckCheck className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              {copied ? "Copiado!" : "Copiar link"}
+            </motion.button>
+          </div>
+        </div>
+
+        {/* Profile card */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative rounded-3xl overflow-hidden border border-white/10"
-          style={{ boxShadow: `0 0 80px -20px ${accent}40` }}
+          initial={{ opacity: 0, y: 24, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ type: "spring", duration: 0.5 }}
+          className="relative rounded-3xl overflow-hidden border border-white/[0.07]"
+          style={{ boxShadow: `0 0 100px -30px ${accent}35, 0 0 0 1px rgba(255,255,255,0.04)` }}
         >
-          {/* Banner / background */}
-          <div className="relative h-32 overflow-hidden">
+          {/* Banner */}
+          <div className="relative h-36 overflow-hidden">
             {profile.banner ? (
               <img src={profile.banner} alt="" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full" style={{
-                background: `radial-gradient(ellipse at 30% 50%, ${accent}30 0%, transparent 70%), radial-gradient(ellipse at 80% 20%, ${accent}15 0%, transparent 60%), hsl(220 35% 6%)`,
+                background: `radial-gradient(ellipse at 25% 60%, ${accent}25 0%, transparent 65%),
+                             radial-gradient(ellipse at 80% 20%, ${accent}12 0%, transparent 55%),
+                             linear-gradient(135deg, hsl(220 40% 8%) 0%, hsl(220 35% 5%) 100%)`,
               }} />
             )}
-            <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.7) 100%)" }} />
+            {/* gradient fade at bottom */}
+            <div className="absolute inset-0" style={{
+              background: "linear-gradient(to bottom, transparent 30%, hsl(220 35% 4%) 100%)"
+            }} />
 
-            {/* Views counter */}
-            <div className="absolute top-3 right-3 flex items-center gap-1 bg-black/40 backdrop-blur-sm px-2 py-1 rounded-full">
-              <Eye className="w-3 h-3 text-white/60" />
-              <span className="text-[10px] text-white/60">{profile.views.toLocaleString("pt-BR")}</span>
+            {/* Views counter - top right */}
+            <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm px-2.5 py-1 rounded-full border border-white/10">
+              <Eye className="w-3 h-3 text-white/50" />
+              <span className="text-[10px] text-white/50 font-medium">{profile.views.toLocaleString("pt-BR")}</span>
             </div>
           </div>
 
           {/* Card body */}
-          <div className="relative px-5 pb-5" style={{ background: "hsl(220 35% 6% / 0.97)", backdropFilter: "blur(20px)" }}>
-            {/* Avatar */}
-            <div className="relative -mt-10 mb-3">
-              <div className="relative inline-block">
-                <div className="w-20 h-20 rounded-2xl overflow-hidden border-4"
-                  style={{ borderColor: accent + "60", background: profile.photo ? "transparent" : hashColor(profile.username) }}>
+          <div
+            className="relative px-5 pb-6"
+            style={{ background: "hsl(220 35% 5% / 0.98)", backdropFilter: "blur(20px)" }}
+          >
+            {/* Avatar — overlaps banner */}
+            <div className="relative -mt-12 mb-4 flex items-end justify-between">
+              <div className="relative">
+                <div
+                  className="w-20 h-20 rounded-2xl overflow-hidden border-[3px] flex items-center justify-center font-bold text-3xl"
+                  style={{
+                    borderColor: `${accent}50`,
+                    background: profile.photo ? "transparent" : hashColor(profile.username),
+                    boxShadow: `0 0 0 1px ${accent}20, 0 8px 32px rgba(0,0,0,0.5)`,
+                  }}
+                >
                   {profile.photo
                     ? <img src={profile.photo} alt="" className="w-full h-full object-cover" />
-                    : <span className="w-full h-full flex items-center justify-center text-3xl font-bold text-black">{profile.displayName[0]?.toUpperCase()}</span>
+                    : <span style={{ color: "#000" }}>{profile.displayName[0]?.toUpperCase()}</span>
                   }
                 </div>
-                {/* Status dot */}
-                <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-background flex items-center justify-center"
-                  style={{ background: statusColor }}>
-                </span>
+                {/* Status indicator */}
+                <div
+                  className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center"
+                  style={{ borderColor: "hsl(220 35% 5%)", background: statusColor }}
+                  title={STATUS_LABEL[profile.status]}
+                />
               </div>
-            </div>
 
-            {/* Name + role */}
-            <div className="flex items-start justify-between gap-2 mb-1">
-              <div>
-                <h1 className="text-xl font-bold leading-none">{profile.displayName}</h1>
-                <p className="text-xs text-muted-foreground mt-0.5">@{profile.username}</p>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0 pt-1">
+              {/* Role badges */}
+              <div className="flex gap-1.5 pb-1">
                 {profile.role === "admin" && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: "#f59e0b20", color: "#f59e0b", border: "1px solid #f59e0b40" }}>
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold"
+                    style={{ background: "#f59e0b18", color: "#f59e0b", border: "1px solid #f59e0b35" }}>
                     <Crown className="w-3 h-3" /> ADMIN
                   </span>
                 )}
                 {profile.role === "vip" && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `${accent}20`, color: accent, border: `1px solid ${accent}40` }}>
+                  <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold"
+                    style={{ background: `${accent}18`, color: accent, border: `1px solid ${accent}35` }}>
                     <Shield className="w-3 h-3" /> VIP
                   </span>
                 )}
               </div>
             </div>
 
+            {/* Name */}
+            <div className="mb-1">
+              <h1 className="text-xl font-bold text-white leading-tight">{profile.displayName}</h1>
+              <p className="text-xs text-white/35 mt-0.5 font-mono">@{profile.username}</p>
+            </div>
+
             {/* Status */}
-            <div className="flex items-center gap-1.5 mb-3">
+            <div className="flex items-center gap-2 mb-3">
               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: statusColor }} />
-              <span className="text-xs" style={{ color: statusColor }}>{STATUS_LABEL[profile.status]}</span>
-              {profile.statusMsg && <span className="text-xs text-muted-foreground/60">— {profile.statusMsg}</span>}
+              <span className="text-xs font-medium" style={{ color: statusColor }}>
+                {STATUS_LABEL[profile.status]}
+              </span>
+              {profile.statusMsg && (
+                <span className="text-xs text-white/35">— {profile.statusMsg}</span>
+              )}
             </div>
 
             {/* Bio */}
             {profile.bio && (
-              <p className="text-sm text-foreground/80 leading-relaxed mb-4 border-l-2 pl-3" style={{ borderColor: accent + "60" }}>
+              <div className="mb-4 px-3 py-2.5 rounded-xl text-sm text-white/75 leading-relaxed border-l-[2px]"
+                style={{ borderColor: `${accent}60`, background: `${accent}06` }}>
                 {profile.bio}
-              </p>
+              </div>
             )}
 
-            {/* Meta info */}
-            <div className="flex flex-wrap gap-3 mb-4">
+            {/* Meta row */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-4 text-xs text-white/35">
               {profile.location && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
-                  <MapPin className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="w-3 h-3" />
                   {profile.location}
                 </div>
               )}
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
-                <Calendar className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-3 h-3" />
                 Membro desde {joinDate}
               </div>
             </div>
 
-            {/* Social links */}
+            {/* Spotify embed (if spotify URL) */}
+            {profile.musicUrl && isSpotify && (
+              <div className="mb-4">
+                <SpotifyEmbed url={profile.musicUrl} />
+              </div>
+            )}
+
+            {/* Music link (non-Spotify) */}
+            {profile.musicUrl && !isSpotify && (
+              <a href={profile.musicUrl} target="_blank" rel="noopener noreferrer"
+                className="mb-4 flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all hover:scale-[1.02] group"
+                style={{ borderColor: `${accent}25`, background: `${accent}08` }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ background: `${accent}20` }}>
+                  <Music className="w-4 h-4" style={{ color: accent }} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[9px] text-white/30 uppercase tracking-widest mb-0.5">Músicas</p>
+                  <p className="text-xs font-medium truncate" style={{ color: accent }}>
+                    {profile.musicUrl.replace(/^https?:\/\//, "").split("/")[0]}
+                  </p>
+                </div>
+                <ExternalLink className="w-3.5 h-3.5 text-white/20 group-hover:text-white/50 transition-colors shrink-0" />
+              </a>
+            )}
+
+            {/* Social links grid */}
             {profile.socialLinks.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-4">
                 {profile.socialLinks.map((link, i) => (
                   <a key={i} href={socialUrl(link)} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all hover:scale-105"
-                    style={{ borderColor: `${accent}40`, color: accent, background: `${accent}10` }}>
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all hover:scale-105"
+                    style={{ borderColor: `${accent}30`, color: accent, background: `${accent}10` }}>
                     <SocialIcon type={link.type} />
-                    {link.type}
+                    <span className="capitalize">{link.type}</span>
                   </a>
                 ))}
               </div>
             )}
 
-            {/* Music player */}
-            {profile.musicUrl && (
-              <div className="mb-4 p-3 rounded-xl border border-white/5 bg-white/[0.03] flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${accent}20` }}>
-                  <Music className="w-4 h-4" style={{ color: accent }} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest mb-0.5">Músicas</p>
-                  <a href={profile.musicUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-xs font-medium hover:underline truncate block" style={{ color: accent }}>
-                    {profile.musicUrl.replace(/^https?:\/\//, "").split("/")[0]}
-                  </a>
-                </div>
-                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
-              </div>
-            )}
+            {/* Divider */}
+            <div className="border-t border-white/[0.05] mb-4" />
 
             {/* Action buttons */}
-            {!isMe && me && (
+            {!isMe && loggedIn && (
               <div className="flex gap-2">
                 {friendStatus === "none" && (
                   <button onClick={sendFriendRequest} disabled={friendLoading}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all hover:opacity-90 disabled:opacity-50"
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all hover:opacity-90 disabled:opacity-50 active:scale-95"
                     style={{ background: accent, color: "#000" }}>
                     {friendLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
                     Adicionar
                   </button>
                 )}
                 {friendStatus === "sent" && (
-                  <div className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border border-white/10 text-muted-foreground">
+                  <div className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm border border-white/10 text-white/40">
                     <Check className="w-4 h-4" /> Pedido enviado
                   </div>
                 )}
                 {friendStatus === "received" && (
                   <button onClick={acceptFriendRequest} disabled={friendLoading}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all"
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
                     style={{ background: accent, color: "#000" }}>
                     {friendLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
                     Aceitar pedido
                   </button>
                 )}
                 {friendStatus === "accepted" && (
-                  <div className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border border-green-500/30 text-green-400">
+                  <div className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm border border-green-500/25 text-green-400">
                     <Users className="w-4 h-4" /> Amigos
                   </div>
                 )}
                 <Link href="/comunidade">
-                  <button className="px-4 py-2.5 rounded-xl text-sm font-medium border border-white/10 hover:bg-white/5 transition-colors">
+                  <button className="px-4 py-2.5 rounded-xl border border-white/10 hover:bg-white/5 transition-colors text-white/60 hover:text-white">
                     <MessageCircle className="w-4 h-4" />
                   </button>
                 </Link>
               </div>
             )}
 
+            {/* Not logged in — CTA */}
+            {!loggedIn && (
+              <div className="space-y-2">
+                <a href="/registro"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold transition-all hover:opacity-90 active:scale-95"
+                  style={{ background: accent, color: "#000" }}>
+                  <UserPlus className="w-4 h-4" />
+                  Criar conta na Hydra
+                </a>
+                <a href="/login"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-medium border border-white/10 text-white/50 hover:text-white hover:bg-white/5 transition-all">
+                  Já tenho conta — Entrar
+                </a>
+              </div>
+            )}
+
+            {/* Edit own profile */}
             {isMe && (
               <Link href="/perfil">
-                <button className="w-full py-2.5 rounded-xl text-sm font-bold border border-white/10 hover:bg-white/5 transition-colors">
-                  Editar perfil
+                <button className="w-full py-2.5 rounded-xl text-sm font-bold border border-white/10 hover:bg-white/5 text-white/60 hover:text-white transition-all">
+                  Editar meu perfil
                 </button>
               </Link>
             )}
@@ -324,7 +475,16 @@ export default function PerfilPublico() {
         </motion.div>
 
         {/* Hydra branding */}
-        <p className="text-center text-[10px] text-muted-foreground/30 mt-4 uppercase tracking-widest">Hydra Consultoria</p>
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <div className="w-4 h-4 opacity-40">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="text-cyan-400">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+            </svg>
+          </div>
+          <a href="/" className="text-[10px] text-white/20 hover:text-white/50 transition-colors uppercase tracking-[0.35em]">
+            Hydra Consultoria
+          </a>
+        </div>
       </div>
     </div>
   );

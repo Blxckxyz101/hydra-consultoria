@@ -45,11 +45,14 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
   };
 }
 
-// ── GET /api/infinity/u/:username — public profile ─────────────────────────────
+// ── GET /api/infinity/u/:username — public profile (NO auth required) ──────────
 router.get("/u/:username", async (req, res): Promise<void> => {
   const { username } = req.params as { username: string };
   const u = safeUsername(username);
   if (!u) { res.status(400).json({ error: "Username inválido" }); return; }
+
+  // CORS-friendly: allow public access
+  res.setHeader("Access-Control-Allow-Origin", "*");
 
   try {
     const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);

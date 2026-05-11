@@ -41,41 +41,42 @@ function NotFound() {
 function Router() {
   return (
     <Switch>
+      {/* ── Rotas públicas (sem login) ── */}
       <Route path="/login" component={Login} />
-      <Route path="/registro">
-        <Registro />
-      </Route>
-      <Route path="/planos">
-        <Registro />
-      </Route>
+      <Route path="/registro"><Registro /></Route>
+      <Route path="/planos"><Registro /></Route>
+
+      {/* ── Perfil público — acessível sem conta ── */}
+      <Route path="/u/:username" component={PerfilPublico} />
+
+      {/* ── Rotas protegidas ── */}
       <Route>
         <AuthGuard>
           <TermsGuard>
-          <Layout>
-            <Switch>
-              <Route path="/" component={Overview} />
-              <Route path="/consultas" component={Consultas} />
-              <Route path="/ia" component={IA} />
-              <Route path="/dossie" component={Dossie} />
-              <Route path="/favoritos" component={Favoritos} />
-              <Route path="/bases">
-                <AdminGuard><Bases /></AdminGuard>
-              </Route>
-              <Route path="/perfil" component={Perfil} />
-              <Route path="/configuracoes" component={Configuracoes} />
-              <Route path="/personalizar" component={Personalizar} />
-              <Route path="/skylers" component={Skylers} />
-              <Route path="/api-promo" component={SkylersPromo} />
-              <Route path="/suporte" component={Suporte} />
-              <Route path="/historico" component={Historico} />
-              <Route path="/planos">{() => { window.location.replace("/registro"); return null; }}</Route>
-              <Route path="/afiliados" component={Afiliados} />
-              <Route path="/carteira" component={Carteira} />
-              <Route path="/comunidade" component={Comunidade} />
-              <Route path="/u/:username" component={PerfilPublico} />
-              <Route component={NotFound} />
-            </Switch>
-          </Layout>
+            <Layout>
+              <Switch>
+                <Route path="/" component={Overview} />
+                <Route path="/consultas" component={Consultas} />
+                <Route path="/ia" component={IA} />
+                <Route path="/dossie" component={Dossie} />
+                <Route path="/favoritos" component={Favoritos} />
+                <Route path="/bases">
+                  <AdminGuard><Bases /></AdminGuard>
+                </Route>
+                <Route path="/perfil" component={Perfil} />
+                <Route path="/configuracoes" component={Configuracoes} />
+                <Route path="/personalizar" component={Personalizar} />
+                <Route path="/skylers" component={Skylers} />
+                <Route path="/api-promo" component={SkylersPromo} />
+                <Route path="/suporte" component={Suporte} />
+                <Route path="/historico" component={Historico} />
+                <Route path="/planos">{() => { window.location.replace("/registro"); return null; }}</Route>
+                <Route path="/afiliados" component={Afiliados} />
+                <Route path="/carteira" component={Carteira} />
+                <Route path="/comunidade" component={Comunidade} />
+                <Route component={NotFound} />
+              </Switch>
+            </Layout>
           </TermsGuard>
         </AuthGuard>
       </Route>
