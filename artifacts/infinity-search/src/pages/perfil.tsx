@@ -527,7 +527,7 @@ export default function Perfil() {
               <div className="text-sm font-semibold text-foreground">Ocultar seu @usuário</div>
               <div className="text-[11px] text-muted-foreground mt-0.5">
                 {hideUsername
-                  ? <>Aparece como <span style={{ color: "var(--color-primary)" }}>@infinitysearch</span> para você</>
+                  ? <>Aparece como <span style={{ color: "var(--color-primary)" }}>@hydraconsultoria</span> para você</>
                   : <>Mostra seu @ real — <span className="text-white/40">somente você vê isso</span></>}
               </div>
             </div>

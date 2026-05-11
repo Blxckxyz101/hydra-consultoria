@@ -303,7 +303,7 @@ router.get("/referral", requireAuth, async (req, res) => {
     .orderBy(desc(infinityReferralsTable.createdAt));
 
   const totalBonus = referrals.filter(r => !!r.appliedAt).reduce((acc, r) => acc + r.bonusDays, 0);
-  const baseUrl = process.env.PANEL_URL ?? "https://infinitysearch.pro";
+  const baseUrl = process.env.PANEL_URL ?? "https://hydraconsultoria.pro";
 
   res.json({
     referralCode: username,

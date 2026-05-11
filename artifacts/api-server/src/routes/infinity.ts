@@ -704,7 +704,7 @@ async function callReceitaWs(cnpj: string, signal: AbortSignal): Promise<{
   try {
     const r = await fetch(`https://www.receitaws.com.br/v1/cnpj/${cnpj}`, {
       signal,
-      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+      headers: { "Accept": "application/json", "User-Agent": "HydraConsultoria/1.0" },
     });
     if (!r.ok) return { ok: false, error: `ReceitaWS HTTP ${r.status}` };
     const d = await r.json() as ReceitaWsResponse & { message?: string };
@@ -793,7 +793,7 @@ async function callCnpjWs(cnpj: string, signal: AbortSignal): Promise<{
   try {
     const r = await fetch(`https://publica.cnpj.ws/v1/cnpj/${cnpj}`, {
       signal,
-      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+      headers: { "Accept": "application/json", "User-Agent": "HydraConsultoria/1.0" },
     });
     if (!r.ok) return { ok: false, error: `CNPJ.ws HTTP ${r.status}` };
     const d = await r.json() as CnpjWsResponse;
@@ -869,7 +869,7 @@ async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
   try {
     const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, {
       signal,
-      headers: { "Accept": "application/json", "User-Agent": "InfinitySearch/1.0" },
+      headers: { "Accept": "application/json", "User-Agent": "HydraConsultoria/1.0" },
     });
     if (!r.ok) return { ok: false, error: `BrasilAPI HTTP ${r.status}` };
     const d = await r.json() as BrasilApiCnpjResponse;
@@ -2379,7 +2379,7 @@ const CONSULTA_TOOL = {
   function: {
     name: "consultar_infinity",
     description:
-      "Executa uma consulta OSINT no banco de dados do Infinity Search. " +
+      "Executa uma consulta OSINT no banco de dados da Hydra Consultoria. " +
       "Use SEMPRE que o usuário pedir para buscar, consultar, pesquisar ou investigar qualquer dado sobre pessoas, veículos, empresas, crédito ou governo brasileiro. " +
       "Nunca invente dados — consulte sempre a ferramenta.",
     parameters: {
@@ -2510,7 +2510,7 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é a Infinity IA — agente OSINT profissional da plataforma Infinity Search. Responda SEMPRE em português brasileiro.\n\n" +
+    "Você é a Hydra IA — agente OSINT profissional da plataforma Hydra Consultoria. Responda SEMPRE em português brasileiro.\n\n" +
 
     "══════════════════════════════════════\n" +
     "REGRA ABSOLUTA — PROIBIÇÕES ESTRITAS\n" +

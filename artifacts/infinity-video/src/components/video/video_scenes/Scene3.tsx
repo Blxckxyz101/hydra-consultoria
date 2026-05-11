@@ -26,7 +26,7 @@ export function Scene3() {
       <div className="absolute inset-0 overflow-hidden opacity-40">
         <motion.img 
           src={img2}
-          alt="Infinity Search Features"
+          alt="Hydra Consultoria Features"
           className="w-full h-full object-cover"
           initial={{ scale: 1.1, rotate: -2 }}
           animate={phase >= 1 ? { scale: 1.05, rotate: 0 } : { scale: 1.1, rotate: -2 }}

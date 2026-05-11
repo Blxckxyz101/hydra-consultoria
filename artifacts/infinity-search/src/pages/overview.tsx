@@ -303,7 +303,7 @@ export default function Overview() {
             <div className="font-bold text-lg sm:text-xl tracking-tight truncate">{me?.displayName ?? me?.username ?? "operador"}</div>
             <div className="text-[10px] font-mono truncate" style={{ color: "var(--color-primary)" }}>
               {typeof window !== "undefined" && localStorage.getItem("infinity_hide_username") === "true"
-                ? "@infinitysearch"
+                ? "@hydraconsultoria"
                 : `@${me?.username ?? ""}`}
             </div>
             <div className="text-[10px] uppercase tracking-[0.35em] text-white/40 mt-0.5">{me?.role === "vip" ? "VIP" : me?.role ?? "user"}</div>
@@ -773,7 +773,7 @@ export default function Overview() {
       </motion.div>
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-4">
-        Infinity Search
+        Hydra Consultoria
       </div>
     </div>
   );

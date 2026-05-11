@@ -35,7 +35,7 @@ export function Scene2() {
       <div className="relative w-full aspect-[3/4] rounded-xl overflow-hidden border border-[#0ea5e9]/30 shadow-[0_0_30px_rgba(14,165,233,0.15)] bg-[#0f172a]/50 backdrop-blur-md">
         <motion.img 
           src={img1}
-          alt="Infinity Search Dashboard"
+          alt="Hydra Consultoria Dashboard"
           className="w-full h-full object-cover opacity-80 mix-blend-screen"
           initial={{ scale: 1.2, opacity: 0 }}
           animate={phase >= 1 ? { scale: 1, opacity: 0.8 } : { scale: 1.2, opacity: 0 }}

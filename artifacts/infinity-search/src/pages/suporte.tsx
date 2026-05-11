@@ -31,7 +31,7 @@ const LINKS = [
   {
     label: "Canal de Atualizações",
     desc: "Novidades oficiais da plataforma",
-    url: "https://t.me/infinitysearchchannel",
+    url: "https://t.me/hydraconsultoria",
     icon: "📢",
     color: "--color-chart-4",
   },

@@ -2306,7 +2306,7 @@ bot.command("osint", async ctx => {
   );
 });
 
-// ── Start Infinity Search consultation bot ────────────────────────────────────
+// ── Start Hydra Consultoria consultation bot ────────────────────────────────────
 startInfinityBot();
 
 // ── Launch ────────────────────────────────────────────────────────────────────

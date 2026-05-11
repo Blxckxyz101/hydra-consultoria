@@ -53,7 +53,7 @@ function CopyBtn({ text }: { text: string }) {
 function buildReport(dossie: Dossie): string {
   const lines: string[] = [
     "═══════════════════════════════════════",
-    `  INFINITY SEARCH — DOSSIÊ FORENSE`,
+    `  HYDRA CONSULTORIA — DOSSIÊ FORENSE`,
     "═══════════════════════════════════════",
     `Título: ${dossie.title}`,
     `Criado: ${new Date(dossie.createdAt).toLocaleString("pt-BR")}`,
@@ -77,7 +77,7 @@ function buildReport(dossie: Dossie): string {
     lines.push("");
   });
   lines.push("═══════════════════════════════════════");
-  lines.push("Infinity Search");
+  lines.push("Hydra Consultoria");
   return lines.join("\n");
 }
 
@@ -165,7 +165,7 @@ function exportPdf(dossie: Dossie) {
 </head>
 <body>
   <div class="header">
-    <h1>∞ Infinity Search · Dossiê Forense</h1>
+    <h1>⚔ Hydra Consultoria · Dossiê Forense</h1>
     <div class="meta">
       ${dossie.title} &nbsp;·&nbsp;
       Criado: ${new Date(dossie.createdAt).toLocaleString("pt-BR")} &nbsp;·&nbsp;
@@ -178,7 +178,7 @@ function exportPdf(dossie: Dossie) {
     <div class="stat"><div class="label">Seções Total</div><div class="value">${dossie.items.reduce((s, it) => s + it.sections.length, 0)}</div></div>
   </div>
   ${itemsHtml}
-  <div class="footer">Infinity Search · Confidencial</div>
+  <div class="footer">Hydra Consultoria · Confidencial</div>
   <script>window.onload=()=>{window.print();}</script>
 </body>
 </html>`;
@@ -536,7 +536,7 @@ export default function Dossie() {
       )}
 
       <div className="text-center text-[10px] uppercase tracking-[0.5em] text-muted-foreground/60 pt-2">
-        Infinity Search
+        Hydra Consultoria
       </div>
     </div>
   );

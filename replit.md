@@ -82,7 +82,7 @@ The project is structured as a pnpm workspace monorepo.
 - **WhatsApp**: Target for abuse reporting functionality.
 - **Geass API** (`http://149.56.18.68:25584/api/consulta/<TIPO>`): OSINT provider with 24 tipos (cpf, nome, placa, chassi, telefone, pix, nis, cns, mae, pai, parentes, cep, frota, cnpj, fucionarios, score, email, rg, ip, titulo, endereco, irpf, obito, cheque). Key: `GeassZero` (env: `GEASS_API_KEY`).
 
-## Infinity Search (artifacts/infinity-search)
+## Hydra Consultoria (artifacts/infinity-search)
 
 - Sky/cyan branding, pt-BR UI, glass card design
 - 24 OSINT consulta tipos organized in category pills: Pessoa / Veículo / Empresa / Saúde / Outros

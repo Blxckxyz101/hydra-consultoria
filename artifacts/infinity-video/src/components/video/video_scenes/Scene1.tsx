@@ -14,7 +14,7 @@ export function Scene1() {
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
 
-  const text = "INFINITY";
+  const text = "HYDRA";
 
   return (
     <motion.div 

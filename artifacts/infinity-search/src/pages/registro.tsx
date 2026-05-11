@@ -5,7 +5,7 @@ import {
   QrCode, User, Lock, Gift, KeyRound, UserPlus,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
-import logoUrl from "@/assets/logo.png";
+import logoUrl from "@/assets/hydra-logo.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 
 interface Plan {
@@ -253,8 +253,8 @@ export default function Registro() {
           <img src={logoUrl} alt="" className="w-10 h-10 object-contain"
             style={{ filter: "drop-shadow(0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent))" }} />
           <div>
-            <div className="font-bold tracking-[0.3em] text-lg">INFINITY</div>
-            <div className="text-[9px] uppercase tracking-[0.5em] text-primary/60">SEARCH</div>
+            <div className="font-bold tracking-[0.3em] text-lg">HYDRA</div>
+            <div className="text-[9px] uppercase tracking-[0.5em] text-primary/60">CONSULTORIA</div>
           </div>
         </div>
 
@@ -492,7 +492,7 @@ export default function Registro() {
         </div>
 
         <p className="text-center mt-5 text-[10px] uppercase tracking-[0.3em] text-muted-foreground/40">
-          by infinity search · pagamento seguro via pix
+          by hydra consultoria · pagamento seguro via pix
         </p>
       </motion.div>
     </div>

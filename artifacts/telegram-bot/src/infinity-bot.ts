@@ -6,16 +6,16 @@ const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero";
 const SUPPORT_URL        = "https://t.me/Blxckxyz";
 const SUPPORT_URL2       = "https://t.me/xxmathexx";
 const SUPPORT_URL3       = "https://t.me/piancooz";
-const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? "https://infinitysearch.pro";
+const PANEL_URL          = process.env.INFINITY_PANEL_URL ?? "https://hydraconsultoria.pro";
 
 const LINE  = "═".repeat(44);
 const LINE2 = "─".repeat(44);
 const AUTHOR = "blxckxyz";
-const BOT_NAME_HDR = "᯽ INFINITY SEARCH ᯽";
+const BOT_NAME_HDR = "⚔ HYDRA CONSULTORIA ⚔";
 
 // ── Channel — only updates channel required ────────────────────────────────────
-const CHANNEL_INVITE   = "https://t.me/infinitysearchchannel";
-const CHANNEL_USERNAME = process.env.INFINITY_CHANNEL2_USERNAME ?? "@infinitysearchchannel";
+const CHANNEL_INVITE   = "https://t.me/hydraconsultoria";
+const CHANNEL_USERNAME = process.env.INFINITY_CHANNEL2_USERNAME ?? "@hydraconsultoria";
 let   CHANNEL_ID: number | null = process.env.INFINITY_CHANNEL_ID
   ? Number(process.env.INFINITY_CHANNEL_ID)
   : null;
@@ -243,7 +243,7 @@ function buildFunnelMsg(): string {
     "┃",
     "┃  💎 QUER AINDA MAIS DADOS?",
     DIV,
-    "┃ No <b>Painel Infinity Pro</b>:",
+    "┃ No <b>Painel Hydra Pro</b>:",
     "┃",
     "┃  📸 Foto biométrica do alvo",
     "┃  📋 Histórico completo",
@@ -279,10 +279,10 @@ function buildPrivateMsg(): string {
   return [
     HDR,
     "┃",
-    "┃ 🤖 USE NO GRUPO INFINITY",
+    "┃ 🤖 USE NO GRUPO HYDRA",
     DIV,
     `┃ Este bot funciona apenas no`,
-    `┃ grupo oficial do Infinity Search.`,
+    `┃ grupo oficial da Hydra Consultoria.`,
     "┃",
     "┃ 💬 Entre em contato com o suporte.",
     FTR,
@@ -298,7 +298,7 @@ function buildNotAuthorizedMsg(): string {
     "┃ Para usar o bot, entre no",
     "┃ canal de atualizações:",
     "┃",
-    "┃ 📣 @infinitysearchchannel",
+    "┃ 📣 @hydraconsultoria",
     "┃",
     "┃ Após entrar, use /start.",
     FTR,
@@ -369,15 +369,15 @@ function buildResultTxt(
   // ── Header ─────────────────────────────────────────────────────────────────
   lines.push(BORDER_TOP);
   lines.push(txtLine());
-  lines.push(txtLine("∞  INFINITY SEARCH  ∞"));
-  lines.push(txtLine("Powered by Infinity Search Pro"));
+  lines.push(txtLine("⚔  HYDRA CONSULTORIA  ⚔"));
+  lines.push(txtLine("Powered by Hydra Consultoria"));
   lines.push(txtLine());
   lines.push(BORDER_MID);
   lines.push(txtLine());
   lines.push(txtKV("Consulta", tipo.toUpperCase()));
   lines.push(txtKV("Dado", dados));
   lines.push(txtKV("Data", now));
-  lines.push(txtKV("Canal", "@infinitysearchchannel"));
+  lines.push(txtKV("Canal", "@hydraconsultoria"));
   lines.push(txtLine());
   lines.push(BORDER_MID);
 
@@ -437,9 +437,9 @@ function buildResultTxt(
   // ── Footer ─────────────────────────────────────────────────────────────────
   lines.push(BORDER_MID);
   lines.push(txtLine());
-  lines.push(txtLine("Infinity Search  ·  infinitysearch.pro"));
+  lines.push(txtLine("Hydra Consultoria  ·  hydraconsultoria.pro"));
   lines.push(txtLine("Suporte: @Blxckxyz  |  @xxmathexx  |  @piancooz"));
-  lines.push(txtLine(`Canal: @infinitysearchchannel`));
+  lines.push(txtLine(`Canal: @hydraconsultoria`));
   lines.push(txtLine());
   lines.push(BORDER_BOT);
 

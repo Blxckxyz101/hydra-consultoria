@@ -23,7 +23,7 @@ export function Scene4() {
       <div className="relative w-full aspect-[4/3] mb-8 rounded-xl overflow-hidden border border-[#38bdf8]/40 shadow-[0_0_40px_rgba(14,165,233,0.2)]">
         <motion.img 
           src={img3}
-          alt="Infinity Search Data"
+          alt="Hydra Consultoria Data"
           className="w-full h-full object-cover"
           initial={{ scale: 1.2, opacity: 0 }}
           animate={phase >= 1 ? { scale: 1, opacity: 1 } : { scale: 1.2, opacity: 0 }}

@@ -11,9 +11,9 @@ function hasAccepted() {
 
 const TERMS_FULL = [
   { title: "Sem reembolso", text: "Todas as assinaturas e pagamentos são definitivos e não reembolsáveis, independente do motivo." },
-  { title: "Sem responsabilidade por instabilidades", text: "O Infinity Search não se responsabiliza por interrupções, lentidão, indisponibilidade ou perda de dados causados por falhas técnicas, ataques ou manutenção." },
-  { title: "Sem responsabilidade por atos de terceiros", text: "O Infinity Search não se responsabiliza por ações, danos ou prejuízos causados por terceiros com dados obtidos pela plataforma." },
-  { title: "Uso legal e exclusivo do usuário", text: "O usuário declara que utilizará as consultas exclusivamente para fins lícitos. O uso indevido é de inteira responsabilidade do usuário, eximindo totalmente o Infinity Search." },
+  { title: "Sem responsabilidade por instabilidades", text: "A Hydra Consultoria não se responsabiliza por interrupções, lentidão, indisponibilidade ou perda de dados causados por falhas técnicas, ataques ou manutenção." },
+  { title: "Sem responsabilidade por atos de terceiros", text: "A Hydra Consultoria não se responsabiliza por ações, danos ou prejuízos causados por terceiros com dados obtidos pela plataforma." },
+  { title: "Uso legal e exclusivo do usuário", text: "O usuário declara que utilizará as consultas exclusivamente para fins lícitos. O uso indevido é de inteira responsabilidade do usuário, eximindo totalmente a Hydra Consultoria." },
   { title: "Conformidade com a LGPD", text: "As consultas são realizadas em bases de dados de acesso público ou fontes legalmente autorizadas. O usuário se compromete a tratar os dados obtidos conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018)." },
   { title: "Vedação de compartilhamento", text: "É proibido revender, compartilhar ou redistribuir o acesso à plataforma. Infrações resultam em encerramento imediato da conta sem reembolso." },
 ];
@@ -48,14 +48,14 @@ export function TermsGuard({ children }: { children: React.ReactNode }) {
           <div className="px-7 pt-7 pb-6 flex items-center gap-3.5">
             <div className="relative shrink-0">
               <div className="absolute inset-0 rounded-xl bg-sky-400/15 blur-lg" />
-              <img src={logoUrl} alt="Infinity" className="relative w-10 h-10 object-contain" />
+              <img src={logoUrl} alt="Hydra Consultoria" className="relative w-10 h-10 object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 mb-0.5">
                 <ShieldCheck className="w-3 h-3 text-sky-400" />
                 <span className="text-[9px] uppercase tracking-[0.5em] text-sky-400/70">Termos de Uso</span>
               </div>
-              <h1 className="text-base font-bold tracking-wide text-white">Infinity Search</h1>
+              <h1 className="text-base font-bold tracking-wide text-white">Hydra Consultoria</h1>
             </div>
           </div>
 
@@ -63,7 +63,7 @@ export function TermsGuard({ children }: { children: React.ReactNode }) {
             {/* Main text */}
             <p className="text-sm text-white/80 leading-relaxed">
               Ao prosseguir, você concorda com todos os{" "}
-              <strong className="text-white">Termos de Uso</strong> do Infinity Search,
+              <strong className="text-white">Termos de Uso</strong> do Hydra Consultoria,
               incluindo conformidade com a{" "}
               <strong className="text-white">LGPD (Lei 13.709/2018)</strong> e uso exclusivamente
               para fins lícitos. O uso indevido é de sua inteira responsabilidade.
@@ -114,7 +114,7 @@ export function TermsGuard({ children }: { children: React.ReactNode }) {
                 }
               </div>
               <span className="text-[12px] text-white/60 group-hover:text-white/80 transition-colors leading-relaxed">
-                Li e concordo com os Termos de Uso e a Política de Privacidade do Infinity Search
+                Li e concordo com os Termos de Uso e a Política de Privacidade do Hydra Consultoria
               </span>
             </button>
           </div>

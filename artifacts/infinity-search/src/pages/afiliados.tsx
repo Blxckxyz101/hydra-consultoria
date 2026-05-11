@@ -18,7 +18,7 @@ export default function Afiliados() {
         <div className="space-y-2">
           <h1 className="text-2xl font-bold text-white tracking-tight">Seja um Revendedor</h1>
           <p className="text-sm text-white/50 leading-relaxed">
-            Quer revender o Infinity Search? Entre em contato com nosso suporte e saiba como se tornar um parceiro.
+            Quer revender o Hydra Consultoria? Entre em contato com nosso suporte e saiba como se tornar um parceiro.
           </p>
         </div>
 

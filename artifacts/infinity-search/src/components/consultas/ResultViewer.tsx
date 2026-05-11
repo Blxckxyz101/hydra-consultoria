@@ -453,13 +453,13 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   const otherFields    = displayFields.filter(f => !headlineFields.includes(f));
 
   const exportText = useMemo(() => {
-    const lines = [`═══ INFINITY SEARCH ═══`, `Tipo: ${tipo.toUpperCase()}`, `Data: ${new Date().toLocaleString("pt-BR")}`, ``];
+    const lines = [`═══ HYDRA CONSULTORIA ═══`, `Tipo: ${tipo.toUpperCase()}`, `Data: ${new Date().toLocaleString("pt-BR")}`, ``];
     parsed.fields.forEach(f => {
       if (f.key === "FOTO_URL" && f.value.startsWith("data:image")) lines.push(`${f.key}: [imagem base64]`);
       else lines.push(`${f.key}: ${f.value}`);
     });
     parsed.sections.forEach(s => { lines.push(""); lines.push(`━ ${s.name} (${s.items.length}) ━`); s.items.forEach(it => lines.push(`  • ${it}`)); });
-    lines.push(""); lines.push("Infinity Search");
+    lines.push(""); lines.push("Hydra Consultoria");
     return lines.join("\n");
   }, [parsed, tipo]);
 
@@ -476,13 +476,13 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     const fotoForPdf = parsed.fields.find(f => f.key === "FOTO_URL");
     const fieldsHtml = parsed.fields.filter(f => f.key !== "FOTO_URL").map(f => `<tr><td class="key">${f.key}</td><td class="val">${f.value || "—"}</td></tr>`).join("");
     const sectionsHtml = parsed.sections.map(s => `<div class="section"><div class="sec-title">${s.name} <span class="badge">${s.items.length}</span></div><ul>${s.items.map(it => `<li>${it}</li>`).join("")}</ul></div>`).join("");
-    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Infinity Search · ${tipo.toUpperCase()} · ${query}</title>
+    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Hydra Consultoria · ${tipo.toUpperCase()} · ${query}</title>
 <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111;padding:28px 36px;font-size:13px}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2.5px solid #0891b2;padding-bottom:14px;margin-bottom:20px}.logo{font-size:22px;font-weight:900;letter-spacing:4px;text-transform:uppercase;color:#0891b2}.meta{text-align:right;color:#555;font-size:11px;line-height:1.7}.meta strong{color:#111}table{width:100%;border-collapse:collapse;margin-bottom:20px}tr:nth-child(even){background:#f4fbfd}td{padding:7px 10px;border-bottom:1px solid #e0f2f8;vertical-align:top}td.key{font-weight:700;color:#0e7490;text-transform:uppercase;font-size:11px;letter-spacing:1px;width:36%;white-space:nowrap}td.val{color:#111;font-size:13px;word-break:break-all}.section{margin-bottom:18px}.sec-title{font-weight:800;text-transform:uppercase;letter-spacing:2px;font-size:11px;color:#0891b2;margin-bottom:8px;display:flex;align-items:center;gap:8px}.badge{background:#0891b2;color:#fff;border-radius:9px;padding:1px 7px;font-size:10px}ul{list-style:none;padding:0}li{padding:5px 10px;background:#f4fbfd;border-left:3px solid #0891b2;margin-bottom:4px;font-size:12px;font-family:monospace;word-break:break-all}.footer{margin-top:24px;border-top:1px solid #e0f2f8;padding-top:10px;text-align:center;color:#aaa;font-size:10px;letter-spacing:2px;text-transform:uppercase}@media print{body{padding:10px 16px}}</style></head>
-<body><div class="header"><div><div class="logo">∞ Infinity Search</div><div style="margin-top:4px;font-size:11px;color:#555">Relatório OSINT gerado automaticamente</div></div>
+<body><div class="header"><div><div class="logo">⚔ Hydra Consultoria</div><div style="margin-top:4px;font-size:11px;color:#555">Relatório OSINT gerado automaticamente</div></div>
 <div class="meta"><div><strong>Tipo:</strong> ${tipo.toUpperCase()}</div><div><strong>Consulta:</strong> ${query}</div><div><strong>Data:</strong> ${date}</div><div><strong>Campos:</strong> ${parsed.fields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div></div></div>
 ${fotoForPdf ? `<div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;padding:12px;border:1px solid #e0f2f8;border-radius:8px;background:#f4fbfd;"><img src="${fotoForPdf.value}" alt="Foto" style="width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid #0891b2;" onerror="this.style.display='none'" /><div><div style="font-weight:700;color:#0e7490;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Foto Biométrica</div></div></div>` : ""}
 ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
-<div class="footer">Infinity Search · ${date}</div>
+<div class="footer">Hydra Consultoria · ${date}</div>
 <script>setTimeout(()=>window.print(),300)</script></body></html>`;
     const win = window.open("", "_blank", "width=900,height=700");
     if (win) { win.document.write(html); win.document.close(); }
@@ -865,7 +865,7 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-center gap-2 pt-1 pb-2">
         <Zap className="w-2.5 h-2.5 opacity-30" style={{ color: "var(--color-primary)" }} />
-        <span className="text-[9px] uppercase tracking-[0.6em] text-muted-foreground/30">Infinity Search</span>
+        <span className="text-[9px] uppercase tracking-[0.6em] text-muted-foreground/30">Hydra Consultoria</span>
         <Zap className="w-2.5 h-2.5 opacity-30" style={{ color: "var(--color-primary)" }} />
       </div>
     </motion.div>

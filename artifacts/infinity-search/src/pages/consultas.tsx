@@ -748,7 +748,7 @@ export default function Consultas() {
                     )}
                   </div>
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Infinity Search</p>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Hydra Consultoria</p>
                     <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Geass API · recomendado</p>
                   </div>
                   <div className="flex items-center gap-1 text-[9px] text-primary/50 group-hover:text-primary transition-colors">
@@ -917,7 +917,7 @@ export default function Consultas() {
           </div>
         )}
         <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between text-[10px] uppercase tracking-[0.4em] text-muted-foreground">
-          <span>Infinity Search</span>
+          <span>Hydra Consultoria</span>
           <span className="text-primary/60">v1.0</span>
         </div>
       </div>

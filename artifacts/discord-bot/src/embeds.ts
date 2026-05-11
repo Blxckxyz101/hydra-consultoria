@@ -163,7 +163,7 @@ export function getMethodDesc(id: string, lang: "en" | "pt", fallback?: string):
 }
 
 const footer = (extra?: string) => ({
-  text: [AUTHOR, "📣 t.me/infinitysearchchannel", extra].filter(Boolean).join(" • "),
+  text: [AUTHOR, "📣 t.me/hydraconsultoria", extra].filter(Boolean).join(" • "),
 });
 
 // ── Generic Language Toggle Row ───────────────────────────────────────────────

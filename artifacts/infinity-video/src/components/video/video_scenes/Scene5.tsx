@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { sceneTransitions } from '@/lib/video/animations';
+import hydraLogo from '@assets/4dd5ed63-e0ef-48f8-a1ca-d13c3c00d495_1778525084093.jpeg';
 
 export function Scene5() {
   const [phase, setPhase] = useState(0);
@@ -22,45 +23,36 @@ export function Scene5() {
       {...sceneTransitions.morphExpand}
     >
       <div className="relative z-20 flex flex-col items-center">
-        {/* Infinity Logo */}
+        {/* Hydra Logo */}
         <motion.div 
-          className="relative w-32 h-16 mb-8"
+          className="relative w-36 h-36 mb-6"
           initial={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
           animate={phase >= 1 ? { opacity: 1, scale: 1, filter: 'blur(0px)' } : { opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
           transition={{ type: 'spring', stiffness: 200, damping: 20 }}
         >
-          <svg viewBox="0 0 100 50" className="w-full h-full drop-shadow-[0_0_15px_rgba(14,165,233,0.8)]">
-            <motion.path 
-              d="M 25,25 m -15,0 a 15,15 0 1,0 30,0 a 15,15 0 1,0 -30,0" 
-              fill="none" 
-              stroke="#0ea5e9" 
-              strokeWidth="6"
-              initial={{ pathLength: 0 }}
-              animate={phase >= 1 ? { pathLength: 1 } : { pathLength: 0 }}
-              transition={{ duration: 1.5, ease: "easeInOut" }}
-            />
-            <motion.path 
-              d="M 75,25 m -15,0 a 15,15 0 1,0 30,0 a 15,15 0 1,0 -30,0" 
-              fill="none" 
-              stroke="#38bdf8" 
-              strokeWidth="6"
-              initial={{ pathLength: 0 }}
-              animate={phase >= 1 ? { pathLength: 1 } : { pathLength: 0 }}
-              transition={{ duration: 1.5, ease: "easeInOut", delay: 0.2 }}
-            />
-            <path d="M 40,25 Q 50,40 60,25" fill="none" stroke="#7dd3fc" strokeWidth="6" />
-            <path d="M 40,25 Q 50,10 60,25" fill="none" stroke="#0ea5e9" strokeWidth="6" />
-          </svg>
+          <img 
+            src={hydraLogo} 
+            alt="Hydra Consultoria" 
+            className="w-full h-full object-contain drop-shadow-[0_0_20px_rgba(14,165,233,0.8)]"
+          />
         </motion.div>
 
         <motion.h1 
-          className="text-4xl font-bold tracking-widest text-white mb-2"
+          className="text-4xl font-bold tracking-widest text-white mb-1"
           initial={{ opacity: 0, y: 20 }}
           animate={phase >= 1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
           transition={{ duration: 0.8, delay: 0.5 }}
         >
-          INFINITY
+          HYDRA
         </motion.h1>
+        <motion.div
+          className="text-xs font-mono text-[#0ea5e9]/70 tracking-[0.4em] uppercase mb-6"
+          initial={{ opacity: 0 }}
+          animate={phase >= 1 ? { opacity: 1 } : { opacity: 0 }}
+          transition={{ duration: 0.8, delay: 0.7 }}
+        >
+          CONSULTORIA
+        </motion.div>
 
         <motion.div 
           className="text-sm font-mono text-[#0ea5e9] tracking-widest mb-8 text-center"
@@ -104,7 +96,7 @@ export function Scene5() {
             <span className="w-12 h-px bg-[#0ea5e9]/40" />
           </div>
           <p className="text-[11px] text-white/50 tracking-widest font-mono">
-            🌐 <span className="text-[#38bdf8]">infinitysearch.pro</span>
+            🌐 <span className="text-[#38bdf8]">hydraconsultoria.pro</span>
           </p>
           <p className="text-[11px] text-white/50 tracking-widest font-mono">
             💬 <span className="text-[#38bdf8]">Entre em contato via WhatsApp</span>

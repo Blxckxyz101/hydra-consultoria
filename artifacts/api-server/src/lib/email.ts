@@ -6,7 +6,7 @@ function getTransporter() {
   const port = Number(process.env.SMTP_PORT ?? 587);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM ?? user ?? "noreply@infinitysearch.pro";
+  const from = process.env.SMTP_FROM ?? user ?? "noreply@hydraconsultoria.pro";
 
   if (!host || !user || !pass) {
     return null;
@@ -29,7 +29,7 @@ export async function sendWelcomeEmail(opts: {
 
   const { transporter, from } = config;
   const expires = opts.expiresAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
-  const panelUrl = process.env.PANEL_URL ?? "https://infinitysearch.pro";
+  const panelUrl = process.env.PANEL_URL ?? "https://hydraconsultoria.pro";
 
   const html = `
 <!DOCTYPE html>
@@ -37,7 +37,7 @@ export async function sendWelcomeEmail(opts: {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bem-vindo ao Infinity Search</title>
+  <title>Bem-vindo ao Hydra Consultoria</title>
   <style>
     body { margin: 0; padding: 0; background: #06091a; font-family: 'Segoe UI', Arial, sans-serif; color: #e2e8f0; }
     .wrapper { max-width: 560px; margin: 40px auto; background: #0d1326; border-radius: 20px; overflow: hidden; border: 1px solid rgba(99,210,255,0.15); }
@@ -59,7 +59,7 @@ export async function sendWelcomeEmail(opts: {
 <body>
   <div class="wrapper">
     <div class="header">
-      <div class="logo">INFINITY</div>
+      <div class="logo">HYDRA</div>
       <div class="tagline">SEARCH · OSINT PLATFORM</div>
     </div>
     <div class="body">
@@ -76,7 +76,7 @@ export async function sendWelcomeEmail(opts: {
       </div>
     </div>
     <div class="footer">
-      Infinity Search · ${new Date().getFullYear()} · Não compartilhe suas credenciais.
+      Hydra Consultoria · ${new Date().getFullYear()} · Não compartilhe suas credenciais.
     </div>
   </div>
 </body>
@@ -85,9 +85,9 @@ export async function sendWelcomeEmail(opts: {
 
   try {
     await transporter.sendMail({
-      from: `"Infinity Search" <${from}>`,
+      from: `"Hydra Consultoria" <${from}>`,
       to: opts.to,
-      subject: `✅ Conta criada — Infinity Search (${opts.planLabel})`,
+      subject: `✅ Conta criada — Hydra Consultoria (${opts.planLabel})`,
       html,
     });
     logger.info({ username: opts.username }, "E-mail de boas-vindas enviado");

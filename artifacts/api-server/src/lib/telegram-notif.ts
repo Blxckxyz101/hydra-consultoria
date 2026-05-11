@@ -73,7 +73,7 @@ export async function sendSaleNotification(params: SaleNotifParams): Promise<voi
     text = [
       divider,
       `⚡ <b>RENOVAÇÃO CONFIRMADA</b>`,
-      `<b>∞ Infinity Search</b>`,
+      `<b>⚔ Hydra Consultoria</b>`,
       divider,
       ``,
       `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,
@@ -87,7 +87,7 @@ export async function sendSaleNotification(params: SaleNotifParams): Promise<voi
     text = [
       divider,
       `🔓 <b>NOVO ACESSO VIP</b>`,
-      `<b>∞ Infinity Search</b>`,
+      `<b>⚔ Hydra Consultoria</b>`,
       divider,
       ``,
       `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,

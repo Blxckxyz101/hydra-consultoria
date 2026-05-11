@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import logoUrl from "@/assets/logo.png";
+import logoUrl from "@/assets/hydra-logo.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
@@ -118,7 +118,7 @@ export default function Login() {
                 <div className="absolute inset-0 rounded-full bg-primary/30 blur-2xl scale-110" />
                 <img
                   src={logoUrl}
-                  alt="Infinity Search"
+                  alt="Hydra Consultoria"
                   className="relative w-24 h-24 object-contain drop-shadow-[0_0_20px_rgba(56,189,248,0.6)]"
                 />
               </motion.div>
@@ -128,7 +128,7 @@ export default function Login() {
                 transition={{ delay: 0.25 }}
                 className="text-2xl font-bold tracking-[0.3em] text-foreground neon-text"
               >
-                INFINITY SEARCH
+                HYDRA CONSULTORIA
               </motion.h1>
               <motion.div
                 initial={{ opacity: 0 }}
@@ -381,7 +381,7 @@ export default function Login() {
               </a>
             </div>
             <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.35em] text-muted-foreground/60">
-              <span>Infinity Search</span>
+              <span>Hydra Consultoria</span>
               <span className="text-primary/60">v1.0</span>
             </div>
           </div>

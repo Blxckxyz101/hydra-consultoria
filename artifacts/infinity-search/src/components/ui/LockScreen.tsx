@@ -58,7 +58,7 @@ export function LockScreen() {
             Sua conta expirou
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed mb-8 max-w-xs mx-auto">
-            Seu período de acesso ao <span className="text-sky-400 font-semibold">Infinity Search</span> encerrou.
+            Seu período de acesso ao <span className="text-sky-400 font-semibold">Hydra Consultoria</span> encerrou.
             Renove agora para continuar usando as consultas e a IA.
           </p>
 
@@ -120,7 +120,7 @@ export function LockScreen() {
 
           {/* Footer */}
           <div className="mt-8 pt-5 border-t border-white/5 text-[9px] uppercase tracking-[0.4em] text-muted-foreground/30">
-            Infinity Search
+            Hydra Consultoria
           </div>
         </div>
       </motion.div>

@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
-import logoUrl from "@/assets/logo.png";
+import logoUrl from "@/assets/hydra-logo.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -258,14 +258,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           />
           <img
             src={logoUrl}
-            alt="Infinity Search"
+            alt="Hydra Consultoria"
             className="relative w-11 h-11 object-contain"
             style={{ filter: "drop-shadow(0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
           />
         </div>
         <div className="flex flex-col flex-1 min-w-0">
-          <span className="font-bold tracking-[0.25em] text-base text-foreground">INFINITY</span>
-          <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>SEARCH</span>
+          <span className="font-bold tracking-[0.25em] text-base text-foreground">HYDRA</span>
+          <span className="text-[9px] uppercase tracking-[0.4em]" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>CONSULTORIA</span>
         </div>
         {/* Bell — desktop sidebar header */}
         <div ref={bellDesktopRef} className="relative shrink-0">
@@ -380,7 +380,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <div className="font-semibold text-sm truncate">{(user as any)?.displayName ?? user?.username}</div>
               <div className="text-[8px] text-muted-foreground/30 font-mono truncate">
                 {localStorage.getItem("infinity_hide_username") === "true"
-                  ? "@infinitysearch"
+                  ? "@hydraconsultoria"
                   : `@${user?.username ?? ""}`}
               </div>
               <div
@@ -424,7 +424,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span>Precisa de ajuda?</span>
           </a>
           <a
-            href="https://t.me/infinitysearchchannel"
+            href="https://t.me/hydraconsultoria"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
@@ -447,7 +447,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         <div className="pt-3 mt-2 border-t border-white/5 flex items-center justify-between text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60">
-          <span>Infinity Search</span>
+          <span>Hydra Consultoria</span>
           <span>v1.0</span>
         </div>
       </div>
@@ -495,7 +495,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             className="w-7 h-7 object-contain"
             style={{ filter: "drop-shadow(0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
           />
-          <span className="font-bold tracking-[0.2em] text-sm">INFINITY</span>
+          <span className="font-bold tracking-[0.2em] text-sm">HYDRA</span>
         </div>
         {/* Bell — mobile topbar */}
         <div ref={bellMobileRef} className="relative">

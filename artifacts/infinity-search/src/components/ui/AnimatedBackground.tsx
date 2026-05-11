@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import bgUrl from "@/assets/background.png";
+import hydraIconUrl from "@/assets/hydra-logo.jpg";
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   s /= 100; l /= 100;
@@ -173,18 +173,25 @@ export function AnimatedBackground() {
 
   return (
     <>
-      {/* Background image — hidden on AMOLED for true black */}
+      {/* Hydra watermark — hidden on AMOLED for true black */}
       {!isAmoled && (
         <div
-          className="fixed inset-0 z-[-3] pointer-events-none"
-          style={{
-            backgroundImage: `url(${bgUrl})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-            backgroundRepeat: "no-repeat",
-          }}
+          className="fixed inset-0 z-[-3] pointer-events-none flex items-center justify-center"
           aria-hidden
-        />
+        >
+          <img
+            src={hydraIconUrl}
+            alt=""
+            style={{
+              width: "55vmin",
+              height: "55vmin",
+              objectFit: "contain",
+              opacity: 0.06,
+              filter: "blur(2px) brightness(0.8)",
+              userSelect: "none",
+            }}
+          />
+        </div>
       )}
 
       {/* Overlay — pure black for AMOLED, navy gradient otherwise */}

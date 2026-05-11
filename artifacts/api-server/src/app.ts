@@ -25,8 +25,8 @@ const ALLOWED_ORIGINS = [
   /^https:\/\/.*\.replit\.dev$/,
   /^https:\/\/.*\.replit\.app$/,
   /^http:\/\/localhost(:\d+)?$/,
-  /^https:\/\/infinitysearch\.pro$/,
-  /^https:\/\/www\.infinitysearch\.pro$/,
+  /^https:\/\/hydraconsultoria\.pro$/,
+  /^https:\/\/www\.hydraconsultoria\.pro$/,
 ];
 
 function isOriginAllowed(origin: string | undefined): boolean {

@@ -81,7 +81,7 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
     doc.setTextColor(...hex(C.primary));
     doc.setFontSize(6.5);
     doc.setFont("helvetica", "normal");
-    doc.text("INFINITY SEARCH — LAUDO PERICIAL DIGITAL — CONFIDENCIAL", margin, 5.5);
+    doc.text("HYDRA CONSULTORIA — LAUDO PERICIAL DIGITAL — CONFIDENCIAL", margin, 5.5);
     doc.text(`Pág. ${page}`, W - margin, 5.5, { align: "right" });
     doc.setTextColor(...hex(C.text));
     y = 15;
@@ -199,7 +199,7 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
   doc.setTextColor(...hex(C.primary));
   doc.setFontSize(5.5);
   doc.setFont("helvetica", "normal");
-  doc.text("SISTEMA DE INTELIGÊNCIA • INFINITY SEARCH", photoX, 13);
+  doc.text("SISTEMA DE INTELIGÊNCIA • HYDRA CONSULTORIA", photoX, 13);
 
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(19);
@@ -471,7 +471,7 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
     doc.setFontSize(6.5);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...hex(C.sub));
-    doc.text("Documento gerado por Infinity Search. Uso restrito — informações sigilosas.", margin, fy + 1);
+    doc.text("Documento gerado por Hydra Consultoria. Uso restrito — informações sigilosas.", margin, fy + 1);
     doc.text(`Protocolo: ${protocol}  |  ${new Date().toLocaleString("pt-BR")}  |  Pág. ${p}/${totalPages}`, W - margin, fy + 1, { align: "right" });
     doc.setDrawColor(...hex(C.primary));
     doc.setLineWidth(0.4);
