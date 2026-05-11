@@ -259,31 +259,50 @@ export function AnimatedBackground() {
 
   return (
     <>
-      {/* New Hydra tech background */}
+      {/* Hydra sci-fi background image */}
       <div
-        className="fixed inset-0 z-[-3] pointer-events-none"
-        style={{
-          backgroundImage: `url(${bgUrl})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center center",
-          backgroundRepeat: "no-repeat",
-        }}
+        className="fixed inset-0 pointer-events-none"
+        style={{ zIndex: -4 }}
         aria-hidden
-      />
+      >
+        <img
+          src={bgUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover object-center"
+          style={{ opacity: isAmoled ? 0.08 : 0.85 }}
+        />
+      </div>
 
-      {/* Subtle darkening overlay — much lighter to let the background breathe */}
+      {/* Theme-reactive color tint — shifts with primary hue */}
       <div
-        className="fixed inset-0 z-[-2] pointer-events-none"
+        className="fixed inset-0 pointer-events-none"
         style={{
+          zIndex: -3,
           background: isAmoled
-            ? "rgba(0,0,0,0.92)"
-            : "radial-gradient(ellipse at 50% 30%, rgba(4,12,30,0.35) 0%, rgba(2,6,18,0.55) 60%, rgba(2,6,18,0.72) 100%)",
-          transition: "background 0.5s ease",
+            ? "rgba(0,0,0,0.9)"
+            : [
+                "radial-gradient(ellipse 80% 60% at 15% 80%, color-mix(in srgb, var(--color-primary) 10%, transparent) 0%, transparent 70%)",
+                "radial-gradient(ellipse 60% 50% at 85% 15%, color-mix(in srgb, var(--color-primary) 7%, transparent) 0%, transparent 70%)",
+              ].join(", "),
+          transition: "background 0.8s ease",
         }}
         aria-hidden
       />
 
-      <canvas ref={canvasRef} className="fixed inset-0 z-[-1] pointer-events-none" aria-hidden />
+      {/* Base darkening to keep text readable */}
+      <div
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          zIndex: -2,
+          background: isAmoled
+            ? "transparent"
+            : "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.10) 40%, rgba(0,0,0,0.40) 100%)",
+        }}
+        aria-hidden
+      />
+
+      {/* Canvas: stars, orbs, shooting stars */}
+      <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none" style={{ zIndex: -1 }} aria-hidden />
     </>
   );
 }

@@ -557,7 +557,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="lg:hidden fixed inset-0 bg-black/70 z-40 backdrop-blur-sm"
+              className="lg:hidden fixed inset-0 bg-black/30 z-40"
               onClick={() => setMobileOpen(false)}
             />
             <motion.aside
@@ -566,7 +566,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 280, damping: 32 }}
-              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.06] backdrop-blur-3xl" style={{ background: "rgba(0,0,4,0.45)" }}
+              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(2,6,18,0.35)" }}
             >
               {renderSidebar(() => setMobileOpen(false))}
             </motion.aside>
