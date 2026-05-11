@@ -44,7 +44,7 @@ export function Scene3() {
           <div className="inline-block border border-[#0ea5e9] bg-[#0ea5e9]/10 text-[#0ea5e9] px-3 py-1 rounded-full text-xs font-mono mb-4">
             CAPABILITY_SCAN
           </div>
-          <h2 className="text-5xl font-black text-white leading-none mb-2">24 TIPOS</h2>
+          <h2 className="text-5xl font-black text-white leading-none mb-2">+90 TIPOS</h2>
           <h3 className="text-2xl text-[#38bdf8] tracking-wide mb-8">DE CONSULTA</h3>
         </motion.div>
 

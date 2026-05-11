@@ -951,9 +951,21 @@ function isUseful(v: unknown): boolean {
 
 function humanizeKey(k: string): string {
   return k
-    .replace(/_/g, " ")
+    .replace(/^iseek-fotos---/i, "")
+    .replace(/^iseek-dados---/i, "")
+    .replace(/^iseek-/i, "")
+    .replace(/[-_]/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function sectionName(k: string): string {
+  return k
+    .replace(/^iseek-fotos---/i, "")
+    .replace(/^iseek-dados---/i, "")
+    .replace(/^iseek-/i, "")
+    .replace(/[-_]/g, " ")
+    .toUpperCase();
 }
 
 /**
@@ -1147,7 +1159,7 @@ function parseSkylers(data: unknown): Parsed {
       if (v.length === 0) continue;
       const secItems = processArray(v as unknown[], fotoUrl);
       if (secItems.length > 0) {
-        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: secItems });
+        result.sections.push({ name: sectionName(k), items: secItems });
       }
 
     } else if (typeof v === "object" && v !== null) {
@@ -1165,7 +1177,7 @@ function parseSkylers(data: unknown): Parsed {
               if (colonIdx > -1) result.fields.push({ key: `${humanizeKey(k)} · ${si.slice(0, colonIdx)}`, value: si.slice(colonIdx + 2) });
             }
           } else {
-            result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: subItems });
+            result.sections.push({ name: sectionName(k), items: subItems });
           }
           continue;
         }
@@ -1180,7 +1192,7 @@ function parseSkylers(data: unknown): Parsed {
           else result.fields.push({ key: humanizeKey(k), value: si });
         }
       } else {
-        result.sections.push({ name: k.toUpperCase().replace(/_/g, " "), items: subItems });
+        result.sections.push({ name: sectionName(k), items: subItems });
       }
 
     } else {
