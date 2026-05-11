@@ -4,7 +4,10 @@ import {
   Camera, Image as ImageIcon, Trash2, Save, CheckCircle2,
   User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil, AtSign,
   Bookmark, BookmarkPlus, Play, Plus, X as XIcon,
+  MapPin, Music, Globe, Instagram, Twitter, Youtube, Github, Twitch, UserPlus, Users as UsersIcon,
+  CheckCircle, XCircle, Loader2,
 } from "lucide-react";
+import { Link } from "wouter";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { THEMES, applyTheme } from "@/pages/personalizar";
 
@@ -117,6 +120,22 @@ export default function Perfil() {
   };
   const [showPins, setShowPins] = useState(false);
 
+  // ── Social fields ─────────────────────────────────────────────────────────
+  const [socialLocation, setSocialLocation] = useState("");
+  const [socialMusicUrl, setSocialMusicUrl] = useState("");
+  const [socialLinks, setSocialLinks] = useState<{ type: string; value: string }[]>([]);
+  const [socialSaving, setSocialSaving] = useState(false);
+  const [socialSaved, setSocialSaved] = useState(false);
+  const [newLinkType, setNewLinkType] = useState("instagram");
+  const [newLinkValue, setNewLinkValue] = useState("");
+
+  // ── Friends ───────────────────────────────────────────────────────────────
+  const [friends, setFriends] = useState<{ id: number; username: string; displayName: string; photo: string | null; status: string; direction: string; friendStatus: string }[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  const [addFriendInput, setAddFriendInput] = useState("");
+  const [addFriendLoading, setAddFriendLoading] = useState(false);
+  const [addFriendMsg, setAddFriendMsg] = useState("");
+
   // ── Presets ───────────────────────────────────────────────────────────────
   const [presets, setPresets] = useState<PresetSummary[]>([]);
   const [presetSaving, setPresetSaving] = useState(false);
@@ -191,6 +210,18 @@ export default function Perfil() {
     } catch { /* silent */ }
   };
 
+  const loadFriends = useCallback(async () => {
+    setFriendsLoading(true);
+    try {
+      const r = await fetch("/api/infinity/friends", { headers: authHeaders() });
+      if (r.ok) {
+        const list = await r.json() as { id: number; username: string; displayName: string; photo: string | null; status: string; direction: string; friendStatus: string }[];
+        setFriends(list.map(f => ({ ...f, friendStatus: f.status })));
+      }
+    } catch {}
+    finally { setFriendsLoading(false); }
+  }, []);
+
   useEffect(() => {
     fetch("/api/infinity/me", { headers: authHeaders() })
       .then(r => r.json())
@@ -202,7 +233,6 @@ export default function Perfil() {
       }) => {
         setDisplayName(d.displayName ?? "");
         setHasPinSet(d.pinSet ?? false);
-        // Load profile from server (overrides localStorage)
         if (d.profilePhoto !== undefined) { setPhoto(d.profilePhoto); if (d.profilePhoto) localStorage.setItem(LS_PHOTO, d.profilePhoto); else localStorage.removeItem(LS_PHOTO); }
         if (d.profileBanner !== undefined) { setBanner(d.profileBanner); if (d.profileBanner) localStorage.setItem(LS_BANNER, d.profileBanner); else localStorage.removeItem(LS_BANNER); }
         if (d.profileBio !== undefined) { setBio(d.profileBio ?? ""); localStorage.setItem(LS_BIO, d.profileBio ?? ""); }
@@ -211,8 +241,71 @@ export default function Perfil() {
         if (d.hideUsername !== undefined) { setHideUsername(d.hideUsername); d.hideUsername ? localStorage.setItem(LS_HIDE_USERNAME, "true") : localStorage.removeItem(LS_HIDE_USERNAME); }
       })
       .catch(() => {});
+
+    // Load social profile
+    fetch("/api/infinity/me/social", { headers: authHeaders() })
+      .then(r => r.json())
+      .then((d: { location?: string | null; musicUrl?: string | null; socialLinks?: { type: string; value: string }[] }) => {
+        setSocialLocation(d.location ?? "");
+        setSocialMusicUrl(d.musicUrl ?? "");
+        setSocialLinks(Array.isArray(d.socialLinks) ? d.socialLinks : []);
+      })
+      .catch(() => {});
+
     loadPresets();
-  }, [loadPresets]);
+    loadFriends();
+  }, [loadPresets, loadFriends]);
+
+  const saveSocial = async () => {
+    setSocialSaving(true);
+    try {
+      await fetch("/api/infinity/me/social", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          location: socialLocation.trim() || null,
+          musicUrl: socialMusicUrl.trim() || null,
+          socialLinks,
+        }),
+      });
+      setSocialSaved(true);
+      setTimeout(() => setSocialSaved(false), 2200);
+    } catch {}
+    finally { setSocialSaving(false); }
+  };
+
+  const addSocialLink = () => {
+    if (!newLinkValue.trim() || socialLinks.length >= 8) return;
+    setSocialLinks(prev => [...prev, { type: newLinkType, value: newLinkValue.trim() }]);
+    setNewLinkValue("");
+  };
+
+  const removeSocialLink = (i: number) => setSocialLinks(prev => prev.filter((_, idx) => idx !== i));
+
+  const sendFriendRequest = async () => {
+    if (!addFriendInput.trim()) return;
+    setAddFriendLoading(true); setAddFriendMsg("");
+    try {
+      const r = await fetch("/api/infinity/friends/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ username: addFriendInput.trim() }),
+      });
+      const d = await r.json() as { error?: string; message?: string };
+      if (!r.ok) { setAddFriendMsg(d.error ?? "Erro"); }
+      else { setAddFriendMsg(d.message ?? "Pedido enviado!"); setAddFriendInput(""); loadFriends(); }
+    } catch { setAddFriendMsg("Erro de conexão"); }
+    finally { setAddFriendLoading(false); }
+  };
+
+  const respondFriend = async (id: number, action: "accept" | "decline" | "delete") => {
+    const url = action === "delete"
+      ? `/api/infinity/friends/${id}`
+      : `/api/infinity/friends/${id}/${action}`;
+    const method = action === "delete" ? "DELETE" : "POST";
+    await fetch(url, { method, headers: authHeaders() });
+    loadFriends();
+  };
 
   const saveDisplayName = async () => {
     setDnSaving(true); setDnErr(""); setDnSaved(false);
@@ -657,6 +750,161 @@ export default function Perfil() {
           className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors resize-none"
         />
         <p className="text-[9px] text-muted-foreground/30 text-right">{bio.length}/160</p>
+      </motion.div>
+
+      {/* ── Perfil Social ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.16 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Perfil Público</h2>
+          </div>
+          <Link href={`/u/${user?.username ?? ""}`}>
+            <span className="text-[10px] text-muted-foreground hover:text-primary transition-colors cursor-pointer">Ver →</span>
+          </Link>
+        </div>
+
+        {/* Location */}
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5 flex items-center gap-1.5"><MapPin className="w-3 h-3" /> Localização</label>
+          <input value={socialLocation} onChange={e => setSocialLocation(e.target.value.slice(0, 60))}
+            placeholder="ex: São Paulo, Brasil"
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40" />
+        </div>
+
+        {/* Music URL */}
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5 flex items-center gap-1.5"><Music className="w-3 h-3" /> Link de Músicas (Spotify, SoundCloud...)</label>
+          <input value={socialMusicUrl} onChange={e => setSocialMusicUrl(e.target.value.slice(0, 200))}
+            placeholder="https://open.spotify.com/..."
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40" />
+        </div>
+
+        {/* Social Links */}
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 block">Links Sociais ({socialLinks.length}/8)</label>
+          <div className="space-y-2 mb-2">
+            {socialLinks.map((link, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/4 border border-white/8">
+                <span className="text-[10px] uppercase tracking-widest text-muted-foreground/60 w-16 shrink-0">{link.type}</span>
+                <span className="text-sm flex-1 truncate">{link.value}</span>
+                <button onClick={() => removeSocialLink(i)} className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0"><XIcon className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+          {socialLinks.length < 8 && (
+            <div className="flex gap-2">
+              <select value={newLinkType} onChange={e => setNewLinkType(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 transition-colors shrink-0">
+                {["instagram","twitter","youtube","github","twitch","tiktok","discord","website"].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <input value={newLinkValue} onChange={e => setNewLinkValue(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addSocialLink(); }}
+                placeholder="@user ou URL"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40" />
+              <button onClick={addSocialLink} disabled={!newLinkValue.trim()}
+                className="px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-40 transition-all"
+                style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }}>
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button onClick={saveSocial} disabled={socialSaving}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold uppercase tracking-widest text-sm transition-all disabled:opacity-50"
+          style={socialSaved ? { background: "#22c55e", color: "#fff" } : { background: "var(--color-primary)", color: "#000", boxShadow: "0 0 20px color-mix(in srgb, var(--color-primary) 25%, transparent)" }}>
+          {socialSaved ? <><CheckCircle className="w-4 h-4" /> Salvo!</> : socialSaving ? "Salvando..." : <><Save className="w-4 h-4" /> Salvar perfil social</>}
+        </button>
+      </motion.div>
+
+      {/* ── Amigos ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center gap-2">
+          <UsersIcon className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Amigos</h2>
+          <span className="ml-auto text-[9px] text-muted-foreground/40">{friends.filter(f => f.friendStatus === "accepted").length} amigos</span>
+        </div>
+
+        {/* Add friend input */}
+        <div className="flex gap-2">
+          <input value={addFriendInput} onChange={e => setAddFriendInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") sendFriendRequest(); }}
+            placeholder="@usuário para adicionar..."
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40" />
+          <button onClick={sendFriendRequest} disabled={addFriendLoading || !addFriendInput.trim()}
+            className="px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all shrink-0"
+            style={{ background: "var(--color-primary)", color: "#000" }}>
+            {addFriendLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+          </button>
+        </div>
+        {addFriendMsg && <p className="text-xs text-muted-foreground">{addFriendMsg}</p>}
+
+        {/* Friends list */}
+        {friendsLoading ? (
+          <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : friends.length === 0 ? (
+          <p className="text-xs text-muted-foreground/40 text-center py-4">Nenhum amigo ainda — adicione pelo @usuário acima</p>
+        ) : (
+          <div className="space-y-2">
+            {friends.map(f => {
+              const statusColor: Record<string, string> = { online: "#22c55e", busy: "#ef4444", away: "#f59e0b", offline: "#6b7280" };
+              return (
+                <div key={f.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/4 border border-white/8">
+                  <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0 flex items-center justify-center text-xs font-bold"
+                    style={{ background: f.photo ? "transparent" : "#3b82f6", color: "#fff" }}>
+                    {f.photo ? <img src={f.photo} className="w-full h-full object-cover" /> : f.displayName?.[0]?.toUpperCase()}
+                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-background"
+                      style={{ background: statusColor[f.status] ?? "#6b7280" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <Link href={`/u/${f.username}`}>
+                      <span className="text-sm font-semibold hover:underline cursor-pointer">{f.displayName}</span>
+                    </Link>
+                    <p className="text-[10px] text-muted-foreground/50">@{f.username}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {f.friendStatus === "pending" && f.direction === "received" && (
+                      <>
+                        <button onClick={() => respondFriend(f.id, "accept")} title="Aceitar"
+                          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-green-500/20 transition-colors">
+                          <CheckCircle className="w-4 h-4 text-green-400" />
+                        </button>
+                        <button onClick={() => respondFriend(f.id, "decline")} title="Recusar"
+                          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-500/20 transition-colors">
+                          <XCircle className="w-4 h-4 text-red-400" />
+                        </button>
+                      </>
+                    )}
+                    {f.friendStatus === "pending" && f.direction === "sent" && (
+                      <span className="text-[10px] text-muted-foreground/40 italic">Pendente</span>
+                    )}
+                    {f.friendStatus === "accepted" && (
+                      <button onClick={() => respondFriend(f.id, "delete")} title="Remover amigo"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-500/20 transition-colors text-muted-foreground/30 hover:text-red-400 transition-colors">
+                        <XIcon className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </motion.div>
 
       {/* ── Presets ── */}

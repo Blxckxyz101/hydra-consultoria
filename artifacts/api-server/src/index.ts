@@ -1,11 +1,18 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { db, attacksTable, infinitySessionsTable } from "@workspace/db";
+import { db, attacksTable, infinitySessionsTable, infinityChatMessagesTable, infinityUsersTable } from "@workspace/db";
 import { eq, lt } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { WebSocketServer, type WebSocket } from "ws";
+import { lookupUser } from "./lib/infinity-auth.js";
+
+// Global type for broadcast function used by REST fallback
+declare global {
+  var __chatBroadcast: ((roomSlug: string, data: object) => void) | undefined;
+}
 
 const rawPort = process.env["PORT"];
 
@@ -56,9 +63,102 @@ async function cleanExpiredSessions() {
 void cleanExpiredSessions();
 setInterval(() => void cleanExpiredSessions(), 24 * 60 * 60 * 1000);
 
+// ── WebSocket chat server ────────────────────────────────────────────────────
+interface ChatClient { ws: WebSocket; username: string; displayName: string; photo: string | null; role: string; accentColor: string | null; rooms: Set<string> }
+const chatClients = new Map<WebSocket, ChatClient>();
+
+function broadcast(roomSlug: string, data: object, except?: WebSocket) {
+  const payload = JSON.stringify(data);
+  for (const [ws, client] of chatClients) {
+    if (ws !== except && ws.readyState === 1 && client.rooms.has(roomSlug)) {
+      ws.send(payload);
+    }
+  }
+}
+
+// Register broadcast for REST fallback in infinity-social.ts
+globalThis.__chatBroadcast = broadcast;
+
 const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
+
+    // ── WebSocket server for real-time chat ─────────────────────────────────
+    const wss = new WebSocketServer({ server, path: "/api/ws/chat" });
+
+    wss.on("connection", async (ws, req) => {
+      // Auth via ?token= query param
+      const url = new URL(req.url ?? "/", `http://localhost`);
+      const token = url.searchParams.get("token") ?? "";
+      const user = token ? await lookupUser(token) : null;
+      if (!user) { ws.close(4001, "Unauthorized"); return; }
+
+      // Fetch display info
+      const rows = await db.select({ displayName: infinityUsersTable.displayName, profilePhoto: infinityUsersTable.profilePhoto, role: infinityUsersTable.role, profileAccentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(eq(infinityUsersTable.username, user.username)).limit(1);
+      const userInfo = rows[0];
+
+      const client: ChatClient = {
+        ws,
+        username: user.username,
+        displayName: userInfo?.displayName ?? user.username,
+        photo: userInfo?.profilePhoto ?? null,
+        role: userInfo?.role ?? "user",
+        accentColor: userInfo?.profileAccentColor ?? null,
+        rooms: new Set(),
+      };
+      chatClients.set(ws, client);
+
+      ws.on("message", async (raw) => {
+        try {
+          const msg = JSON.parse(raw.toString()) as { type: string; roomSlug?: string; content?: string };
+
+          if (msg.type === "join" && msg.roomSlug) {
+            client.rooms.add(msg.roomSlug);
+            ws.send(JSON.stringify({ type: "joined", roomSlug: msg.roomSlug }));
+          }
+
+          if (msg.type === "leave" && msg.roomSlug) {
+            client.rooms.delete(msg.roomSlug);
+          }
+
+          if (msg.type === "message" && msg.roomSlug && msg.content) {
+            const content = msg.content.trim().slice(0, 2000);
+            if (!content) return;
+
+            const [saved] = await db.insert(infinityChatMessagesTable).values({
+              roomSlug: msg.roomSlug,
+              username: client.username,
+              content,
+            }).returning();
+
+            const fullMsg = {
+              type: "message",
+              id: saved!.id,
+              roomSlug: msg.roomSlug,
+              username: client.username,
+              displayName: client.displayName,
+              photo: client.photo,
+              role: client.role,
+              accentColor: client.accentColor,
+              content,
+              createdAt: saved!.createdAt,
+            };
+
+            // Send to all clients in this room (including sender)
+            broadcast(msg.roomSlug, fullMsg);
+          }
+
+          if (msg.type === "ping") {
+            ws.send(JSON.stringify({ type: "pong" }));
+          }
+        } catch { /* ignore parse errors */ }
+      });
+
+      ws.on("close", () => { chatClients.delete(ws); });
+      ws.on("error", () => { chatClients.delete(ws); });
+
+      ws.send(JSON.stringify({ type: "ready", username: user.username }));
+    });
 
     // Prevent "other side closed" errors when clients (Discord bot, panel) reuse
     // HTTP keep-alive connections. Node.js defaults to 5s — too short for callers

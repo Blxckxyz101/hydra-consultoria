@@ -19,6 +19,14 @@ export const infinityUsersTable = pgTable("infinity_users", {
   profileStatus:    text("profile_status").default("online"),
   profileStatusMsg: text("profile_status_msg"),
   hideUsername:     boolean("hide_username").notNull().default(false),
+  // Social profile extensions
+  profileLocation:    text("profile_location"),
+  profileMusicUrl:    text("profile_music_url"),
+  profileSocialLinks: jsonb("profile_social_links"),
+  profileViews:       integer("profile_views").notNull().default(0),
+  profileAccentColor: text("profile_accent_color"),
+  profileBgType:      text("profile_bg_type").default("default"),
+  profileBgValue:     text("profile_bg_value"),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {
@@ -220,6 +228,67 @@ export const infinityReferralsTable = pgTable(
     byReferrer: index("infinity_referrals_referrer_idx").on(t.referrerUsername),
   }),
 );
+
+// ─── Friendships ─────────────────────────────────────────────────────────────
+
+export const infinityFriendshipsTable = pgTable(
+  "infinity_friendships",
+  {
+    id:                serial("id").primaryKey(),
+    requesterUsername: text("requester_username").notNull(),
+    addresseeUsername: text("addressee_username").notNull(),
+    status:            text("status").notNull().default("pending"),
+    createdAt:         timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt:         timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byRequester: index("infinity_friendships_requester_idx").on(t.requesterUsername),
+    byAddressee: index("infinity_friendships_addressee_idx").on(t.addresseeUsername),
+  }),
+);
+
+export type InfinityFriendshipRow = typeof infinityFriendshipsTable.$inferSelect;
+
+// ─── Chat Rooms ───────────────────────────────────────────────────────────────
+
+export const infinityChatRoomsTable = pgTable(
+  "infinity_chat_rooms",
+  {
+    id:          serial("id").primaryKey(),
+    slug:        text("slug").unique().notNull(),
+    name:        text("name").notNull(),
+    type:        text("type").notNull().default("public"),
+    createdBy:   text("created_by").notNull(),
+    description: text("description"),
+    icon:        text("icon"),
+    createdAt:   timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    bySlug:    index("infinity_chat_rooms_slug_idx").on(t.slug),
+    byCreator: index("infinity_chat_rooms_creator_idx").on(t.createdBy),
+  }),
+);
+
+export type InfinityChatRoomRow = typeof infinityChatRoomsTable.$inferSelect;
+
+// ─── Chat Messages ────────────────────────────────────────────────────────────
+
+export const infinityChatMessagesTable = pgTable(
+  "infinity_chat_messages",
+  {
+    id:        serial("id").primaryKey(),
+    roomSlug:  text("room_slug").notNull(),
+    username:  text("username").notNull(),
+    content:   text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byRoom:    index("infinity_chat_messages_room_idx").on(t.roomSlug),
+    byCreated: index("infinity_chat_messages_created_idx").on(t.createdAt),
+  }),
+);
+
+export type InfinityChatMessageRow = typeof infinityChatMessagesTable.$inferSelect;
 
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);
 export type InsertInfinityUser        = z.infer<typeof insertInfinityUserSchema>;

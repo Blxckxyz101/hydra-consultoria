@@ -23,6 +23,7 @@ import infinityRouter  from "./infinity";
 import infinityPaymentsRouter from "./infinity-payments";
 import infinityWalletRouter from "./infinity-wallet";
 import infinityAffiliateRouter from "./infinity-affiliate";
+import infinitySocialRouter from "./infinity-social";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use("/infinity", infinityRouter);
 router.use("/infinity", infinityPaymentsRouter);
 router.use("/infinity", infinityWalletRouter);
 router.use("/infinity", infinityAffiliateRouter);
+router.use("/infinity", infinitySocialRouter);
 
 export default router;

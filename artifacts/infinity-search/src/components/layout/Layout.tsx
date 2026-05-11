@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, type LucideIcon } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, Users, type LucideIcon } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
 import logoUrl from "@/assets/hydra-icon.png";
@@ -225,6 +225,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const isAdmin = user?.role === "admin";
 
+  // Friend request badge count
+  const [pendingFriends, setPendingFriends] = useState(0);
+  useEffect(() => {
+    const load = () => {
+      const token = localStorage.getItem("infinity_token");
+      if (!token) return;
+      fetch("/api/infinity/friends", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then((list: { status: string; direction: string }[]) => {
+          const pending = list.filter(f => f.status === "pending" && f.direction === "received").length;
+          setPendingFriends(pending);
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   type NavItem = { href: string; label: string; icon: LucideIcon; badge?: string };
   const navGroups: { label: string; items: NavItem[] }[] = [
     {
@@ -232,6 +251,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/", label: "Visão Geral", icon: Activity },
         { href: "/consultas", label: "Consultas", icon: Search },
+        { href: "/comunidade", label: "Comunidade", icon: Users, badge: pendingFriends > 0 ? String(pendingFriends) : undefined },
         { href: "/api-promo", label: "🌟 API", icon: Zap },
         { href: "/ia", label: "Assistente IA", icon: Bot },
       ],

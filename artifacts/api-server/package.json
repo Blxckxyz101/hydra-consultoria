@@ -31,7 +31,8 @@
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "raw-socket": "^1.8.1",
-    "undici": "^8.1.0"
+    "undici": "^8.1.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
@@ -40,6 +41,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.27.3",
     "esbuild-plugin-pino": "^2.3.3",
     "pino-pretty": "^13",

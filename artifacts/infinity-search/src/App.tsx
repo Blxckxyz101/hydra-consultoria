@@ -21,6 +21,8 @@ import Historico from "@/pages/historico";
 import Registro from "@/pages/registro";
 import Afiliados from "@/pages/afiliados";
 import Carteira from "@/pages/carteira";
+import Comunidade from "@/pages/comunidade";
+import PerfilPublico from "@/pages/perfil-publico";
 
 // Apply saved color theme immediately on load
 initSavedTheme();
@@ -69,6 +71,8 @@ function Router() {
               <Route path="/planos">{() => { window.location.replace("/registro"); return null; }}</Route>
               <Route path="/afiliados" component={Afiliados} />
               <Route path="/carteira" component={Carteira} />
+              <Route path="/comunidade" component={Comunidade} />
+              <Route path="/u/:username" component={PerfilPublico} />
               <Route component={NotFound} />
             </Switch>
           </Layout>
