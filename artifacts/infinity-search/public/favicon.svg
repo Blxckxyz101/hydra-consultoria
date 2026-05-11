@@ -1,3 +1,20 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="80" fill="#060B1A"/>
+  <defs>
+    <linearGradient id="ig" x1="80" y1="200" x2="432" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1a3aff"/>
+      <stop offset="100%" stop-color="#0061ff"/>
+    </linearGradient>
+    <linearGradient id="ig2" x1="80" y1="200" x2="432" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2255ff"/>
+      <stop offset="100%" stop-color="#0044dd"/>
+    </linearGradient>
+  </defs>
+  <!-- Infinity symbol path -->
+  <path d="M256 256 C256 256 210 200 170 200 C120 200 90 235 90 256 C90 277 120 312 170 312 C210 312 256 256 256 256 Z
+            M256 256 C256 256 302 200 342 200 C392 200 422 235 422 256 C422 277 392 312 342 312 C302 312 256 256 256 256 Z"
+        fill="none" stroke="url(#ig)" stroke-width="38" stroke-linecap="round"/>
+  <!-- Magnifier circle on right loop -->
+  <circle cx="355" cy="242" r="28" fill="none" stroke="url(#ig2)" stroke-width="16"/>
+  <line x1="374" y1="261" x2="392" y2="279" stroke="url(#ig2)" stroke-width="16" stroke-linecap="round"/>
 </svg>
