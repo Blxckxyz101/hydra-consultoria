@@ -9,9 +9,10 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { lookupUser } from "./lib/infinity-auth.js";
 
-// Global type for broadcast function used by REST fallback
+// Global type for broadcast/notify functions used by REST fallback and social routes
 declare global {
   var __chatBroadcast: ((roomSlug: string, data: object) => void) | undefined;
+  var __notifyUser: ((username: string, data: object) => void) | undefined;
 }
 
 const rawPort = process.env["PORT"];
@@ -78,6 +79,17 @@ function broadcast(roomSlug: string, data: object, except?: WebSocket) {
 
 // Register broadcast for REST fallback in infinity-social.ts
 globalThis.__chatBroadcast = broadcast;
+
+// Push notification to a specific connected user
+function notifyUser(username: string, data: object) {
+  const payload = JSON.stringify(data);
+  for (const [ws, client] of chatClients) {
+    if (client.username === username && ws.readyState === 1) {
+      ws.send(payload);
+    }
+  }
+}
+globalThis.__notifyUser = notifyUser;
 
 const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
   const server = app.listen(port, () => {

@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, Users, type LucideIcon } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
+import { NotificationBell } from "@/components/layout/NotificationBell";
 
 import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
@@ -312,6 +313,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <X className="w-4 h-4" />
           </button>
         ) : (
+          <div className="flex items-center gap-1 shrink-0">
+            <NotificationBell />
           <div ref={bellDesktopRef} className="relative shrink-0">
             <button
               onClick={openBell}
@@ -331,6 +334,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <AnimatePresence>
               {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
             </AnimatePresence>
+          </div>
           </div>
         )}
       </div>
@@ -545,26 +549,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <span className="text-foreground" style={{ fontFamily: "'Bebas Neue', 'Exo 2', sans-serif", fontSize: "17px", letterSpacing: "0.18em" }}>HYDRA</span>
         </div>
-        {/* Bell — mobile topbar */}
-        <div ref={bellMobileRef} className="relative">
-          <button
-            onClick={openBell}
-            className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Novidades"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadCount > 0 && (
-              <span
-                className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
-                style={{ background: "var(--color-primary)" }}
-              >
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
-          </button>
-          <AnimatePresence>
-            {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
-          </AnimatePresence>
+        {/* Personal notifications bell — mobile topbar */}
+        <div className="flex items-center gap-1">
+          <NotificationBell />
+          {/* System bell — mobile topbar */}
+          <div ref={bellMobileRef} className="relative">
+            <button
+              onClick={openBell}
+              className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Novidades"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
+                  style={{ background: "var(--color-primary)" }}
+                >
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <AnimatePresence>
+              {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 

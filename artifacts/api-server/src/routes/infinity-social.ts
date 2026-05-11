@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable } from "@workspace/db";
-import { eq, or, and, desc, asc, ne, sql, inArray } from "drizzle-orm";
+import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable } from "@workspace/db";
+import { eq, or, and, desc, asc, ne, sql, inArray, lt } from "drizzle-orm";
 import { requireAuth } from "../lib/infinity-auth.js";
 import { logger } from "../lib/logger.js";
 
@@ -25,6 +25,8 @@ function sanitizeLinks(links: unknown): SocialLink[] {
 
 function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
   const links = Array.isArray(row.profileSocialLinks) ? row.profileSocialLinks : [];
+  const now = new Date();
+  const isPro = row.planType === "pro" && (row.planExpiresAt == null || row.planExpiresAt > now);
   return {
     username:     row.username,
     displayName:  row.displayName ?? row.username,
@@ -40,9 +42,18 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
     accentColor:  row.profileAccentColor ?? null,
     bgType:       row.profileBgType ?? "default",
     bgValue:      row.profileBgValue ?? null,
+    cardTheme:    row.cardTheme ?? "default",
+    planType:     isPro ? "pro" : "free",
     views:        row.profileViews ?? 0,
     createdAt:    row.createdAt,
   };
+}
+
+// Push notification helper — broadcasts to connected WS clients
+function pushUserNotification(username: string, payload: object) {
+  if (typeof globalThis.__notifyUser === "function") {
+    globalThis.__notifyUser(username, payload);
+  }
 }
 
 // ── GET /api/infinity/u/:username — public profile (NO auth required) ──────────
@@ -51,7 +62,6 @@ router.get("/u/:username", async (req, res): Promise<void> => {
   const u = safeUsername(username);
   if (!u) { res.status(400).json({ error: "Username inválido" }); return; }
 
-  // CORS-friendly: allow public access
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   try {
@@ -59,7 +69,6 @@ router.get("/u/:username", async (req, res): Promise<void> => {
     const row = rows[0];
     if (!row) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
 
-    // Increment profile views (fire-and-forget)
     db.update(infinityUsersTable)
       .set({ profileViews: sql`${infinityUsersTable.profileViews} + 1` })
       .where(eq(infinityUsersTable.username, u))
@@ -72,10 +81,10 @@ router.get("/u/:username", async (req, res): Promise<void> => {
   }
 });
 
-// ── PATCH /api/infinity/me/social — update social profile fields ────────────────
+// ── PATCH /api/infinity/me/social ────────────────────────────────────────────────
 router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
-  const { location, musicUrl, socialLinks, accentColor, bgType, bgValue } = req.body as Record<string, unknown>;
+  const { location, musicUrl, socialLinks, accentColor, bgType, bgValue, cardTheme } = req.body as Record<string, unknown>;
 
   const patch: Partial<typeof infinityUsersTable.$inferInsert> = {};
   if (typeof location === "string" || location === null) patch.profileLocation = typeof location === "string" ? location.slice(0, 60) : null;
@@ -84,6 +93,18 @@ router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
   if (typeof accentColor === "string" || accentColor === null) patch.profileAccentColor = typeof accentColor === "string" ? accentColor.slice(0, 20) : null;
   if (typeof bgType === "string") patch.profileBgType = bgType.slice(0, 20);
   if (typeof bgValue === "string" || bgValue === null) patch.profileBgValue = typeof bgValue === "string" ? bgValue.slice(0, 500) : null;
+  if (typeof cardTheme === "string") {
+    // Validate theme against allowed themes by plan
+    const userRow = await db.select({ planType: infinityUsersTable.planType, planExpiresAt: infinityUsersTable.planExpiresAt }).from(infinityUsersTable).where(eq(infinityUsersTable.username, me)).limit(1);
+    const row = userRow[0];
+    const isPro = row?.planType === "pro" && (row.planExpiresAt == null || row.planExpiresAt > new Date());
+    const isAdmin = req.infinityUser!.role === "admin";
+    const PRO_THEMES = ["aurora", "matrix", "neon", "holographic", "particles", "glitch", "cyberpunk"];
+    if (PRO_THEMES.includes(cardTheme) && !isPro && !isAdmin) {
+      res.status(403).json({ error: "Tema PRO — faça upgrade do plano para usar este tema." }); return;
+    }
+    patch.cardTheme = cardTheme.slice(0, 30);
+  }
 
   if (Object.keys(patch).length === 0) { res.status(400).json({ error: "Nenhum campo para atualizar" }); return; }
 
@@ -96,7 +117,7 @@ router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
-// ── GET /api/infinity/me/social — my social profile ──────────────────────────────
+// ── GET /api/infinity/me/social ────────────────────────────────────────────────
 router.get("/me/social", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   try {
@@ -110,21 +131,59 @@ router.get("/me/social", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
-// ── GET /api/infinity/friends — list friends and pending requests ──────────────
+// ── POST /api/infinity/me/plan/buy — buy pro plan from wallet ─────────────────
+router.post("/me/plan/buy", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const PLAN_COST_CENTS = 299; // $2.99
+
+  try {
+    const walletRows = await db.select().from(infinityWalletTable).where(eq(infinityWalletTable.username, me)).limit(1);
+    const wallet = walletRows[0];
+    const balance = wallet?.balanceCents ?? 0;
+
+    if (balance < PLAN_COST_CENTS) {
+      res.status(402).json({ error: `Saldo insuficiente. Você tem R$${(balance / 100).toFixed(2)}, necessário R$${(PLAN_COST_CENTS / 100).toFixed(2)}.` }); return;
+    }
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
+    // Atomic: debit wallet + set plan
+    await db.transaction(async (tx) => {
+      await tx.update(infinityWalletTable)
+        .set({ balanceCents: sql`${infinityWalletTable.balanceCents} - ${PLAN_COST_CENTS}`, updatedAt: new Date() })
+        .where(eq(infinityWalletTable.username, me));
+      await tx.insert(infinityWalletTxnsTable).values({
+        username: me,
+        direction: "debit",
+        amountCents: PLAN_COST_CENTS,
+        description: "Plano Hydra PRO — 30 dias",
+        refId: `plan-${Date.now()}`,
+      });
+      await tx.update(infinityUsersTable)
+        .set({ planType: "pro", planExpiresAt: expiresAt })
+        .where(eq(infinityUsersTable.username, me));
+    });
+
+    res.json({ ok: true, planType: "pro", expiresAt });
+  } catch (err) {
+    logger.error({ err }, "Failed to buy plan");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── Friends ───────────────────────────────────────────────────────────────────
+
 router.get("/friends", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   try {
-    const rows = await db
-      .select()
-      .from(infinityFriendshipsTable)
-      .where(or(
-        eq(infinityFriendshipsTable.requesterUsername, me),
-        eq(infinityFriendshipsTable.addresseeUsername, me),
-      ));
+    const rows = await db.select().from(infinityFriendshipsTable).where(or(
+      eq(infinityFriendshipsTable.requesterUsername, me),
+      eq(infinityFriendshipsTable.addresseeUsername, me),
+    ));
 
     const friends: { id: number; username: string; status: string; direction: "sent" | "received" }[] = [];
     const usernamesNeeded = new Set<string>();
-
     for (const r of rows) {
       if (r.status === "blocked") continue;
       const other = r.requesterUsername === me ? r.addresseeUsername : r.requesterUsername;
@@ -133,78 +192,54 @@ router.get("/friends", requireAuth, async (req, res): Promise<void> => {
       usernamesNeeded.add(other);
     }
 
-    // Fetch mini profiles for all users
     let profileMap: Record<string, { displayName: string | null; photo: string | null; status: string | null; role: string }> = {};
     if (usernamesNeeded.size > 0) {
-      const profiles = await db
-        .select({
-          username: infinityUsersTable.username,
-          displayName: infinityUsersTable.displayName,
-          photo: infinityUsersTable.profilePhoto,
-          status: infinityUsersTable.profileStatus,
-          role: infinityUsersTable.role,
-        })
-        .from(infinityUsersTable)
-        .where(inArray(infinityUsersTable.username, [...usernamesNeeded]));
-      for (const p of profiles) {
-        profileMap[p.username] = { displayName: p.displayName, photo: p.photo, status: p.status, role: p.role };
-      }
+      const profiles = await db.select({ username: infinityUsersTable.username, displayName: infinityUsersTable.displayName, photo: infinityUsersTable.profilePhoto, status: infinityUsersTable.profileStatus, role: infinityUsersTable.role }).from(infinityUsersTable).where(inArray(infinityUsersTable.username, [...usernamesNeeded]));
+      for (const p of profiles) profileMap[p.username] = { displayName: p.displayName, photo: p.photo, status: p.status, role: p.role };
     }
 
-    const result = friends.map(f => ({
+    res.json(friends.map(f => ({
       ...f,
       displayName: profileMap[f.username]?.displayName ?? f.username,
       photo: profileMap[f.username]?.photo ?? null,
       status: profileMap[f.username]?.status ?? "offline",
       role: profileMap[f.username]?.role ?? "user",
-    }));
-
-    res.json(result);
+    })));
   } catch (err) {
     logger.error({ err }, "Failed to list friends");
     res.status(500).json({ error: "Erro interno" });
   }
 });
 
-// ── POST /api/infinity/friends/request — send friend request ──────────────────
 router.post("/friends/request", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const { username } = req.body as { username: string };
   const target = safeUsername(username);
-
   if (!target) { res.status(400).json({ error: "Username inválido" }); return; }
   if (target === me) { res.status(400).json({ error: "Você não pode se adicionar" }); return; }
 
   try {
-    // Check target exists
     const targetRows = await db.select({ username: infinityUsersTable.username }).from(infinityUsersTable).where(eq(infinityUsersTable.username, target)).limit(1);
     if (!targetRows[0]) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
 
-    // Check existing friendship
-    const existing = await db.select().from(infinityFriendshipsTable).where(
-      or(
-        and(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, target)),
-        and(eq(infinityFriendshipsTable.requesterUsername, target), eq(infinityFriendshipsTable.addresseeUsername, me)),
-      )
-    ).limit(1);
+    const existing = await db.select().from(infinityFriendshipsTable).where(or(
+      and(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, target)),
+      and(eq(infinityFriendshipsTable.requesterUsername, target), eq(infinityFriendshipsTable.addresseeUsername, me)),
+    )).limit(1);
 
     if (existing[0]) {
       const e = existing[0];
       if (e.status === "accepted") { res.status(409).json({ error: "Já são amigos" }); return; }
       if (e.status === "pending") { res.status(409).json({ error: "Pedido já enviado ou pendente" }); return; }
-      // Was declined — reset
-      await db.update(infinityFriendshipsTable)
-        .set({ status: "pending", requesterUsername: me, addresseeUsername: target, updatedAt: new Date() })
-        .where(eq(infinityFriendshipsTable.id, e.id));
-      res.json({ ok: true, message: "Pedido reenviado" });
-      return;
+      await db.update(infinityFriendshipsTable).set({ status: "pending", requesterUsername: me, addresseeUsername: target, updatedAt: new Date() }).where(eq(infinityFriendshipsTable.id, e.id));
+      res.json({ ok: true, message: "Pedido reenviado" }); return;
     }
 
-    const [created] = await db.insert(infinityFriendshipsTable).values({
-      requesterUsername: me,
-      addresseeUsername: target,
-      status: "pending",
-    }).returning();
+    const [created] = await db.insert(infinityFriendshipsTable).values({ requesterUsername: me, addresseeUsername: target, status: "pending" }).returning();
+
+    // Create personal notification for target
+    const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: target, type: "friend_request", fromUser: me, data: { friendshipId: created!.id } }).returning();
+    pushUserNotification(target, { type: "notification", notification: notif });
 
     res.json({ ok: true, id: created!.id, message: "Pedido enviado" });
   } catch (err) {
@@ -213,20 +248,20 @@ router.post("/friends/request", requireAuth, async (req, res): Promise<void> => 
   }
 });
 
-// ── POST /api/infinity/friends/:id/accept ──────────────────────────────────────
 router.post("/friends/:id/accept", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const id = parseInt((req.params as { id: string }).id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "ID inválido" }); return; }
-
   try {
-    const rows = await db.select().from(infinityFriendshipsTable).where(
-      and(eq(infinityFriendshipsTable.id, id), eq(infinityFriendshipsTable.addresseeUsername, me), eq(infinityFriendshipsTable.status, "pending"))
-    ).limit(1);
-
+    const rows = await db.select().from(infinityFriendshipsTable).where(and(eq(infinityFriendshipsTable.id, id), eq(infinityFriendshipsTable.addresseeUsername, me), eq(infinityFriendshipsTable.status, "pending"))).limit(1);
     if (!rows[0]) { res.status(404).json({ error: "Pedido não encontrado" }); return; }
 
     await db.update(infinityFriendshipsTable).set({ status: "accepted", updatedAt: new Date() }).where(eq(infinityFriendshipsTable.id, id));
+
+    // Notify requester that their request was accepted
+    const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: rows[0].requesterUsername, type: "friend_accept", fromUser: me, data: { friendshipId: id } }).returning();
+    pushUserNotification(rows[0].requesterUsername, { type: "notification", notification: notif });
+
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "Failed to accept friend request");
@@ -234,19 +269,12 @@ router.post("/friends/:id/accept", requireAuth, async (req, res): Promise<void> 
   }
 });
 
-// ── POST /api/infinity/friends/:id/decline ────────────────────────────────────
 router.post("/friends/:id/decline", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const id = parseInt((req.params as { id: string }).id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "ID inválido" }); return; }
-
   try {
-    await db.update(infinityFriendshipsTable)
-      .set({ status: "declined", updatedAt: new Date() })
-      .where(and(
-        eq(infinityFriendshipsTable.id, id),
-        or(eq(infinityFriendshipsTable.addresseeUsername, me), eq(infinityFriendshipsTable.requesterUsername, me)),
-      ));
+    await db.update(infinityFriendshipsTable).set({ status: "declined", updatedAt: new Date() }).where(and(eq(infinityFriendshipsTable.id, id), or(eq(infinityFriendshipsTable.addresseeUsername, me), eq(infinityFriendshipsTable.requesterUsername, me))));
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "Failed to decline friend request");
@@ -254,19 +282,12 @@ router.post("/friends/:id/decline", requireAuth, async (req, res): Promise<void>
   }
 });
 
-// ── DELETE /api/infinity/friends/:id — remove friend ─────────────────────────
 router.delete("/friends/:id", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const id = parseInt((req.params as { id: string }).id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "ID inválido" }); return; }
-
   try {
-    await db.delete(infinityFriendshipsTable).where(
-      and(
-        eq(infinityFriendshipsTable.id, id),
-        or(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, me)),
-      )
-    );
+    await db.delete(infinityFriendshipsTable).where(and(eq(infinityFriendshipsTable.id, id), or(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, me))));
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "Failed to remove friend");
@@ -274,29 +295,59 @@ router.delete("/friends/:id", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
-// ── GET /api/infinity/chat/rooms ──────────────────────────────────────────────
-router.get("/chat/rooms", requireAuth, async (req, res): Promise<void> => {
-  try {
-    const rooms = await db
-      .select()
-      .from(infinityChatRoomsTable)
-      .where(ne(infinityChatRoomsTable.type, "private"))
-      .orderBy(asc(infinityChatRoomsTable.createdAt));
+// ── DMs ───────────────────────────────────────────────────────────────────────
 
-    // Always include global room
-    const hasGlobal = rooms.some(r => r.slug === "global");
-    if (!hasGlobal) {
-      const [g] = await db.insert(infinityChatRoomsTable).values({
-        slug: "global",
-        name: "Global",
-        type: "global",
-        createdBy: "system",
-        description: "Chat geral da Hydra Consultoria",
-        icon: "🌐",
-      }).returning().onConflictDoNothing();
-      if (g) rooms.unshift(g);
+router.get("/me/dm/:username", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { username } = req.params as { username: string };
+  const other = safeUsername(username);
+  if (!other) { res.status(400).json({ error: "Username inválido" }); return; }
+  if (other === me) { res.status(400).json({ error: "Não pode criar DM consigo mesmo" }); return; }
+
+  // Deterministic slug: dm:alpha:beta (alphabetical order)
+  const [a, b] = [me, other].sort();
+  const slug = `dm:${a}:${b}`;
+
+  try {
+    // Check target exists
+    const targetRows = await db.select({ username: infinityUsersTable.username, displayName: infinityUsersTable.displayName, profilePhoto: infinityUsersTable.profilePhoto, profileAccentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(eq(infinityUsersTable.username, other)).limit(1);
+    if (!targetRows[0]) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+
+    // Get or create DM room
+    const existing = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, slug)).limit(1);
+    let room = existing[0];
+    if (!room) {
+      [room] = await db.insert(infinityChatRoomsTable).values({
+        slug,
+        name: `DM: ${me} ↔ ${other}`,
+        type: "dm",
+        createdBy: me,
+        description: `Conversa privada entre ${me} e ${other}`,
+        icon: "💬",
+      }).onConflictDoNothing().returning();
+      if (!room) {
+        const rows2 = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, slug)).limit(1);
+        room = rows2[0]!;
+      }
     }
 
+    res.json({ room, otherUser: targetRows[0] });
+  } catch (err) {
+    logger.error({ err }, "Failed to get/create DM room");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── Chat Rooms ────────────────────────────────────────────────────────────────
+
+router.get("/chat/rooms", requireAuth, async (req, res): Promise<void> => {
+  try {
+    const rooms = await db.select().from(infinityChatRoomsTable).where(ne(infinityChatRoomsTable.type, "dm")).orderBy(asc(infinityChatRoomsTable.createdAt));
+    const hasGlobal = rooms.some(r => r.slug === "global");
+    if (!hasGlobal) {
+      const [g] = await db.insert(infinityChatRoomsTable).values({ slug: "global", name: "Global", type: "global", createdBy: "system", description: "Chat geral da Hydra Consultoria", icon: "🌐" }).returning().onConflictDoNothing();
+      if (g) rooms.unshift(g);
+    }
     res.json(rooms.sort((a, b) => (a.slug === "global" ? -1 : b.slug === "global" ? 1 : 0)));
   } catch (err) {
     logger.error({ err }, "Failed to list chat rooms");
@@ -304,27 +355,13 @@ router.get("/chat/rooms", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
-// ── POST /api/infinity/chat/rooms — create room ────────────────────────────────
 router.post("/chat/rooms", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const { name, description, icon } = req.body as { name?: string; description?: string; icon?: string };
-
-  if (!name || typeof name !== "string" || name.trim().length < 2) {
-    res.status(400).json({ error: "Nome precisa ter ao menos 2 caracteres" }); return;
-  }
-
+  if (!name || typeof name !== "string" || name.trim().length < 2) { res.status(400).json({ error: "Nome precisa ter ao menos 2 caracteres" }); return; }
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) + "-" + Date.now().toString(36);
-
   try {
-    const [room] = await db.insert(infinityChatRoomsTable).values({
-      slug,
-      name: name.trim().slice(0, 50),
-      type: "public",
-      createdBy: me,
-      description: typeof description === "string" ? description.slice(0, 200) : null,
-      icon: typeof icon === "string" ? icon.slice(0, 4) : "💬",
-    }).returning();
-
+    const [room] = await db.insert(infinityChatRoomsTable).values({ slug, name: name.trim().slice(0, 50), type: "public", createdBy: me, description: typeof description === "string" ? description.slice(0, 200) : null, icon: typeof icon === "string" ? icon.slice(0, 4) : "💬" }).returning();
     res.json(room);
   } catch (err) {
     logger.error({ err }, "Failed to create chat room");
@@ -332,11 +369,9 @@ router.post("/chat/rooms", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
-// ── GET /api/infinity/chat/rooms/:slug/messages ─────────────────────────────────
 router.get("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<void> => {
   const { slug } = req.params as { slug: string };
   const limit = Math.min(100, parseInt((req.query as Record<string, string>).limit ?? "50", 10));
-  const before = (req.query as Record<string, string>).before;
 
   try {
     const msgs = await db
@@ -357,57 +392,141 @@ router.get("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<
       .orderBy(desc(infinityChatMessagesTable.id))
       .limit(limit);
 
-    res.json(msgs.reverse());
+    // Fetch reactions for these messages
+    const msgIds = msgs.map(m => m.id);
+    let reactionsMap: Record<number, { emoji: string; count: number; users: string[] }[]> = {};
+    if (msgIds.length > 0) {
+      const reactions = await db.select().from(infinityMessageReactionsTable).where(inArray(infinityMessageReactionsTable.messageId, msgIds));
+      for (const r of reactions) {
+        if (!reactionsMap[r.messageId]) reactionsMap[r.messageId] = [];
+        const ex = reactionsMap[r.messageId]!.find(x => x.emoji === r.emoji);
+        if (ex) { ex.count++; ex.users.push(r.username); }
+        else reactionsMap[r.messageId]!.push({ emoji: r.emoji, count: 1, users: [r.username] });
+      }
+    }
+
+    res.json(msgs.reverse().map(m => ({ ...m, reactions: reactionsMap[m.id] ?? [] })));
   } catch (err) {
     logger.error({ err }, "Failed to fetch chat messages");
     res.status(500).json({ error: "Erro interno" });
   }
 });
 
-// ── POST /api/infinity/chat/rooms/:slug/messages — post message (REST fallback) ─
 router.post("/chat/rooms/:slug/messages", requireAuth, async (req, res): Promise<void> => {
   const me = req.infinityUser!.username;
   const { slug } = req.params as { slug: string };
   const { content } = req.body as { content?: string };
-
-  if (!content || typeof content !== "string" || content.trim().length === 0) {
-    res.status(400).json({ error: "Mensagem vazia" }); return;
-  }
-  if (content.trim().length > 2000) {
-    res.status(400).json({ error: "Mensagem muito longa (máx 2000 chars)" }); return;
-  }
+  if (!content || typeof content !== "string" || content.trim().length === 0) { res.status(400).json({ error: "Mensagem vazia" }); return; }
+  if (content.trim().length > 2000) { res.status(400).json({ error: "Mensagem muito longa (máx 2000 chars)" }); return; }
 
   try {
-    // Verify room exists
     const roomRows = await db.select({ id: infinityChatRoomsTable.id }).from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, slug)).limit(1);
     if (!roomRows[0]) { res.status(404).json({ error: "Sala não encontrada" }); return; }
 
-    // Get user profile for the response
     const userRows = await db.select({ displayName: infinityUsersTable.displayName, photo: infinityUsersTable.profilePhoto, role: infinityUsersTable.role, accentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(eq(infinityUsersTable.username, me)).limit(1);
     const userProfile = userRows[0];
 
-    const [msg] = await db.insert(infinityChatMessagesTable).values({
-      roomSlug: slug,
-      username: me,
-      content: content.trim(),
-    }).returning();
+    const [msg] = await db.insert(infinityChatMessagesTable).values({ roomSlug: slug, username: me, content: content.trim() }).returning();
+    const fullMsg = { ...msg, displayName: userProfile?.displayName ?? me, photo: userProfile?.photo ?? null, role: userProfile?.role ?? "user", accentColor: userProfile?.accentColor ?? null, reactions: [] };
 
-    const fullMsg = {
-      ...msg,
-      displayName: userProfile?.displayName ?? me,
-      photo: userProfile?.photo ?? null,
-      role: userProfile?.role ?? "user",
-      accentColor: userProfile?.accentColor ?? null,
-    };
+    if (globalThis.__chatBroadcast) globalThis.__chatBroadcast(slug, { type: "message", ...fullMsg });
 
-    // Broadcast via WebSocket if available
-    if (globalThis.__chatBroadcast) {
-      globalThis.__chatBroadcast(slug, { type: "message", ...fullMsg });
+    // DM notification: notify the other participant
+    if (slug.startsWith("dm:")) {
+      const parts = slug.split(":");
+      const other = parts[1] === me ? parts[2] : parts[1];
+      if (other) {
+        const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: other!, type: "dm", fromUser: me, data: { roomSlug: slug, preview: content.trim().slice(0, 80) } }).returning();
+        pushUserNotification(other!, { type: "notification", notification: notif });
+      }
     }
 
     res.json(fullMsg);
   } catch (err) {
     logger.error({ err }, "Failed to post chat message");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── Reactions ─────────────────────────────────────────────────────────────────
+
+router.post("/chat/messages/:id/react", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const msgId = parseInt((req.params as { id: string }).id, 10);
+  if (isNaN(msgId)) { res.status(400).json({ error: "ID inválido" }); return; }
+  const { emoji } = req.body as { emoji?: string };
+  if (!emoji || typeof emoji !== "string" || emoji.length > 10) { res.status(400).json({ error: "Emoji inválido" }); return; }
+
+  try {
+    // Toggle: if already reacted with same emoji, remove; else add
+    const existing = await db.select().from(infinityMessageReactionsTable).where(and(eq(infinityMessageReactionsTable.messageId, msgId), eq(infinityMessageReactionsTable.username, me), eq(infinityMessageReactionsTable.emoji, emoji))).limit(1);
+
+    let added: boolean;
+    if (existing[0]) {
+      await db.delete(infinityMessageReactionsTable).where(eq(infinityMessageReactionsTable.id, existing[0].id));
+      added = false;
+    } else {
+      await db.insert(infinityMessageReactionsTable).values({ messageId: msgId, username: me, emoji });
+      added = true;
+    }
+
+    // Get the message to find the room and notify
+    const msgRows = await db.select({ roomSlug: infinityChatMessagesTable.roomSlug, username: infinityChatMessagesTable.username }).from(infinityChatMessagesTable).where(eq(infinityChatMessagesTable.id, msgId)).limit(1);
+    const msgRow = msgRows[0];
+
+    // Fetch updated reactions for this message
+    const allReactions = await db.select().from(infinityMessageReactionsTable).where(eq(infinityMessageReactionsTable.messageId, msgId));
+    const reactionSummary: Record<string, { emoji: string; count: number; users: string[] }> = {};
+    for (const r of allReactions) {
+      if (!reactionSummary[r.emoji]) reactionSummary[r.emoji] = { emoji: r.emoji, count: 0, users: [] };
+      reactionSummary[r.emoji]!.count++;
+      reactionSummary[r.emoji]!.users.push(r.username);
+    }
+    const reactions = Object.values(reactionSummary);
+
+    // Broadcast reaction update to room
+    if (msgRow && globalThis.__chatBroadcast) {
+      globalThis.__chatBroadcast(msgRow.roomSlug, { type: "reaction_update", messageId: msgId, reactions });
+    }
+
+    // Notify message author (if not self)
+    if (added && msgRow && msgRow.username !== me) {
+      const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: msgRow.username, type: "reaction", fromUser: me, data: { messageId: msgId, emoji, roomSlug: msgRow.roomSlug } }).returning();
+      pushUserNotification(msgRow.username, { type: "notification", notification: notif });
+    }
+
+    res.json({ ok: true, added, reactions });
+  } catch (err) {
+    logger.error({ err }, "Failed to toggle reaction");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+router.get("/me/notifications", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    const notifs = await db.select().from(infinityUserNotificationsTable).where(eq(infinityUserNotificationsTable.username, me)).orderBy(desc(infinityUserNotificationsTable.createdAt)).limit(30);
+    res.json(notifs);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch notifications");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.patch("/me/notifications/read", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { ids } = req.body as { ids?: number[] };
+  try {
+    if (ids && ids.length > 0) {
+      await db.update(infinityUserNotificationsTable).set({ read: true }).where(and(eq(infinityUserNotificationsTable.username, me), inArray(infinityUserNotificationsTable.id, ids)));
+    } else {
+      await db.update(infinityUserNotificationsTable).set({ read: true }).where(eq(infinityUserNotificationsTable.username, me));
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to mark notifications read");
     res.status(500).json({ error: "Erro interno" });
   }
 });

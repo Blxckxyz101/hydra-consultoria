@@ -23,6 +23,7 @@ import Afiliados from "@/pages/afiliados";
 import Carteira from "@/pages/carteira";
 import Comunidade from "@/pages/comunidade";
 import PerfilPublico from "@/pages/perfil-publico";
+import DM from "@/pages/dm";
 
 // Apply saved color theme immediately on load
 initSavedTheme();
@@ -74,6 +75,7 @@ function Router() {
                 <Route path="/afiliados" component={Afiliados} />
                 <Route path="/carteira" component={Carteira} />
                 <Route path="/comunidade" component={Comunidade} />
+                <Route path="/dm/:username" component={DM} />
                 <Route component={NotFound} />
               </Switch>
             </Layout>

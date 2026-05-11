@@ -5,7 +5,7 @@ import {
   User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil, AtSign,
   Bookmark, BookmarkPlus, Play, Plus, X as XIcon,
   MapPin, Music, Globe, Instagram, Twitter, Youtube, Github, Twitch, UserPlus, Users as UsersIcon,
-  CheckCircle, XCircle, Loader2,
+  CheckCircle, XCircle, Loader2, CreditCard, Sparkles, Crown,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
@@ -136,6 +136,49 @@ export default function Perfil() {
   const [addFriendLoading, setAddFriendLoading] = useState(false);
   const [addFriendMsg, setAddFriendMsg] = useState("");
 
+  // ── Card Theme & Plan ─────────────────────────────────────────────────────
+  const [cardTheme, setCardTheme] = useState<string>("default");
+  const [planType, setPlanType] = useState<string>("free");
+  const [planBuying, setPlanBuying] = useState(false);
+  const [planMsg, setPlanMsg] = useState("");
+  const [themeSaving, setThemeSaving] = useState(false);
+
+  const PRO_THEMES = ["aurora","matrix","neon","holographic","particles","glitch","cyberpunk"];
+  const ALL_THEMES = [
+    { id: "default", label: "Padrão", colors: ["#00d9ff","#0a1628"], pro: false },
+    { id: "midnight", label: "Midnight", colors: ["#6366f1","#0f0c1d"], pro: false },
+    { id: "rose", label: "Rose", colors: ["#f43f5e","#1a0a0e"], pro: false },
+    { id: "aurora", label: "Aurora", colors: ["#22d3ee","#a78bfa","#0d1117"], pro: true },
+    { id: "matrix", label: "Matrix", colors: ["#22c55e","#00ff41","#0a0a0a"], pro: true },
+    { id: "neon", label: "Neon", colors: ["#f0abfc","#e879f9","#12001a"], pro: true },
+    { id: "holographic", label: "Holográfico", colors: ["#67e8f9","#a5f3fc","#f0abfc"], pro: true },
+    { id: "glitch", label: "Glitch", colors: ["#ff0080","#00ffff","#0a0a0a"], pro: true },
+    { id: "cyberpunk", label: "Cyberpunk", colors: ["#fbbf24","#f97316","#0f0700"], pro: true },
+  ];
+
+  const buyPlan = async () => {
+    setPlanBuying(true); setPlanMsg("");
+    try {
+      const r = await fetch("/api/infinity/me/plan/buy", { method: "POST", headers: authHeaders() });
+      const d = await r.json() as { error?: string; planType?: string };
+      if (!r.ok) { setPlanMsg(d.error ?? "Erro ao comprar"); }
+      else { setPlanType("pro"); setPlanMsg("PRO ativado por 30 dias! 🎉"); }
+    } catch { setPlanMsg("Erro de conexão"); }
+    finally { setPlanBuying(false); setTimeout(() => setPlanMsg(""), 4000); }
+  };
+
+  const saveCardTheme = async (theme: string) => {
+    setCardTheme(theme); setThemeSaving(true);
+    try {
+      await fetch("/api/infinity/me/social", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ cardTheme: theme }),
+      });
+    } catch {}
+    finally { setThemeSaving(false); }
+  };
+
   // ── Presets ───────────────────────────────────────────────────────────────
   const [presets, setPresets] = useState<PresetSummary[]>([]);
   const [presetSaving, setPresetSaving] = useState(false);
@@ -245,10 +288,12 @@ export default function Perfil() {
     // Load social profile
     fetch("/api/infinity/me/social", { headers: authHeaders() })
       .then(r => r.json())
-      .then((d: { location?: string | null; musicUrl?: string | null; socialLinks?: { type: string; value: string }[] }) => {
+      .then((d: { location?: string | null; musicUrl?: string | null; socialLinks?: { type: string; value: string }[]; cardTheme?: string; planType?: string }) => {
         setSocialLocation(d.location ?? "");
         setSocialMusicUrl(d.musicUrl ?? "");
         setSocialLinks(Array.isArray(d.socialLinks) ? d.socialLinks : []);
+        if (d.cardTheme) setCardTheme(d.cardTheme);
+        if (d.planType) setPlanType(d.planType);
       })
       .catch(() => {});
 
@@ -905,6 +950,84 @@ export default function Perfil() {
             })}
           </div>
         )}
+      </motion.div>
+
+      {/* ── Card Tema PRO ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.185 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <CreditCard className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Tema do Card</h2>
+            {planType === "pro" || user?.role === "admin" ? (
+              <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded-full font-bold text-black flex items-center gap-0.5" style={{ background: "var(--color-primary)" }}>
+                <Crown className="w-2.5 h-2.5" /> PRO
+              </span>
+            ) : (
+              <span className="text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded-full font-bold border border-white/20 text-muted-foreground">FREE</span>
+            )}
+          </div>
+          {planType === "free" && user?.role !== "admin" && (
+            <button onClick={buyPlan} disabled={planBuying}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all disabled:opacity-50 animate-pulse"
+              style={{ background: "var(--color-primary)", color: "#000" }}>
+              <Sparkles className="w-3 h-3" />
+              {planBuying ? "Processando..." : "Ativar PRO — R$2,99"}
+            </button>
+          )}
+        </div>
+
+        {planMsg && (
+          <p className={`text-xs px-3 py-2 rounded-xl ${planMsg.includes("🎉") ? "bg-green-500/10 text-green-400 border border-green-500/20" : "bg-red-500/10 text-red-400 border border-red-500/20"}`}>
+            {planMsg}
+          </p>
+        )}
+
+        <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest -mt-1">
+          Escolha o tema visual do seu cartão de perfil público
+        </p>
+
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          {ALL_THEMES.map(t => {
+            const isLocked = t.pro && planType !== "pro" && user?.role !== "admin";
+            const isSelected = cardTheme === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => !isLocked && saveCardTheme(t.id)}
+                disabled={isLocked}
+                title={isLocked ? "Requer PRO" : t.label}
+                className={`relative flex flex-col items-center gap-2 p-3 rounded-2xl border transition-all ${isSelected ? "scale-105" : "hover:scale-102 opacity-70 hover:opacity-100"} ${isLocked ? "cursor-not-allowed" : "cursor-pointer"}`}
+                style={{
+                  borderColor: isSelected ? "var(--color-primary)" : "rgba(255,255,255,0.07)",
+                  background: isSelected ? "color-mix(in srgb, var(--color-primary) 10%, transparent)" : "rgba(255,255,255,0.03)",
+                }}
+              >
+                {/* Mini color preview */}
+                <div className="w-full h-8 rounded-xl overflow-hidden flex">
+                  {t.colors.map((c, i) => (
+                    <div key={i} className="flex-1 h-full" style={{ background: c }} />
+                  ))}
+                </div>
+                <span className="text-[10px] text-center truncate w-full" style={{ color: isSelected ? "var(--color-primary)" : "rgba(255,255,255,0.5)" }}>{t.label}</span>
+                {isLocked && (
+                  <span className="absolute top-1 right-1 text-[8px] text-yellow-400">🔒</span>
+                )}
+                {isSelected && (
+                  <span className="absolute top-1 left-1 w-3.5 h-3.5 rounded-full flex items-center justify-center" style={{ background: "var(--color-primary)" }}>
+                    <Check className="w-2 h-2 text-black" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {themeSaving && <p className="text-[10px] text-muted-foreground/50 text-center animate-pulse">Salvando tema...</p>}
       </motion.div>
 
       {/* ── Presets ── */}

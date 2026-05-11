@@ -27,6 +27,10 @@ export const infinityUsersTable = pgTable("infinity_users", {
   profileAccentColor: text("profile_accent_color"),
   profileBgType:      text("profile_bg_type").default("default"),
   profileBgValue:     text("profile_bg_value"),
+  // Plan & card theme
+  planType:           text("plan_type").default("free"),        // "free" | "pro"
+  planExpiresAt:      timestamp("plan_expires_at", { withTimezone: true }),
+  cardTheme:          text("card_theme").default("default"),    // theme slug
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {
@@ -289,6 +293,47 @@ export const infinityChatMessagesTable = pgTable(
 );
 
 export type InfinityChatMessageRow = typeof infinityChatMessagesTable.$inferSelect;
+
+// ─── Message Reactions ────────────────────────────────────────────────────────
+
+export const infinityMessageReactionsTable = pgTable(
+  "infinity_message_reactions",
+  {
+    id:        serial("id").primaryKey(),
+    messageId: integer("message_id").notNull(),
+    username:  text("username").notNull(),
+    emoji:     text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byMessage: index("infinity_message_reactions_msg_idx").on(t.messageId),
+    byUser:    index("infinity_message_reactions_user_idx").on(t.username),
+  }),
+);
+
+export type InfinityMessageReactionRow = typeof infinityMessageReactionsTable.$inferSelect;
+
+// ─── User Notifications (personal) ───────────────────────────────────────────
+
+export const infinityUserNotificationsTable = pgTable(
+  "infinity_user_notifications",
+  {
+    id:        serial("id").primaryKey(),
+    username:  text("username").notNull(),       // recipient
+    type:      text("type").notNull(),           // "friend_request" | "friend_accept" | "dm" | "reaction" | "system"
+    fromUser:  text("from_user"),               // who triggered it
+    data:      jsonb("data"),                   // extra info (messageId, roomSlug, etc.)
+    read:      boolean("read").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byUser:    index("infinity_user_notifs_user_idx").on(t.username),
+    byRead:    index("infinity_user_notifs_read_idx").on(t.read),
+    byCreated: index("infinity_user_notifs_created_idx").on(t.createdAt),
+  }),
+);
+
+export type InfinityUserNotificationRow = typeof infinityUserNotificationsTable.$inferSelect;
 
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);
 export type InsertInfinityUser        = z.infer<typeof insertInfinityUserSchema>;
