@@ -430,7 +430,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         <div className="space-y-1">
           <a
-            href="https://t.me/Blxckxyz"
+            href="https://t.me/infinitysearchchannel"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
@@ -451,7 +451,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span>Precisa de ajuda?</span>
           </a>
           <a
-            href="https://t.me/hydraconsultoria"
+            href="https://t.me/infinitysearchchannel"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
