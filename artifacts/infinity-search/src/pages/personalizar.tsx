@@ -63,8 +63,8 @@ export function applyTheme(t: ThemeDef) {
   const parts = t.primary.split(" ");
   const hue = parts[0]!;
   const sat = parseFloat(parts[1] ?? "50");
-  const bgHsl   = t.bgOverride     ?? "220 8% 3%";
-  const cardHsl = t.cardOverride   ?? "220 6% 5%";
+  const bgHsl   = t.bgOverride     ?? "0 0% 2%";
+  const cardHsl = t.cardOverride   ?? "0 0% 4%";
   const brdHsl  = t.borderOverride ?? `${hue} 18% 12%`;
   const mutHsl  = t.mutedOverride  ?? `${hue} 14% 13%`;
 

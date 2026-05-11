@@ -333,15 +333,16 @@ export default function Overview() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <Link
                   href="/consultas"
-                  className="group inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-black font-semibold text-xs uppercase tracking-widest transition-all"
+                  className="group inline-flex items-center gap-2.5 px-6 py-3 rounded-xl text-black font-bold text-xs uppercase tracking-[0.3em] transition-all"
                   style={{
                     background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 75%, white))",
-                    boxShadow: "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)",
+                    boxShadow: "0 0 40px color-mix(in srgb, var(--color-primary) 45%, transparent)",
+                    fontSize: "11px",
                   }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 45px color-mix(in srgb, var(--color-primary) 65%, transparent)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 30px color-mix(in srgb, var(--color-primary) 40%, transparent)"; }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 60px color-mix(in srgb, var(--color-primary) 70%, transparent)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 0 40px color-mix(in srgb, var(--color-primary) 45%, transparent)"; }}
                 >
-                  Nova consulta <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                  Nova consulta <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                 </Link>
                 <Link
                   href="/ia"
@@ -377,6 +378,46 @@ export default function Overview() {
             </div>
           </div>
         </div>
+      </motion.div>
+
+      {/* Credibility / Platform Trust Indicators */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.04 }}
+        className="grid grid-cols-3 gap-3"
+      >
+        {[
+          {
+            icon: <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] mr-2" />,
+            label: "Sistema operacional",
+            sub: "99.9% uptime",
+            color: "emerald",
+          },
+          {
+            icon: <span className="text-base">🔒</span>,
+            label: "Dados protegidos",
+            sub: "Criptografia ponta-a-ponta",
+            color: "primary",
+          },
+          {
+            icon: <span className="text-base">✅</span>,
+            label: "Plataforma verificada",
+            sub: "Acesso autorizado",
+            color: "primary",
+          },
+        ].map((item, i) => (
+          <div
+            key={i}
+            className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-white/[0.06] bg-black/20 backdrop-blur-xl px-3 py-4 text-center"
+          >
+            <div className="flex items-center justify-center text-xs font-semibold text-foreground/80">
+              {item.icon}
+              <span className="text-[10px] font-bold uppercase tracking-widest">{item.label}</span>
+            </div>
+            <div className="text-[9px] text-muted-foreground/50 uppercase tracking-wider">{item.sub}</div>
+          </div>
+        ))}
       </motion.div>
 
       {/* Latest Updates — TOP of page */}

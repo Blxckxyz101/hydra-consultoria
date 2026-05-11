@@ -120,7 +120,7 @@ export default function Login() {
                   <img
                     src={logoUrl}
                     alt="Hydra Consultoria"
-                    className="w-24 h-24 drop-shadow-[0_0_18px_var(--color-primary)]"
+                    className="w-24 h-24 object-contain"
                   />
                 </div>
               </motion.div>

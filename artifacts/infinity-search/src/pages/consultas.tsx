@@ -52,6 +52,7 @@ type TabDef = {
   inputMode?: "numeric" | "text";
   icon: React.ComponentType<{ className?: string }>;
   sanitize?: (s: string) => string;
+  hidden?: boolean;
 };
 
 const cpf11  = (s: string) => s.replace(/\D/g, "").slice(0, 11);
@@ -60,21 +61,19 @@ const placa8 = (s: string) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0
 
 const TABS: TabDef[] = [
   // ── PESSOA ────────────────────────────────────────────────────────────────
-  { id: "cpf",        label: "CPF",          category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos",                               inputMode: "numeric", icon: IdCard,        sanitize: cpf11 },
-  { id: "cpffull",    label: "CPF Full",     category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · consulta completa · 17 módulos", inputMode: "numeric", icon: IdCard,     sanitize: cpf11 },
-  { id: "cpfbasico",  label: "CPF Básico",   category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · Skylers",                     inputMode: "numeric", icon: FileText,      sanitize: cpf11 },
+  { id: "cpf",        label: "CPF",          category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · Padrão / Full / Básico",      inputMode: "numeric", icon: IdCard,        sanitize: cpf11 },
   { id: "nome",       label: "Nome",         category: "Pessoa", placeholder: "Nome completo",       hint: "texto livre",                              icon: User,            sanitize: (s) => s.slice(0, 80) },
+  { id: "telefone",   label: "Telefone",     category: "Pessoa", placeholder: "11999999999",         hint: "DDD + número sem DDI 55 · ex: 11999999999",inputMode: "numeric", icon: Phone,         sanitize: (s) => { const d = s.replace(/\D/g, ""); return d.startsWith("55") && d.length > 11 ? d.slice(2, 13) : d.slice(0, 13); } },
+  { id: "email",      label: "Email",        category: "Pessoa", placeholder: "exemplo@dominio.com", hint: "texto livre",                              icon: Mail },
+  { id: "pix",        label: "PIX",          category: "Pessoa", placeholder: "CPF, email, telefone ou chave aleatória",           hint: "ex: 12345678900 · email@dominio.com · +5511999999999 · chave-uuid",             icon: Wallet },
+  { id: "parentes",   label: "Parentes",     category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos — rede familiar",               inputMode: "numeric", icon: Users,         sanitize: cpf11 },
   { id: "rg",         label: "RG",           category: "Pessoa", placeholder: "RG ou identidade",    hint: "texto/numérico",                           icon: ScrollText },
   { id: "mae",        label: "Mãe",          category: "Pessoa", placeholder: "CPF do filho(a)",     hint: "11 dígitos — busca pela mãe",              inputMode: "numeric", icon: Heart,         sanitize: cpf11 },
   { id: "pai",        label: "Pai",          category: "Pessoa", placeholder: "CPF do filho(a)",     hint: "11 dígitos — busca pelo pai",              inputMode: "numeric", icon: Heart,         sanitize: cpf11 },
-  { id: "nasc",       label: "Nascimento",   category: "Pessoa", placeholder: "Digite o CPF",         hint: "Informe o CPF para obter a data de nascimento cadastrada · Skylers",       inputMode: "numeric", icon: Calendar,      sanitize: cpf11 },
-  { id: "parentes",   label: "Parentes",     category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos — rede familiar",               inputMode: "numeric", icon: Users,         sanitize: cpf11 },
-  { id: "obito",      label: "Óbito",        category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos",                               inputMode: "numeric", icon: Skull,         sanitize: cpf11 },
-  { id: "email",      label: "Email",        category: "Pessoa", placeholder: "exemplo@dominio.com", hint: "texto livre",                              icon: Mail },
-  { id: "telefone",   label: "Telefone",     category: "Pessoa", placeholder: "11999999999",         hint: "DDD + número sem DDI 55 · ex: 11999999999",inputMode: "numeric", icon: Phone,         sanitize: (s) => { const d = s.replace(/\D/g, ""); return d.startsWith("55") && d.length > 11 ? d.slice(2, 13) : d.slice(0, 13); } },
-  { id: "pix",        label: "PIX",          category: "Pessoa", placeholder: "CPF, email, telefone ou chave aleatória",           hint: "ex: 12345678900 · email@dominio.com · +5511999999999 · chave-uuid",             icon: Wallet },
   { id: "endereco",   label: "Endereço",     category: "Pessoa", placeholder: "00000000000",         hint: "CPF · endereço residencial · Skylers",     inputMode: "numeric", icon: MapPin,        sanitize: cpf11 },
   { id: "cep",        label: "CEP",          category: "Pessoa", placeholder: "00000000",            hint: "8 dígitos",                                inputMode: "numeric", icon: MapPin,        sanitize: (s) => s.replace(/\D/g, "").slice(0, 8) },
+  { id: "nasc",       label: "Nascimento",   category: "Pessoa", placeholder: "Digite o CPF",         hint: "Informe o CPF para obter a data de nascimento cadastrada · Skylers",       inputMode: "numeric", icon: Calendar,      sanitize: cpf11 },
+  { id: "obito",      label: "Óbito",        category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos",                               inputMode: "numeric", icon: Skull,         sanitize: cpf11 },
   { id: "nis",        label: "NIS/PIS",      category: "Pessoa", placeholder: "NIS/PIS",             hint: "11 dígitos",                               inputMode: "numeric", icon: CreditCard,    sanitize: (s) => s.replace(/\D/g, "").slice(0, 11) },
   { id: "titulo",     label: "Título",       category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos · título eleitor · Skylers",    inputMode: "numeric", icon: Award,         sanitize: cpf11 },
   { id: "score",      label: "Score",        category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos · score de crédito · Skylers",  inputMode: "numeric", icon: BarChart2,     sanitize: cpf11 },
@@ -92,6 +91,8 @@ const TABS: TabDef[] = [
   { id: "registro",   label: "Registro",     category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos · Skylers",                     inputMode: "numeric", icon: ClipboardList, sanitize: cpf11 },
   { id: "spc",        label: "CPF SPC",      category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos · dados de crédito · Skylers",  inputMode: "numeric", icon: CreditCard,    sanitize: cpf11 },
   { id: "credilink",  label: "CrediLink",    category: "Pessoa", placeholder: "CPF",                 hint: "11 dígitos · score financeiro · Skylers",  inputMode: "numeric", icon: CreditCard,    sanitize: cpf11 },
+  { id: "cpffull",    label: "CPF Full",     category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · consulta completa · 17 módulos", inputMode: "numeric", icon: IdCard,     sanitize: cpf11, hidden: true },
+  { id: "cpfbasico",  label: "CPF Básico",   category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · Skylers",                     inputMode: "numeric", icon: FileText,      sanitize: cpf11, hidden: true },
 
   // ── FOTOS ─────────────────────────────────────────────────────────────────
   { id: "foto",          label: "Foto CNH",       category: "Fotos", placeholder: "CPF", hint: "11 dígitos · foto da CNH · Skylers",        inputMode: "numeric", icon: Camera,     sanitize: cpf11 },
@@ -231,6 +232,7 @@ const CREDILINK_BASES = new Set<Tipo>(["cpf"]);
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
+  const [cpfVariant, setCpfVariant] = useState<"cpf" | "cpffull" | "cpfbasico">("cpf");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ success: boolean; error?: string | null; data?: unknown } | null>(null);
   const [pending, setPending] = useState(false);
@@ -379,30 +381,42 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
-    if (tab === "cpffull") {
+    const effectiveTab: Tipo = tab === "cpf" ? cpfVariant : tab;
+    if (effectiveTab === "cpffull") {
       setCpfFullQuery(query.trim());
       return;
     }
-    if (SKYLERS_ONLY_TIPOS.has(tab)) {
-      await executeQuery(tab, query.trim(), "skylers");
+    if (SKYLERS_ONLY_TIPOS.has(effectiveTab)) {
+      await executeQuery(effectiveTab, query.trim(), "skylers");
       return;
     }
-    if (PANEL_EXTERNAL_TIPOS.has(tab)) {
-      setPendingQuery({ tipo: tab, dados: query.trim() });
+    if (PANEL_EXTERNAL_TIPOS.has(effectiveTab)) {
+      setPendingQuery({ tipo: effectiveTab, dados: query.trim() });
       setShowBaseSelector(true);
       return;
     }
-    await executeQuery(tab, query.trim(), null);
+    await executeQuery(effectiveTab, query.trim(), null);
   };
 
   const repeatQuery = (tipo: string, dados: string) => {
     const tabDef = TABS.find((t) => t.id === tipo);
     if (!tabDef) return;
     setActiveCategory(tabDef.category);
-    setTab(tabDef.id);
     setQuery(dados);
     setResult(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Remap hidden CPF variants back to the unified CPF tile
+    if (tabDef.id === "cpffull" || tabDef.id === "cpfbasico") {
+      setTab("cpf");
+      setCpfVariant(tabDef.id);
+      if (tabDef.id === "cpffull") {
+        setCpfFullQuery(dados);
+      } else {
+        executeQuery("cpfbasico", dados, "skylers");
+      }
+      return;
+    }
+    setTab(tabDef.id);
     if (SKYLERS_ONLY_TIPOS.has(tabDef.id)) {
       executeQuery(tabDef.id, dados, "skylers");
     } else if (PANEL_EXTERNAL_TIPOS.has(tabDef.id)) {
@@ -426,12 +440,14 @@ export default function Consultas() {
   const isSearching = searchTrim.length > 0;
   const tabsInCategory = isSearching
     ? TABS.filter((t) =>
-        t.label.toLowerCase().includes(searchTrim) ||
-        t.id.toLowerCase().includes(searchTrim) ||
-        t.category.toLowerCase().includes(searchTrim) ||
-        t.hint.toLowerCase().includes(searchTrim)
+        !t.hidden && (
+          t.label.toLowerCase().includes(searchTrim) ||
+          t.id.toLowerCase().includes(searchTrim) ||
+          t.category.toLowerCase().includes(searchTrim) ||
+          t.hint.toLowerCase().includes(searchTrim)
+        )
       )
-    : TABS.filter((t) => t.category === activeCategory);
+    : TABS.filter((t) => t.category === activeCategory && !t.hidden);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -584,7 +600,7 @@ export default function Consultas() {
           <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
             {CATEGORIES.map((cat) => {
               const isActive = activeCategory === cat;
-              const count = TABS.filter((t) => t.category === cat).length;
+              const count = TABS.filter((t) => t.category === cat && !t.hidden).length;
               return (
                 <button
                   key={cat}
@@ -669,6 +685,33 @@ export default function Consultas() {
             <ActiveIcon className="w-3.5 h-3.5" />
             {activeTab.label} · {activeTab.hint}
           </div>
+
+          {/* CPF sub-type selector */}
+          {tab === "cpf" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40">Tipo:</span>
+              {([
+                { id: "cpf"      as const, label: "Padrão",   hint: "Geass" },
+                { id: "cpffull"  as const, label: "Completo",  hint: "17 módulos" },
+                { id: "cpfbasico"as const, label: "Básico",    hint: "Skylers" },
+              ]).map(v => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setCpfVariant(v.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] uppercase tracking-widest font-bold transition-all ${
+                    cpfVariant === v.id
+                      ? "bg-primary/20 border-primary/50 text-primary shadow-[0_0_12px_-2px_color-mix(in_srgb,var(--color-primary)_50%,transparent)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"
+                  }`}
+                >
+                  {v.label}
+                  <span className="opacity-40 font-normal text-[8px]">· {v.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex-1 relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />

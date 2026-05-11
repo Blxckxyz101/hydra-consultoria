@@ -269,19 +269,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Header */}
       <div className="px-5 pt-5 pb-5 flex items-center gap-3 border-b border-white/5">
         <div className="relative w-11 h-11 shrink-0 flex items-center justify-center">
-          <div
-            className="absolute inset-0 rounded-xl blur-lg"
-            style={{ background: "color-mix(in srgb, var(--color-primary) 28%, transparent)" }}
-          />
           <img
             src={logoUrl}
             alt="Hydra Consultoria"
-            className="relative w-11 h-11 drop-shadow-[0_0_10px_var(--color-primary)]"
+            className="w-11 h-11 object-contain"
           />
         </div>
         <div className="flex flex-col flex-1 min-w-0">
-          <span className="font-bold tracking-[0.25em] text-base text-foreground leading-none">HYDRA</span>
-          <span className="text-[9px] uppercase tracking-[0.4em] mt-0.5" style={{ color: "color-mix(in srgb, var(--color-primary) 70%, transparent)" }}>CONSULTORIA</span>
+          <span className="leading-none text-foreground" style={{ fontFamily: "'Bebas Neue', 'Exo 2', sans-serif", fontSize: "20px", letterSpacing: "0.18em" }}>HYDRA</span>
+          <div className="flex items-center gap-1 mt-0.5">
+            <span className="text-[9px]" style={{ color: "var(--color-primary)", opacity: 0.7 }}>—</span>
+            <span className="text-[8px] uppercase tracking-[0.45em] font-medium" style={{ color: "var(--color-primary)", opacity: 0.8, fontFamily: "'Exo 2', sans-serif" }}>CONSULTORIA</span>
+            <span className="text-[9px]" style={{ color: "var(--color-primary)", opacity: 0.7 }}>—</span>
+          </div>
         </div>
         {onClose ? (
           <button
@@ -502,7 +502,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <AnimatedBackground />
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-72 flex-col z-10 shrink-0 border-r border-white/[0.07] backdrop-blur-2xl" style={{ background: "rgba(5,11,28,0.45)" }}>
+      <aside className="hidden lg:flex w-72 flex-col z-10 shrink-0 border-r border-white/[0.05] backdrop-blur-3xl" style={{ background: "rgba(0,0,4,0.15)" }}>
         {renderSidebar()}
       </aside>
 
@@ -520,10 +520,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <img
               src={logoUrl}
               alt=""
-              className="w-7 h-7 drop-shadow-[0_0_8px_var(--color-primary)]"
+              className="w-7 h-7 object-contain"
             />
           </div>
-          <span className="font-bold tracking-[0.2em] text-sm">HYDRA</span>
+          <span className="text-foreground" style={{ fontFamily: "'Bebas Neue', 'Exo 2', sans-serif", fontSize: "17px", letterSpacing: "0.18em" }}>HYDRA</span>
         </div>
         {/* Bell — mobile topbar */}
         <div ref={bellMobileRef} className="relative">
@@ -566,7 +566,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 280, damping: 32 }}
-              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(5,11,28,0.72)" }}
+              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.06] backdrop-blur-3xl" style={{ background: "rgba(0,0,4,0.45)" }}
             >
               {renderSidebar(() => setMobileOpen(false))}
             </motion.aside>
