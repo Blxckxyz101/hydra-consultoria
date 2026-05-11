@@ -9,8 +9,9 @@ export function Scene5() {
     const timers = [
       setTimeout(() => setPhase(1), 500),  // Logo
       setTimeout(() => setPhase(2), 1200), // Tagline
-      setTimeout(() => setPhase(3), 2000), // CTA
-      setTimeout(() => setPhase(4), 4500), // Exit
+      setTimeout(() => setPhase(3), 2000), // CTA buttons
+      setTimeout(() => setPhase(4), 3200), // Contact line
+      setTimeout(() => setPhase(5), 5500), // Exit
     ];
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
@@ -21,7 +22,7 @@ export function Scene5() {
       {...sceneTransitions.morphExpand}
     >
       <div className="relative z-20 flex flex-col items-center">
-        {/* Infinity Logo constructed with CSS */}
+        {/* Infinity Logo */}
         <motion.div 
           className="relative w-32 h-16 mb-8"
           initial={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
@@ -53,7 +54,7 @@ export function Scene5() {
         </motion.div>
 
         <motion.h1 
-          className="text-4xl font-bold tracking-widest text-white mb-4"
+          className="text-4xl font-bold tracking-widest text-white mb-2"
           initial={{ opacity: 0, y: 20 }}
           animate={phase >= 1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
           transition={{ duration: 0.8, delay: 0.5 }}
@@ -62,7 +63,7 @@ export function Scene5() {
         </motion.h1>
 
         <motion.div 
-          className="text-sm font-mono text-[#0ea5e9] tracking-widest mb-12 text-center"
+          className="text-sm font-mono text-[#0ea5e9] tracking-widest mb-8 text-center"
           initial={{ opacity: 0 }}
           animate={phase >= 2 ? { opacity: 1 } : { opacity: 0 }}
           transition={{ duration: 1 }}
@@ -70,13 +71,44 @@ export function Scene5() {
           INTELIGÊNCIA EM<br/>CADA CONSULTA
         </motion.div>
 
-        <motion.div 
-          className="px-8 py-3 bg-[#0ea5e9]/10 border border-[#0ea5e9] rounded-full text-white text-sm font-bold tracking-wider backdrop-blur-sm"
+        {/* CTA Buttons */}
+        <motion.div
+          className="flex flex-col items-center gap-3 mb-6 w-full max-w-xs"
           initial={{ opacity: 0, scale: 0.9, y: 20 }}
           animate={phase >= 3 ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 20 }}
           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
         >
-          ACESSE AGORA
+          <div className="w-full px-6 py-3 bg-[#0ea5e9]/15 border border-[#0ea5e9] rounded-full text-white text-sm font-bold tracking-wider backdrop-blur-sm text-center">
+            ACESSE AGORA
+          </div>
+          <div className="flex gap-2 w-full">
+            <div className="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-full text-[#7dd3fc] text-xs font-semibold tracking-wider text-center">
+              CONHEÇA OS PLANOS
+            </div>
+            <div className="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-full text-[#7dd3fc] text-xs font-semibold tracking-wider text-center">
+              SOLICITE UM TESTE
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Contact / site line */}
+        <motion.div
+          className="flex flex-col items-center gap-1.5"
+          initial={{ opacity: 0, y: 8 }}
+          animate={phase >= 4 ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
+          transition={{ duration: 0.7 }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-12 h-px bg-[#0ea5e9]/40" />
+            <span className="text-[10px] font-mono text-[#0ea5e9]/70 tracking-[0.25em] uppercase">entre em contato</span>
+            <span className="w-12 h-px bg-[#0ea5e9]/40" />
+          </div>
+          <p className="text-[11px] text-white/50 tracking-widest font-mono">
+            🌐 <span className="text-[#38bdf8]">infinitysearch.pro</span>
+          </p>
+          <p className="text-[11px] text-white/50 tracking-widest font-mono">
+            ✉️ <span className="text-[#38bdf8]">Telegram: @Blxckxyz</span>
+          </p>
         </motion.div>
       </div>
 

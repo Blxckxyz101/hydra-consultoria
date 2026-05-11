@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable, infinityProfilePresetsTable } from "@workspace/db";
 import { eq, desc, sql, gte, and, isNull } from "drizzle-orm";
+import { sendFakeSaleNotification } from "../lib/telegram-notif.js";
 import {
   createSession,
   deleteSession,
@@ -3194,6 +3195,25 @@ router.delete("/notifications/:id", requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: "Erro ao remover notificação" });
+  }
+});
+
+// ─── Admin: Sales Channel ──────────────────────────────────────────────────────
+router.post("/admin/sales-channel/fake-sale", requireAdmin, async (_req, res) => {
+  try {
+    await sendFakeSaleNotification(false);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Falha ao enviar notificação" });
+  }
+});
+
+router.post("/admin/sales-channel/fake-recharge", requireAdmin, async (_req, res) => {
+  try {
+    await sendFakeSaleNotification(true);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Falha ao enviar notificação" });
   }
 });
 

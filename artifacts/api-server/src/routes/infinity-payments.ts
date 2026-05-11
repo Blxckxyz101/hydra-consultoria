@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "../lib/infinity-auth.js";
 import { loginLimiter } from "../middlewares/rateLimit.js";
 import { sendWelcomeEmail } from "../lib/email.js";
+import { sendSaleNotification } from "../lib/telegram-notif.js";
 
 const router: IRouter = Router();
 
@@ -379,6 +380,13 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
     await db.update(infinityUsersTable)
       .set({ accountExpiresAt: newExpiry })
       .where(eq(infinityUsersTable.username, username));
+    void sendSaleNotification({
+      username,
+      planLabel: plan.label,
+      amountCents: plan.amountCents,
+      expiresAt: newExpiry,
+      isRenewal: true,
+    });
     return;
   }
 
@@ -417,6 +425,14 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
     if (pending.referredBy) {
       void applyReferralBonus(pending.username, pending.referredBy);
     }
+
+    void sendSaleNotification({
+      username: pending.username,
+      planLabel: plan.label,
+      amountCents: plan.amountCents,
+      expiresAt: accountExpiresAt,
+      isRenewal: false,
+    });
   } catch {
     // User may have been created in a race — just mark approved
     await db.update(infinityPendingAccountsTable)

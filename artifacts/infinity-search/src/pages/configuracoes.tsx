@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2 } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight } from "lucide-react";
 
 
 const ROLE_CONFIG = {
@@ -493,6 +493,50 @@ export default function Configuracoes() {
     await loadPins();
   };
 
+  // ── Sales Channel state ────────────────────────────────────────────────────
+  interface SalesPayment { id: string; username: string; planId: string; amountBrl: string; status: string; createdAt: string; paidAt: string | null; }
+  const [salesLog, setSalesLog] = useState<SalesPayment[]>([]);
+  const [salesLogLoading, setSalesLogLoading] = useState(false);
+  const [fakeSaleLoading, setFakeSaleLoading] = useState(false);
+  const [fakeRechargeLoading, setFakeRechargeLoading] = useState(false);
+  const [fakeSaleMsg, setFakeSaleMsg] = useState("");
+
+  const loadSalesLog = useCallback(async () => {
+    if (!isAdmin) return;
+    setSalesLogLoading(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/payments", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (r.ok) setSalesLog(await r.json());
+    } catch {} finally { setSalesLogLoading(false); }
+  }, [isAdmin]);
+
+  useEffect(() => { void loadSalesLog(); }, [loadSalesLog]);
+
+  const handleFakeSale = async (type: "sale" | "recharge") => {
+    const setter = type === "sale" ? setFakeSaleLoading : setFakeRechargeLoading;
+    setter(true);
+    setFakeSaleMsg("");
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const endpoint = type === "sale"
+        ? "/api/infinity/admin/sales-channel/fake-sale"
+        : "/api/infinity/admin/sales-channel/fake-recharge";
+      const r = await fetch(endpoint, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) throw new Error();
+      setFakeSaleMsg(type === "sale" ? "✅ Venda enviada ao canal!" : "✅ Recarga enviada ao canal!");
+      setTimeout(() => setFakeSaleMsg(""), 3000);
+    } catch {
+      setFakeSaleMsg("❌ Falha ao enviar. Verifique o bot.");
+      setTimeout(() => setFakeSaleMsg(""), 3000);
+    } finally { setter(false); }
+  };
+
   // ── Notifications state ────────────────────────────────────────────────────
   const [notifs, setNotifs] = useState<InfinityNotif[]>([]);
   const [notifTitle, setNotifTitle] = useState("");
@@ -711,6 +755,105 @@ export default function Configuracoes() {
         </motion.div>
       ) : (
         <>
+          {/* ── Canal de Vendas ────────────────────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.02 }}
+            className="rounded-2xl border border-emerald-500/20 bg-black/30 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-emerald-400" />
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Canal de Vendas</h2>
+                <span className="text-[9px] px-1.5 py-0.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-full uppercase tracking-widest">Telegram</span>
+              </div>
+              <button
+                onClick={() => void loadSalesLog()}
+                disabled={salesLogLoading}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-white hover:bg-white/5 transition-colors border border-transparent hover:border-white/10"
+                title="Atualizar log"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${salesLogLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Simulate buttons */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-5">
+              <button
+                onClick={() => handleFakeSale("sale")}
+                disabled={fakeSaleLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-sm font-semibold tracking-wider hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {fakeSaleLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <ShoppingBag className="w-4 h-4" />}
+                Simular Nova Venda
+              </button>
+              <button
+                onClick={() => handleFakeSale("recharge")}
+                disabled={fakeRechargeLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-sky-500/30 bg-sky-500/10 text-sky-300 text-sm font-semibold tracking-wider hover:bg-sky-500/20 hover:border-sky-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {fakeRechargeLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Zap className="w-4 h-4" />}
+                Simular Recarga
+              </button>
+            </div>
+
+            {fakeSaleMsg && (
+              <div className={`text-xs rounded-xl px-4 py-2.5 mb-4 border font-mono ${
+                fakeSaleMsg.startsWith("✅")
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                  : "bg-destructive/10 border-destructive/30 text-destructive"
+              }`}>
+                {fakeSaleMsg}
+              </div>
+            )}
+
+            {/* Sales log */}
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground mb-3 flex items-center gap-1.5">
+                <CreditCard className="w-3 h-3" /> Log de Compras ({salesLog.filter(s => s.status === "paid").length})
+              </p>
+              {salesLog.filter(s => s.status === "paid").length === 0 ? (
+                <div className="rounded-xl border border-white/5 bg-black/20 px-4 py-6 text-center text-xs text-muted-foreground">
+                  {salesLogLoading ? "Carregando..." : "Nenhuma compra registrada ainda."}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {salesLog.filter(s => s.status === "paid").slice(0, 20).map((p, i) => {
+                    const maskedUser = p.username.length <= 6
+                      ? p.username.slice(0, 2) + "****" + p.username.slice(-2)
+                      : p.username.length <= 9
+                        ? p.username.slice(0, 3) + "****" + p.username.slice(-3)
+                        : p.username.slice(0, 5) + "****" + p.username.slice(-4);
+                    const paidDate = p.paidAt ? new Date(p.paidAt).toLocaleString("pt-BR") : new Date(p.createdAt).toLocaleString("pt-BR");
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/20 px-4 py-3 text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-mono text-[10px] text-muted-foreground/50 shrink-0">#{i + 1}</span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-white font-mono">{maskedUser}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-full uppercase tracking-wider">{p.planId}</span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">{paidDate}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-emerald-400 font-bold font-mono">R$ {p.amountBrl}</span>
+                          <ChevronRight className="w-3 h-3 text-muted-foreground/30" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+
           {/* ── Novidades / Notifications ──────────────────────────────────── */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
