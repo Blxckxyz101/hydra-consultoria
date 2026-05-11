@@ -215,6 +215,7 @@ function getFieldAccent(key: string) {
 }
 
 function formatValue(key: string, value: string): string {
+  if (!value || !value.trim()) return "Não encontrado";
   const k = key.toUpperCase();
   const v = value.trim().replace(/\D/g, "");
   if ((k === "CPF" || k.endsWith(" CPF") || k.startsWith("CPF ")) && /^\d{11}$/.test(v))
@@ -224,7 +225,7 @@ function formatValue(key: string, value: string): string {
   if ((k.includes("TELEFONE") || k.includes("CELULAR")) && /^\d{10,11}$/.test(v))
     return v.length === 11 ? `(${v.slice(0, 2)}) ${v.slice(2, 7)}-${v.slice(7)}` : `(${v.slice(0, 2)}) ${v.slice(2, 6)}-${v.slice(6)}`;
   if (k.includes("CEP") && /^\d{8}$/.test(v)) return `${v.slice(0, 5)}-${v.slice(5)}`;
-  return value;
+  return value.trim();
 }
 
 type SectionTheme = { color: string; bgClass: string; borderClass: string; icon: LucideIcon; bgStyle: string; borderStyle: string };
