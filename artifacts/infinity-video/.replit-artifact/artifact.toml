@@ -1,0 +1,31 @@
+kind = "video"
+previewPath = "/infinity-video/"
+title = "Infinity Search Promo"
+version = "1.0.0"
+id = "artifacts/infinity-video"
+router = "path"
+
+[[integratedSkills]]
+name = "video-js"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/infinity-video/" ]
+localPort = 19141
+
+[services.development]
+run = "pnpm --filter @workspace/infinity-video run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/infinity-video", "run", "build" ]
+publicDir = "artifacts/infinity-video/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19141"
+BASE_PATH = "/infinity-video/"

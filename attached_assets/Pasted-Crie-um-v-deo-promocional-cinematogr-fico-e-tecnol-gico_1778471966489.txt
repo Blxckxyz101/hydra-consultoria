@@ -1,0 +1,48 @@
+Crie um vídeo promocional cinematográfico e tecnológico usando TODAS as imagens enviadas como INPUT, respeitando EXATAMENTE a ordem original dos arquivos enviados. Cada imagem deve aparecer na sequência correta, funcionando como uma apresentação progressiva do painel/plataforma de consultoria de dados “Infinity Search”.
+ESTRUTURA DO VÍDEO:
+Estilo: futurista, premium, cyber-tech, visual dark mode.
+Paleta: preto profundo + azul neon + branco.
+Clima: tecnologia avançada, velocidade, exclusividade e segurança.
+Formato: vertical 9:16 para WhatsApp Status, Reels e TikTok.
+Qualidade: ultra realista, clean, motion graphics profissionais.
+FPS: 60fps.
+Resolução: 1080x1920.
+Duração total: entre 20 e 35 segundos.
+Transições suaves e impactantes entre as imagens.
+Use zoom cinematográfico, parallax, glow neon, partículas digitais, linhas holográficas, HUD UI effects e light streaks.
+Animar textos principais presentes nas imagens com entrada dinâmica.
+Destacar visualmente: • “+80 módulos de consulta” • “Resposta em segundos” • “100% seguro” • “Dados confidenciais” • “A partir de R$15”
+Criar sensação de sistema privado e tecnologia de alto nível.
+IMPORTANTE:
+NÃO alterar a ordem das imagens.
+Cada nova imagem deve continuar naturalmente a apresentação da anterior.
+As imagens devem ganhar movimento leve de câmera para parecerem cenas reais de um comercial premium.
+Aplicar efeitos de profundidade e reflexos digitais.
+Adicionar pequenas animações de interface tecnológica ao redor das imagens.
+Criar abertura forte com logo aparecendo em fundo escuro com glow azul.
+Criar encerramento elegante mostrando: “ENTRE EM CONTATO CONOSCO” “ACESSE NOSSO SITE: infinitysearch.pro”
+ÁUDIO:
+NÃO adicionar música.
+NÃO adicionar trilha sonora.
+Apenas efeitos sonoros sutis e tecnológicos: • glitches leves • swooshes • sons de interface futurista • transições digitais suaves
+Áudio minimalista e premium.
+NARRATIVA VISUAL: O vídeo deve transmitir:
+velocidade
+poder
+exclusividade
+tecnologia
+confiabilidade
+acesso premium a consultas de dados
+REFERÊNCIA VISUAL: Mistura de:
+comerciais de tecnologia premium
+interfaces HUD futuristas
+trailers de SaaS high-tech
+estética BODYCAM + UI holográfica
+animações estilo fintech/cybersecurity
+FINALIZAÇÃO:
+Color grading cinematográfico.
+Nitidez alta.
+Contraste forte.
+Glow azul neon elegante.
+Motion blur suave profissional.
+Exportação final pronta para redes sociais e anúncios pagos.
