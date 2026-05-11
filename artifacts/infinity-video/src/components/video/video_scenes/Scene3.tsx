@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { sceneTransitions } from '../../lib/video/animations';
+import { sceneTransitions } from '@/lib/video/animations';
 import img2 from '@assets/ade57ce7-cfa0-44f4-91e6-2bf98cc05f54_1778471980393.jpeg';
 
 export function Scene3() {

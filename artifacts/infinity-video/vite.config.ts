@@ -52,6 +52,9 @@ export default defineConfig({
       "@assets": path.resolve(import.meta.dirname, "..", "..", "attached_assets"),
     },
   },
+  optimizeDeps: {
+    include: ['lucide-react', 'framer-motion', 'react', 'react-dom'],
+  },
   css: {
     postcss: {
       plugins: [],

@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { sceneTransitions } from '../../lib/video/animations';
+import { sceneTransitions } from '@/lib/video/animations';
 
 export function Scene5() {
   const [phase, setPhase] = useState(0);
