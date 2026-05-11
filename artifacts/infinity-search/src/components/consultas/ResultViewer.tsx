@@ -571,33 +571,33 @@ ${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
           </div>
 
           {/* Right: timestamp + actions */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[9px] text-muted-foreground/50 hidden md:inline">
+          <div className="flex items-center gap-2 sm:gap-3 overflow-x-auto scrollbar-none shrink-0">
+            <span className="text-[9px] text-muted-foreground/50 hidden md:inline shrink-0">
               {queriedAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </span>
-            <div className="w-px h-3 bg-white/10" />
+            <div className="w-px h-3 bg-white/10 shrink-0 hidden md:block" />
             <FavoriteButton tipo={tipo} query={query} data={result.data} />
             <SaveToDossieButton tipo={tipo} query={query} data={result.data} />
-            <div className="w-px h-3 bg-white/10" />
-            <button onClick={downloadTxt} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors">
+            <div className="w-px h-3 bg-white/10 shrink-0" />
+            <button onClick={downloadTxt} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors shrink-0">
               <Download className="w-3 h-3" /> TXT
             </button>
-            <button onClick={downloadPdf} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors">
+            <button onClick={downloadPdf} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors shrink-0">
               <FileText className="w-3 h-3" /> PDF
             </button>
             <CopyButton text={exportText} label="Copiar" />
-            <div className="w-px h-3 bg-white/10" />
+            <div className="w-px h-3 bg-white/10 shrink-0" />
             <button onClick={() => setCompact(v => !v)}
-              className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors ${compact ? "text-primary" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
+              className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors shrink-0 ${compact ? "text-primary" : "text-muted-foreground/50 hover:text-muted-foreground"}`}
               title={compact ? "Modo detalhado" : "Modo compacto"}>
               {compact ? <Rows3 className="w-3 h-3" /> : <LayoutGrid className="w-3 h-3" />}
-              {compact ? "Detalhado" : "Compacto"}
+              <span className="hidden sm:inline">{compact ? "Detalhado" : "Compacto"}</span>
             </button>
-            <div className="w-px h-3 bg-white/10" />
+            <div className="w-px h-3 bg-white/10 shrink-0" />
             <button onClick={() => setShowRaw(v => !v)}
-              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/50 hover:text-muted-foreground transition-colors shrink-0">
               {showRaw ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              {showRaw ? "Ocultar" : "Bruto"}
+              <span className="hidden sm:inline">{showRaw ? "Ocultar" : "Bruto"}</span>
             </button>
           </div>
         </div>

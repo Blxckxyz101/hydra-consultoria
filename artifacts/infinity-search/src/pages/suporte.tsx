@@ -36,11 +36,11 @@ const LINKS = [
     color: "--color-chart-3",
   },
   {
-    label: "Suporte via Telegram",
-    desc: "Fale com o suporte pelo Telegram",
-    url: "https://t.me/Blxckxyz",
-    icon: "💬",
-    color: "--color-primary",
+    label: "Suporte via WhatsApp",
+    desc: "Fale com o suporte pelo WhatsApp",
+    url: "https://wa.me/5511999999999",
+    icon: "📱",
+    color: "--color-chart-2",
   },
 ];
 
@@ -288,8 +288,7 @@ export default function Suporte() {
         <div>
           <p className="text-sm font-semibold text-foreground mb-1">Como entrar em contato</p>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Para dúvidas, problemas de acesso ou suporte técnico, clique em <strong>Falar no Telegram</strong> acima.
-            Acompanhe novidades e atualizações do sistema pelo canal oficial da Hydra no Telegram.
+            Para dúvidas, problemas de acesso ou suporte técnico, clique em <strong>Falar no Telegram</strong> acima ou use o botão <strong>Suporte via WhatsApp</strong>. Acompanhe novidades e atualizações pelo canal oficial da Hydra.
           </p>
         </div>
       </motion.div>

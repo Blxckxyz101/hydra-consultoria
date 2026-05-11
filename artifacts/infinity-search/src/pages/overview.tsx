@@ -353,7 +353,7 @@ export default function Overview() {
               </div>
             </div>
 
-            <div className="flex items-center gap-6 self-start lg:self-end">
+            <div className="hidden lg:flex items-center gap-6 self-start lg:self-end">
               <div className="text-right">
                 <div className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mb-1">Tendência</div>
                 <div className="flex items-baseline gap-2">

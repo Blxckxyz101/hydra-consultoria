@@ -611,7 +611,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
           { href: "/comunidade", icon: MessageCircle,   label: "Chat"     },
         ] as const).map((item) => {
           const Icon = item.icon;
-          const isActive = location === item.href;
+          const isActive = item.href === "/comunidade"
+            ? (location === "/comunidade" || location.startsWith("/dm/"))
+            : location === item.href;
           return (
             <Link
               key={item.href}
