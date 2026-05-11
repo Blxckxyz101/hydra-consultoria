@@ -557,7 +557,7 @@ export default function IA() {
 
   /* ── Main Chat View ──────────────────────────────────────────────────────── */
   return (
-    <div className="relative flex gap-3 h-[calc(100vh-8rem)] sm:h-[calc(100vh-6rem)] lg:h-[calc(100vh-4rem)]">
+    <div className="relative flex gap-3 h-[calc(100vh-8rem-76px)] sm:h-[calc(100vh-6rem-76px)] lg:h-[calc(100vh-4rem)]">
 
       {/* ── Mobile backdrop ──────────────────────────────────────────────── */}
       <AnimatePresence>

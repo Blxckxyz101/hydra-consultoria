@@ -248,7 +248,7 @@ export default function Comunidade() {
   const [showCreate, setShowCreate] = useState(false);
   const [showGif, setShowGif] = useState(false);
   const [wsReady, setWsReady] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -351,7 +351,7 @@ export default function Comunidade() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] lg:h-screen overflow-hidden">
+    <div className="flex h-[calc(100vh-3.5rem-76px)] lg:h-screen overflow-hidden">
       {/* Rooms sidebar */}
       <AnimatePresence>
         {sidebarOpen && (

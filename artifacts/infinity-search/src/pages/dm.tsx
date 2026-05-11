@@ -182,7 +182,7 @@ export default function DM() {
   );
 
   return (
-    <div className="flex flex-col h-full max-h-screen bg-[hsl(220_35%_4%)]">
+    <div className="flex flex-col h-full bg-[hsl(220_35%_4%)]">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] bg-[hsl(220_35%_5%)]">
         <Link href="/comunidade">

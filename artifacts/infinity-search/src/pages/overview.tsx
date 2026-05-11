@@ -385,37 +385,37 @@ export default function Overview() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.04 }}
-        className="grid grid-cols-3 gap-3"
+        className="grid grid-cols-3 gap-1.5 sm:gap-3"
       >
         {[
           {
-            icon: <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] mr-2" />,
-            label: "Sistema operacional",
+            icon: <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] sm:mr-2" />,
+            label: "Sistema ativo",
             sub: "99.9% uptime",
             color: "emerald",
           },
           {
-            icon: <span className="text-base">🔒</span>,
-            label: "Dados protegidos",
-            sub: "Criptografia ponta-a-ponta",
+            icon: <span className="text-sm sm:text-base">🔒</span>,
+            label: "Criptografado",
+            sub: "Ponta-a-ponta",
             color: "primary",
           },
           {
-            icon: <span className="text-base">✅</span>,
-            label: "Plataforma verificada",
+            icon: <span className="text-sm sm:text-base">✅</span>,
+            label: "Verificado",
             sub: "Acesso autorizado",
             color: "primary",
           },
         ].map((item, i) => (
           <div
             key={i}
-            className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-white/[0.06] bg-black/20 backdrop-blur-xl px-3 py-4 text-center"
+            className="flex flex-col items-center justify-center gap-0.5 sm:gap-1 rounded-xl sm:rounded-2xl border border-white/[0.06] bg-black/20 backdrop-blur-xl px-2 sm:px-3 py-3 sm:py-4 text-center"
           >
-            <div className="flex items-center justify-center text-xs font-semibold text-foreground/80">
+            <div className="flex items-center justify-center gap-1 text-xs font-semibold text-foreground/80">
               {item.icon}
-              <span className="text-[10px] font-bold uppercase tracking-widest">{item.label}</span>
+              <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wide sm:tracking-widest leading-tight">{item.label}</span>
             </div>
-            <div className="text-[9px] text-muted-foreground/50 uppercase tracking-wider">{item.sub}</div>
+            <div className="text-[8px] sm:text-[9px] text-muted-foreground/50 uppercase tracking-wider hidden xs:block sm:block">{item.sub}</div>
           </div>
         ))}
       </motion.div>

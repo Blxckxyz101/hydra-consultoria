@@ -634,7 +634,7 @@ export default function Consultas() {
         key={isSearching ? `search-${searchTrim}` : activeCategory}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2"
+        className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2"
       >
         {tabsInCategory.length === 0 && (
           <div className="col-span-full py-10 flex flex-col items-center gap-3 text-muted-foreground/40">

@@ -602,7 +602,44 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 h-screen overflow-y-auto z-10 pt-14 lg:pt-0">
+      {/* Mobile bottom navigation bar */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 flex items-stretch border-t border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(2,6,18,0.90)", height: "60px", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        {([
+          { href: "/",          icon: Activity,        label: "Início"   },
+          { href: "/consultas", icon: Search,          label: "Busca"    },
+          { href: "/ia",        icon: Bot,             label: "IA"       },
+          { href: "/comunidade", icon: MessageCircle,   label: "Chat"     },
+        ] as const).map((item) => {
+          const Icon = item.icon;
+          const isActive = location === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors relative"
+              style={{ color: isActive ? "var(--color-primary)" : undefined }}
+            >
+              {isActive && (
+                <span
+                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] rounded-b-full"
+                  style={{ background: "var(--color-primary)" }}
+                />
+              )}
+              <Icon className="w-[18px] h-[18px]" style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : { color: "rgba(148,163,184,0.7)" }} />
+              <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: isActive ? "var(--color-primary)" : "rgba(100,116,139,0.8)" }}>{item.label}</span>
+            </Link>
+          );
+        })}
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors"
+        >
+          <Menu className="w-[18px] h-[18px]" style={{ color: "rgba(148,163,184,0.7)" }} />
+          <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: "rgba(100,116,139,0.8)" }}>Menu</span>
+        </button>
+      </nav>
+
+      <main className="flex-1 h-screen overflow-y-auto z-10 pt-14 lg:pt-0 pb-[76px] lg:pb-0">
         {/* Expiry warning banner */}
         <AnimatePresence>
           {expiryWarningDays !== null && !expiryDismissed && (

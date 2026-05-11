@@ -107,7 +107,7 @@ export default function Login() {
         <div className="rounded-3xl border border-white/10 bg-black/30 backdrop-blur-2xl shadow-[0_30px_80px_-20px_rgba(0,0,0,0.7),0_0_60px_-20px_rgba(56,189,248,0.4)] overflow-hidden">
           <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
 
-          <div className="px-10 pt-10 pb-8">
+          <div className="px-6 pt-8 pb-6 sm:px-10 sm:pt-10 sm:pb-8">
             <div className="flex flex-col items-center mb-8">
               <motion.div
                 initial={{ scale: 0.5, opacity: 0, rotate: -10 }}
@@ -128,7 +128,7 @@ export default function Login() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.25 }}
-                className="text-2xl font-bold tracking-[0.3em] text-foreground neon-text"
+                className="text-xl sm:text-2xl font-bold tracking-[0.18em] sm:tracking-[0.3em] text-foreground neon-text text-center"
               >
                 HYDRA CONSULTORIA
               </motion.h1>
@@ -339,7 +339,7 @@ export default function Login() {
             </AnimatePresence>
           </div>
 
-          <div className="px-10 py-5 border-t border-white/5 bg-black/20 space-y-3">
+          <div className="px-5 py-4 sm:px-10 sm:py-5 border-t border-white/5 bg-black/20 space-y-3">
             {step === "credentials" && (
               <div className="flex gap-2">
                 <a

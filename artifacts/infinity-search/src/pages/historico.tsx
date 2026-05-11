@@ -145,10 +145,10 @@ export default function Historico() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
-        className="flex flex-wrap items-center gap-3"
+        className="flex flex-wrap items-center gap-2 sm:gap-3"
       >
         {/* Search */}
-        <div className="relative flex-1 min-w-48">
+        <div className="relative flex-1 min-w-36 sm:min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           <input
             type="text"
