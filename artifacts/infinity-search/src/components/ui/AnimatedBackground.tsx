@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import hydraIconUrl from "@/assets/hydra-logo.jpg";
+import bgUrl from "@/assets/background.png";
 
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   s /= 100; l /= 100;
@@ -10,9 +10,9 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 }
 
 function getThemeRgb(): [number, number, number] {
-  const hsl = document.documentElement.getAttribute("data-theme-hsl") ?? "195 90% 55%";
+  const hsl = document.documentElement.getAttribute("data-theme-hsl") ?? "210 90% 55%";
   const parts = hsl.split(" ");
-  const h = parseFloat(parts[0] ?? "195");
+  const h = parseFloat(parts[0] ?? "210");
   const s = parseFloat((parts[1] ?? "90%").replace("%", ""));
   const l = parseFloat((parts[2] ?? "55%").replace("%", ""));
   return hslToRgb(h, s, l);
@@ -39,9 +39,10 @@ export function AnimatedBackground() {
     if (!ctx) return;
 
     let animationFrameId = 0;
+    const isMobile = window.innerWidth < 768;
     let width = window.innerWidth;
     let height = window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
 
     const resize = () => {
       width = window.innerWidth;
@@ -60,148 +61,247 @@ export function AnimatedBackground() {
     let targetX = mouseX;
     let targetY = mouseY;
 
-    const onMove = (e: MouseEvent) => {
-      targetX = e.clientX;
-      targetY = e.clientY;
+    const onMove = (e: MouseEvent) => { targetX = e.clientX; targetY = e.clientY; };
+    const onTouch = (e: TouchEvent) => {
+      if (e.touches[0]) { targetX = e.touches[0].clientX; targetY = e.touches[0].clientY; }
     };
-    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mousemove", onMove, { passive: true });
+    window.addEventListener("touchmove", onTouch, { passive: true });
 
-    type P = { x: number; y: number; vx: number; vy: number; r: number; phase: number };
-    const particles: P[] = [];
-    const N = Math.min(120, Math.floor((width * height) / 14000));
-    for (let i = 0; i < N; i++) {
-      particles.push({
-        x: Math.random() * width,
-        y: Math.random() * height,
-        vx: (Math.random() - 0.5) * 0.3,
-        vy: (Math.random() - 0.5) * 0.3,
-        r: Math.random() * 1.6 + 0.4,
-        phase: Math.random() * Math.PI * 2,
-      });
-    }
+    type Star = { x: number; y: number; vx: number; vy: number; r: number; phase: number; twinkleSpeed: number };
+    type ShootingStar = { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; active: boolean };
+    type FloatingOrb = { x: number; y: number; vx: number; vy: number; r: number; phase: number };
+
+    const isMob = window.innerWidth < 768;
+    const starCount = Math.min(isMob ? 60 : 130, Math.floor((width * height) / (isMob ? 9000 : 7000)));
+
+    const stars: Star[] = Array.from({ length: starCount }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.15,
+      vy: (Math.random() - 0.5) * 0.12,
+      r: Math.random() * 1.4 + 0.3,
+      phase: Math.random() * Math.PI * 2,
+      twinkleSpeed: 1.5 + Math.random() * 2.5,
+    }));
+
+    const orbCount = isMob ? 2 : 4;
+    const orbs: FloatingOrb[] = Array.from({ length: orbCount }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.08,
+      vy: (Math.random() - 0.5) * 0.08,
+      r: 60 + Math.random() * 120,
+      phase: Math.random() * Math.PI * 2,
+    }));
+
+    const shootingStars: ShootingStar[] = Array.from({ length: 3 }, () => ({
+      x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, active: false,
+    }));
+
+    let scanY = -height;
+    let scanActive = false;
+    let scanTimer = 0;
+    const scanInterval = isMob ? 12000 : 8000;
 
     let t = 0;
     let frameCount = 0;
+    let lastScan = performance.now();
     let rgb: [number, number, number] = getThemeRgb();
-    let curIsAmoled = document.documentElement.getAttribute("data-theme") === "amoled";
 
-    const render = () => {
-      t += 0.005;
+    function spawnShootingStar(s: ShootingStar) {
+      s.x = Math.random() * width * 0.7;
+      s.y = Math.random() * height * 0.4;
+      const angle = (Math.random() * 30 + 10) * (Math.PI / 180);
+      const speed = 4 + Math.random() * 5;
+      s.vx = Math.cos(angle) * speed;
+      s.vy = Math.sin(angle) * speed;
+      s.life = 0;
+      s.maxLife = 50 + Math.random() * 40;
+      s.active = true;
+    }
+
+    const render = (now: number) => {
+      t += 0.006;
       frameCount++;
-      if (frameCount % 30 === 0) {
+
+      if (frameCount % 60 === 0) {
         rgb = getThemeRgb();
-        curIsAmoled = document.documentElement.getAttribute("data-theme") === "amoled";
       }
 
-      mouseX += (targetX - mouseX) * 0.06;
-      mouseY += (targetY - mouseY) * 0.06;
+      mouseX += (targetX - mouseX) * 0.04;
+      mouseY += (targetY - mouseY) * 0.04;
 
       ctx.clearRect(0, 0, width, height);
-
       const [rr, gg, bb] = rgb;
 
-      // cursor glow — tighter and more vivid on AMOLED
-      const glowRadius = curIsAmoled ? 400 : 520;
-      const glowAlpha = curIsAmoled ? 0.28 : 0.18;
-      const g = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, glowRadius);
-      g.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, ${glowAlpha})`);
-      g.addColorStop(0.5, `rgba(${Math.round(rr * 0.8)}, ${Math.round(gg * 0.65)}, ${Math.round(bb * 0.87)}, ${curIsAmoled ? 0.09 : 0.06})`);
-      g.addColorStop(1, "rgba(0, 0, 0, 0)");
-      ctx.fillStyle = g;
+      // Floating orbs — very subtle glow blobs
+      for (const orb of orbs) {
+        orb.phase += 0.003;
+        orb.x += orb.vx + Math.sin(orb.phase) * 0.15;
+        orb.y += orb.vy + Math.cos(orb.phase * 0.7) * 0.12;
+        if (orb.x < -200) orb.x = width + 200;
+        if (orb.x > width + 200) orb.x = -200;
+        if (orb.y < -200) orb.y = height + 200;
+        if (orb.y > height + 200) orb.y = -200;
+        const orbGrad = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, orb.r);
+        const orbAlpha = (0.025 + Math.sin(orb.phase) * 0.01);
+        orbGrad.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, ${orbAlpha})`);
+        orbGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = orbGrad;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      // Cursor glow
+      const glowR = isMob ? 280 : 420;
+      const glow = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, glowR);
+      glow.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, 0.14)`);
+      glow.addColorStop(0.45, `rgba(${Math.round(rr * 0.6)}, ${Math.round(gg * 0.5)}, ${Math.round(bb * 0.85)}, 0.04)`);
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
       ctx.fillRect(0, 0, width, height);
 
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        const dx = p.x - mouseX;
-        const dy = p.y - mouseY;
+      // Stars
+      for (let i = 0; i < stars.length; i++) {
+        const s = stars[i];
+        const dx = s.x - mouseX;
+        const dy = s.y - mouseY;
         const d2 = dx * dx + dy * dy;
-        if (d2 < 18000) {
-          const f = (18000 - d2) / 18000;
-          p.vx += (dx / Math.sqrt(d2 + 1)) * 0.05 * f;
-          p.vy += (dy / Math.sqrt(d2 + 1)) * 0.05 * f;
+        if (d2 < 22000) {
+          const f = (22000 - d2) / 22000;
+          s.vx += (dx / Math.sqrt(d2 + 1)) * 0.04 * f;
+          s.vy += (dy / Math.sqrt(d2 + 1)) * 0.04 * f;
         }
-        p.vx *= 0.985;
-        p.vy *= 0.985;
-        p.x += p.vx;
-        p.y += p.vy;
-        if (p.x < -10) p.x = width + 10;
-        if (p.x > width + 10) p.x = -10;
-        if (p.y < -10) p.y = height + 10;
-        if (p.y > height + 10) p.y = -10;
+        s.vx *= 0.988;
+        s.vy *= 0.988;
+        s.x += s.vx;
+        s.y += s.vy;
+        if (s.x < -5) s.x = width + 5;
+        if (s.x > width + 5) s.x = -5;
+        if (s.y < -5) s.y = height + 5;
+        if (s.y > height + 5) s.y = -5;
 
-        const twinkle = 0.45 + Math.sin(t * 3 + p.phase) * 0.35;
+        const twinkle = 0.4 + Math.sin(t * s.twinkleSpeed + s.phase) * 0.35;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        const particleAlpha = curIsAmoled ? twinkle * 0.9 : twinkle * 0.7;
-        if (curIsAmoled) {
-          ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${particleAlpha})`;
-        } else {
-          const lr = Math.min(255, Math.round(rr + (255 - rr) * 0.45));
-          const lg = Math.min(255, Math.round(gg + (255 - gg) * 0.45));
-          const lb = Math.min(255, Math.round(bb + (255 - bb) * 0.45));
-          ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, ${particleAlpha})`;
-        }
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        const lr = Math.min(255, Math.round(rr + (255 - rr) * 0.5));
+        const lg = Math.min(255, Math.round(gg + (255 - gg) * 0.5));
+        const lb = Math.min(255, Math.round(bb + (255 - bb) * 0.5));
+        ctx.fillStyle = `rgba(${lr}, ${lg}, ${lb}, ${twinkle * 0.65})`;
         ctx.fill();
 
-        for (let j = i + 1; j < particles.length; j++) {
-          const q = particles[j];
-          const ddx = p.x - q.x;
-          const ddy = p.y - q.y;
-          const dd = ddx * ddx + ddy * ddy;
-          if (dd < 11000) {
-            const alpha = (1 - dd / 11000) * (curIsAmoled ? 0.28 : 0.18);
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(q.x, q.y);
-            ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${alpha})`;
-            ctx.lineWidth = curIsAmoled ? 0.8 : 0.6;
-            ctx.stroke();
+        // Bright star cross sparkle on larger stars
+        if (s.r > 1.1 && twinkle > 0.65) {
+          ctx.globalAlpha = (twinkle - 0.65) * 0.8;
+          ctx.strokeStyle = `rgba(${lr}, ${lg}, ${lb}, 0.6)`;
+          ctx.lineWidth = 0.5;
+          const ss = s.r * 2.5;
+          ctx.beginPath(); ctx.moveTo(s.x - ss, s.y); ctx.lineTo(s.x + ss, s.y); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(s.x, s.y - ss); ctx.lineTo(s.x, s.y + ss); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+
+        // Connect nearby stars with very faint lines
+        if (!isMob) {
+          for (let j = i + 1; j < stars.length; j++) {
+            const q = stars[j];
+            const ddx = s.x - q.x;
+            const ddy = s.y - q.y;
+            const dd = ddx * ddx + ddy * ddy;
+            if (dd < 9000) {
+              ctx.beginPath();
+              ctx.moveTo(s.x, s.y);
+              ctx.lineTo(q.x, q.y);
+              ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${(1 - dd / 9000) * 0.1})`;
+              ctx.lineWidth = 0.4;
+              ctx.stroke();
+            }
           }
         }
       }
 
+      // Shooting stars
+      for (const ss of shootingStars) {
+        if (!ss.active) continue;
+        ss.x += ss.vx;
+        ss.y += ss.vy;
+        ss.life++;
+        if (ss.life >= ss.maxLife) { ss.active = false; continue; }
+        const prog = ss.life / ss.maxLife;
+        const alpha = prog < 0.3 ? prog / 0.3 : prog > 0.7 ? (1 - prog) / 0.3 : 1;
+        const tailLen = 40 + ss.vx * 6;
+        const grad = ctx.createLinearGradient(ss.x - ss.vx * 10, ss.y - ss.vy * 10, ss.x, ss.y);
+        grad.addColorStop(0, `rgba(${rr}, ${gg}, ${bb}, 0)`);
+        grad.addColorStop(1, `rgba(255, 255, 255, ${alpha * 0.85})`);
+        ctx.beginPath();
+        ctx.moveTo(ss.x - ss.vx * (tailLen / Math.abs(ss.vx)), ss.y - ss.vy * (tailLen / Math.abs(ss.vx)));
+        ctx.lineTo(ss.x, ss.y);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      // Shoot star spawner
+      if (now - scanTimer > 4000 + Math.random() * 6000) {
+        const idle = shootingStars.find(s => !s.active);
+        if (idle && !isMob) { spawnShootingStar(idle); }
+        scanTimer = now;
+      }
+
+      // Horizontal scan line sweep
+      if (!scanActive && now - lastScan > scanInterval) {
+        scanActive = true;
+        scanY = -4;
+        lastScan = now;
+      }
+      if (scanActive) {
+        scanY += isMob ? 4 : 3;
+        if (scanY > height + 10) { scanActive = false; scanY = -10; }
+        const scanGrad = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
+        scanGrad.addColorStop(0, "rgba(0,0,0,0)");
+        scanGrad.addColorStop(0.4, `rgba(${rr}, ${gg}, ${bb}, 0.07)`);
+        scanGrad.addColorStop(0.5, `rgba(${rr}, ${gg}, ${bb}, 0.18)`);
+        scanGrad.addColorStop(0.6, `rgba(${rr}, ${gg}, ${bb}, 0.07)`);
+        scanGrad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = scanGrad;
+        ctx.fillRect(0, scanY - 12, width, 24);
+      }
+
       animationFrameId = requestAnimationFrame(render);
     };
-    render();
+
+    animationFrameId = requestAnimationFrame(render);
 
     return () => {
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("touchmove", onTouch);
       cancelAnimationFrame(animationFrameId);
     };
   }, []);
 
   return (
     <>
-      {/* Hydra watermark — hidden on AMOLED for true black */}
-      {!isAmoled && (
-        <div
-          className="fixed inset-0 z-[-3] pointer-events-none flex items-center justify-center"
-          aria-hidden
-        >
-          <img
-            src={hydraIconUrl}
-            alt=""
-            style={{
-              width: "55vmin",
-              height: "55vmin",
-              objectFit: "contain",
-              opacity: 0.06,
-              filter: "blur(2px) brightness(0.8)",
-              userSelect: "none",
-            }}
-          />
-        </div>
-      )}
+      {/* New Hydra tech background */}
+      <div
+        className="fixed inset-0 z-[-3] pointer-events-none"
+        style={{
+          backgroundImage: `url(${bgUrl})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center center",
+          backgroundRepeat: "no-repeat",
+        }}
+        aria-hidden
+      />
 
-      {/* Overlay — pure black for AMOLED, navy gradient otherwise */}
+      {/* Subtle darkening overlay — much lighter to let the background breathe */}
       <div
         className="fixed inset-0 z-[-2] pointer-events-none"
         style={{
           background: isAmoled
-            ? "#000000"
-            : "radial-gradient(ellipse at top, rgba(8,15,40,0.55), rgba(2,6,18,0.85) 60%, rgba(2,6,18,0.92))",
-          transition: "background 0.4s ease",
+            ? "rgba(0,0,0,0.92)"
+            : "radial-gradient(ellipse at 50% 30%, rgba(4,12,30,0.35) 0%, rgba(2,6,18,0.55) 60%, rgba(2,6,18,0.72) 100%)",
+          transition: "background 0.5s ease",
         }}
         aria-hidden
       />

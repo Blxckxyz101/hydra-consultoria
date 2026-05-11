@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import logoUrl from "@/assets/hydra-logo.jpg";
+import logoUrl from "@/assets/hydra-icon.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
@@ -115,12 +115,15 @@ export default function Login() {
                 transition={{ delay: 0.15, type: "spring", stiffness: 180, damping: 14 }}
                 className="relative mb-4"
               >
-                <div className="absolute inset-0 rounded-full bg-primary/30 blur-2xl scale-110" />
-                <img
-                  src={logoUrl}
-                  alt="Hydra Consultoria"
-                  className="relative w-24 h-24 object-contain drop-shadow-[0_0_20px_rgba(56,189,248,0.6)]"
-                />
+                <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-2xl scale-125" />
+                <div className="relative w-24 h-24 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(56,189,248,0.2)", boxShadow: "0 0 28px rgba(56,189,248,0.35), inset 0 0 12px rgba(56,189,248,0.08)" }}>
+                  <img
+                    src={logoUrl}
+                    alt="Hydra Consultoria"
+                    className="w-full h-full object-cover"
+                    style={{ filter: "brightness(1.15)" }}
+                  />
+                </div>
               </motion.div>
               <motion.h1
                 initial={{ opacity: 0, y: 8 }}

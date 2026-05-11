@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
-import logoUrl from "@/assets/hydra-logo.jpg";
+import logoUrl from "@/assets/hydra-icon.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -251,16 +251,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const SidebarBody = (
     <>
       <div className="px-6 pt-6 pb-6 flex items-center gap-3 border-b border-white/5">
-        <div className="relative">
+        <div className="relative w-11 h-11 rounded-xl overflow-hidden shrink-0" style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 25%, transparent)" }}>
           <div
             className="absolute inset-0 rounded-xl blur-xl scale-110"
-            style={{ background: "color-mix(in srgb, var(--color-primary) 30%, transparent)" }}
+            style={{ background: "color-mix(in srgb, var(--color-primary) 25%, transparent)" }}
           />
           <img
             src={logoUrl}
             alt="Hydra Consultoria"
-            className="relative w-11 h-11 object-contain"
-            style={{ filter: "drop-shadow(0 0 12px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
+            className="relative w-full h-full object-cover"
+            style={{ filter: "drop-shadow(0 0 14px color-mix(in srgb, var(--color-primary) 80%, transparent)) brightness(1.1)" }}
           />
         </div>
         <div className="flex flex-col flex-1 min-w-0">
@@ -489,12 +489,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex items-center gap-2">
-          <img
-            src={logoUrl}
-            alt=""
-            className="w-7 h-7 object-contain"
-            style={{ filter: "drop-shadow(0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent))" }}
-          />
+          <div className="relative w-7 h-7 rounded-lg overflow-hidden shrink-0">
+            <img
+              src={logoUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              style={{ filter: "brightness(1.1)" }}
+            />
+          </div>
           <span className="font-bold tracking-[0.2em] text-sm">HYDRA</span>
         </div>
         {/* Bell — mobile topbar */}
