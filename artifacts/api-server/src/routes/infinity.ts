@@ -1305,6 +1305,18 @@ async function callSkylers(
         return { ok: false, error: errField.value, parsed: { fields: [], sections: [], raw: parsed.raw } };
       }
     }
+    // Detect compound error fields from nested Skylers responses
+    // e.g. {"data":{"err":"Foto não encontrada"}} → parseSkylers creates field "Data · Err"
+    // e.g. {"data":{"err":"CPF não encontrado"}} for obito → same pattern
+    const compoundErrField = parsed.fields.find(f => {
+      const k = f.key.toLowerCase();
+      return k.endsWith(" · err") || k.endsWith(" · error") || k.endsWith(" · erro") || k.endsWith("·err") || k.endsWith("·error");
+    });
+    if (compoundErrField) {
+      skylersCircuit.recordSuccess();
+      return { ok: false, error: compoundErrField.value, parsed: { fields: [], sections: [], raw: parsed.raw } };
+    }
+
     skylersCircuit.recordSuccess();
     return { ok: true, parsed };
   } catch (e) {
