@@ -1,7 +1,7 @@
 export const BOT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN ?? "";
 export const API_BASE    = process.env.API_BASE ?? "http://localhost:8080";
-export const BOT_NAME    = "Geass Command Center";
-export const AUTHOR      = "LelouchBritannia";
+export const BOT_NAME    = "Hydra Command Center";
+export const AUTHOR      = "HydraConsultoria";
 export const MINIAPP_URL = process.env.MINIAPP_URL ?? "";
 
 // Checker targets — must match IDs in api-server checker.ts

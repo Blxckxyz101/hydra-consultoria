@@ -97,7 +97,7 @@ export const ATTACK_METHODS = [
     name: "Geass Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "ABSOLUTE MAXIMUM — 30 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + HTTP Bypass + Keepalive Exhaust + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + H2 PING Storm + HTTP Smuggling + TLS Renegotiation + SSL Death + QUIC/H3 + XML Bomb + Slow Read + Range Flood + SYN Flood + ICMP Flood + DNS Water Torture + NTP Flood + Memcached UDP + SSDP M-SEARCH + UDP Flood + DoH Flood. ARES OMNIVECT ∞ — I, LELOUCH vi BRITANNIA, COMMAND YOU!",
+    description: "ABSOLUTE MAXIMUM — 30 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + HTTP Bypass + Keepalive Exhaust + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + H2 PING Storm + HTTP Smuggling + TLS Renegotiation + SSL Death + QUIC/H3 + XML Bomb + Slow Read + Range Flood + SYN Flood + ICMP Flood + DNS Water Torture + NTP Flood + Memcached UDP + SSDP M-SEARCH + UDP Flood + DoH Flood. ARES OMNIVECT ∞ — HYDRA COMMANDS YOU!",
   },
 
   // ── NEW: H2 Settings Storm ────────────────────────────────

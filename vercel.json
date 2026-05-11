@@ -1,8 +1,0 @@
-{
-  "buildCommand": "npm install -g pnpm@10 && pnpm install --frozen-lockfile && pnpm --filter @workspace/mikubeam-panel run build",
-  "outputDirectory": "artifacts/mikubeam-panel/dist/public",
-  "installCommand": "echo 'install handled in buildCommand'",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://RAILWAY_URL_AQUI/api/$1" }
-  ]
-}

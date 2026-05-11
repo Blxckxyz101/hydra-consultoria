@@ -10,14 +10,14 @@ import { COLORS, METHOD_EMOJIS, AUTHOR, BOT_NAME } from "./config.js";
 // ── Asset paths ───────────────────────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GEASS_PNG  = path.join(__dirname, "..", "assets", "geass-symbol.png");
-const LELOUCH_GIF = path.join(__dirname, "..", "assets", "lelouch.gif");
+const HYDRA_GIF = path.join(__dirname, "..", "assets", "hydra.gif");
 
 export function buildGeassFiles(): AttachmentBuilder[] {
   return [new AttachmentBuilder(GEASS_PNG, { name: "geass-symbol.png" })];
 }
 export function buildAttackFiles(): AttachmentBuilder[] {
   return [
-    new AttachmentBuilder(LELOUCH_GIF, { name: "lelouch.gif" }),
+    new AttachmentBuilder(HYDRA_GIF, { name: "hydra.gif" }),
     new AttachmentBuilder(GEASS_PNG,   { name: "geass-symbol.png" }),
   ];
 }
@@ -424,8 +424,8 @@ export function buildStartEmbed(attack: Attack, proxyCount = 0, lang: "en" | "pt
   const isGeass = attack.method === "geass-override";
 
   const quote = pt
-    ? `> *"NÃO. POR CAUSA DISSO… nós lutamos."*  — **Lelouch vi Britannia**`
-    : `> *"No. BECAUSE of that… We fight."*  — **Lelouch vi Britannia**`;
+    ? `> *"NÃO. POR CAUSA DISSO… nós lutamos."*  — **Hydra**`
+    : `> *"No. BECAUSE of that… We fight."*  — **Hydra**`;
 
   const geassLine = isGeass
     ? (pt ? "\n👁️ **ARES OMNIVECT ∞** — 35 vetores simultâneos" : "\n👁️ **ARES OMNIVECT ∞** — 35 simultaneous vectors")
@@ -443,7 +443,7 @@ export function buildStartEmbed(attack: Attack, proxyCount = 0, lang: "en" | "pt
     .setColor(COLORS.CRIMSON)
     .setTitle(pt ? `${emoji} COMANDO GEASS EMITIDO` : `${emoji} GEASS COMMAND ISSUED`)
     .setDescription(`${quote}${geassLine}${proxyLine}\n\n${configLine}`)
-    .setImage("attachment://lelouch.gif")
+    .setImage("attachment://hydra.gif")
     .setThumbnail("attachment://geass-symbol.png")
     .addFields({
       name:   pt ? "🔴 Inicializando" : "🔴 Initializing",
@@ -464,7 +464,7 @@ export function buildStopEmbed(id: number, ok: boolean, lang: "en" | "pt" = "en"
       : (pt ? "❌ FALHA AO PARAR" : "❌ STOP FAILED"))
     .setDescription(
       ok
-        ? (pt ? `Ataque **#${id}** foi encerrado pelo Comando Geass.` : `Attack **#${id}** has been stopped by Geass command.`)
+        ? (pt ? `Ataque **#${id}** foi encerrado pelo Comando Geass.` : `Attack **#${id}** has been stopped by Hydra command.`)
         : (pt ? `Não foi possível parar o ataque **#${id}**. Ele pode já ter terminado.` : `Could not stop attack **#${id}**. It may have already ended.`)
     )
     .setFooter(footer())
@@ -558,7 +558,7 @@ export function buildListEmbed(attacks: Attack[], lang: "en" | "pt" = "en"): Emb
   if (attacks.length === 0) {
     embed.addFields({
       name: pt ? "Nenhum ataque" : "No attacks found",
-      value: pt ? "Use `/attack start` para iniciar um Comando Geass." : "Use `/attack start` to launch a Geass command.",
+      value: pt ? "Use `/attack start` para iniciar um Comando Geass." : "Use `/attack start` to launch a Hydra command.",
       inline: false,
     });
   }
@@ -898,7 +898,7 @@ export function buildHelpEmbed(lang: "en" | "pt" = "en"): EmbedBuilder {
   const pt = lang === "pt";
   return new EmbedBuilder()
     .setColor(COLORS.GOLD)
-    .setTitle(pt ? "👁️ LELOUCH BRITANNIA — CENTRAL DE COMANDO" : "👁️ LELOUCH BRITANNIA — COMMAND CENTER")
+    .setTitle(pt ? "👁️ HYDRA — CENTRAL DE COMANDO" : "👁️ HYDRA — COMMAND CENTER")
     .setDescription(
       pt
         ? `> *"Eu sou Zero — o homem que irá obliterar o mundo."*\n\nBem-vindo à interface de controle de rede do **${BOT_NAME}**.\nTodos os comandos são slash commands — pressione \`/\` para navegar.`
@@ -955,14 +955,14 @@ export function buildHelpEmbed(lang: "en" | "pt" = "en"): EmbedBuilder {
         name: pt ? "🤖 IA & Info" : "🤖 AI & Info",
         value: pt
           ? [
-              "`/lelouch ask <mensagem>` — Falar com **Lelouch IA** — ajuda com bot, código, sistemas web",
-              "`/lelouch reset` — Limpar histórico da conversa",
+              "`/hydra ask <mensagem>` — Falar com **Hydra IA** — ajuda com bot, código, sistemas web",
+              "`/hydra reset` — Limpar histórico da conversa",
               "`/info` — Info completa da plataforma — infraestrutura & stats ao vivo",
               "`/help` — Mostrar esta mensagem de ajuda",
             ].join("\n")
           : [
-              "`/lelouch ask <message>` — Talk to **Lelouch AI** — helps with bot, code, web systems",
-              "`/lelouch reset` — Clear conversation history",
+              "`/hydra ask <message>` — Talk to **Hydra AI** — helps with bot, code, web systems",
+              "`/hydra reset` — Clear conversation history",
               "`/info` — Full platform info — cluster infrastructure & live stats",
               "`/help` — Show this help message",
             ].join("\n"),
@@ -977,14 +977,14 @@ export function buildHelpEmbed(lang: "en" | "pt" = "en"): EmbedBuilder {
               "• Use `waf-bypass` para alvos protegidos por Cloudflare/Akamai",
               "• O botão ⏹️ **Stop** aparece em todo embed de ataque",
               "• Ataques ativos atualizam automaticamente a cada 5 segundos",
-              "• Pergunte `/lelouch ask` qualquer coisa — ele conhece toda a plataforma",
+              "• Pergunte `/hydra ask` qualquer coisa — ele conhece toda a plataforma",
             ].join("\n")
           : [
               "• Run `/analyze <target>` first to find the best attack vector",
               "• Use `waf-bypass` for Cloudflare/Akamai protected targets",
               "• The ⏹️ **Stop** button appears on every attack embed",
               "• Active attacks auto-update every 5 seconds",
-              "• Ask `/lelouch ask` anything — it knows the entire platform",
+              "• Ask `/hydra ask` anything — it knows the entire platform",
             ].join("\n"),
         inline: false,
       },
@@ -1039,14 +1039,14 @@ export function buildInfoEmbed(opts: {
   // ── Strings ────────────────────────────────────────────────────────────────
   const T = {
     title:       pt
-      ? "👁️  LELOUCH BRITANNIA  —  INTERFACE DE COMANDO GEASS"
-      : "👁️  LELOUCH BRITANNIA  —  GEASS COMMAND INTERFACE",
+      ? "👁️  HYDRA  —  INTERFACE DE COMANDO GEASS"
+      : "👁️  HYDRA  —  GEASS COMMAND INTERFACE",
     quote:       pt
-      ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Lelouch vi Britannia**, Código R-02`
-      : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Lelouch vi Britannia**, Code R-02`,
+      ? `> *"Os únicos que deveriam matar são aqueles que estão preparados para serem mortos."*\n> — **Hydra**, Código R-02`
+      : `> *"The only ones who should kill, are those who are prepared to be killed."*\n> — **Hydra**, Code R-02`,
     desc:        pt
-      ? `**Lelouch Britannia** é uma plataforma de stress-test de redes de próxima geração.\n33 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Geass.`
-      : `**Lelouch Britannia** is a next-generation network stress-testing platform.\n33 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Geass command.`,
+      ? `**Hydra** é uma plataforma de stress-test de redes de próxima geração.\n33 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Hydra.`
+      : `**Hydra** is a next-generation network stress-testing platform.\n33 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Hydra command.`,
     secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
     engineTitle: pt ? "🔴 Geass Override ∞ — 33 Vetores" : "🔴 Geass Override ∞ — 33 Vectors",
     engineBox:
@@ -1126,18 +1126,18 @@ export function buildInfoEmbed(opts: {
       : "`/geass`  — Geass Override ∞ · 42 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
-      ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Geass a todos\n`/lelouch ask`  — IA Lelouch · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
-      : "`/analyze`  — Target recon & vector ranking\n`/methods`  — Full attack method list\n`/cluster status`  — Node health grid\n`/cluster broadcast`  — Fan-out Geass to all nodes\n`/lelouch ask`  — Lelouch AI · help & chat\n`/info`  — This screen  ·  `/help`  — Quick reference",
+      ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Hydra a todos\n`/hydra ask`  — IA Hydra · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
+      : "`/analyze`  — Target recon & vector ranking\n`/methods`  — Full attack method list\n`/cluster status`  — Node health grid\n`/cluster broadcast`  — Fan-out Hydra to all nodes\n`/hydra ask`  — Hydra AI · help & chat\n`/info`  — This screen  ·  `/help`  — Quick reference",
     footer:      pt
-      ? `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nós  •  🇧🇷 Português`
-      : `${AUTHOR}  •  Lelouch Britannia v2.0  •  ${totalNodes} Nodes  •  🇺🇸 English`,
+      ? `${AUTHOR}  •  Hydra v2.0  •  ${totalNodes} Nós  •  🇧🇷 Português`
+      : `${AUTHOR}  •  Hydra v2.0  •  ${totalNodes} Nodes  •  🇺🇸 English`,
   };
 
   return new EmbedBuilder()
     .setColor(COLORS.CRIMSON)
     .setTitle(T.title)
     .setDescription(`${T.quote}\n\n${T.desc}`)
-    .setImage("attachment://lelouch.gif")
+    .setImage("attachment://hydra.gif")
     .setThumbnail("attachment://geass-symbol.png")
     .addFields(
       { name: "\u200b",        value: T.secEngine,               inline: false },
@@ -1382,7 +1382,7 @@ export function buildHealthEmbed(h: HealthData, stats: GlobalStats | null, lang:
   const icon  = h.status === "healthy" ? "🟢" : h.status === "warning" ? "🟡" : "🔴";
 
   const T = {
-    title:   pt ? `${icon} LELOUCH BRITANNIA — MÉTRICAS DO SERVIDOR` : `${icon} LELOUCH BRITANNIA — SERVER METRICS`,
+    title:   pt ? `${icon} HYDRA — MÉTRICAS DO SERVIDOR` : `${icon} HYDRA — SERVER METRICS`,
     status:  pt ? "📡 Status" : "📡 Status",
     uptime:  pt ? "⏱ Uptime" : "⏱ Uptime",
     ram:     pt ? `🧠 RAM  (${h.system.ramPct}%)` : `🧠 RAM  (${h.system.ramPct}%)`,

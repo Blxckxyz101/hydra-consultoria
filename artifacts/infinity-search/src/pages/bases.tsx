@@ -89,7 +89,7 @@ function StatusMessage({ base }: { base: BaseStatus }) {
       <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-500/5 border border-rose-500/15">
         <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
         <p className="text-[10px] text-rose-300/80">
-          {base.id === "geass"
+          {base.id === "geass" /* Hydra API */
             ? "API offline permanentemente — sistema usando Skylers como fallback"
             : "Base indisponível no momento — usando bases alternativas"}
         </p>

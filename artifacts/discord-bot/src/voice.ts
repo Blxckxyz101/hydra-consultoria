@@ -91,9 +91,9 @@ function isAdmin(userId: string, username: string): boolean {
 function denyEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(COLORS.RED)
-    .setTitle("👁 Permissão Negada — Geass")
+    .setTitle("👁 Permissão Negada")
     .setDescription(
-      "*\"Only those bound by my Geass may stand before me.\"*\n\n" +
+      "*\"Apenas membros autorizados podem usar este comando.\"*\n\n" +
       "Este comando é exclusivo para **owners** e **admins** do bot.",
     );
 }
@@ -183,7 +183,7 @@ async function lookupServerGeo(hostnameOrIp: string): Promise<ServerGeo | null> 
   try {
     const resp = await fetch(`https://ipapi.co/${ip}/json/`, {
       signal:  AbortSignal.timeout(6_000),
-      headers: { "User-Agent": "Mozilla/5.0 LelouchBot/3.0" },
+      headers: { "User-Agent": "Mozilla/5.0 HydraBot/3.0" },
     });
     if (resp.ok) geo = await resp.json() as Record<string, unknown>;
   } catch { /* timeout / network error */ }
@@ -501,7 +501,7 @@ function buildSniffEmbed(
     .setTitle(`📡 Voice Sniffer — #${session.vcName}`)
     .setDescription(
       "```\n" +
-      `  LELOUCH NETWORK INTELLIGENCE — SAMPLE #${sampleCount}\n` +
+      `  HYDRA NETWORK INTELLIGENCE — SAMPLE #${sampleCount}\n` +
       `  Canal: #${session.vcName} · Uptime: ${mm}:${ss}\n` +
       "```"
     )
@@ -547,7 +547,7 @@ function buildSniffEmbed(
         inline: false,
       },
     )
-    .setFooter({ text: "👁 Lelouch Intelligence · Atualiza a cada 5s · /voice leave para encerrar" })
+    .setFooter({ text: "👁 Hydra Intelligence · Atualiza a cada 5s · /voice leave para encerrar" })
     .setTimestamp();
 }
 
@@ -663,7 +663,7 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.GREEN)
-            .setTitle("🔊 Lelouch entrou na call")
+            .setTitle("🔊 Hydra entrou na call")
             .setDescription(
               `Conectado em **#${vc.name}** · ${memberCount} participante${memberCount !== 1 ? "s" : ""}.\n\n` +
               `**🔌 Servidor de Voz Discord:**\n${serverLine}${ipLine}${geoLine}\n\n` +
@@ -713,8 +713,8 @@ export async function handleVoice(interaction: ChatInputCommandInteraction): Pro
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.CRIMSON)
-          .setTitle("🔇 Lelouch saiu da call")
-          .setDescription("*\"I take my leave. Remember — I am always watching.\"*"),
+          .setTitle("🔇 Hydra saiu da call")
+          .setDescription("*\"Saindo. Os dados continuam aqui.\"*"),
       ],
       flags: MessageFlags.Ephemeral,
     });

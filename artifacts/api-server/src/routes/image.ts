@@ -1,12 +1,12 @@
 /**
- * IMAGE GENERATION — Lelouch Geass Vision
+ * IMAGE GENERATION — Hydra AI Vision
  *
  * POST /api/generate-image
  *   body: { prompt: string; style?: string; size?: "1024x1024" | "512x512" | "256x256" }
  *   returns: { b64_json: string; prompt: string; revisedPrompt?: string }
  *
  * Uses OpenAI gpt-image-1 via Replit AI Integrations proxy.
- * Prompt is enhanced with Lelouch Britannia thematic style.
+ * Prompt is enhanced with a dark cyber thematic style.
  */
 import { Router, type IRouter } from "express";
 import OpenAI from "openai";
@@ -23,13 +23,11 @@ const openai = new OpenAI({
 const VALID_SIZES = ["1024x1024", "1536x1024", "1024x1536"] as const;
 type ValidSize = typeof VALID_SIZES[number];
 
-// Lelouch Britannia thematic style injected into every prompt
-const LELOUCH_STYLE_SUFFIX = [
-  "dark fantasy art style",
-  "deep crimson and black color palette",
-  "Code Geass anime aesthetic",
-  "dramatic lighting with Geass eye glow effects",
-  "intricate royal Britannian design language",
+// Hydra thematic style injected into every prompt
+const HYDRA_STYLE_SUFFIX = [
+  "dark cyberpunk art style",
+  "deep cyan and black color palette",
+  "dramatic neon lighting effects",
   "high detail digital art",
   "cinematic composition",
   "no watermarks, no text overlays",
@@ -43,8 +41,8 @@ function enhancePrompt(userPrompt: string, style?: string): string {
   if (style === "minimal") {
     return `${base}, minimalist design, clean lines, flat art, no watermarks`;
   }
-  // Default: Lelouch/Code Geass theme
-  return `${base}, ${LELOUCH_STYLE_SUFFIX}`;
+  // Default: Hydra cyberpunk theme
+  return `${base}, ${HYDRA_STYLE_SUFFIX}`;
 }
 
 router.post("/generate-image", imageLimiter, async (req, res) => {

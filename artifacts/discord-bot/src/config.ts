@@ -5,7 +5,7 @@ export const GUILD_ID       = "1493780674031779951";
 export const ALL_GUILD_IDS  = ["1493780674031779951"];
 export const API_BASE       = "http://localhost:8080";
 export const AUTHOR         = "Made by blxckxyz";
-export const BOT_NAME       = "Lelouch Britannia";
+export const BOT_NAME       = "Hydra";
 
 export const COLORS = {
   CRIMSON:  0xC0392B,

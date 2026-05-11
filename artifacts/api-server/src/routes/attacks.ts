@@ -302,7 +302,7 @@ async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect
       attack,
       timestamp: new Date().toISOString(),
       embeds: [{
-        title: event === "target_down" ? "🔴 TARGET DOWN — LELOUCH BRITANNIA" : "✅ ATTACK FINISHED — LELOUCH BRITANNIA",
+        title: event === "target_down" ? "🔴 TARGET DOWN — HYDRA" : "✅ ATTACK FINISHED — HYDRA",
         description: event === "target_down"
           ? `Target **${attack.target}** confirmed OFFLINE`
           : `Attack against **${attack.target}** has completed`,
@@ -316,7 +316,7 @@ async function fireWebhook(url: string, attack: typeof attacksTable.$inferSelect
           { name: "Status",       value: attack.status,              inline: true },
         ],
         timestamp: new Date().toISOString(),
-        footer: { text: "Lelouch Britannia — ARES OMNIVECT ∞" },
+        footer: { text: "Hydra — ARES OMNIVECT ∞" },
       }],
     };
     await fetch(url, {
@@ -360,7 +360,7 @@ setInterval(async () => {
 }, 10_000);
 
 // ── AI Advisor — live Groq-powered tactical analysis ──────────────────────
-const GROQ_SYSTEM = `You are an elite offensive security AI advisor for a penetration testing platform called "Lelouch Britannia". Analyze live attack metrics and return ONLY a valid JSON object. No markdown, no explanation, no code fences.`;
+const GROQ_SYSTEM = `You are an elite offensive security AI advisor for a penetration testing platform called "Hydra". Analyze live attack metrics and return ONLY a valid JSON object. No markdown, no explanation, no code fences.`;
 
 /** Safely parse Groq response — strips markdown fences and finds first JSON block */
 function parseGroqJSON(raw: string): Record<string, unknown> {
@@ -2162,10 +2162,10 @@ router.post("/notify", async (req, res): Promise<void> => {
   const evt = event ?? "target_down";
   const desc = message ?? (attackData ? `Target **${attackData.target}** confirmed OFFLINE` : "Target confirmed OFFLINE");
   const payload = {
-    username: "Lelouch Britannia",
+    username: "Hydra",
     avatar_url: "https://i.imgur.com/ZHKmhI7.png",
     embeds: [{
-      title: evt === "target_down" ? "🔴 TARGET DOWN — GEASS CONFIRMED" : "⚔️ LELOUCH BRITANNIA — ATTACK EVENT",
+      title: evt === "target_down" ? "🔴 TARGET DOWN — CONFIRMED" : "⚔️ HYDRA — ATTACK EVENT",
       description: desc,
       color: evt === "target_down" ? 0xFF0000 : 0xFF6600,
       fields: (() => {
@@ -2181,7 +2181,7 @@ router.post("/notify", async (req, res): Promise<void> => {
         ];
       })(),
       timestamp: new Date().toISOString(),
-      footer: { text: "Lelouch Britannia • ARES OMNIVECT ∞ v3" },
+      footer: { text: "Hydra • ARES OMNIVECT ∞ v3" },
     }],
   };
   try {

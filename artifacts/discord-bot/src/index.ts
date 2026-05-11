@@ -38,7 +38,7 @@ import {
   listPanelOwners, listPanelMods,
   BOOTSTRAP_OWNER_USERNAME,
 } from "./bot-config.js";
-import { askLelouch, askLelouchModerate, clearLelouchHistory, getLelouchMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
+import { askHydra, askHydraModerate, clearHydraHistory, getHydraMemoryStats, getSessionTimeRemaining } from "./lelouch-ai.js";
 import { askSkynet, isSkynetConfigured, getSkynetPoolStatus, addAccountToPool, SkynetRateLimitError } from "./skynetchat.js";
 import { enqueueRequest, getRateLimitRemaining, getQueueStatus, type QueuePosition } from "./sky-queue.js";
 import { handleVoice } from "./voice.js";
@@ -299,11 +299,11 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("info")
-    .setDescription("👁️ Lelouch Britannia — platform info, full cluster infrastructure & live stats (EN/PT)"),
+    .setDescription("👁️ Hydra — platform info, full cluster infrastructure & live stats (EN/PT)"),
 
   new SlashCommandBuilder()
     .setName("help")
-    .setDescription("❓ Show Lelouch Britannia command guide"),
+    .setDescription("❓ Show Hydra command guide"),
 
   new SlashCommandBuilder()
     .setName("cluster")
@@ -340,18 +340,18 @@ const COMMANDS = [
     ),
 
   new SlashCommandBuilder()
-    .setName("lelouch")
-    .setDescription("👁️ Fale com Lelouch vi Britannia — IA com personalidade completa do anime")
+    .setName("hydra")
+    .setDescription("👁️ Fale com Hydra — IA com personalidade completa do anime")
     .addSubcommand(sub =>
       sub.setName("ask")
-        .setDescription("💬 Faça uma pergunta ou pedido ao Lelouch (qualquer assunto)")
+        .setDescription("💬 Faça uma pergunta ou pedido à Hydra (qualquer assunto)")
         .addStringOption(opt =>
-          opt.setName("message").setDescription("Sua mensagem para Lelouch").setRequired(true)
+          opt.setName("message").setDescription("Sua mensagem para Hydra").setRequired(true)
         )
     )
     .addSubcommand(sub =>
       sub.setName("draw")
-        .setDescription("🎨 Gere uma imagem com o Geass de Lelouch — qualquer coisa que imaginar")
+        .setDescription("🎨 Gere uma imagem com o Hydra — qualquer coisa que imaginar — qualquer coisa que imaginar")
         .addStringOption(opt =>
           opt.setName("prompt").setDescription("O que você quer que o Geass crie?").setRequired(true)
         )
@@ -382,11 +382,11 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("memory")
-        .setDescription("🧠 Ver o que Lelouch aprendeu — base de conhecimento global")
+        .setDescription("🧠 Ver o que Hydra aprendeu — base de conhecimento global")
     )
     .addSubcommand(sub =>
       sub.setName("moderate")
-        .setDescription("⚖️ Tribunal do Geass — Lelouch julga um usuário com base nas evidências")
+        .setDescription("⚖️ Tribunal do Geass — Hydra julga um usuário com base nas evidências")
         .addUserOption(opt =>
           opt.setName("user").setDescription("O suspeito a ser julgado").setRequired(true)
         )
@@ -440,7 +440,7 @@ const COMMANDS = [
   // ── /advisor ──────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("advisor")
-    .setDescription("🧠 Lelouch AI Advisor — análise táctica com Groq llama-3.3-70b")
+    .setDescription("🧠 Hydra AI Advisor — análise táctica com Groq llama-3.3-70b")
     .addStringOption(opt =>
       opt.setName("target").setDescription("URL ou IP para analisar").setRequired(true)
     ),
@@ -493,7 +493,7 @@ const COMMANDS = [
   // ── /admin ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("admin")
-    .setDescription("👁️ Lelouch Kingdom Administration — moderation commands")
+    .setDescription("👁️ Hydra Kingdom Administration — moderation commands")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .addSubcommand(sub =>
       sub.setName("ban")
@@ -1263,7 +1263,7 @@ function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: st
   if (monitors.has(attackId)) return;
 
   // MAX 5 concurrent monitors — prevents Discord request queue saturation that causes
-  // "The application did not respond" errors on unrelated commands (e.g. /lelouch ask)
+  // "The application did not respond" errors on unrelated commands (e.g. /hydra ask)
   if (monitors.size >= 5) {
     console.warn(`[MONITOR] Max concurrent monitors (5) reached — skipping monitor for #${attackId}`);
     return;
@@ -2125,7 +2125,7 @@ async function handleCluster(interaction: ChatInputCommandInteraction): Promise<
               `👁️ **ARES OMNIVECT ∞ × ${nodesOnline}** — All cluster nodes running 33 simultaneous attack vectors\n\n` +
               `Primary attack **#${attack.id}** monitoring below. Peer nodes fire independently.`
             )
-            .setImage("attachment://lelouch.gif")
+            .setImage("attachment://hydra.gif")
             .setThumbnail("attachment://geass-symbol.png")
             .addFields(
               { name: "🎯 Target",         value: `\`${target}\``,           inline: true },
@@ -2165,9 +2165,9 @@ async function handleGeass(interaction: ChatInputCommandInteraction): Promise<vo
     embeds: [
       new EmbedBuilder()
         .setColor(COLORS.CRIMSON)
-        .setTitle("👁️ LELOUCH vi BRITANNIA COMMANDS YOU...")
+        .setTitle("👁️ HYDRA COMMANDS YOU...")
         .setDescription(
-          `> *"I, Lelouch vi Britannia, hereby command all opposition... TO SUBMIT!"*\n\n` +
+          `> *"I, Hydra, hereby command all opposition... TO SUBMIT!"*\n\n` +
           `👁️ **GEASS OVERRIDE ∞ — ARES OMNIVECT ∞** — **30** simultaneous real attack vectors against \`${target}\`\n\n` +
           `**L7 App (12):** ConnFlood → Slowloris → H2RST(CVE-2023) → H2CONT(CVE-2024) → HPACK Bomb → WAF Bypass → WebSocket → GraphQL → RUDY v2 → Cache Poison → HTTP Bypass → Keepalive Exhaust\n` +
           `**L7 H2 (4):** H2 Storm → HTTP Pipeline(300K/s) → H2 PING Storm → HTTP Smuggling\n` +
@@ -2696,7 +2696,7 @@ async function handleAdvisor(interaction: ChatInputCommandInteraction): Promise<
   try {
     await interaction.editReply({ embeds: [new EmbedBuilder()
       .setColor(COLORS.CRIMSON)
-      .setTitle("🧠 LELOUCH AI ADVISOR — ANALYSING...")
+      .setTitle("🧠 HYDRA AI ADVISOR — ANALYSING...")
       .setDescription(`> *"Intelligence is the cornerstone of absolute victory."*\n\n⏳ Consultando Groq llama-3.3-70b... analisando \`${target}\`...`)
       .setFooter({ text: AUTHOR })] });
 
@@ -2806,7 +2806,7 @@ async function handleVip(interaction: ChatInputCommandInteraction): Promise<void
       .setColor(isVip ? COLORS.GOLD : COLORS.GRAY)
       .setTitle(isVip ? "👑 Plano VIP Ativo" : "🔓 Plano Free")
       .setDescription(isVip
-        ? `> *"Aos aliados de Lelouch, as melhores armas são concedidas."*\n\n**${checkName}** tem acesso VIP.`
+        ? `> *"Aos aliados da Hydra, as melhores ferramentas são concedidas."*\n\n**${checkName}** tem acesso VIP.`
         : `> *"Poder básico ainda é poder. Mas os grandes generais merecem mais."*\n\n**${checkName}** está no plano Free.`
       )
       .addFields(
@@ -2877,13 +2877,13 @@ async function handleVip(interaction: ChatInputCommandInteraction): Promise<void
   }
 }
 
-// ── /lelouch handler ──────────────────────────────────────────────────────────
-async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<void> {
+// ── /hydra handler ──────────────────────────────────────────────────────────
+async function handleHydra(interaction: ChatInputCommandInteraction): Promise<void> {
   const sub = interaction.options.getSubcommand();
 
   if (sub === "reset") {
-    clearLelouchHistory(interaction.user.id);
-    const memStats = getLelouchMemoryStats();
+    clearHydraHistory(interaction.user.id);
+    const memStats = getHydraMemoryStats();
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -2899,7 +2899,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
   }
 
   if (sub === "memory") {
-    const memStats = getLelouchMemoryStats();
+    const memStats = getHydraMemoryStats();
     const sessionRemaining = getSessionTimeRemaining(interaction.user.id);
     const sessionMin = sessionRemaining !== null ? Math.ceil(sessionRemaining / 60_000) : null;
     await interaction.reply({
@@ -2913,7 +2913,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
               name: "📚 Assuntos mais discutidos",
               value: memStats.topTopics.length > 0
                 ? memStats.topTopics.map((t, i) => `${i + 1}. ${t}`).join("\n")
-                : "*Nenhum tópico ainda — use /lelouch ask para começar*",
+                : "*Nenhum tópico ainda — use /hydra ask para começar*",
               inline: false,
             },
             {
@@ -2946,12 +2946,12 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
     const targetName = member ? `${suspect.username} (ID: ${suspect.id}, Nickname: ${member.nickname ?? "none"})` : `${suspect.username} (ID: ${suspect.id})`;
 
     try {
-      const verdict = await askLelouchModerate(interaction.user.id, targetName, evidence, context);
+      const verdict = await askHydraModerate(interaction.user.id, targetName, evidence, context);
       await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor(0x8B0000) // dark red — tribunal
-            .setAuthor({ name: "Tribunal do Geass — Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
+            .setAuthor({ name: "Tribunal do Geass — Hydra", iconURL: "attachment://geass-symbol.png" })
             .setTitle("⚖️ JULGAMENTO REAL — VEREDITO DO GEASS")
             .setThumbnail(suspect.displayAvatarURL({ size: 256 }))
             .addFields(
@@ -3126,7 +3126,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
 
     await interaction.deferReply();
 
-    // Lelouch's dramatic reaction while generating
+    // Hydra's dramatic reaction while generating
     const thinkingQuotes = [
       "*\"Deixe o Geass pintar o que sua mente não consegue imaginar...\"*",
       "*\"O poder de Geass agora serve a sua visão. Um momento.\"*",
@@ -3170,7 +3170,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.PURPLE)
-            .setAuthor({ name: "Lelouch vi Britannia — Geass Vision", iconURL: "attachment://geass-symbol.png" })
+            .setAuthor({ name: "Hydra — Geass Vision", iconURL: "attachment://geass-symbol.png" })
             .setTitle("🎨 GEASS VISION — CRIAÇÃO COMPLETA")
             .setDescription(quote + `\n\n**Prompt:** \`${prompt.slice(0, 200)}\``)
             .addFields(
@@ -3183,14 +3183,14 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
               }] : []),
             )
             .setImage("attachment://geass-vision.png")
-            .setFooter({ text: `${AUTHOR} • /lelouch draw para criar mais` })
+            .setFooter({ text: `${AUTHOR} • /hydra draw para criar mais` })
             .setTimestamp(),
         ],
         files: [attachment, ...buildGeassFiles()],
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[LELOUCH DRAW ERROR]", msg);
+      console.error("[HYDRA DRAW ERROR]", msg);
       await interaction.editReply({
         embeds: [buildErrorEmbed(
           "GEASS VISION FALHOU",
@@ -3213,7 +3213,7 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
     : undefined;
 
   try {
-    const reply = await askLelouch(interaction.user.id, message, serverCtx);
+    const reply = await askHydra(interaction.user.id, message, serverCtx);
 
     // Truncate if over Discord 4096 embed limit (use 1900 for description safety)
     const display = reply.length > 1900 ? reply.slice(0, 1897) + "..." : reply;
@@ -3222,16 +3222,16 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
       embeds: [
         new EmbedBuilder()
           .setColor(0x9B59B6)
-          .setAuthor({ name: "Lelouch vi Britannia", iconURL: "attachment://geass-symbol.png" })
+          .setAuthor({ name: "Hydra", iconURL: "attachment://geass-symbol.png" })
           .setDescription(display)
-          .setFooter({ text: `${AUTHOR} • /lelouch reset para limpar histórico` })
+          .setFooter({ text: `${AUTHOR} • /hydra reset para limpar histórico` })
           .setTimestamp(),
       ],
       files: buildGeassFiles(),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[LELOUCH REPLY ERROR]", msg);
+    console.error("[HYDRA REPLY ERROR]", msg);
     await interaction.editReply({
       embeds: [buildErrorEmbed("GEASS FALHOU", `O Geass encontrou resistência inesperada. Tente novamente.\n\`${msg.slice(0, 200)}\``)],
     });
@@ -3239,24 +3239,24 @@ async function handleLelouch(interaction: ChatInputCommandInteraction): Promise<
 }
 
 // ── /admin handler ────────────────────────────────────────────────────────────
-const LELOUCH_BAN_QUOTES = [
+const HYDRA_BAN_QUOTES = [
   "*\"You are hereby banished from my kingdom. The Geass has spoken.\"*",
   "*\"By the power of Geass, I banish you to the void. Farewell, pawn.\"*",
   "*\"Britannia has no use for those who defy its order. Be gone.\"*",
   "*\"Your existence in this realm ends here — by my absolute command.\"*",
 ];
-const LELOUCH_MUTE_QUOTES = [
+const HYDRA_MUTE_QUOTES = [
   "*\"Silence. A king need not tolerate the noise of the unworthy.\"*",
   "*\"Your voice has been stripped by Geass. Know your place.\"*",
-  "*\"I, Lelouch vi Britannia, command you — speak no more.\"*",
+  "*\"I, Hydra, command you — speak no more.\"*",
   "*\"The strategy requires silence. You have volunteered.\"*",
 ];
-const LELOUCH_WARN_QUOTES = [
+const HYDRA_WARN_QUOTES = [
   "*\"Consider this your final warning. My Geass does not issue thirds.\"*",
   "*\"I am watching. My Geass sees all. One more transgression and you are finished.\"*",
   "*\"A pawn that moves out of turn is sacrificed. Remember that.\"*",
 ];
-const LELOUCH_CLEAR_QUOTES = [
+const HYDRA_CLEAR_QUOTES = [
   "*\"Erase the evidence of their incompetence. Clean slates are the foundation of strategy.\"*",
   "*\"A battlefield must be clear before the next engagement. Proceed.\"*",
   "*\"History is written by the victors. The rest — deleted.\"*",
@@ -4004,7 +4004,7 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
         if (!logChId) continue;
         const ch = guild.channels.cache.find((c: import("discord.js").GuildBasedChannel) => c.id === logChId && c.isTextBased());
         if (ch && ch.isTextBased()) {
-          await ch.send({ embeds: [new EmbedBuilder().setColor(COLORS.PURPLE).setTitle("📢 BROADCAST — LELOUCH VI BRITANNIA").setDescription(message).setTimestamp()] });
+          await ch.send({ embeds: [new EmbedBuilder().setColor(COLORS.PURPLE).setTitle("📢 BROADCAST — HYDRA").setDescription(message).setTimestamp()] });
           sent++;
         }
       } catch { failed++; }
@@ -4191,18 +4191,18 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── BAN ──────────────────────────────────────────────────────────────────
   if (sub === "ban") {
     const target = interaction.options.getUser("user", true);
-    const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    const reason = interaction.options.getString("reason") ?? "Por ordem de Hydra.";
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
     if (target.id === interaction.user.id) { await interaction.editReply({ embeds: [buildErrorEmbed("GEASS NEGADO", "Até um rei não pode banir a si mesmo.")] }); return; }
 
     try {
-      await interaction.guild.members.ban(target.id, { reason: `[Lelouch] ${reason}` });
+      await interaction.guild.members.ban(target.id, { reason: `[Hydra] ${reason}` });
       const embed = new EmbedBuilder()
         .setColor(0xC0392B)
         .setTitle("⚔️ BANISHMENT DECREE — GEASS ABSOLUTE")
-        .setDescription(getRandQuote(LELOUCH_BAN_QUOTES))
+        .setDescription(getRandQuote(HYDRA_BAN_QUOTES))
         .addFields(
           { name: "⛔ Banished Subject", value: `${target.tag} (${target.id})`, inline: true },
           { name: "👁️ Decreed By",      value: `${interaction.user.tag}`,        inline: true },
@@ -4228,7 +4228,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
     try {
-      await interaction.guild.members.unban(userId, `[Lelouch] Pardon by ${interaction.user.tag}`);
+      await interaction.guild.members.unban(userId, `[Hydra] Pardon by ${interaction.user.tag}`);
       const embed = new EmbedBuilder()
         .setColor(0x2ecc71)
         .setTitle("🕊️ PARDON GRANTED — BY ROYAL DECREE")
@@ -4282,7 +4282,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
       const embed = new EmbedBuilder()
         .setColor(0xf39c12)
         .setTitle("🗑️ EVIDENCE ERASED — GEASS CLEAN SWEEP")
-        .setDescription(getRandQuote(LELOUCH_CLEAR_QUOTES))
+        .setDescription(getRandQuote(HYDRA_CLEAR_QUOTES))
         .addFields(
           { name: "🗑️ Deleted",   value: `**${deleted.size}** messages`, inline: true },
           { name: "📍 Channel",   value: `<#${channel.id}>`,              inline: true },
@@ -4307,7 +4307,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
     const embed = new EmbedBuilder()
       .setColor(0xe67e22)
       .setTitle("⚠️ GEASS WARNING — FINAL NOTICE")
-      .setDescription(getRandQuote(LELOUCH_WARN_QUOTES))
+      .setDescription(getRandQuote(HYDRA_WARN_QUOTES))
       .addFields(
         { name: "⚠️ Warned Subject", value: `${target} (${target.tag})`, inline: true },
         { name: "👁️ Issued By",      value: `${interaction.user.tag}`,    inline: true },
@@ -4337,18 +4337,18 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   if (sub === "mute") {
     const target  = interaction.options.getUser("user", true);
     const minutes = interaction.options.getInteger("duration") ?? 10;
-    const reason  = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    const reason  = interaction.options.getString("reason") ?? "Por ordem de Hydra.";
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
 
     try {
       const member = await interaction.guild.members.fetch(target.id);
-      await member.timeout(minutes * 60_000, `[Lelouch] ${reason}`);
+      await member.timeout(minutes * 60_000, `[Hydra] ${reason}`);
       const embed = new EmbedBuilder()
         .setColor(0x9b59b6)
         .setTitle("🔇 SILENCED BY GEASS — ROYAL DECREE")
-        .setDescription(getRandQuote(LELOUCH_MUTE_QUOTES))
+        .setDescription(getRandQuote(HYDRA_MUTE_QUOTES))
         .addFields(
           { name: "🔇 Silenced Subject", value: `${target.tag}`,                                   inline: true },
           { name: "⏱️ Duration",         value: `**${minutes}** minute${minutes > 1 ? "s" : ""}`, inline: true },
@@ -4397,7 +4397,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
   // ── KICK ─────────────────────────────────────────────────────────────────
   if (sub === "kick") {
     const target = interaction.options.getUser("user", true);
-    const reason = interaction.options.getString("reason") ?? "Por ordem de Lelouch vi Britannia.";
+    const reason = interaction.options.getString("reason") ?? "Por ordem de Hydra.";
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     if (!interaction.guild) { await interaction.editReply({ embeds: [buildErrorEmbed("ERRO", "Este comando só funciona em servidores.")] }); return; }
@@ -4405,7 +4405,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
 
     try {
       const member = await interaction.guild.members.fetch(target.id);
-      await member.kick(`[Lelouch] ${reason}`);
+      await member.kick(`[Hydra] ${reason}`);
       const embed = new EmbedBuilder()
         .setColor(0xE67E22)
         .setTitle("👢 EXPULSION DECREE — GEASS ORDER")
@@ -4438,7 +4438,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
 
     try {
       const ch = interaction.channel as import("discord.js").TextChannel;
-      await ch.setRateLimitPerUser(seconds, `[Lelouch] Slowmode set by ${interaction.user.tag}`);
+      await ch.setRateLimitPerUser(seconds, `[Hydra] Slowmode set by ${interaction.user.tag}`);
       const embed = new EmbedBuilder()
         .setColor(seconds === 0 ? 0x2ecc71 : 0x9b59b6)
         .setTitle(seconds === 0 ? "🔓 SLOWMODE DISABLED" : "🐢 SLOWMODE ENGAGED — GEASS THROTTLE")
@@ -4626,7 +4626,7 @@ function buildCheckerTxt(
 
   // ── Header box ──────────────────────────────────────────────────────────────
   lines.push(sep("╔", "", "╗", "═"));
-  lines.push(row("  LELOUCH BRITANNIA — CHECKER RESULTADOS"));
+  lines.push(row("  HYDRA — CHECKER RESULTADOS"));
   lines.push(sep("╠", "", "╣", "═"));
   lines.push(row(`  Alvo      : ${targetIcon} ${targetLabel}`));
   lines.push(row(`  Data      : ${dt}`));
@@ -4696,7 +4696,7 @@ function buildCheckerTxt(
 
   // ── Footer ───────────────────────────────────────────────────────────────────
   lines.push("═".repeat(W));
-  lines.push(`  ${AUTHOR}  •  Lelouch Britannia Panel`);
+  lines.push(`  ${AUTHOR}  •  Hydra Panel`);
   lines.push("═".repeat(W));
 
   return Buffer.from(lines.join("\n"), "utf-8");
@@ -5336,7 +5336,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
 
     const txtLines: string[] = [
       sep("╔", "", "╗", "═"),
-      row("  LELOUCH BRITANNIA — HITS PARCIAIS"),
+      row("  HYDRA — HITS PARCIAIS"),
       sep("╠", "", "╣", "═"),
       row(`  Alvo    : ${targetIcon} ${targetLabel}`),
       row(`  Data    : ${dt}`),
@@ -6811,7 +6811,7 @@ async function main(): Promise<void> {
 
   client.once(Events.ClientReady, c => {
     console.log(`\n╔════════════════════════════════════════╗`);
-    console.log(`║   👁️  LELOUCH BRITANNIA — ONLINE        ║`);
+    console.log(`║   👁️  HYDRA — ONLINE        ║`);
     console.log(`║   Bot: ${c.user.tag.padEnd(32)} ║`);
     console.log(`║   Servers: ${String(c.guilds.cache.size).padEnd(28)} ║`);
     console.log(`╚════════════════════════════════════════╝\n`);
@@ -6839,7 +6839,7 @@ async function main(): Promise<void> {
                 embeds: [new EmbedBuilder()
                   .setColor(COLORS.GREEN)
                   .setTitle("✅ API SERVER — RECUPERADO")
-                  .setDescription("O servidor API do Lelouch Britannia está novamente **online** e respondendo.\n*\"O Geass jamais se rende — a ordem foi restaurada.\"*")
+                  .setDescription("O servidor API do Hydra está novamente **online** e respondendo.\n*\"O Geass jamais se rende — a ordem foi restaurada.\"*")
                   .setTimestamp()
                   .setFooter({ text: AUTHOR })],
               }).catch(() => null);
@@ -7560,8 +7560,8 @@ async function main(): Promise<void> {
         await handleCheck(interaction);
       } else if (commandName === "geass") {
         await handleGeass(interaction);
-      } else if (commandName === "lelouch") {
-        await handleLelouch(interaction);
+      } else if (commandName === "hydra") {
+        await handleHydra(interaction);
       } else if (commandName === "schedule") {
         await handleSchedule(interaction);
       } else if (commandName === "advisor") {

@@ -342,12 +342,12 @@ async function editMsg(
 // ── Home screen ───────────────────────────────────────────────────────────────
 function homeMsg(name: string): string {
   return [
-    `${GEASS} <b>GEASS COMMAND CENTER</b> ${GEASS}`,
-    `<i>All hail Lelouch vi Britannia</i>`,
+    `${GEASS} <b>HYDRA COMMAND CENTER</b> ${GEASS}`,
+    `<i>Hydra Consultoria — Inteligência de dados</i>`,
     LINE2,
     ``,
     `Bem-vindo, <b>${esc(name)}</b>.`,
-    `O poder do Geass responde às suas ordens.`,
+    `A plataforma Hydra responde às suas ordens.`,
     ``,
     LINE,
     `${SWORD} Escolha sua operação abaixo.`,
@@ -723,7 +723,7 @@ bot.command("checker", async ctx => {
   }
 });
 
-// ── /sky e /lelouch — IA via SkyNetChat ──────────────────────────────────────
+// ── /sky e /hydra — IA via SkyNetChat ──────────────────────────────────────
 
 /** Build the queue-position message text (HTML for Telegram) */
 function buildSkyQueueText(pos: QueuePosition, qPreview: string): string {
@@ -770,7 +770,7 @@ async function handleAiCommand(ctx: Context, question: string) {
       `🛰️ <b>SKYNETCHAT — IA</b>\n${LINE2}\n\n` +
       `<i>Envie sua pergunta logo após o comando:</i>\n` +
       `<code>/sky Qual a capital do Brasil?</code>\n` +
-      `<code>/lelouch Explique HTTP/2 Rapid Reset</code>`,
+      `<code>/hydra Explique HTTP/2 Rapid Reset</code>`,
     );
     return;
   }
@@ -876,7 +876,7 @@ bot.command("sky", async ctx => {
   await handleAiCommand(ctx, question);
 });
 
-bot.command("lelouch", async ctx => {
+bot.command("hydra", async ctx => {
   const question = ctx.message.text.split(/\s+/).slice(1).join(" ");
   await handleAiCommand(ctx, question);
 });
@@ -1356,7 +1356,7 @@ function buildCheckerTxt(
   const lines: string[] = [];
 
   lines.push(sep("═"));
-  lines.push(row("  LELOUCH BRITANNIA — CHECKER RESULTADOS"));
+  lines.push(row("  HYDRA — CHECKER RESULTADOS"));
   lines.push(sep("═"));
   lines.push(row(`  Alvo     : ${label.toUpperCase()}`));
   lines.push(row(`  Data     : ${dt}`));
@@ -1421,7 +1421,7 @@ function buildCheckerTxt(
   }
 
   lines.push(sep("═"));
-  lines.push(`  Made by blxckxyz  •  Lelouch Britannia Panel`);
+  lines.push(`  Made by blxckxyz  •  Hydra Consultoria`);
   lines.push(sep("═"));
 
   return Buffer.from(lines.join("\n"), "utf-8");
@@ -1491,7 +1491,7 @@ async function registerCommands() {
   await bot.telegram.setMyCommands([
     { command: "home",    description: "🏠 Menu principal" },
     { command: "sky",     description: "🛰️ Perguntar para a IA (SkyNetChat)" },
-    { command: "lelouch", description: "👁️ Perguntar para a IA (alias)" },
+    { command: "hydra", description: "👁️ Perguntar para a IA (alias)" },
     { command: "checker", description: "⚔️ Iniciar checker de credenciais" },
     { command: "import",  description: "💾 Importar arquivo .txt de credenciais" },
     { command: "url",     description: "🔍 Buscar domínio no banco" },
@@ -1960,7 +1960,7 @@ function buildTgSipniText(cpf: string, d: TgSipniRecord): string {
   if (d.grauQualidade)         flags.push(`📊 Qualidade ${d.grauQualidade}`);
   if (flags.length) lines.push(``, `<b>ℹ️ STATUS</b>`, flags.join(" • "));
 
-  lines.push(``, `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`, `<i>servicos-cloud.saude.gov.br  •  Lelouch Britannia</i>`);
+  lines.push(``, `<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`, `<i>servicos-cloud.saude.gov.br  •  Hydra Consultoria</i>`);
   return lines.join("\n");
 }
 
@@ -2090,7 +2090,7 @@ function buildTgBaseText(tipo: string, dado: string, records: TgBaseRecord[]): s
 
   lines.push(``);
   lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
-  lines.push(`<i>🤖 GeassZero API  •  Lelouch Britannia</i>`);
+  lines.push(`<i>🤖 Hydra API  •  Hydra Consultoria</i>`);
   return lines.join("\n");
 }
 
@@ -2191,7 +2191,7 @@ function buildTgOsintText(tipo: string, dado: string, kvPairs: Array<[string, st
 
   lines.push(``);
   lines.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
-  lines.push(`<i>🤖 GeassZero API  •  Lelouch Britannia</i>`);
+  lines.push(`<i>🤖 Hydra API  •  Hydra Consultoria</i>`);
   return lines.join("\n");
 }
 
@@ -2253,7 +2253,7 @@ bot.command("osint", async ctx => {
       }
       await ctx.telegram.deleteMessage(msg.chat.id, msg.message_id).catch(() => {/* ignore */});
       await ctx.replyWithPhoto(j.url, {
-        caption: `📸 <b>OSINT — FOTO CNH BR</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n└ CPF: <code>${cpfNum}</code>\n\n<i>DarkFlow API  •  Lelouch Britannia</i>`,
+        caption: `📸 <b>OSINT — FOTO CNH BR</b>\n<code>━━━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n└ CPF: <code>${cpfNum}</code>\n\n<i>DarkFlow API  •  Hydra Consultoria</i>`,
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([[Markup.button.callback("🏠 Início", "go_home")]]),
       });

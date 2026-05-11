@@ -5,7 +5,7 @@ const THOUGHTS = [
   "Analisando sua mensagem…",
   "Verificando o contexto da conversa…",
   "Identificando intenção e tipo de dado…",
-  "Conectando à base de dados Geass…",
+  "Conectando à base de dados Hydra…",
   "Avaliando qual ferramenta utilizar…",
   "Processando solicitação…",
   "Cruzando referências disponíveis…",

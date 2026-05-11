@@ -463,7 +463,7 @@ export default function Consultas() {
             Consultas
           </motion.h1>
           <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-            {TABS.length} módulos · Geass + Skylers API conectados
+            {TABS.length} módulos · Hydra + Skylers API conectados
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -792,7 +792,7 @@ export default function Consultas() {
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary group-hover:text-sky-200 transition-colors">Hydra Consultoria</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Geass API · recomendado</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5 leading-relaxed">OSINT completo via Hydra API · recomendado</p>
                   </div>
                   <div className="flex items-center gap-1 text-[9px] text-primary/50 group-hover:text-primary transition-colors">
                     <ShieldCheck className="w-3 h-3" /><span>Fonte principal</span>
