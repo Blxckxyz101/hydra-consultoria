@@ -63,13 +63,10 @@ export function applyTheme(t: ThemeDef) {
   const parts = t.primary.split(" ");
   const hue = parts[0]!;
   const sat = parseFloat(parts[1] ?? "50");
-  const bgSat = sat < 8 ? 0 : 16;
-  const cardSat = sat < 8 ? 0 : 12;
-
-  const bgHsl   = t.bgOverride     ?? `${hue} ${bgSat}% 3%`;
-  const cardHsl = t.cardOverride   ?? `${hue} ${cardSat}% 5%`;
-  const brdHsl  = t.borderOverride ?? `${hue} 25% 15%`;
-  const mutHsl  = t.mutedOverride  ?? `${hue} 20% 15%`;
+  const bgHsl   = t.bgOverride     ?? "220 8% 3%";
+  const cardHsl = t.cardOverride   ?? "220 6% 5%";
+  const brdHsl  = t.borderOverride ?? `${hue} 18% 12%`;
+  const mutHsl  = t.mutedOverride  ?? `${hue} 14% 13%`;
 
   root.style.setProperty("--primary", t.primary);
   root.style.setProperty("--accent", t.accent);

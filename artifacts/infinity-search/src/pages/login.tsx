@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import logoUrl from "@/assets/hydra-icon.jpg";
+import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock } from "lucide-react";
@@ -120,8 +120,7 @@ export default function Login() {
                   <img
                     src={logoUrl}
                     alt="Hydra Consultoria"
-                    className="w-24 h-24"
-                    style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
+                    className="w-24 h-24 drop-shadow-[0_0_18px_var(--color-primary)]"
                   />
                 </div>
               </motion.div>

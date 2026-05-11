@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShieldCheck, ChevronDown, ChevronUp, Square, CheckSquare } from "lucide-react";
-import logoUrl from "@/assets/hydra-icon.jpg";
+import logoUrl from "@/assets/hydra-icon.png";
 
 const LS_KEY = "infinity_terms_v1";
 
@@ -48,7 +48,7 @@ export function TermsGuard({ children }: { children: React.ReactNode }) {
           <div className="px-7 pt-7 pb-6 flex items-center gap-3.5">
             <div className="relative shrink-0">
               <div className="absolute inset-0 rounded-xl bg-sky-400/15 blur-lg" />
-              <img src={logoUrl} alt="Hydra Consultoria" className="relative w-10 h-10" style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }} />
+              <img src={logoUrl} alt="Hydra Consultoria" className="relative w-10 h-10 drop-shadow-[0_0_10px_var(--color-primary)]" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 mb-0.5">

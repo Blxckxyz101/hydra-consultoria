@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, type LucideIcon } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 
-import logoUrl from "@/assets/hydra-icon.jpg";
+import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -276,8 +276,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <img
             src={logoUrl}
             alt="Hydra Consultoria"
-            className="relative w-11 h-11"
-            style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
+            className="relative w-11 h-11 drop-shadow-[0_0_10px_var(--color-primary)]"
           />
         </div>
         <div className="flex flex-col flex-1 min-w-0">
@@ -521,8 +520,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <img
               src={logoUrl}
               alt=""
-              className="w-7 h-7"
-              style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }}
+              className="w-7 h-7 drop-shadow-[0_0_8px_var(--color-primary)]"
             />
           </div>
           <span className="font-bold tracking-[0.2em] text-sm">HYDRA</span>

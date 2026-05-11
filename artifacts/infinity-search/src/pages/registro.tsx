@@ -5,7 +5,7 @@ import {
   QrCode, User, Lock, Gift, KeyRound, UserPlus,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
-import logoUrl from "@/assets/hydra-icon.jpg";
+import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 
 interface Plan {
@@ -250,8 +250,7 @@ export default function Registro() {
         className="relative w-full max-w-lg z-10"
       >
         <div className="flex items-center justify-center gap-3 mb-8">
-          <img src={logoUrl} alt="" className="w-10 h-10"
-            style={{ mixBlendMode: "screen", filter: "brightness(4) saturate(2)" }} />
+          <img src={logoUrl} alt="" className="w-10 h-10 drop-shadow-[0_0_10px_var(--color-primary)]" />
           <div>
             <div className="font-bold tracking-[0.3em] text-lg">HYDRA</div>
             <div className="text-[9px] uppercase tracking-[0.5em] text-primary/60">CONSULTORIA</div>

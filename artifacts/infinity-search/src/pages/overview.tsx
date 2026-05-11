@@ -463,10 +463,11 @@ export default function Overview() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 + idx * 0.07 }}
             whileHover={{ y: -4 }}
-            className="group relative overflow-hidden rounded-2xl p-4 sm:p-5 backdrop-blur-xl transition-all duration-200 cursor-default"
+            className="group relative overflow-hidden rounded-2xl p-4 sm:p-5 backdrop-blur-2xl transition-all duration-200 cursor-default"
             style={{
-              background: `linear-gradient(135deg, color-mix(in srgb, var(${stat.chartVar}) 18%, transparent) 0%, color-mix(in srgb, var(${stat.chartVar}) 5%, transparent) 100%)`,
-              border: `1px solid color-mix(in srgb, var(${stat.chartVar}) 22%, transparent)`,
+              background: `linear-gradient(135deg, color-mix(in srgb, var(${stat.chartVar}) 7%, rgba(255,255,255,0.02)) 0%, color-mix(in srgb, var(${stat.chartVar}) 2%, transparent) 100%)`,
+              border: `1px solid color-mix(in srgb, var(${stat.chartVar}) 18%, rgba(255,255,255,0.06))`,
+              boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04)`,
             }}
             onMouseEnter={e => {
               const el = e.currentTarget as HTMLElement;
