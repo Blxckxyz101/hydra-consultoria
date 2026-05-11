@@ -529,7 +529,7 @@ function scoreMethodsFor(opts: {
       : hasWAF ? 80
       : 76;
     recs.push({
-      method: "waf-bypass", name: "Geass WAF Bypass",
+      method: "waf-bypass", name: "Hydra WAF Bypass",
       score: baseScore, tier: tierFromScore(baseScore),
       reason: cdnProvider === "GoCache"
         ? `GoCache CDN/WAF (BR) detected — WAF rules generally simpler than Cloudflare/Akamai; JA3 fingerprint randomization + custom header ordering bypasses most GoCache rules effectively`

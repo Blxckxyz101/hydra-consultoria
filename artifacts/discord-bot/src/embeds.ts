@@ -75,7 +75,7 @@ export const methodLabel = (id: string) => {
     "http-bypass":          "HTTP Bypass",
     "http2-flood":          "HTTP/2 Rapid Reset",
     "http2-continuation":   "H2 CONTINUATION (CVE-2024-27316)",
-    "waf-bypass":           "Geass WAF Bypass ∞",
+    "waf-bypass":           "Hydra WAF Bypass ∞",
     "conn-flood":           "TLS Connection Flood",
     "slowloris":            "Slowloris",
     "tls-renego":           "TLS Renegotiation DoS",
@@ -105,7 +105,7 @@ export const methodLabel = (id: string) => {
     "app-smart-flood":      "App Smart Flood — DB Query Exhaust",
     "large-header-bomb":    "Large Header Bomb — 16KB Header Overflow",
     "http2-priority-storm": "H2 PRIORITY Storm — Stream Reorder Exhaust",
-    "geass-override":       "Geass Override ∞ [ARES OMNIVECT — 35 VECTORS]",
+    "geass-override":       "Hydra Override ∞ [ARES OMNIVECT — 35 VECTORS]",
     "cf-bypass":            "Cloudflare Bypass",
     "nginx-killer":         "Nginx Killer",
     "h2-rst-burst":         "H2 RST Burst — CVE-2023-44487 Pure RST Engine",
@@ -365,7 +365,7 @@ export function buildAttackEmbed(
 
   const embed = new EmbedBuilder()
     .setColor(color)
-    .setTitle(`${emoji} ${isRunning ? "GEASS COMMAND ACTIVE" : `ATTACK #${attack.id} ${attack.status.toUpperCase()}`}`)
+    .setTitle(`${emoji} ${isRunning ? "HYDRA COMMAND ACTIVE" : `ATTACK #${attack.id} ${attack.status.toUpperCase()}`}`)
     .setDescription(`${configLine}\n${statusDesc}${proxyLine}`);
 
   if (isRunning) {
@@ -943,11 +943,11 @@ export function buildHelpEmbed(lang: "en" | "pt" = "en"): EmbedBuilder {
         value: pt
           ? [
               "`/cluster status` — Saúde & latência de todos os nós do cluster",
-              "`/cluster broadcast <alvo>` — Disparar Geass Override para TODOS os nós (10× potência)",
+              "`/cluster broadcast <alvo>` — Disparar Hydra Override para TODOS os nós (10× potência)",
             ].join("\n")
           : [
               "`/cluster status` — Health & latency of all cluster nodes",
-              "`/cluster broadcast <target>` — Fire Geass Override to ALL nodes (10× power)",
+              "`/cluster broadcast <target>` — Fire Hydra Override to ALL nodes (10× power)",
             ].join("\n"),
         inline: false,
       },
@@ -1048,7 +1048,7 @@ export function buildInfoEmbed(opts: {
       ? `**Hydra** é uma plataforma de stress-test de redes de próxima geração.\n33 vetores de ataque simultâneos (ARES OMNIVECT ∞), fan-out multi-nó em cluster, monitoramento ao vivo e C2 via Discord — tudo sob um único Comando Hydra.`
       : `**Hydra** is a next-generation network stress-testing platform.\n33 simultaneous real attack vectors (ARES OMNIVECT ∞), multi-node cluster fan-out, live probe monitoring, and Discord C2 — all under one Hydra command.`,
     secEngine:   pt ? "━━━━ ⚔️  **MOTOR ARES OMNIVECT** ━━━━" : "━━━━ ⚔️  **ARES OMNIVECT ENGINE** ━━━━",
-    engineTitle: pt ? "🔴 Geass Override ∞ — 33 Vetores" : "🔴 Geass Override ∞ — 33 Vectors",
+    engineTitle: pt ? "🔴 Hydra Override ∞ — 33 Vetores" : "🔴 Hydra Override ∞ — 33 Vectors",
     engineBox:
       "```\n" +
       (pt
@@ -1088,8 +1088,8 @@ export function buildInfoEmbed(opts: {
         ? `  │  Nós cluster :  ${String(clusterNodes).padEnd(2)}  peer node(s)          │\n`
         : `  │  Cluster peer:  ${String(clusterNodes).padEnd(2)}  node(s) configured    │\n`) +
       (pt
-        ? `  │  Fan-out     :  ${String(totalNodes)}× poder — Geass Override ∞  │\n`
-        : `  │  Fan-out     :  ${String(totalNodes)}× power — Geass Override ∞  │\n`) +
+        ? `  │  Fan-out     :  ${String(totalNodes)}× poder — Hydra Override ∞  │\n`
+        : `  │  Fan-out     :  ${String(totalNodes)}× power — Hydra Override ∞  │\n`) +
       (pt
         ? `  │  Vetores tot.:  ${String(totalVectors)} simultâneos por disparo │\n`
         : `  │  Total vects :  ${String(totalVectors)} simultaneous per fire    │\n`) +
@@ -1122,8 +1122,8 @@ export function buildInfoEmbed(opts: {
     secCmds:     pt ? "━━━━ 📖  **REFERÊNCIA DE COMANDOS** ━━━━" : "━━━━ 📖  **COMMAND REFERENCE** ━━━━",
     coreTitle:   pt ? "⚡ Comandos Principais" : "⚡ Core Commands",
     coreVal:     pt
-      ? "`/geass`  — Geass Override ∞ · 42 vetores ARES OMNIVECT ∞\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
-      : "`/geass`  — Geass Override ∞ · 42 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
+      ? "`/geass`  — Hydra Override ∞ · 42 vetores ARES OMNIVECT ∞\n`/attack start`  — Iniciar qualquer vetor\n`/attack stop`   — Encerrar por ID\n`/attack list`   — Ver todos os ataques\n`/attack stats`  — Estatísticas da sessão"
+      : "`/geass`  — Hydra Override ∞ · 42 vectors ARES OMNIVECT ∞\n`/attack start`  — Launch any single vector\n`/attack stop`   — Terminate by ID\n`/attack list`   — View all attacks\n`/attack stats`  — Session statistics",
     reconTitle:  pt ? "🔍 Reconhecimento & Cluster" : "🔍 Recon & Cluster",
     reconVal:    pt
       ? "`/analyze`  — Reconhecimento do alvo\n`/methods`  — Lista de vetores de ataque\n`/cluster status`  — Grade de saúde dos nós\n`/cluster broadcast`  — Fan-out Hydra a todos\n`/hydra ask`  — IA Hydra · ajuda & chat\n`/info`  — Esta tela  ·  `/help`  — Ajuda rápida"
@@ -1197,13 +1197,13 @@ export function buildClusterEmbed(status: {
     .addFields(
       { name: pt ? "🟢 Online"      : "🟢 Online",      value: `**${totalOnline}** nó${totalOnline !== 1 ? "s" : ""}`, inline: true },
       { name: pt ? "🔴 Offline"     : "🔴 Offline",     value: `**${configuredNodes - onlineCount}** nó${(configuredNodes - onlineCount) !== 1 ? "s" : ""}`, inline: true },
-      { name: pt ? "⚡ Poder Geass" : "⚡ Geass Power", value: `**${totalOnline}×** ${pt ? "multiplicador" : "multiplier"}`, inline: true },
+      { name: pt ? "⚡ Poder Hydra" : "⚡ Hydra Power", value: `**${totalOnline}×** ${pt ? "multiplicador" : "multiplier"}`, inline: true },
       { name: pt ? "💻 CPU Primário" : "💻 Primary CPU", value: `${self.cpus} vCPU`, inline: true },
       { name: pt ? "💾 RAM Primário" : "💾 Primary RAM", value: `${self.freeMem} MB ${pt ? "livre" : "free"}`, inline: true },
-      { name: "👁️ Geass Override", value: configuredNodes > 0
+      { name: "👁️ Hydra Override", value: configuredNodes > 0
           ? (pt
-            ? `Quando Geass Override dispara, ele **propaga automaticamente** para todos os ${configuredNodes} nós peer configurados. Cada nó roda todos os 35 vetores ARES simultaneamente.`
-            : `When Geass Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 35 ARES vectors simultaneously.`)
+            ? `Quando Hydra Override dispara, ele **propaga automaticamente** para todos os ${configuredNodes} nós peer configurados. Cada nó roda todos os 35 vetores ARES simultaneamente.`
+            : `When Hydra Override fires, it **automatically fans out** to all ${configuredNodes} configured peer nodes. Each node runs all 35 ARES vectors simultaneously.`)
           : (pt ? "Defina `CLUSTER_NODES` para ativar o fan-out automático." : "Set `CLUSTER_NODES` to enable automatic fan-out."),
         inline: false },
     )

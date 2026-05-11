@@ -94,12 +94,12 @@ if (!BOT_TOKEN) {
 
 // ── Method definitions with layer grouping for the select menu ──────────────
 const METHOD_OPTIONS = [
-  // ── Geass / Special ────────────────────────────────────────────────────
-  { value: "geass-override",      label: "👁️ Geass Override ∞ [ARES 42v]",    description: "MAX POWER — 42 vectors simultâneos: H3-RapidReset(QUIC)+RapidResetUltra+H2-RST+H2-CONT+HPACK+WAF+TLS+gRPC+DNS+...", emoji: "👁️" },
-  { value: "geass-ultima",        label: "🔮 Geass Ultima ∞ [FINAL FORM 9v]", description: "FORMA FINAL — 9 vetores em todas camadas OSI: RapidReset+WAF+H2Storm+AppFlood+TLS+Conn+Pipeline+SSE+UDP", emoji: "🔮" },
+  // ── Hydra / Special ────────────────────────────────────────────────────
+  { value: "geass-override",      label: "👁️ Hydra Override ∞ [ARES 42v]",    description: "MAX POWER — 42 vectors simultâneos: H3-RapidReset(QUIC)+RapidResetUltra+H2-RST+H2-CONT+HPACK+WAF+TLS+gRPC+DNS+...", emoji: "👁️" },
+  { value: "geass-ultima",        label: "🔮 Hydra Ultima ∞ [FINAL FORM 9v]", description: "FORMA FINAL — 9 vetores em todas camadas OSI: RapidReset+WAF+H2Storm+AppFlood+TLS+Conn+Pipeline+SSE+UDP", emoji: "🔮" },
   { value: "bypass-storm",        label: "⚡ Bypass Storm ∞ [3-Phase CF]",    description: "3 fases: TLS Exhaust+ConnFlood → WAF+H2 RST+RapidReset → AppFlood+CacheBust. Anti-Cloudflare/Akamai", emoji: "⚡" },
   // ── L7 Application ─────────────────────────────────────────────────────
-  { value: "waf-bypass",          label: "🟣 Geass WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
+  { value: "waf-bypass",          label: "🟣 Hydra WAF Bypass ∞",            description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF",                     emoji: "🟣" },
   { value: "http2-flood",         label: "⚡ HTTP/2 Rapid Reset",             description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s",               emoji: "⚡" },
   { value: "http2-continuation",  label: "💀 H2 CONTINUATION (CVE-2024)",    description: "CVE-2024-27316 — endless CONTINUATION frames, nginx/Apache OOM — NO patch for nginx ≤1.25.4", emoji: "💀" },
   { value: "hpack-bomb",          label: "🧨 HPACK Bomb (RFC 7541)",         description: "Incremental-indexed headers → HPACK table eviction storm — no CVE, no fix",        emoji: "🧨" },
@@ -245,10 +245,10 @@ function scheduleSessionExpiry(userId: string): void {
 const COMMANDS = [
   new SlashCommandBuilder()
     .setName("attack")
-    .setDescription("⚔️ Geass Attack Control — launch, stop, and monitor attacks")
+    .setDescription("⚔️ Hydra Attack Control — launch, stop, and monitor attacks")
     .addSubcommand(sub =>
       sub.setName("start")
-        .setDescription("🔴 Launch a new Geass command — opens method/duration/thread selector")
+        .setDescription("🔴 Launch a new Hydra command — opens method/duration/thread selector")
         .addStringOption(opt =>
           opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
         )
@@ -307,14 +307,14 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("cluster")
-    .setDescription("🌐 Cluster node management — check health and broadcast Geass to all nodes")
+    .setDescription("🌐 Cluster node management — check health and broadcast Hydra to all nodes")
     .addSubcommand(sub =>
       sub.setName("status")
         .setDescription("🔍 Check health and latency of all configured cluster nodes")
     )
     .addSubcommand(sub =>
       sub.setName("broadcast")
-        .setDescription("👁️ Fire Geass Override ∞ to ALL cluster nodes simultaneously (10× power)")
+        .setDescription("👁️ Fire Hydra Override ∞ to ALL cluster nodes simultaneously (10× power)")
         .addStringOption(opt =>
           opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
         )
@@ -328,7 +328,7 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("geass")
-    .setDescription("👁️ Launch Geass Override ∞ — ARES OMNIVECT maximum power, 21 simultaneous real attack vectors")
+    .setDescription("👁️ Launch Hydra Override ∞ — ARES OMNIVECT maximum power, 21 simultaneous real attack vectors")
     .addStringOption(opt =>
       opt.setName("target").setDescription("Target URL or IP (e.g. https://example.com)").setRequired(true)
     )
@@ -351,16 +351,16 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("draw")
-        .setDescription("🎨 Gere uma imagem com o Hydra — qualquer coisa que imaginar — qualquer coisa que imaginar")
+        .setDescription("🎨 Gere uma imagem com a Hydra — qualquer coisa que imaginar")
         .addStringOption(opt =>
-          opt.setName("prompt").setDescription("O que você quer que o Geass crie?").setRequired(true)
+          opt.setName("prompt").setDescription("O que você quer criar?").setRequired(true)
         )
         .addStringOption(opt =>
           opt.setName("style")
-            .setDescription("Estilo visual (padrão: Code Geass dark art)")
+            .setDescription("Estilo visual (padrão: dark art)")
             .setRequired(false)
             .addChoices(
-              { name: "🎌 Code Geass — dark anime art (padrão)", value: "geass" },
+              { name: "🎌 Dark anime art (padrão)", value: "geass" },
               { name: "📸 Realista — fotorrealista de alta qualidade", value: "realistic" },
               { name: "◾ Minimal — design limpo e moderno", value: "minimal" },
             )
@@ -386,7 +386,7 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("moderate")
-        .setDescription("⚖️ Tribunal do Geass — Hydra julga um usuário com base nas evidências")
+        .setDescription("⚖️ Tribunal Hydra julga um usuário com base nas evidências")
         .addUserOption(opt =>
           opt.setName("user").setDescription("O suspeito a ser julgado").setRequired(true)
         )
@@ -515,13 +515,13 @@ const COMMANDS = [
     )
     .addSubcommand(sub =>
       sub.setName("warn")
-        .setDescription("⚠️ Issue a Geass warning to a subject")
+        .setDescription("⚠️ Issue a Hydra warning to a subject")
         .addUserOption(opt => opt.setName("user").setDescription("Subject to warn").setRequired(true))
         .addStringOption(opt => opt.setName("reason").setDescription("Reason for warning").setRequired(true))
     )
     .addSubcommand(sub =>
       sub.setName("mute")
-        .setDescription("🔇 Silence a subject by Geass command")
+        .setDescription("🔇 Silence a subject by Hydra command")
         .addUserOption(opt => opt.setName("user").setDescription("Subject to silence").setRequired(true))
         .addIntegerOption(opt =>
           opt.setName("duration").setDescription("Timeout duration in minutes (1–10080)").setRequired(false).setMinValue(1).setMaxValue(10080)
@@ -601,7 +601,7 @@ const COMMANDS = [
   // ── /whois ────────────────────────────────────────────────────────────────
   new SlashCommandBuilder()
     .setName("whois")
-    .setDescription("🔍 Geass Intelligence — dossier completo: identidade, cargos, permissões, risco e mais")
+    .setDescription("🔍 Hydra Intelligence — dossier completo: identidade, cargos, permissões, risco e mais")
     .addUserOption(opt =>
       opt.setName("user").setDescription("O sujeito a investigar (padrão: você mesmo)").setRequired(false)
     )
@@ -1462,7 +1462,7 @@ function startMonitor(attackId: number, initialEditFn: MonitorEditFn, target: st
 // Discord hard-limit: 25 options per select menu, 5 rows per message.
 // VIP:  Row1 = methods 1-25, Row2 = methods 26-50, Row3 = duration, Row4 = threads, Row5 = buttons
 // Free: Row1 = 7 free methods only,               Row2 = duration, Row3 = threads, Row4 = buttons
-const METHOD_OPTIONS_A     = METHOD_OPTIONS.slice(0, 25); // Geass + L7 + L4 (≤25)
+const METHOD_OPTIONS_A     = METHOD_OPTIONS.slice(0, 25); // Hydra + L7 + L4 (≤25)
 const METHOD_OPTIONS_B     = METHOD_OPTIONS.slice(25);    // ARES OMNIVECT ∞  (≤25)
 const FREE_METHOD_OPTIONS  = METHOD_OPTIONS.filter(m => FREE_METHODS.has(m.value));
 
@@ -1527,7 +1527,7 @@ function buildLauncherComponents(
   // VIP: two method menus (all 50 methods)
   const methodMenuA = new StringSelectMenuBuilder()
     .setCustomId("select_method")
-    .setPlaceholder("⚔️ Método — Geass / L7 / L4 / L3 (1-25)...")
+    .setPlaceholder("⚔️ Método — Hydra / L7 / L4 / L3 (1-25)...")
     .addOptions(METHOD_OPTIONS_A.map(mkMethodOpt));
 
   const methodMenuB = new StringSelectMenuBuilder()
@@ -1619,7 +1619,7 @@ async function handleAttackStart(interaction: ChatInputCommandInteraction): Prom
             .setColor(COLORS.GOLD)
             .setTitle("⏳ GEASS EM RECARGA")
             .setDescription(
-              `> *"Mesmo o Geass precisa de um momento para se concentrar. A paciência é uma arma, não uma fraqueza."*\n\n` +
+              `> *"Mesmo a Hydra precisa de um momento para se concentrar. A paciência é uma arma, não uma fraqueza."*\n\n` +
               `Aguarde **${remaining}s** antes de lançar outro ataque.`
             )
             .setFooter({ text: `${AUTHOR} • Cooldown: ${ATTACK_COOLDOWN_MS / 1000}s` })
@@ -2671,7 +2671,7 @@ async function handleSchedule(interaction: ChatInputCommandInteraction): Promise
     const embed = new EmbedBuilder()
       .setColor(COLORS.CRIMSON)
       .setTitle("⏰ ATAQUE AGENDADO — GEASS COMMAND SCHEDULED")
-      .setDescription(`> *"The stage is set — the pieces in place. At the appointed hour, my Geass shall be absolute!"*`)
+      .setDescription(`> *"The stage is set — the pieces in place. At the appointed hour, Hydra shall be absolute!"*`)
       .addFields(
         { name: "🎯 Target",   value: `\`${target}\``,              inline: true },
         { name: "⚔ Method",   value: `\`${method.toUpperCase()}\``, inline: true },
@@ -2951,7 +2951,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
         embeds: [
           new EmbedBuilder()
             .setColor(0x8B0000) // dark red — tribunal
-            .setAuthor({ name: "Tribunal do Geass — Hydra", iconURL: "attachment://geass-symbol.png" })
+            .setAuthor({ name: "Tribunal Hydra — Hydra", iconURL: "attachment://geass-symbol.png" })
             .setTitle("⚖️ JULGAMENTO REAL — VEREDITO DO GEASS")
             .setThumbnail(suspect.displayAvatarURL({ size: 256 }))
             .addFields(
@@ -2968,7 +2968,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
       if (interaction.guildId) {
         const logEmbed = new EmbedBuilder()
           .setColor(0x8B0000)
-          .setTitle("⚖️ [LOG] Tribunal do Geass usado")
+          .setTitle("⚖️ [LOG] Tribunal Hydra usado")
           .addFields(
             { name: "Moderador", value: `${interaction.user.tag} (<@${interaction.user.id}>)`, inline: true },
             { name: "Suspeito",  value: `${suspect.tag} (<@${suspect.id}>)`,                  inline: true },
@@ -3043,7 +3043,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.PURPLE)
-          .setAuthor({ name: "Geass Intelligence — Server Dossier", iconURL: "attachment://geass-symbol.png" })
+          .setAuthor({ name: "Hydra Intelligence — Server Dossier", iconURL: "attachment://geass-symbol.png" })
           .setTitle(`👑 ${fetchedGuild.name.toUpperCase()} — INTELIGÊNCIA DO SERVIDOR`)
           .setThumbnail(fetchedGuild.iconURL({ size: 256 }) ?? null)
           .setDescription(`*"Conheço cada canto deste reino. A informação é o poder absoluto do Geass."*`)
@@ -3110,7 +3110,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
             },
           )
           .setImage(fetchedGuild.bannerURL({ size: 1024 }) ?? null)
-          .setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Server Dossier` })
+          .setFooter({ text: `${AUTHOR} • Hydra Intelligence Division — Server Dossier` })
           .setTimestamp(),
       ],
       files: buildGeassFiles(),
@@ -3128,8 +3128,8 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
 
     // Hydra's dramatic reaction while generating
     const thinkingQuotes = [
-      "*\"Deixe o Geass pintar o que sua mente não consegue imaginar...\"*",
-      "*\"O poder de Geass agora serve a sua visão. Um momento.\"*",
+      "*\"Deixe a Hydra pintar o que sua mente não consegue imaginar...\"*",
+      "*\"O poder da Hydra agora serve a sua visão. Um momento.\"*",
       "*\"Até um rei precisa de tempo para criar obras dignas de Britannia...\"*",
       "*\"O tabuleiro se transforma. A imagem emerge das sombras do Geass.\"*",
     ];
@@ -3161,7 +3161,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
       const attachment   = new AttachmentBuilder(imageBuffer, { name: "geass-vision.png" });
 
       const styleLabels: Record<string, string> = {
-        geass: "🎌 Code Geass dark anime art",
+        geass: "🎌 Dark anime art",
         realistic: "📸 Fotorrealista",
         minimal: "◾ Minimal",
       };
@@ -3170,7 +3170,7 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
         embeds: [
           new EmbedBuilder()
             .setColor(COLORS.PURPLE)
-            .setAuthor({ name: "Hydra — Geass Vision", iconURL: "attachment://geass-symbol.png" })
+            .setAuthor({ name: "Hydra Vision", iconURL: "attachment://geass-symbol.png" })
             .setTitle("🎨 GEASS VISION — CRIAÇÃO COMPLETA")
             .setDescription(quote + `\n\n**Prompt:** \`${prompt.slice(0, 200)}\``)
             .addFields(
@@ -3195,8 +3195,8 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
         embeds: [buildErrorEmbed(
           "GEASS VISION FALHOU",
           msg.includes("content policy") || msg.includes("rejected")
-            ? `O Geass rejeitou este prompt por violar as diretrizes de conteúdo.\n\nTente uma descrição diferente.`
-            : `O Geass encontrou resistência inesperada.\n\`${msg.slice(0, 200)}\``
+            ? `A Hydra rejeitou este prompt por violar as diretrizes de conteúdo.\n\nTente uma descrição diferente.`
+            : `A Hydra encontrou resistência inesperada.\n\`${msg.slice(0, 200)}\``
         )],
       });
     }
@@ -3233,14 +3233,14 @@ async function handleHydra(interaction: ChatInputCommandInteraction): Promise<vo
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[HYDRA REPLY ERROR]", msg);
     await interaction.editReply({
-      embeds: [buildErrorEmbed("GEASS FALHOU", `O Geass encontrou resistência inesperada. Tente novamente.\n\`${msg.slice(0, 200)}\``)],
+      embeds: [buildErrorEmbed("HYDRA FALHOU", `A Hydra encontrou resistência inesperada. Tente novamente.\n\`${msg.slice(0, 200)}\``)],
     });
   }
 }
 
 // ── /admin handler ────────────────────────────────────────────────────────────
 const HYDRA_BAN_QUOTES = [
-  "*\"You are hereby banished from my kingdom. The Geass has spoken.\"*",
+  "*\"You are hereby banished from my kingdom. Hydra has spoken.\"*",
   "*\"By the power of Geass, I banish you to the void. Farewell, pawn.\"*",
   "*\"Britannia has no use for those who defy its order. Be gone.\"*",
   "*\"Your existence in this realm ends here — by my absolute command.\"*",
@@ -3252,8 +3252,8 @@ const HYDRA_MUTE_QUOTES = [
   "*\"The strategy requires silence. You have volunteered.\"*",
 ];
 const HYDRA_WARN_QUOTES = [
-  "*\"Consider this your final warning. My Geass does not issue thirds.\"*",
-  "*\"I am watching. My Geass sees all. One more transgression and you are finished.\"*",
+  "*\"Consider this your final warning. Hydra does not issue thirds.\"*",
+  "*\"I am watching. Hydra sees all. One more transgression and you are finished.\"*",
   "*\"A pawn that moves out of turn is sacrificed. Remember that.\"*",
 ];
 const HYDRA_CLEAR_QUOTES = [
@@ -3308,7 +3308,7 @@ async function logCommandUsage(interaction: ChatInputCommandInteraction): Promis
       { name: "📍 Canal",    value: `<#${interaction.channelId}>`,                                inline: true  },
       { name: "🕒 Horário",  value: `<t:${Math.floor(Date.now() / 1000)}:F>`,                    inline: false },
     )
-    .setFooter({ text: `${AUTHOR} • Geass Intelligence Logs` })
+    .setFooter({ text: `${AUTHOR} • Hydra Intelligence Logs` })
     .setTimestamp();
 
   try {
@@ -3612,7 +3612,7 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     .setColor(fetched.bot ? COLORS.BLUE : COLORS.PURPLE)
     .setTitle("🔍 GEASS INTELLIGENCE — DOSSIER COMPLETO")
     .setDescription(
-      `> *"Meu Geass vê tudo. Cada pessoa tem uma história — e eu já li a sua."*\n\n` +
+      `> *"Hydra vê tudo. Cada pessoa tem uma história — e eu já li a sua."*\n\n` +
       `**${fetched.username}** ${fetched.bot ? "🤖 BOT" : "👤 USUÁRIO"} ${fetched.system ? "⚙️ SISTEMA" : ""}`
     )
     .setThumbnail(avatarURL)
@@ -3674,7 +3674,7 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
   );
 
   if (bannerURL) embedIdentity.setImage(bannerURL);
-  embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Página 1/3` });
+  embedIdentity.setFooter({ text: `${AUTHOR} • Hydra Intelligence Division — Página 1/3` });
 
   // ════════════════════════════════════════════════════════════════════════
   // EMBED 2 — SERVER INTELLIGENCE
@@ -3750,7 +3750,7 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     }
   }
 
-  embedServer.setFooter({ text: `${AUTHOR} • Geass Intelligence Division — Página 2/3` });
+  embedServer.setFooter({ text: `${AUTHOR} • Hydra Intelligence Division — Página 2/3` });
 
   // ════════════════════════════════════════════════════════════════════════
   // EMBED 3 — TECHNICAL & RISK ASSESSMENT
@@ -3877,10 +3877,10 @@ async function handleWhois(interaction: ChatInputCommandInteraction): Promise<vo
     });
   }
 
-  embedIdentity.setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 1/3 — Use as setas para navegar` });
-  embedServer.setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 2/3 — Servidor & Papéis` });
+  embedIdentity.setFooter({ text: `${AUTHOR} • Hydra Intelligence Division ▸ Página 1/3 — Use as setas para navegar` });
+  embedServer.setFooter({ text: `${AUTHOR} • Hydra Intelligence Division ▸ Página 2/3 — Servidor & Papéis` });
   embedTech
-    .setFooter({ text: `${AUTHOR} • Geass Intelligence Division ▸ Página 3/3 — Técnico & Risco` })
+    .setFooter({ text: `${AUTHOR} • Hydra Intelligence Division ▸ Página 3/3 — Técnico & Risco` })
     .setTimestamp();
 
   await sendPaginated(interaction, [embedIdentity, embedServer, embedTech]);
@@ -3895,7 +3895,7 @@ async function handlePanel(interaction: ChatInputCommandInteraction): Promise<vo
 
   if (!isOwner(callerId, callerUsername) && !isMod(callerId, callerUsername)) {
     await interaction.reply({
-      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerUsername}** — Apenas donos e mods autorizados podem usar este painel.\n\n*"Meu Geass não reconhece você como aliado."*`)],
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerUsername}** — Apenas donos e mods autorizados podem usar este painel.\n\n*"Hydra não reconhece você como aliado."*`)],
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -4066,7 +4066,7 @@ async function handleAdmins(interaction: ChatInputCommandInteraction): Promise<v
     const embed = new EmbedBuilder()
       .setColor(COLORS.PURPLE)
       .setTitle("👑 PAINEL DE ADMINISTRADORES — GEASS BRITÂNIA")
-      .setDescription(`*"Aqueles que servem sob o olho do Geass — os confiáveis da Order."*\n\n` +
+      .setDescription(`*"Aqueles que servem sob o olho da Hydra — os confiáveis da Order."*\n\n` +
         `**Total de owners:** \`${owners.length + 1}\` | **Total de admins:** \`${mods.length}\``)
       .addFields(
         {
@@ -4112,7 +4112,7 @@ async function handleAdmins(interaction: ChatInputCommandInteraction): Promise<v
       embeds: [new EmbedBuilder()
         .setColor(0xFFD700)
         .setTitle("👑 OWNER ADICIONADO")
-        .setDescription(`<@${target.id}> (\`${target.username}\`) agora tem acesso de **owner** ao bot.\n\n*"Um novo aliado do Geass foi reconhecido."*`)
+        .setDescription(`<@${target.id}> (\`${target.username}\`) agora tem acesso de **owner** ao bot.\n\n*"Um novo aliado da Hydra foi reconhecido."*`)
         .addFields({ name: "Adicionado por", value: `<@${callerId}> (\`${callerName}\`)`, inline: true })
         .setTimestamp()
         .setFooter({ text: AUTHOR })],
@@ -4175,7 +4175,7 @@ async function handleAdmins(interaction: ChatInputCommandInteraction): Promise<v
       embeds: [new EmbedBuilder()
         .setColor(0xFF6B6B)
         .setTitle("➖ ACESSO REVOGADO")
-        .setDescription(`<@${target.id}> (\`${target.username}\`) teve o acesso de **${removedRole}** removido.\n\n*"O Geass não perdoa aqueles que perdem a confiança."*`)
+        .setDescription(`<@${target.id}> (\`${target.username}\`) teve o acesso de **${removedRole}** removido.\n\n*"A Hydra não perdoa aqueles que perdem a confiança."*`)
         .addFields({ name: "Removido por", value: `<@${callerId}> (\`${callerName}\`)`, inline: true })
         .setTimestamp()
         .setFooter({ text: AUTHOR })],
@@ -4474,7 +4474,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
     const embed = new EmbedBuilder()
       .setColor(COLORS.GOLD)
       .setTitle("📋 MOD LOG CHANNEL — CONFIGURED")
-      .setDescription(`*"All intelligence shall be recorded. The Geass sees everything, and now so shall this channel."*`)
+      .setDescription(`*"All intelligence shall be recorded. Hydra sees everything, and now so shall this channel."*`)
       .addFields(
         { name: "📋 Log Channel", value: `<#${channel.id}>`, inline: true },
         { name: "👁️ Set By",     value: `${interaction.user.tag}`, inline: true },
@@ -4486,7 +4486,7 @@ async function handleAdmin(interaction: ChatInputCommandInteraction): Promise<vo
     void sendAdminLog(interaction.guildId, new EmbedBuilder()
       .setColor(COLORS.GOLD)
       .setTitle("📋 THIS IS NOW THE MOD LOG CHANNEL")
-      .setDescription(`*"The Geass Intelligence Network has chosen this channel. All future mod actions will appear here."*`)
+      .setDescription(`*"The Hydra Intelligence Network has chosen this channel. All future mod actions will appear here."*`)
       .addFields({ name: "👁️ Configured By", value: `${interaction.user.tag}` })
       .setFooter({ text: AUTHOR })
       .setTimestamp()
@@ -4966,7 +4966,7 @@ async function handleChecker(interaction: ChatInputCommandInteraction): Promise<
   const callerName = interaction.user.username;
   if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
     await interaction.reply({
-      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o checker.\n\n*"O Geass não é dado a quem não tem força para carregá-lo."*`)],
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o checker.\n\n*"Hydra não é dado a quem não tem força para carregá-lo."*`)],
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -6056,7 +6056,7 @@ async function handleSky(interaction: ChatInputCommandInteraction): Promise<void
 
 // ── /osint — External OSINT lookup via GeassZero + DarkFlow + SIPNI ──────────
 const GEASS_ZERO_BASE = "http://149.56.18.68:25584/api/consulta";
-const GEASS_ZERO_KEY  = "GeassZero";
+const GEASS_ZERO_KEY  = "HydraZero";
 const DARKFLOW_TOKEN  = process.env.DARKFLOW_TOKEN ?? "KEVINvQUCvPrDSob5q437uC36MPubhxa";
 const DARKFLOW_BASE   = "https://darkflowapis.space/api.php";
 
@@ -6576,7 +6576,7 @@ async function handleUrl(interaction: ChatInputCommandInteraction): Promise<void
   const callerName = interaction.user.username;
   if (!isOwner(callerId, callerName) && !isMod(callerId, callerName)) {
     await interaction.reply({
-      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o /url.\n\n*"O Geass não é dado a quem não tem força para carregá-lo."*`)],
+      embeds: [buildErrorEmbed("⛔ ACESSO NEGADO", `**${callerName}** — Apenas owners e admins podem usar o /url.\n\n*"Hydra não é dado a quem não tem força para carregá-lo."*`)],
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -6839,7 +6839,7 @@ async function main(): Promise<void> {
                 embeds: [new EmbedBuilder()
                   .setColor(COLORS.GREEN)
                   .setTitle("✅ API SERVER — RECUPERADO")
-                  .setDescription("O servidor API do Hydra está novamente **online** e respondendo.\n*\"O Geass jamais se rende — a ordem foi restaurada.\"*")
+                  .setDescription("O servidor API do Hydra está novamente **online** e respondendo.\n*\"Hydra jamais se rende — a ordem foi restaurada.\"*")
                   .setTimestamp()
                   .setFooter({ text: AUTHOR })],
               }).catch(() => null);
@@ -6860,7 +6860,7 @@ async function main(): Promise<void> {
             embeds: [new EmbedBuilder()
               .setColor(COLORS.RED)
               .setTitle("🚨 ALERTA — API SERVER FORA DO AR")
-              .setDescription(`O servidor API do **${BOT_NAME}** não está respondendo.\n\n⚠️ Ataques em execução podem ter sido interrompidos.\n*"Mesmo o Geass pode encontrar resistência. Investigando o problema..."*`)
+              .setDescription(`O servidor API do **${BOT_NAME}** não está respondendo.\n\n⚠️ Ataques em execução podem ter sido interrompidos.\n*"Mesmo a Hydra pode encontrar resistência. Investigando o problema..."*`)
               .addFields({ name: "🔗 Endpoint", value: `\`${API_BASE}/api/health\``, inline: true })
               .setTimestamp()
               .setFooter({ text: `${AUTHOR} • Health Monitor` })],
@@ -6990,7 +6990,7 @@ async function main(): Promise<void> {
         embed
           .setColor(COLORS.GREEN)
           .setTitle("✅ CÓDIGO NITRO VÁLIDO!")
-          .setDescription(`🎁 O código **\`${code}\`** é **VÁLIDO**!\n\n💎 Plano: **${result.plan}**\n🔗 https://discord.gift/${code}\n\n*"O Geass revelou um tesouro."*`);
+          .setDescription(`🎁 O código **\`${code}\`** é **VÁLIDO**!\n\n💎 Plano: **${result.plan}**\n🔗 https://discord.gift/${code}\n\n*"Hydra revelou um tesouro."*`);
         // Alert log channel
         void sendNitroHitAlert(interaction.guildId, code, result.plan ?? "Nitro", interaction.user.username);
       } else if (result.status === "rate_limited") {
@@ -7002,7 +7002,7 @@ async function main(): Promise<void> {
         embed
           .setColor(COLORS.RED)
           .setTitle("❌ CÓDIGO INVÁLIDO")
-          .setDescription(`O código **\`${code}\`** não é válido ou já foi resgatado.\n\n*"Nem todo Geass funciona."*`);
+          .setDescription(`O código **\`${code}\`** não é válido ou já foi resgatado.\n\n*"Nem toda missão funciona."*`);
       } else {
         embed
           .setColor(COLORS.ORANGE)
@@ -7279,7 +7279,7 @@ async function main(): Promise<void> {
       const resultEmbed = new EmbedBuilder()
         .setColor(hasHit ? COLORS.GREEN : COLORS.RED)
         .setTitle(hasHit ? "🎉 NITRO HIT ENCONTRADO!" : "🎁 NITRO ONESHOT — Resultado")
-        .setDescription(hasHit ? `*"O Geass revelou um presente!"*` : `*"O Geass busca. Use \`/nitro stats\` para ver o acumulado."*`)
+        .setDescription(hasHit ? `*"Hydra revelou um presente!"*` : `*"Hydra busca. Use \`/nitro stats\` para ver o acumulado."*`)
         .addFields(
           {
             name: "📊 Resultado",
@@ -7355,7 +7355,7 @@ async function main(): Promise<void> {
       .setColor(ok ? COLORS.GREEN : COLORS.CRIMSON)
       .setTitle(`${platEmoji} Report ${plat.toUpperCase()} — Resultado`)
       .setDescription(ok
-        ? `*"O Geass age nas sombras digitais. ${sent} reports enviados — o alvo está marcado."*`
+        ? `*"Hydra age nas sombras digitais. ${sent} reports enviados — o alvo está marcado."*`
         : `*"Falha na operação. Verifique o alvo e tente novamente."*`)
       .addFields(
         { name: "🎯 Alvo",      value: `\`@${target}\``,                           inline: true },
@@ -7655,8 +7655,8 @@ async function main(): Promise<void> {
         .setThumbnail(fetched.displayAvatarURL({ size: 256 }))
         .setDescription(
           riskScore >= 60
-            ? `*"Meu Geass detectou uma ameaça potencial entrando no reino. Atenção máxima, soldados."*`
-            : `*"Um novo súdito chegou. O Geass identifica pontos de atenção a monitorar."*`
+            ? `*"Hydra detectou uma ameaça potencial entrando no reino. Atenção máxima, soldados."*`
+            : `*"Um novo súdito chegou. Hydra identifica pontos de atenção a monitorar."*`
         )
         .addFields(
           { name: "👤 Usuário",        value: `${fetched.username} (<@${fetched.id}>)`,              inline: true  },

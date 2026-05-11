@@ -691,7 +691,7 @@ export default function Consultas() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40">Tipo:</span>
               {([
-                { id: "cpf"      as const, label: "Padrão",   hint: "Geass" },
+                { id: "cpf"      as const, label: "Padrão",   hint: "Hydra" },
                 { id: "cpffull"  as const, label: "Completo",  hint: "17 módulos" },
                 { id: "cpfbasico"as const, label: "Básico",    hint: "Skylers" },
               ]).map(v => (

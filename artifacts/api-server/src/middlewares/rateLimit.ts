@@ -86,7 +86,7 @@ export const imageLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders:   false,
   keyGenerator:    ip,
-  message:         { error: "Image generation rate limit — maximum 10 images per minute. The Geass needs time to paint." },
+  message:         { error: "Image generation rate limit — maximum 10 images per minute. The Hydra needs time to render." },
 });
 
 export const aiLimiter = rateLimit({

@@ -94,7 +94,7 @@ export const ATTACK_METHODS = [
   // ── GEASS OVERRIDE — Maximum Multi-Vector ────────────────
   {
     id: "geass-override",
-    name: "Geass Override ∞",
+    name: "Hydra Override ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
     description: "ABSOLUTE MAXIMUM — 30 simultaneous real attack vectors: ConnFlood + Slowloris + H2 RST (CVE-2023-44487) + H2 CONTINUATION (CVE-2024-27316) + HPACK Bomb + WAF Bypass + WebSocket Exhaust + GraphQL Fragment Bomb + RUDY v2 + Cache Poison + HTTP Bypass + Keepalive Exhaust + H2 Settings Storm (326K pps) + HTTP Pipeline (300K req/s) + H2 PING Storm + HTTP Smuggling + TLS Renegotiation + SSL Death + QUIC/H3 + XML Bomb + Slow Read + Range Flood + SYN Flood + ICMP Flood + DNS Water Torture + NTP Flood + Memcached UDP + SSDP M-SEARCH + UDP Flood + DoH Flood. ARES OMNIVECT ∞ — HYDRA COMMANDS YOU!",
@@ -248,10 +248,10 @@ export const ATTACK_METHODS = [
   // ── WAF Bypass ───────────────────────────────────────────────────────
   {
     id: "waf-bypass",
-    name: "Geass WAF Bypass ∞",
+    name: "Hydra WAF Bypass ∞",
     layer: "L7" as const,
     protocol: "HTTP" as const,
-    description: "GEASS WAF OMNIVECT ∞ — 7-vector simultaneous Cloudflare/Akamai/AWS destruction: (I) Chrome H2 Primary Flood (256 streams/conn, 10ms reconnect) + (II) Subresource Storm (15-18 asset requests per page load, 15-18× RPS multiplier) + (III) Cache Annihilator (unique Vary dimensions = 100% CDN origin miss) + (IV) Session Amplifier (5-step user journeys, forces DB + session state) + (V) Origin Direct Fire (DNS subdomain enumeration bypasses CF edge entirely) + (VI) H2 Stream Drain (64 frozen buffers per conn) + (VII) Adaptive Burst Mode (fires at T+20s, 15s waves at 2.0× rate). JA3 fingerprint randomization + Chrome AKAMAI H2 + __cf_bm/__cfruid simulation throughout.",
+    description: "HYDRA WAF OMNIVECT ∞ — 7-vector simultaneous Cloudflare/Akamai/AWS destruction: (I) Chrome H2 Primary Flood (256 streams/conn, 10ms reconnect) + (II) Subresource Storm (15-18 asset requests per page load, 15-18× RPS multiplier) + (III) Cache Annihilator (unique Vary dimensions = 100% CDN origin miss) + (IV) Session Amplifier (5-step user journeys, forces DB + session state) + (V) Origin Direct Fire (DNS subdomain enumeration bypasses CF edge entirely) + (VI) H2 Stream Drain (64 frozen buffers per conn) + (VII) Adaptive Burst Mode (fires at T+20s, 15s waves at 2.0× rate). JA3 fingerprint randomization + Chrome AKAMAI H2 + __cf_bm/__cfruid simulation throughout.",
   },
 
   // ── New ARES OMNIVECT ∞ Vectors ──────────────────────────────────────

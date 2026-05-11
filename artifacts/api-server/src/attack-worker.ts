@@ -8158,7 +8158,7 @@ async function runWorker() {
     await runRUDY(base, cfg.threads, ctrl.signal, onStats);
 
   } else if (cfg.method === "waf-bypass") {
-    // Geass WAF Bypass: JA3 randomization + Chrome AKAMAI H2 fingerprint + exact header order
+    // Hydra WAF Bypass: JA3 randomization + Chrome AKAMAI H2 fingerprint + exact header order
     await runWAFBypass(base, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "http-bypass") {
@@ -8316,7 +8316,7 @@ async function runWorker() {
     await runBypassStorm(base, resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "geass-ultima") {
-    // Geass Ultima — Final Form: 9 simultaneous vectors across every OSI layer
+    // Hydra Ultima — Final Form: 9 simultaneous vectors across every OSI layer
     await runGeassUltima(base, resolvedHost, sniName, targetPort, cfg.threads, cfg.proxies ?? [], ctrl.signal, onStats);
 
   } else if (cfg.method === "h2-dep-bomb") {

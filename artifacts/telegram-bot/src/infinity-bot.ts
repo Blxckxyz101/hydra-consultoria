@@ -2,7 +2,7 @@ import { Telegraf, Markup } from "telegraf";
 
 const INFINITY_BOT_TOKEN = process.env.INFINITY_BOT_TOKEN ?? "";
 const GEASS_API_BASE     = "http://149.56.18.68:25584/api/consulta";
-const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero";
+const GEASS_API_KEY      = process.env.GEASS_API_KEY ?? "GeassZero" // env var name kept for API compat;
 const SUPPORT_URL        = "https://t.me/Blxckxyz";
 const SUPPORT_URL2       = "https://t.me/xxmathexx";
 const SUPPORT_URL3       = "https://t.me/piancooz";
@@ -447,7 +447,7 @@ function buildResultTxt(
 }
 
 // ── Geass API ─────────────────────────────────────────────────────────────────
-interface GeassResult { fields: Record<string, string>[]; sections: { name: string; items: string[] }[]; raw: string }
+interface HydraResult { fields: Record<string, string>[]; sections: { name: string; items: string[] }[]; raw: string }
 
 // ── Full provider text parser (mirrors API server parseProviderText) ──────────
 const SEP = " \u23AF ";
@@ -590,7 +590,7 @@ function parseProviderText(raw: string): { fields: { key: string; value: string 
   return { fields: filtered, sections };
 }
 
-function parseGeassRaw(raw: string): GeassResult {
+function parseGeassRaw(raw: string): HydraResult {
   const parsed = parseProviderText(raw);
   return {
     fields: parsed.fields.map(f => ({ [f.key]: f.value })),

@@ -24,7 +24,7 @@ const PROVIDER_KEY = process.env.GEASS_API_KEY ?? "GeassZero";
 const SKYLERS_BASE = "http://23.81.118.36:7070";
 const SKYLERS_TOKEN = process.env.SKYLERS_TOKEN ?? "SQJeVAFAnPGHQWY3XbQVcdHlmrz8xe2pkAXtwGq4Jdk";
 
-// ── Proxy helper — both Geass and Skylers require it from Replit infra ───────
+// ── Proxy helper — both Hydra and Skylers require it from Replit infra ───────
 function buildOutboundDispatcher(): ProxyAgent | undefined {
   const list = process.env.WEBSHARE_PROXY_LIST?.trim();
   const user = process.env.WEBSHARE_PROXY_USER?.trim();
@@ -626,7 +626,7 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
   raw?: unknown;
 }> {
   if (geassCircuit.isOpen()) {
-    return { ok: false, error: "Geass API temporariamente indisponível" };
+    return { ok: false, error: "Hydra API temporariamente indisponível" };
   }
   const url = `${PROVIDER_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(PROVIDER_KEY)}`;
   try {
@@ -2044,7 +2044,7 @@ router.get("/bases/status", requireAdmin, async (_req, res) => {
   const bases = [
     {
       id: "geass",
-      name: "Geass API",
+      name: "Hydra API",
       description: "Provedor OSINT principal · 24 tipos (CPF, Nome, Placa…)",
       url: `${PROVIDER_BASE}/cpf?cpf=00000000000`,
       circuitOpen: geassCircuit.isOpen(),
@@ -2311,7 +2311,7 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
 
   let provider = await callProvider(tipo, dados, ctrl.signal);
 
-  // ─── Skylers fallback: when Geass fails and the tipo has a Skylers mapping ──
+  // ─── Skylers fallback: when Hydra fails and the tipo has a Skylers mapping ──
   if (!provider.ok && !ctrl.signal.aborted) {
     const skylersModulo = TIPO_TO_SKYLERS[tipo];
     if (skylersModulo) {
@@ -2694,7 +2694,7 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
           : `Sem resultado para ${tipo}: ${fb.error ?? "não encontrado"}`;
       }
     } else {
-      // Try Geass first, Skylers as fallback if available
+      // Try Hydra first, Skylers as fallback if available
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15_000);
       const g = await callProvider(tipo, dados, ctrl.signal);

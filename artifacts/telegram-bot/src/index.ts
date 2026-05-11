@@ -1836,7 +1836,7 @@ bot.command("sendcode", async ctx => {
 
 // ── /osint — OSINT Lookup via GeassZero + DarkFlow + SIPNI APIs ──────────────
 const TG_GEASS_BASE   = "http://149.56.18.68:25584/api/consulta";
-const TG_GEASS_KEY    = "GeassZero";
+const TG_GEASS_KEY    = "GeassZero" // kept for API compat;
 const TG_DARKFLOW_URL = "https://darkflowapis.space/api.php";
 const TG_DARKFLOW_TOK = "KEVINvQUCvPrDSob5q437uC36MPubhxa";
 
