@@ -3,9 +3,11 @@ import { Bell, UserPlus, Heart, MessageCircle, Check, CheckCheck, Users } from "
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "wouter";
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("infinity_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const h: Record<string, string> = {};
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  return h;
 }
 
 interface Notif {
@@ -81,7 +83,7 @@ export function NotificationBell() {
     if (!open || unread === 0) return;
     fetch("/api/infinity/me/notifications/read", {
       method: "PATCH",
-      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      headers: { ...authHeaders(), "Content-Type": "application/json" } as Record<string, string>,
       body: JSON.stringify({}),
     }).then(() => {
       setNotifs(prev => prev.map(n => ({ ...n, read: true })));

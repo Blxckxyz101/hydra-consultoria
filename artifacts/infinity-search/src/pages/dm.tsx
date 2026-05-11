@@ -5,9 +5,11 @@ import {
   ArrowLeft, Send, Loader2, SmilePlus, Image, Gift, X, Paperclip
 } from "lucide-react";
 
-function authHeaders() {
+function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("infinity_token");
-  return token ? { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
 }
 function getToken() { return localStorage.getItem("infinity_token") ?? ""; }
 
@@ -98,8 +100,8 @@ export default function DM() {
           });
         }
         if (data.type === "reaction_update") {
-          const { messageId, reactions } = data as { messageId: number; reactions: Reaction[] };
-          setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions } : m));
+          const upd = data as unknown as { messageId: number; reactions: Reaction[] };
+          setMessages(prev => prev.map(m => m.id === upd.messageId ? { ...m, reactions: upd.reactions } : m));
         }
       } catch {}
     };
