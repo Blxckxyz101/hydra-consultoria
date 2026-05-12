@@ -542,6 +542,34 @@ router.post("/chat/messages/:id/react", requireAuth, async (req, res): Promise<v
   }
 });
 
+// ── Delete own message ────────────────────────────────────────────────────────
+
+router.delete("/chat/messages/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const msgId = parseInt((req.params as { id: string }).id, 10);
+  if (isNaN(msgId)) { res.status(400).json({ error: "ID inválido" }); return; }
+
+  try {
+    const rows = await db.select().from(infinityChatMessagesTable)
+      .where(eq(infinityChatMessagesTable.id, msgId)).limit(1);
+    const msg = rows[0];
+    if (!msg) { res.status(404).json({ error: "Mensagem não encontrada" }); return; }
+    if (msg.username !== me) { res.status(403).json({ error: "Sem permissão" }); return; }
+
+    await db.delete(infinityMessageReactionsTable).where(eq(infinityMessageReactionsTable.messageId, msgId));
+    await db.delete(infinityChatMessagesTable).where(eq(infinityChatMessagesTable.id, msgId));
+
+    if (globalThis.__chatBroadcast) {
+      globalThis.__chatBroadcast(msg.roomSlug, { type: "message_delete", messageId: msgId });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to delete chat message");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
 // ── Chat image upload (temp in-memory store, 30 min TTL) ──────────────────────
 interface ChatImgEntry { mimeType: string; data: string; expires: number }
 const _chatImgStore = new Map<string, ChatImgEntry>();
