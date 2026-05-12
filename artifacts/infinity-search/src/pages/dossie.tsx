@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FolderOpen, Plus, Trash2, Download, Copy, Check, FileText,
@@ -24,13 +24,47 @@ type Dossie = {
 };
 
 const STORAGE_KEY = "infinity_dossies";
+const API_BASE = "/api/infinity";
 
-function loadDossies(): Dossie[] {
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("infinity_token");
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
+
+function loadDossiesLocal(): Dossie[] {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); } catch { return []; }
 }
 
-function saveDossies(d: Dossie[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+async function fetchDossiesAPI(): Promise<Dossie[]> {
+  try {
+    const r = await fetch(`${API_BASE}/me/dossies`, { headers: authHeaders() });
+    if (!r.ok) return [];
+    const rows = await r.json() as Array<{ id: string; title: string; items: unknown[]; createdAt: string }>;
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      items: row.items as EvidenceItem[],
+      createdAt: row.createdAt,
+    }));
+  } catch { return []; }
+}
+
+async function upsertDossieAPI(d: Dossie): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/me/dossies/${d.id}`, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({ title: d.title, items: d.items }),
+    });
+  } catch {}
+}
+
+async function deleteDossieAPI(id: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/me/dossies/${id}`, { method: "DELETE", headers: authHeaders() });
+  } catch {}
 }
 
 function newId() {
@@ -314,15 +348,39 @@ function EvidenceCard({ item, onDelete, onNoteChange }: {
 }
 
 export default function Dossie() {
-  const [dossies, setDossies] = useState<Dossie[]>(loadDossies);
-  const [selected, setSelected] = useState<string | null>(() => loadDossies()[0]?.id ?? null);
+  const [dossies, setDossies] = useState<Dossie[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [showCreate, setShowCreate] = useState(false);
 
-  const persist = useCallback((updated: Dossie[]) => {
+  // On mount: fetch from API, migrate any localStorage-only dossiers
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [apiDossies, localDossies] = await Promise.all([fetchDossiesAPI(), Promise.resolve(loadDossiesLocal())]);
+      if (cancelled) return;
+      const apiIds = new Set(apiDossies.map((d) => d.id));
+      const localOnly = localDossies.filter((d) => !apiIds.has(d.id));
+      // Migrate local-only dossiers to API
+      localOnly.forEach((d) => upsertDossieAPI(d));
+      const merged = [...apiDossies, ...localOnly];
+      setDossies(merged);
+      if (merged.length > 0) setSelected(merged[0].id);
+      if (localDossies.length > 0) localStorage.removeItem(STORAGE_KEY);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const persist = useCallback((updated: Dossie[], changedId?: string) => {
     setDossies(updated);
-    saveDossies(updated);
+    // Only sync the changed dossier (or all if no specific id)
+    if (changedId) {
+      const changed = updated.find((d) => d.id === changedId);
+      if (changed) upsertDossieAPI(changed);
+    } else {
+      updated.forEach((d) => upsertDossieAPI(d));
+    }
   }, []);
 
   const activeDossie = useMemo(() => dossies.find((d) => d.id === selected) ?? null, [dossies, selected]);
@@ -342,7 +400,9 @@ export default function Dossie() {
   const createDossie = () => {
     if (!newTitle.trim()) return;
     const d: Dossie = { id: newId(), title: newTitle.trim(), createdAt: new Date().toISOString(), items: [] };
-    persist([d, ...dossies]);
+    const next = [d, ...dossies];
+    setDossies(next);
+    upsertDossieAPI(d);
     setSelected(d.id);
     setNewTitle("");
     setShowCreate(false);
@@ -350,16 +410,21 @@ export default function Dossie() {
 
   const deleteDossie = (id: string) => {
     const updated = dossies.filter((d) => d.id !== id);
-    persist(updated);
+    setDossies(updated);
+    deleteDossieAPI(id);
     if (selected === id) setSelected(updated[0]?.id ?? null);
   };
 
   const deleteItem = (itemId: string) => {
-    persist(dossies.map((d) => d.id === selected ? { ...d, items: d.items.filter((it) => it.id !== itemId) } : d));
+    if (!selected) return;
+    const updated = dossies.map((d) => d.id === selected ? { ...d, items: d.items.filter((it) => it.id !== itemId) } : d);
+    persist(updated, selected);
   };
 
   const updateNote = (itemId: string, note: string) => {
-    persist(dossies.map((d) => d.id === selected ? { ...d, items: d.items.map((it) => it.id === itemId ? { ...it, note } : it) } : d));
+    if (!selected) return;
+    const updated = dossies.map((d) => d.id === selected ? { ...d, items: d.items.map((it) => it.id === itemId ? { ...it, note } : it) } : d);
+    persist(updated, selected);
   };
 
   return (

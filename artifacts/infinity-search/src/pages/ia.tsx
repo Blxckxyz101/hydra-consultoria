@@ -14,15 +14,48 @@ type ChatSession = { id: string; title: string; messages: Message[]; createdAt: 
 
 const LS_SESSIONS = "infinity_chat_sessions";
 const MAX_SESSIONS = 30;
+const API_BASE = "/api/infinity";
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("infinity_token");
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
 
 function newSession(): ChatSession {
   return { id: crypto.randomUUID(), title: "Nova conversa", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
 }
-function loadSessions(): ChatSession[] {
+function loadSessionsLocal(): ChatSession[] {
   try { return JSON.parse(localStorage.getItem(LS_SESSIONS) ?? "[]"); } catch { return []; }
 }
-function saveSessions(sessions: ChatSession[]) {
-  localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
+async function fetchSessionsAPI(): Promise<ChatSession[]> {
+  try {
+    const r = await fetch(`${API_BASE}/me/ai/sessions`, { headers: authHeaders() });
+    if (!r.ok) return [];
+    const rows = await r.json() as Array<{ id: string; title: string; messages: unknown[]; updatedAt: string; createdAt: string }>;
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      messages: row.messages as Message[],
+      createdAt: new Date(row.createdAt).getTime(),
+      updatedAt: new Date(row.updatedAt).getTime(),
+    }));
+  } catch { return []; }
+}
+async function upsertSessionAPI(s: ChatSession): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/me/ai/sessions/${s.id}`, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({ title: s.title, messages: s.messages }),
+    });
+  } catch {}
+}
+async function deleteSessionAPI(id: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/me/ai/sessions/${id}`, { method: "DELETE", headers: authHeaders() });
+  } catch {}
 }
 function titleFromMsg(text: string) {
   return text.replace(/\*\*|`|#|>/g, "").slice(0, 42).trim() || "Nova conversa";
@@ -180,11 +213,8 @@ function WaveformBars({ color = "sky" }: { color?: string }) {
 }
 
 export default function IA() {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
-  const [currentId, setCurrentId] = useState<string>(() => {
-    const s = loadSessions();
-    return s.length ? s[0].id : newSession().id;
-  });
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentId, setCurrentId] = useState<string>(() => crypto.randomUUID());
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [input, setInput] = useState("");
@@ -216,14 +246,44 @@ export default function IA() {
 
   useEffect(() => { if ("speechSynthesis" in window) getVoicesAsync().catch(() => {}); }, []);
 
+  // On mount: fetch sessions from API; migrate any local-only sessions
   useEffect(() => {
-    setSessions((prev) => {
-      if (prev.find((s) => s.id === currentId)) return prev;
-      const fresh = newSession();
-      setCurrentId(fresh.id);
-      return [fresh, ...prev];
-    });
-  }, [currentId]);
+    let cancelled = false;
+    (async () => {
+      const [apiSessions, localSessions] = await Promise.all([fetchSessionsAPI(), Promise.resolve(loadSessionsLocal())]);
+      if (cancelled) return;
+      const apiIds = new Set(apiSessions.map((s) => s.id));
+      const localOnly = localSessions.filter((s) => !apiIds.has(s.id));
+      // Migrate local-only sessions to API in background
+      localOnly.forEach((s) => upsertSessionAPI(s));
+      const merged = [...apiSessions, ...localOnly].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS);
+      if (merged.length > 0) {
+        setSessions(merged);
+        setCurrentId(merged[0].id);
+        // Clear localStorage after successful migration
+        if (localSessions.length > 0) localStorage.removeItem(LS_SESSIONS);
+      } else {
+        const fresh = newSession();
+        setSessions([fresh]);
+        setCurrentId(fresh.id);
+        upsertSessionAPI(fresh);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Debounced API save: wait 2 seconds after last update before calling API
+  const scheduleSave = useCallback((s: ChatSession) => {
+    const existing = saveTimers.current.get(s.id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      upsertSessionAPI(s);
+      saveTimers.current.delete(s.id);
+    }, 2000);
+    saveTimers.current.set(s.id, timer);
+  }, []);
 
   const currentSession = sessions.find((s) => s.id === currentId) ?? sessions[0];
   const messages = currentSession?.messages ?? [];
@@ -231,26 +291,30 @@ export default function IA() {
   const updateSession = useCallback((id: string, updater: (s: ChatSession) => ChatSession) => {
     setSessions((prev) => {
       const next = prev.map((s) => s.id === id ? updater(s) : s);
-      saveSessions(next);
+      const updated = next.find((s) => s.id === id);
+      if (updated) scheduleSave(updated);
       return next;
     });
-  }, []);
+  }, [scheduleSave]);
 
   const createNew = () => {
     const s = newSession();
-    setSessions((prev) => { const next = [s, ...prev]; saveSessions(next); return next; });
+    setSessions((prev) => [s, ...prev].slice(0, MAX_SESSIONS));
     setCurrentId(s.id);
     setSidebarOpen(false);
+    upsertSessionAPI(s);
   };
 
   const deleteSession = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    deleteSessionAPI(id);
+    const existing = saveTimers.current.get(id);
+    if (existing) { clearTimeout(existing); saveTimers.current.delete(id); }
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== id);
-      saveSessions(next);
       if (id === currentId) {
         if (next.length) setCurrentId(next[0].id);
-        else { const fresh = newSession(); setCurrentId(fresh.id); return [fresh]; }
+        else { const fresh = newSession(); setCurrentId(fresh.id); upsertSessionAPI(fresh); return [fresh]; }
       }
       return next;
     });

@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
-import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable } from "@workspace/db";
+import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable, infinityAiSessionsTable, infinityDossiesTable, infinityChatImagesTable } from "@workspace/db";
 import { eq, or, and, desc, asc, ne, sql, inArray, lt, like } from "drizzle-orm";
 import { requireAuth } from "../lib/infinity-auth.js";
 import { logger } from "../lib/logger.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 
 const router: IRouter = Router();
 
@@ -31,8 +31,9 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
   const bgType = row.profileBgType ?? "default";
   const hasBgImage = bgType === "image" && !!row.profileBgValue;
 
-  // Serve photo/banner as data URLs (small enough), but serve bg image via dedicated endpoint
-  // to avoid embedding a 300–500KB data URL in the main profile JSON
+  // Version param based on profileUpdatedAt — busts browser cache when user saves new images
+  const ver = row.profileUpdatedAt ? `?v=${row.profileUpdatedAt.getTime()}` : "";
+
   return {
     username:     row.username,
     displayName:  row.displayName ?? row.username,
@@ -40,17 +41,14 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
     bio:          row.profileBio ?? null,
     status:       row.profileStatus ?? "online",
     statusMsg:    row.profileStatusMsg ?? null,
-    // Serve photo/banner via dedicated endpoints to avoid embedding data URLs in JSON
-    photoUrl:     row.profilePhoto   ? `/api/infinity/u/${row.username}/photo`  : null,
-    bannerUrl:    row.profileBanner  ? `/api/infinity/u/${row.username}/banner` : null,
+    photoUrl:     row.profilePhoto   ? `/api/infinity/u/${row.username}/photo${ver}`  : null,
+    bannerUrl:    row.profileBanner  ? `/api/infinity/u/${row.username}/banner${ver}` : null,
     location:     row.profileLocation ?? null,
     musicUrl:     row.profileMusicUrl ?? null,
     socialLinks:  links,
     accentColor:  row.profileAccentColor ?? null,
     bgType,
-    // Instead of embedding the full data URL (can be 300-500KB), return a URL to the dedicated endpoint
-    bgImageUrl:   hasBgImage ? `/api/infinity/u/${row.username}/bg` : null,
-    // Keep bgValue for color type (short hex string), null for image type
+    bgImageUrl:   hasBgImage ? `/api/infinity/u/${row.username}/bg${ver}` : null,
     bgValue:      bgType === "color" ? (row.profileBgValue ?? null) : null,
     cardTheme:    row.cardTheme ?? "default",
     planType:     isPro ? "pro" : "free",
@@ -59,14 +57,17 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
   };
 }
 
-// Helper to serve a data URL as raw image bytes
-function serveDataUrl(dataUrl: string, res: import("express").Response): void {
+// Helper to serve a data URL as raw image bytes — uses ETag so browser revalidates on change
+function serveDataUrl(dataUrl: string, req: import("express").Request, res: import("express").Response): void {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
   if (!match) { res.status(404).end(); return; }
   const mimeType = match[1]!;
   const data = Buffer.from(match[2]!, "base64");
+  const etag = `"${createHash("md5").update(data).digest("hex")}"`;
+  if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
   res.setHeader("Content-Type", mimeType);
-  res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", "no-cache, must-revalidate");
   res.end(data);
 }
 
@@ -88,7 +89,7 @@ router.get("/u/:username/photo", async (req, res): Promise<void> => {
       .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
     const row = rows[0];
     if (!row?.photo) { res.status(404).end(); return; }
-    serveDataUrl(row.photo, res);
+    serveDataUrl(row.photo, req, res);
   } catch (err) {
     logger.error({ err }, "Failed to serve profile photo");
     res.status(500).end();
@@ -106,7 +107,7 @@ router.get("/u/:username/banner", async (req, res): Promise<void> => {
       .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
     const row = rows[0];
     if (!row?.banner) { res.status(404).end(); return; }
-    serveDataUrl(row.banner, res);
+    serveDataUrl(row.banner, req, res);
   } catch (err) {
     logger.error({ err }, "Failed to serve banner");
     res.status(500).end();
@@ -131,7 +132,7 @@ router.get("/u/:username/bg", async (req, res): Promise<void> => {
     if (!row || row.bgType !== "image" || !row.bgValue) {
       res.status(404).end(); return;
     }
-    serveDataUrl(row.bgValue, res);
+    serveDataUrl(row.bgValue, req, res);
   } catch (err) {
     logger.error({ err }, "Failed to serve bg image");
     res.status(500).end();
@@ -202,6 +203,11 @@ router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
   }
 
   if (Object.keys(patch).length === 0) { res.status(400).json({ error: "Nenhum campo para atualizar" }); return; }
+
+  // Bust cache when images change
+  if (patch.profileBgValue !== undefined || patch.profileBgType !== undefined) {
+    patch.profileUpdatedAt = new Date();
+  }
 
   try {
     await db.update(infinityUsersTable).set(patch).where(eq(infinityUsersTable.username, me));
@@ -720,16 +726,19 @@ router.delete("/chat/messages/:id", requireAuth, async (req, res): Promise<void>
   }
 });
 
-// ── Chat image upload (temp in-memory store, 30 min TTL) ──────────────────────
-interface ChatImgEntry { mimeType: string; data: string; expires: number }
-const _chatImgStore = new Map<string, ChatImgEntry>();
-const CHAT_IMG_TTL = 30 * 60 * 1000;
-function cleanChatImgStore() {
-  const now = Date.now();
-  for (const [k, v] of _chatImgStore) if (v.expires < now) _chatImgStore.delete(k);
-}
+// ── Chat image upload (persistent DB, 24h TTL) ────────────────────────────────
+
+const CHAT_IMG_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Cleanup expired DB images — runs every hour
+setInterval(async () => {
+  try {
+    await db.delete(infinityChatImagesTable).where(lt(infinityChatImagesTable.expiresAt, new Date()));
+  } catch {}
+}, 60 * 60 * 1000);
 
 router.post("/chat/upload", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
   const { dataUri } = req.body as { dataUri?: string };
   if (!dataUri || typeof dataUri !== "string") {
     res.status(400).json({ error: "dataUri obrigatório" }); return;
@@ -743,20 +752,32 @@ router.post("/chat/upload", requireAuth, async (req, res): Promise<void> => {
   if (base64Data.length > 3_000_000) {
     res.status(413).json({ error: "Imagem muito grande (máximo ~2MB)." }); return;
   }
-  cleanChatImgStore();
   const id = randomBytes(16).toString("hex");
-  _chatImgStore.set(id, { mimeType, data: base64Data, expires: Date.now() + CHAT_IMG_TTL });
-  res.json({ url: `/api/infinity/chat/img/${id}` });
+  const expiresAt = new Date(Date.now() + CHAT_IMG_TTL_MS);
+  try {
+    await db.insert(infinityChatImagesTable).values({ id, username: me, mimeType, data: base64Data, expiresAt });
+    res.json({ url: `/api/infinity/chat/img/${id}` });
+  } catch (err) {
+    logger.error({ err }, "Failed to store chat image");
+    res.status(500).json({ error: "Erro interno" });
+  }
 });
 
-router.get("/chat/img/:id", (req, res): void => {
-  const entry = _chatImgStore.get((req.params as { id: string }).id);
-  if (!entry || entry.expires < Date.now()) {
-    res.status(404).json({ error: "Imagem não encontrada ou expirada" }); return;
+router.get("/chat/img/:id", async (req, res): Promise<void> => {
+  const { id } = req.params as { id: string };
+  try {
+    const rows = await db.select().from(infinityChatImagesTable).where(eq(infinityChatImagesTable.id, id)).limit(1);
+    const entry = rows[0];
+    if (!entry || entry.expiresAt < new Date()) {
+      res.status(404).json({ error: "Imagem não encontrada ou expirada" }); return;
+    }
+    res.setHeader("Content-Type", entry.mimeType);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.end(Buffer.from(entry.data, "base64"));
+  } catch (err) {
+    logger.error({ err }, "Failed to serve chat image");
+    res.status(500).json({ error: "Erro interno" });
   }
-  res.setHeader("Content-Type", entry.mimeType);
-  res.setHeader("Cache-Control", "public, max-age=1800");
-  res.end(Buffer.from(entry.data, "base64"));
 });
 
 // ── User search ───────────────────────────────────────────────────────────────
@@ -814,6 +835,102 @@ router.patch("/me/notifications/read", requireAuth, async (req, res): Promise<vo
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "Failed to mark notifications read");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── AI Chat Sessions ──────────────────────────────────────────────────────────
+
+router.get("/me/ai/sessions", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    const rows = await db.select().from(infinityAiSessionsTable)
+      .where(eq(infinityAiSessionsTable.username, me))
+      .orderBy(desc(infinityAiSessionsTable.updatedAt))
+      .limit(30);
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch AI sessions");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.put("/me/ai/sessions/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id } = req.params as { id: string };
+  const { title, messages } = req.body as { title?: string; messages?: unknown[] };
+  if (!id || typeof id !== "string" || id.length > 64) { res.status(400).json({ error: "ID inválido" }); return; }
+  try {
+    const patch: Record<string, unknown> = { username: me };
+    if (typeof title === "string") patch.title = title.slice(0, 80);
+    if (Array.isArray(messages)) patch.messages = messages.slice(0, 200);
+
+    await db.insert(infinityAiSessionsTable)
+      .values({ id, username: me, title: (patch.title as string) ?? "Nova conversa", messages: (patch.messages as unknown[]) ?? [] })
+      .onConflictDoUpdate({ target: infinityAiSessionsTable.id, set: patch });
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to upsert AI session");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.delete("/me/ai/sessions/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id } = req.params as { id: string };
+  try {
+    await db.delete(infinityAiSessionsTable)
+      .where(and(eq(infinityAiSessionsTable.id, id), eq(infinityAiSessionsTable.username, me)));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to delete AI session");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── Dossiers ──────────────────────────────────────────────────────────────────
+
+router.get("/me/dossies", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    const rows = await db.select().from(infinityDossiesTable)
+      .where(eq(infinityDossiesTable.username, me))
+      .orderBy(desc(infinityDossiesTable.updatedAt));
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch dossiers");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.put("/me/dossies/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id } = req.params as { id: string };
+  const { title, items } = req.body as { title?: string; items?: unknown[] };
+  if (!id || typeof id !== "string" || id.length > 64) { res.status(400).json({ error: "ID inválido" }); return; }
+  if (typeof title !== "string" || !title.trim()) { res.status(400).json({ error: "Título obrigatório" }); return; }
+  try {
+    const safeItems = Array.isArray(items) ? items.slice(0, 500) : [];
+    await db.insert(infinityDossiesTable)
+      .values({ id, username: me, title: title.slice(0, 120), items: safeItems })
+      .onConflictDoUpdate({ target: infinityDossiesTable.id, set: { title: title.slice(0, 120), items: safeItems } });
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to upsert dossier");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.delete("/me/dossies/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id } = req.params as { id: string };
+  try {
+    await db.delete(infinityDossiesTable)
+      .where(and(eq(infinityDossiesTable.id, id), eq(infinityDossiesTable.username, me)));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to delete dossier");
     res.status(500).json({ error: "Erro interno" });
   }
 });

@@ -1651,6 +1651,8 @@ router.patch("/me/profile", requireAuth, async (req, res) => {
   if ("profileStatusMsg" in body) updates["profileStatusMsg"] = body.profileStatusMsg === null ? null : String(body.profileStatusMsg).slice(0, 80);
   if ("hideUsername" in body)     updates["hideUsername"]     = Boolean(body.hideUsername);
   if (Object.keys(updates).length === 0) { res.status(400).json({ error: "Nenhum campo para atualizar" }); return; }
+  // Bust cache when images change
+  if ("profilePhoto" in body || "profileBanner" in body) updates["profileUpdatedAt"] = new Date();
   const [updated] = await db.update(infinityUsersTable).set(updates).where(eq(infinityUsersTable.username, username)).returning();
   res.json(serializeUser(updated!));
 });

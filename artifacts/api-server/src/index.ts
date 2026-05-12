@@ -113,7 +113,7 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
         ws,
         username: user.username,
         displayName: userInfo?.displayName ?? user.username,
-        photo: userInfo?.profilePhoto ?? null,
+        photo: userInfo?.profilePhoto ? `/api/infinity/u/${user.username}/photo` : null,
         role: userInfo?.role ?? "user",
         accentColor: userInfo?.profileAccentColor ?? null,
         rooms: new Set(),

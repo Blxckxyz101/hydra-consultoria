@@ -12,35 +12,54 @@ import {
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
-const STORAGE_KEY = "infinity_dossies";
-type DossieStub = { id: string; title: string };
+const API_BASE = "/api/infinity";
+type DossieStub = { id: string; title: string; items?: unknown[] };
 
-function loadDossieStubs(): DossieStub[] {
+function dossieAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("infinity_token");
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
+
+async function fetchDossieStubsAPI(): Promise<DossieStub[]> {
   try {
-    const arr = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    return arr.map((d: { id: string; title: string }) => ({ id: d.id, title: d.title }));
+    const r = await fetch(`${API_BASE}/me/dossies`, { headers: dossieAuthHeaders() });
+    if (!r.ok) return [];
+    return await r.json() as DossieStub[];
   } catch { return []; }
 }
 
-function saveToD(dossieId: string, item: object) {
+async function addItemToDossieAPI(dossieId: string, newItem: object): Promise<boolean> {
   try {
-    const arr = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    const idx = arr.findIndex((d: { id: string }) => d.id === dossieId);
-    if (idx === -1) return false;
-    arr[idx].items = [item, ...(arr[idx].items ?? [])];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-    return true;
+    // Fetch current dossier, prepend item, PUT back
+    const r = await fetch(`${API_BASE}/me/dossies`, { headers: dossieAuthHeaders() });
+    if (!r.ok) return false;
+    const all = await r.json() as DossieStub[];
+    const dossie = all.find((d) => d.id === dossieId);
+    if (!dossie) return false;
+    const updatedItems = [newItem, ...(dossie.items ?? [])];
+    const put = await fetch(`${API_BASE}/me/dossies/${dossieId}`, {
+      method: "PUT",
+      headers: dossieAuthHeaders(),
+      body: JSON.stringify({ title: dossie.title, items: updatedItems }),
+    });
+    return put.ok;
   } catch { return false; }
 }
 
 function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string; data: unknown }) {
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
-  const stubs = loadDossieStubs();
+  const [saving, setSaving] = useState(false);
+  const [stubs, setStubs] = useState<DossieStub[]>([]);
 
-  if (stubs.length === 0) return (
-    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/30">Crie um dossiê</span>
-  );
+  useEffect(() => {
+    if (open && stubs.length === 0) {
+      fetchDossieStubsAPI().then(setStubs);
+    }
+  }, [open]);
+
   if (saved) return (
     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-emerald-400">
       <CheckCircle2 className="w-3 h-3" /> Salvo
@@ -56,16 +75,22 @@ function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string
           <div className="px-3 py-2 border-b border-white/5">
             <p className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground">Selecionar dossiê</p>
           </div>
+          {stubs.length === 0 && (
+            <p className="px-3 py-3 text-[10px] text-muted-foreground/50">Nenhum dossiê criado</p>
+          )}
           {stubs.map(d => (
-            <button key={d.id} onClick={() => {
+            <button key={d.id} disabled={saving} onClick={async () => {
+              setSaving(true);
               const parsed = (data as { fields?: unknown[]; sections?: unknown[]; raw?: string }) ?? {};
-              const ok = saveToD(d.id, {
+              const item = {
                 id: Math.random().toString(36).slice(2) + Date.now().toString(36),
                 tipo, query, addedAt: new Date().toISOString(), note: "",
                 fields: parsed.fields ?? [], sections: parsed.sections ?? [], raw: parsed.raw ?? "",
-              });
+              };
+              const ok = await addItemToDossieAPI(d.id, item);
+              setSaving(false);
               if (ok) { setSaved(true); setOpen(false); }
-            }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-white/5 transition-colors">
+            }} className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-white/5 transition-colors disabled:opacity-50">
               <FolderOpen className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
               <span className="truncate">{d.title}</span>
             </button>

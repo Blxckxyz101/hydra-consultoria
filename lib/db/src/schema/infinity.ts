@@ -27,6 +27,8 @@ export const infinityUsersTable = pgTable("infinity_users", {
   profileAccentColor: text("profile_accent_color"),
   profileBgType:      text("profile_bg_type").default("default"),
   profileBgValue:     text("profile_bg_value"),
+  // Timestamp used for cache-busting profile image URLs
+  profileUpdatedAt:   timestamp("profile_updated_at", { withTimezone: true }),
   // Plan & card theme
   planType:           text("plan_type").default("free"),        // "free" | "pro"
   planExpiresAt:      timestamp("plan_expires_at", { withTimezone: true }),
@@ -340,6 +342,66 @@ export const infinityUserNotificationsTable = pgTable(
 );
 
 export type InfinityUserNotificationRow = typeof infinityUserNotificationsTable.$inferSelect;
+
+// ─── AI Chat Sessions ─────────────────────────────────────────────────────────
+
+export const infinityAiSessionsTable = pgTable(
+  "infinity_ai_sessions",
+  {
+    id:        text("id").primaryKey(),
+    username:  text("username").notNull(),
+    title:     text("title").notNull().default("Nova conversa"),
+    messages:  jsonb("messages").notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  },
+  (t) => ({
+    byUser:    index("infinity_ai_sessions_user_idx").on(t.username),
+    byUpdated: index("infinity_ai_sessions_updated_idx").on(t.updatedAt),
+  }),
+);
+
+export type InfinityAiSessionRow = typeof infinityAiSessionsTable.$inferSelect;
+
+// ─── Dossiers ─────────────────────────────────────────────────────────────────
+
+export const infinityDossiesTable = pgTable(
+  "infinity_dossies",
+  {
+    id:        text("id").primaryKey(),
+    username:  text("username").notNull(),
+    title:     text("title").notNull(),
+    items:     jsonb("items").notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  },
+  (t) => ({
+    byUser: index("infinity_dossies_user_idx").on(t.username),
+  }),
+);
+
+export type InfinityDossieRow = typeof infinityDossiesTable.$inferSelect;
+
+// ─── Chat Images (persistent, 24h TTL) ───────────────────────────────────────
+
+export const infinityChatImagesTable = pgTable(
+  "infinity_chat_images",
+  {
+    id:        text("id").primaryKey(),
+    username:  text("username").notNull(),
+    mimeType:  text("mime_type").notNull(),
+    data:      text("data").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byExpires: index("infinity_chat_images_expires_idx").on(t.expiresAt),
+  }),
+);
+
+export type InfinityChatImageRow = typeof infinityChatImagesTable.$inferSelect;
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
 
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);
 export type InsertInfinityUser        = z.infer<typeof insertInfinityUserSchema>;
