@@ -35,6 +35,7 @@ interface PublicProfile {
   bgImageUrl: string | null;  // URL to /api/infinity/u/:username/bg (served as image bytes)
   bgValue: string | null;     // Only for color type (short hex), null for image type
   views: number; createdAt: string; cardTheme: string;
+  planType: string;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -228,7 +229,7 @@ export default function PerfilPublico() {
       .catch(() => {});
   }, [loggedIn]);
 
-  const isMe = myUsername ? myUsername === username.toLowerCase() : false;
+  const isMe = myUsername ? myUsername.toLowerCase() === username.toLowerCase() : false;
 
   useEffect(() => {
     if (!username) return;
@@ -649,6 +650,21 @@ export default function PerfilPublico() {
                       transition={{ duration: 2.5, repeat: Infinity, repeatDelay: 3, ease: "easeInOut" }}
                       style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)" }}
                     />
+                  </motion.span>
+                )}
+                {profile.planType === "pro" && profile.role !== "admin" && (
+                  <motion.span
+                    initial={{ opacity: 0, scale: 0.6, x: 6 }} animate={{ opacity: 1, scale: 1, x: 0 }}
+                    transition={{ delay: 0.35, type: "spring", stiffness: 320, damping: 18 }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold tracking-wider relative overflow-hidden"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(139,92,246,0.22), rgba(139,92,246,0.12))",
+                      color: "#a78bfa",
+                      border: "1px solid rgba(139,92,246,0.4)",
+                      boxShadow: "0 0 18px rgba(139,92,246,0.25)",
+                    }}
+                  >
+                    <Sparkles className="w-3 h-3" /> PRO
                   </motion.span>
                 )}
                 {profile.role === "vip" && (

@@ -86,7 +86,7 @@ router.get("/u/:username/photo", async (req, res): Promise<void> => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const rows = await db.select({ photo: infinityUsersTable.profilePhoto })
-      .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+      .from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${u}`).limit(1);
     const row = rows[0];
     if (!row?.photo) { res.status(404).end(); return; }
     serveDataUrl(row.photo, req, res);
@@ -104,7 +104,7 @@ router.get("/u/:username/banner", async (req, res): Promise<void> => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const rows = await db.select({ banner: infinityUsersTable.profileBanner })
-      .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+      .from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${u}`).limit(1);
     const row = rows[0];
     if (!row?.banner) { res.status(404).end(); return; }
     serveDataUrl(row.banner, req, res);
@@ -126,7 +126,7 @@ router.get("/u/:username/bg", async (req, res): Promise<void> => {
     const rows = await db.select({
       bgType:  infinityUsersTable.profileBgType,
       bgValue: infinityUsersTable.profileBgValue,
-    }).from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+    }).from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${u}`).limit(1);
 
     const row = rows[0];
     if (!row || row.bgType !== "image" || !row.bgValue) {
@@ -148,13 +148,13 @@ router.get("/u/:username", async (req, res): Promise<void> => {
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   try {
-    const rows = await db.select().from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+    const rows = await db.select().from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${u}`).limit(1);
     const row = rows[0];
     if (!row) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
 
     db.update(infinityUsersTable)
       .set({ profileViews: sql`${infinityUsersTable.profileViews} + 1` })
-      .where(eq(infinityUsersTable.username, u))
+      .where(eq(infinityUsersTable.username, row.username))
       .catch(() => {});
 
     res.json(publicProfile(row));
@@ -320,30 +320,31 @@ router.post("/friends/request", requireAuth, async (req, res): Promise<void> => 
   const { username } = req.body as { username: string };
   const target = safeUsername(username);
   if (!target) { res.status(400).json({ error: "Username inválido" }); return; }
-  if (target === me) { res.status(400).json({ error: "Você não pode se adicionar" }); return; }
+  if (target === me.toLowerCase()) { res.status(400).json({ error: "Você não pode se adicionar" }); return; }
 
   try {
-    const targetRows = await db.select({ username: infinityUsersTable.username }).from(infinityUsersTable).where(eq(infinityUsersTable.username, target)).limit(1);
+    const targetRows = await db.select({ username: infinityUsersTable.username }).from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${target}`).limit(1);
     if (!targetRows[0]) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+    const realTarget = targetRows[0].username;
 
     const existing = await db.select().from(infinityFriendshipsTable).where(or(
-      and(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, target)),
-      and(eq(infinityFriendshipsTable.requesterUsername, target), eq(infinityFriendshipsTable.addresseeUsername, me)),
+      and(eq(infinityFriendshipsTable.requesterUsername, me), eq(infinityFriendshipsTable.addresseeUsername, realTarget)),
+      and(eq(infinityFriendshipsTable.requesterUsername, realTarget), eq(infinityFriendshipsTable.addresseeUsername, me)),
     )).limit(1);
 
     if (existing[0]) {
       const e = existing[0];
       if (e.status === "accepted") { res.status(409).json({ error: "Já são amigos" }); return; }
       if (e.status === "pending") { res.status(409).json({ error: "Pedido já enviado ou pendente" }); return; }
-      await db.update(infinityFriendshipsTable).set({ status: "pending", requesterUsername: me, addresseeUsername: target, updatedAt: new Date() }).where(eq(infinityFriendshipsTable.id, e.id));
+      await db.update(infinityFriendshipsTable).set({ status: "pending", requesterUsername: me, addresseeUsername: realTarget, updatedAt: new Date() }).where(eq(infinityFriendshipsTable.id, e.id));
       res.json({ ok: true, message: "Pedido reenviado" }); return;
     }
 
-    const [created] = await db.insert(infinityFriendshipsTable).values({ requesterUsername: me, addresseeUsername: target, status: "pending" }).returning();
+    const [created] = await db.insert(infinityFriendshipsTable).values({ requesterUsername: me, addresseeUsername: realTarget, status: "pending" }).returning();
 
     // Create personal notification for target
-    const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: target, type: "friend_request", fromUser: me, data: { friendshipId: created!.id } }).returning();
-    pushUserNotification(target, { type: "notification", notification: notif });
+    const [notif] = await db.insert(infinityUserNotificationsTable).values({ username: realTarget, type: "friend_request", fromUser: me, data: { friendshipId: created!.id } }).returning();
+    pushUserNotification(realTarget, { type: "notification", notification: notif });
 
     res.json({ ok: true, id: created!.id, message: "Pedido enviado" });
   } catch (err) {
@@ -406,31 +407,32 @@ router.get("/me/dm/:username", requireAuth, async (req, res): Promise<void> => {
   const { username } = req.params as { username: string };
   const other = safeUsername(username);
   if (!other) { res.status(400).json({ error: "Username inválido" }); return; }
-  if (other === me) { res.status(400).json({ error: "Não pode criar DM consigo mesmo" }); return; }
-
-  // Deterministic slug: dm:alpha:beta (alphabetical order)
-  const [a, b] = [me, other].sort();
-  const slug = `dm:${a}:${b}`;
+  if (other === me.toLowerCase()) { res.status(400).json({ error: "Não pode criar DM consigo mesmo" }); return; }
 
   try {
-    // Check target exists
-    const targetRows = await db.select({ username: infinityUsersTable.username, displayName: infinityUsersTable.displayName, profilePhoto: infinityUsersTable.profilePhoto, profileAccentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(eq(infinityUsersTable.username, other)).limit(1);
+    // Check target exists (case-insensitive)
+    const targetRows = await db.select({ username: infinityUsersTable.username, displayName: infinityUsersTable.displayName, profilePhoto: infinityUsersTable.profilePhoto, profileAccentColor: infinityUsersTable.profileAccentColor }).from(infinityUsersTable).where(sql`lower(${infinityUsersTable.username}) = ${other}`).limit(1);
     if (!targetRows[0]) { res.status(404).json({ error: "Usuário não encontrado" }); return; }
+    const realOther = targetRows[0].username;
+
+    // Deterministic slug: dm:alpha:beta (alphabetical order of real DB usernames)
+    const [slugA, slugB] = [me, realOther].sort();
+    const realSlug = `dm:${slugA}:${slugB}`;
 
     // Get or create DM room
-    const existing = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, slug)).limit(1);
+    const existing = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, realSlug)).limit(1);
     let room = existing[0];
     if (!room) {
       [room] = await db.insert(infinityChatRoomsTable).values({
-        slug,
-        name: `DM: ${me} ↔ ${other}`,
+        slug: realSlug,
+        name: `DM: ${me} ↔ ${realOther}`,
         type: "dm",
         createdBy: me,
-        description: `Conversa privada entre ${me} e ${other}`,
+        description: `Conversa privada entre ${me} e ${realOther}`,
         icon: "💬",
       }).onConflictDoNothing().returning();
       if (!room) {
-        const rows2 = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, slug)).limit(1);
+        const rows2 = await db.select().from(infinityChatRoomsTable).where(eq(infinityChatRoomsTable.slug, realSlug)).limit(1);
         room = rows2[0]!;
       }
     }
