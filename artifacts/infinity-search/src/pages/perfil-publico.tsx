@@ -374,7 +374,15 @@ export default function PerfilPublico() {
     >
       {/* ═══ FULL-SCREEN BACKGROUND ═══ */}
       <div className="absolute inset-0 z-0">
-        <div className="absolute inset-0" style={{ background: hasBgColor ? profile.bgValue! : "#06070d" }} />
+        {/* Base layer: deep night */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: hasBgColor
+              ? profile.bgValue!
+              : `radial-gradient(ellipse 120% 80% at 20% 0%, ${accent}1a 0%, transparent 55%), radial-gradient(ellipse 100% 70% at 85% 100%, ${accent}14 0%, transparent 50%), linear-gradient(160deg, #050710 0%, #0a0f1f 50%, #060912 100%)`,
+          }}
+        />
 
         {bgSource && (
           <>
@@ -396,6 +404,73 @@ export default function PerfilPublico() {
             />
           </>
         )}
+
+        {/* Animated floating orbs — ALWAYS rendered so the glass card has something to blur over */}
+        <>
+            <motion.div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                width: 700, height: 700, top: "-18%", left: "-12%",
+                background: `radial-gradient(circle, ${accent} 0%, ${accent}55 30%, ${accent}15 55%, transparent 75%)`,
+                filter: "blur(40px)",
+                opacity: 0.9,
+              }}
+              animate={{ x: [0, 80, -40, 0], y: [0, 60, 100, 0], scale: [1, 1.15, 0.92, 1] }}
+              transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <motion.div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                width: 620, height: 620, bottom: "-14%", right: "-10%",
+                background: `radial-gradient(circle, #7c3aed 0%, #6366f199 30%, #6366f130 55%, transparent 75%)`,
+                filter: "blur(45px)",
+                opacity: 0.85,
+              }}
+              animate={{ x: [0, -70, 50, 0], y: [0, -50, -30, 0], scale: [1, 0.9, 1.12, 1] }}
+              transition={{ duration: 28, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <motion.div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                width: 500, height: 500, top: "25%", right: "5%",
+                background: `radial-gradient(circle, ${accent}cc 0%, ${accent}40 40%, transparent 75%)`,
+                filter: "blur(50px)",
+              }}
+              animate={{ x: [0, 40, -50, 0], y: [0, -40, 50, 0], opacity: [0.7, 1, 0.7] }}
+              transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <motion.div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                width: 440, height: 440, bottom: "15%", left: "5%",
+                background: `radial-gradient(circle, #ec4899bb 0%, #ec489930 45%, transparent 75%)`,
+                filter: "blur(50px)",
+              }}
+              animate={{ x: [0, 50, -30, 0], y: [0, 40, -40, 0], opacity: [0.6, 0.95, 0.6] }}
+              transition={{ duration: 24, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <motion.div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                width: 360, height: 360, top: "10%", left: "40%",
+                background: `radial-gradient(circle, #22d3eebb 0%, #22d3ee30 45%, transparent 75%)`,
+                filter: "blur(45px)",
+              }}
+              animate={{ x: [0, -30, 40, 0], y: [0, 50, 20, 0], opacity: [0.5, 0.85, 0.5] }}
+              transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
+            />
+
+            {/* Animated mesh grid lines */}
+            <div
+              className="absolute inset-0 pointer-events-none opacity-[0.10]"
+              style={{
+                backgroundImage: `linear-gradient(${accent}dd 1px, transparent 1px), linear-gradient(90deg, ${accent}dd 1px, transparent 1px)`,
+                backgroundSize: "64px 64px",
+                maskImage: "radial-gradient(ellipse 90% 80% at 50% 50%, black 30%, transparent 80%)",
+                WebkitMaskImage: "radial-gradient(ellipse 90% 80% at 50% 50%, black 30%, transparent 80%)",
+              }}
+            />
+          </>
 
         {/* Cursor-follow ambient glow */}
         <motion.div
@@ -507,10 +582,11 @@ export default function PerfilPublico() {
           <motion.div
             className="w-full rounded-[28px] overflow-hidden relative"
             style={{
-              background: "rgba(8,10,18,0.74)",
-              backdropFilter: "blur(36px) saturate(1.5)",
-              border: "1px solid rgba(255,255,255,0.10)",
-              boxShadow: `0 0 0 1px rgba(255,255,255,0.05) inset, 0 36px 90px rgba(0,0,0,0.65), 0 0 80px -10px ${accent}28`,
+              background: "linear-gradient(135deg, rgba(14,18,32,0.55) 0%, rgba(8,10,18,0.45) 100%)",
+              backdropFilter: "blur(40px) saturate(1.7)",
+              WebkitBackdropFilter: "blur(40px) saturate(1.7)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              boxShadow: `0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.08) inset, 0 36px 90px rgba(0,0,0,0.65), 0 0 80px -10px ${accent}3a`,
               rotateX: stiltX,
               rotateY: stiltY,
               transformStyle: "preserve-3d",
