@@ -273,7 +273,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         { href: "/carteira", label: "Carteira", icon: Wallet },
         { href: "/suporte", label: "Suporte", icon: Headphones, badge: suporteNovo ? "NOVO" : undefined },
         { href: "/perfil", label: "Perfil", icon: UserCircle },
-        { href: "/configuracoes", label: "Configurações", icon: Settings },
+        ...(isAdmin ? [{ href: "/configuracoes", label: "Configurações", icon: Settings }] : []),
         { href: "/personalizar", label: "Personalizar", icon: Palette },
       ],
     },

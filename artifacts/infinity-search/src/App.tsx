@@ -65,7 +65,9 @@ function Router() {
                   <AdminGuard><Bases /></AdminGuard>
                 </Route>
                 <Route path="/perfil" component={Perfil} />
-                <Route path="/configuracoes" component={Configuracoes} />
+                <Route path="/configuracoes">
+                  <AdminGuard><Configuracoes /></AdminGuard>
+                </Route>
                 <Route path="/personalizar" component={Personalizar} />
                 <Route path="/skylers" component={Skylers} />
                 <Route path="/api-promo" component={SkylersPromo} />
