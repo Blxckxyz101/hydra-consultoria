@@ -839,10 +839,12 @@ export default function Perfil() {
 
         {/* Background personalizado */}
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 flex items-center gap-1.5">
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-3 flex items-center gap-1.5">
             <Globe className="w-3 h-3" /> Fundo do Perfil Público
           </label>
-          <div className="flex gap-2 mb-2">
+
+          {/* Type tabs */}
+          <div className="flex gap-2 mb-3">
             {(["default", "image", "color"] as const).map(t => (
               <button
                 key={t}
@@ -853,33 +855,97 @@ export default function Perfil() {
                   : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.08)" }
                 }
               >
-                {t === "default" ? "Padrão" : t === "image" ? "Imagem" : "Cor"}
+                {t === "default" ? "Padrão" : t === "image" ? "Imagem / GIF" : "Cor"}
               </button>
             ))}
           </div>
+
+          {/* Image / GIF input */}
           {socialBgType === "image" && (
-            <input
-              value={socialBgValue}
-              onChange={e => setSocialBgValue(e.target.value.slice(0, 500))}
-              placeholder="https://i.imgur.com/..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40"
-            />
+            <div className="space-y-2">
+              {/* URL input */}
+              <div className="relative">
+                <input
+                  value={socialBgValue}
+                  onChange={e => setSocialBgValue(e.target.value.slice(0, 2000))}
+                  placeholder="https://i.imgur.com/... ou URL de GIF"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/30 pr-12"
+                />
+                {socialBgValue && (
+                  <button
+                    onClick={() => setSocialBgValue("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/60 transition-colors"
+                  >
+                    <XIcon className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* OR file upload */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-white/8" />
+                <span className="text-[9px] text-white/25 uppercase tracking-widest">ou</span>
+                <div className="flex-1 h-px bg-white/8" />
+              </div>
+
+              <label
+                className="flex flex-col items-center justify-center gap-2 w-full py-4 rounded-xl cursor-pointer transition-all hover:bg-white/5 border border-dashed border-white/15 hover:border-white/30"
+                style={{ background: "rgba(255,255,255,0.02)" }}
+              >
+                <input
+                  type="file"
+                  accept="image/*,.gif"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setSocialBgValue(ev.target?.result as string);
+                    reader.readAsDataURL(f);
+                  }}
+                />
+                <ImageIcon className="w-6 h-6 text-white/25" />
+                <div className="text-center">
+                  <p className="text-[11px] font-semibold text-white/50">Clique para enviar arquivo</p>
+                  <p className="text-[9px] text-white/25 mt-0.5">JPG, PNG, WebP, GIF animado</p>
+                </div>
+              </label>
+
+              {/* Preview */}
+              {socialBgValue && (
+                <div className="relative rounded-xl overflow-hidden h-24 border border-white/10">
+                  <img
+                    src={socialBgValue}
+                    alt="preview"
+                    className="w-full h-full object-cover"
+                    style={{ filter: "blur(6px) brightness(0.5)", transform: "scale(1.05)" }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[9px] text-white/60 uppercase tracking-widest bg-black/40 px-2 py-1 rounded">
+                      {socialBgValue.includes(".gif") || socialBgValue.startsWith("data:image/gif") ? "🎞 GIF detectado" : "Pré-visualização"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[9px] text-muted-foreground/30">
+                Aparece desfocada e escurecida como fundo da sua página pública. Suporta GIFs animados.
+              </p>
+            </div>
           )}
+
+          {/* Color picker */}
           {socialBgType === "color" && (
             <div className="flex items-center gap-3">
               <input
                 type="color"
                 value={socialBgValue || "#07090f"}
                 onChange={e => setSocialBgValue(e.target.value)}
-                className="w-10 h-10 rounded-lg cursor-pointer border border-white/10 bg-transparent"
+                className="w-12 h-10 rounded-lg cursor-pointer border border-white/10 bg-transparent"
               />
-              <span className="text-xs text-muted-foreground/50">{socialBgValue || "#07090f"}</span>
+              <span className="text-sm font-mono text-muted-foreground/50">{socialBgValue || "#07090f"}</span>
+              <div className="w-6 h-6 rounded-full border border-white/10 shrink-0" style={{ background: socialBgValue || "#07090f" }} />
             </div>
-          )}
-          {socialBgType !== "default" && (
-            <p className="text-[10px] text-muted-foreground/30 mt-1.5">
-              {socialBgType === "image" ? "URL direta de uma imagem (aparece desfocada como fundo na sua página pública)" : "Cor sólida de fundo"}
-            </p>
           )}
         </div>
 
