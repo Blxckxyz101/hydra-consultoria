@@ -78,6 +78,10 @@ interface ChatMsg {
 interface MiniUser { username: string; displayName: string | null; photo: string | null; role: string; bio: string | null; accentColor: string | null }
 interface ReplyTo { id: number; username: string; displayName: string | null; content: string }
 interface PendingFile { dataUri: string; mimeType: string; filename: string; sizeLabel: string; previewUrl: string }
+interface FriendEntry {
+  id: number; username: string; displayName: string | null; photo: string | null;
+  status: string; role: string; friendStatus: string; direction: "sent" | "received";
+}
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 function RoleBadge({ role }: { role: string }) {
@@ -190,6 +194,87 @@ function LightboxModal({ src, onClose }: { src: string; onClose: () => void }) {
   );
 }
 
+// ── Friends Panel ─────────────────────────────────────────────────────────────
+function FriendsPanel({ friends, loading, onUserClick, onRefresh }: {
+  friends: FriendEntry[]; loading: boolean;
+  onUserClick: (u: MiniUser) => void; onRefresh: () => void;
+}) {
+  const STATUS_DOT: Record<string, string> = { online: "#22c55e", busy: "#ef4444", away: "#f59e0b", offline: "#4b5563" };
+  const STATUS_LABEL: Record<string, string> = { online: "Online", busy: "Ocupado", away: "Ausente", offline: "Offline" };
+  const incoming = friends.filter(f => f.friendStatus === "pending" && f.direction === "received");
+  const accepted = friends.filter(f => f.friendStatus === "accepted");
+  const sent = friends.filter(f => f.friendStatus === "pending" && f.direction === "sent");
+  const accept = async (id: number) => { try { await fetch(`/api/infinity/friends/${id}/accept`, { method: "POST", headers: authHeaders() }); onRefresh(); } catch {} };
+  const decline = async (id: number) => { try { await fetch(`/api/infinity/friends/${id}/decline`, { method: "POST", headers: authHeaders() }); onRefresh(); } catch {} };
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-white/30" /></div>;
+  return (
+    <div className="flex-1 overflow-y-auto py-2 space-y-3 scrollbar-thin scrollbar-thumb-white/10">
+      {incoming.length > 0 && (
+        <div>
+          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25 px-3 block mb-1.5">Pedidos · {incoming.length}</span>
+          {incoming.map(f => (
+            <div key={f.id} className="px-2 py-2 hover:bg-white/5 rounded-xl mx-1 transition-colors">
+              <div className="flex items-center gap-2 mb-2">
+                <Avatar username={f.username} photo={f.photo} size={8} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold truncate text-white/85">{f.displayName ?? f.username}</p>
+                  <p className="text-[10px] text-white/30">@{f.username}</p>
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                <button onClick={() => accept(f.id)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all"
+                  style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)" }}>
+                  Aceitar
+                </button>
+                <button onClick={() => decline(f.id)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide border border-white/10 hover:bg-white/8 text-white/40 transition-all">
+                  Recusar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {accepted.length > 0 && (
+        <div>
+          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25 px-3 block mb-1.5">Amigos · {accepted.length}</span>
+          {accepted.map(f => (
+            <button key={f.id} onClick={() => onUserClick({ username: f.username, displayName: f.displayName, photo: f.photo, role: f.role, bio: null, accentColor: null })}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors text-left">
+              <div className="relative shrink-0">
+                <Avatar username={f.username} photo={f.photo} size={8} />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-[1.5px]"
+                  style={{ background: STATUS_DOT[f.status] ?? "#4b5563", borderColor: "rgba(15,18,28,0.85)" }} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold truncate text-white/80">{f.displayName ?? f.username}</p>
+                <p className="text-[10px] text-white/30">{STATUS_LABEL[f.status] ?? "Offline"}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {sent.length > 0 && (
+        <div>
+          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 px-3 block mb-1">Aguardando</span>
+          {sent.map(f => (
+            <div key={f.id} className="flex items-center gap-2 px-3 py-2 opacity-40">
+              <Avatar username={f.username} photo={f.photo} size={8} />
+              <div className="min-w-0"><p className="text-xs truncate text-white/60">{f.displayName ?? f.username}</p><p className="text-[10px] text-white/30">Pedido enviado</p></div>
+            </div>
+          ))}
+        </div>
+      )}
+      {friends.length === 0 && (
+        <div className="px-3 py-12 text-center">
+          <Users className="w-8 h-8 text-white/10 mx-auto mb-3" />
+          <p className="text-xs text-white/25">Nenhum amigo ainda</p>
+          <p className="text-[10px] text-white/15 mt-1">Adicione pessoas clicando no avatar no chat</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Message Bubble ────────────────────────────────────────────────────────────
 function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, onDelete, onImgClick }: {
   msg: ChatMsg; prev?: ChatMsg; myUsername: string;
@@ -207,20 +292,62 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
   const isOwn = msg.username === myUsername;
   const [showActions, setShowActions] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [swipeX, setSwipeX] = useState(0);
+  const [replyFlash, setReplyFlash] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerStart = useRef({ x: 0, y: 0 });
+  const wasDragging = useRef(false);
+  const didLongPress = useRef(false);
+  const cancelLP = () => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; } };
+
+  const onPD = (e: React.PointerEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("button, a, img, input, textarea")) return;
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+    wasDragging.current = false; didLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null; didLongPress.current = true;
+      setShowEmojiPicker(true); setShowActions(true);
+      if (navigator.vibrate) navigator.vibrate(22);
+    }, 500);
+  };
+  const onPM = (e: React.PointerEvent) => {
+    const dx = e.clientX - pointerStart.current.x;
+    const dy = Math.abs(e.clientY - pointerStart.current.y);
+    if (Math.abs(dx) > 8 || dy > 8) cancelLP();
+    if (dx > 0 && dy < 45 && !didLongPress.current) {
+      wasDragging.current = true;
+      setSwipeX(Math.min(dx * 0.55, 70));
+    } else if (dx <= 0 && swipeX > 0) { setSwipeX(0); }
+  };
+  const onPU = (e: React.PointerEvent) => {
+    const wasTap = longPressTimer.current !== null;
+    cancelLP();
+    if (swipeX > 52 && wasDragging.current && !didLongPress.current) {
+      setReplyFlash(true); setTimeout(() => setReplyFlash(false), 280);
+      onReply({ id: msg.id, username: msg.username, displayName: msg.displayName, content: msg.content });
+      if (navigator.vibrate) navigator.vibrate([8, 8]);
+    } else if (wasTap && !wasDragging.current && !didLongPress.current) {
+      setShowActions(v => !v);
+    }
+    setSwipeX(0); wasDragging.current = false;
+  };
 
   return (
-    <div
-      className={`flex items-start gap-3 sm:gap-4 group px-3 sm:px-4 py-0.5 transition-colors relative ${isConsecutive ? "mt-0" : "mt-4"}`}
-      style={{ background: showActions ? "rgba(255,255,255,0.04)" : undefined }}
-      onMouseEnter={e => { setShowActions(true); e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-      onMouseLeave={e => { setShowActions(false); setShowEmojiPicker(false); e.currentTarget.style.background = ""; }}
-      onClick={(e) => {
-        // Tap-to-toggle actions on touch devices (ignore taps on links/buttons/images)
-        const t = e.target as HTMLElement;
-        if (t.closest("button, a, img, input, textarea")) return;
-        setShowActions(v => !v);
-      }}
-    >
+    <div className={`relative overflow-x-hidden ${isConsecutive ? "mt-0" : "mt-4"}`}>
+      {/* Reply indicator slides in from left */}
+      <div className="absolute left-2.5 top-1/2 z-10 pointer-events-none flex items-center justify-center w-8 h-8 rounded-full"
+        style={{ opacity: swipeX > 15 ? Math.min(1, (swipeX - 15) / 38) : 0, transform: `translateY(-50%) translateX(${Math.max(0, swipeX - 15)}px)`, background: "var(--color-primary)", color: "#000", transition: swipeX === 0 ? "opacity 0.18s, transform 0.18s" : "none" }}>
+        <CornerUpLeft className="w-4 h-4" />
+      </div>
+      <div
+        className={`flex items-start gap-3 sm:gap-4 group px-3 sm:px-4 py-0.5 relative transition-colors`}
+        style={{ background: replyFlash ? "color-mix(in srgb, var(--color-primary) 10%, transparent)" : showActions ? "rgba(255,255,255,0.04)" : undefined, transform: `translateX(${swipeX}px)`, transition: swipeX === 0 ? "transform 0.2s cubic-bezier(0.25,0.46,0.45,0.94), background 0.15s" : "background 0.15s", touchAction: "pan-y" }}
+        onMouseEnter={() => setShowActions(true)}
+        onMouseLeave={() => { setShowActions(false); setShowEmojiPicker(false); }}
+        onPointerDown={onPD} onPointerMove={onPM} onPointerUp={onPU}
+        onPointerCancel={() => { cancelLP(); setSwipeX(0); wasDragging.current = false; }}
+      >
       {/* Avatar column */}
       <div className="w-10 shrink-0 mt-0.5">
         {!isConsecutive && (
@@ -334,6 +461,7 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -685,6 +813,9 @@ export default function Comunidade() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<"rooms" | "friends">("rooms");
+  const [friends, setFriends] = useState<FriendEntry[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -705,6 +836,19 @@ export default function Comunidade() {
         if (global) setActiveRoom(global);
       }).catch(() => {});
   }, []);
+
+  const loadFriends = useCallback(async () => {
+    setFriendsLoading(true);
+    try {
+      const r = await fetch("/api/infinity/friends", { headers: authHeaders() });
+      if (r.ok) setFriends(await r.json() as FriendEntry[]);
+    } catch {} finally { setFriendsLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (!me) return;
+    void loadFriends();
+  }, [me, loadFriends]);
 
   const loadMessages = useCallback(async (slug: string) => {
     try {
@@ -970,44 +1114,72 @@ export default function Comunidade() {
               </div>
             </div>
 
-            {/* Channel list label */}
-            <div className="px-3 pt-3 pb-1">
-              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20">Canais de texto</span>
-            </div>
-
-            {/* Room list */}
-            <div className="flex-1 overflow-y-auto pb-2 px-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10">
-              {rooms.map(room => {
-                const isActive = activeRoom?.slug === room.slug;
+            {/* Tab switcher: Salas / Amigos */}
+            <div className="flex gap-1 px-2 pt-2 pb-1">
+              {(["rooms", "friends"] as const).map(tab => {
+                const pendingCount = tab === "friends" ? friends.filter(f => f.friendStatus === "pending" && f.direction === "received").length : 0;
                 return (
-                  <button key={room.slug}
-                    onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors relative group ${isActive ? "text-white" : "text-white/45 hover:text-white/85"}`}
-                    style={isActive ? { background: "rgba(255,255,255,0.08)" } : {}}
-                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}>
-                    {isActive && <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-1 h-7 rounded-r-full" style={{ background: "var(--color-primary)" }} />}
-                    <Hash className="w-4 h-4 shrink-0 text-white/40" />
-                    <span className="text-[15px] font-medium truncate flex-1">{room.name}</span>
-                    {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-white/25" />}
+                  <button key={tab} onClick={() => { setSidebarTab(tab); if (tab === "friends") void loadFriends(); }}
+                    className="flex-1 relative py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
+                    style={sidebarTab === tab
+                      ? { background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }
+                      : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.07)" }
+                    }>
+                    {tab === "rooms" ? "# Salas" : "Amigos"}
+                    {pendingCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold leading-none">
+                        {pendingCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
-              {rooms.length === 0 && <div className="px-3 py-8 text-center"><p className="text-xs text-white/20">Nenhuma sala ainda</p></div>}
             </div>
 
-            {/* Sidebar footer */}
-            <div className="p-2.5 border-t border-white/[0.06] space-y-1">
-              <button onClick={() => setShowCreate(true)}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 border border-dashed border-white/[0.08] hover:border-white/20 transition-all">
-                <Plus className="w-3.5 h-3.5" /> Nova sala
-              </button>
-              <Link href="/dm/...">
-                <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
-                  <MessageSquareDiff className="w-3.5 h-3.5" /> Nova DM
-                </button>
-              </Link>
-            </div>
+            {sidebarTab === "rooms" ? (
+              <>
+                <div className="px-3 pt-2 pb-1">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20">Canais de texto</span>
+                </div>
+                <div className="flex-1 overflow-y-auto pb-2 px-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10">
+                  {rooms.map(room => {
+                    const isActive = activeRoom?.slug === room.slug;
+                    return (
+                      <button key={room.slug}
+                        onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors relative group ${isActive ? "text-white" : "text-white/45 hover:text-white/85"}`}
+                        style={isActive ? { background: "rgba(255,255,255,0.08)" } : {}}
+                        onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+                        onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}>
+                        {isActive && <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-1 h-7 rounded-r-full" style={{ background: "var(--color-primary)" }} />}
+                        <Hash className="w-4 h-4 shrink-0 text-white/40" />
+                        <span className="text-[15px] font-medium truncate flex-1">{room.name}</span>
+                        {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-white/25" />}
+                      </button>
+                    );
+                  })}
+                  {rooms.length === 0 && <div className="px-3 py-8 text-center"><p className="text-xs text-white/20">Nenhuma sala ainda</p></div>}
+                </div>
+                <div className="p-2.5 border-t border-white/[0.06] space-y-1">
+                  <button onClick={() => setShowCreate(true)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 border border-dashed border-white/[0.08] hover:border-white/20 transition-all">
+                    <Plus className="w-3.5 h-3.5" /> Nova sala
+                  </button>
+                  <Link href="/dm/...">
+                    <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
+                      <MessageSquareDiff className="w-3.5 h-3.5" /> Nova DM
+                    </button>
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <FriendsPanel
+                friends={friends}
+                loading={friendsLoading}
+                onUserClick={u => { setSelectedUser(u); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+                onRefresh={loadFriends}
+              />
+            )}
           </motion.div>
         )}
       </AnimatePresence>

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Palette, Check, Waves, Zap, Leaf, Crown, Heart, Flame, Moon,
   Terminal, Sparkles, Droplets, Radio, Monitor, Sun, Activity,
-  Search, User, Smartphone, type LucideIcon,
+  Search, User, Smartphone, Type, type LucideIcon,
 } from "lucide-react";
 
 interface ThemeDef {
@@ -114,8 +114,33 @@ export function initSavedTheme() {
   applyTheme(t);
 }
 
+// ── Font Definitions ──────────────────────────────────────────────────────────
+const FONTS = [
+  { key: "inter",         name: "Inter",          family: "'Inter', sans-serif",             category: "Sem-serifa" },
+  { key: "space-grotesk", name: "Space Grotesk",  family: "'Space Grotesk', sans-serif",     category: "Geométrica" },
+  { key: "plus-jakarta",  name: "Plus Jakarta",   family: "'Plus Jakarta Sans', sans-serif",  category: "Moderna" },
+  { key: "outfit",        name: "Outfit",         family: "'Outfit', sans-serif",             category: "Sem-serifa" },
+  { key: "sora",          name: "Sora",           family: "'Sora', sans-serif",               category: "Limpa" },
+  { key: "raleway",       name: "Raleway",        family: "'Raleway', sans-serif",            category: "Elegante" },
+  { key: "nunito",        name: "Nunito",         family: "'Nunito', sans-serif",             category: "Arredondada" },
+  { key: "jetbrains",     name: "JetBrains Mono", family: "'JetBrains Mono', monospace",      category: "Monospace" },
+];
+
+export function applyFont(key: string) {
+  const f = FONTS.find(x => x.key === key) ?? FONTS[0]!;
+  document.documentElement.style.setProperty("--app-font-sans", f.family);
+  document.documentElement.style.setProperty("--font-sans", f.family);
+  localStorage.setItem("infinity_font", key);
+}
+
+export function initSavedFont() {
+  const key = localStorage.getItem("infinity_font") ?? "inter";
+  applyFont(key);
+}
+
 export default function Personalizar() {
   const [currentKey, setCurrentKey] = useState(loadThemeKey);
+  const [currentFont, setCurrentFont] = useState(() => localStorage.getItem("infinity_font") ?? "inter");
 
   useEffect(() => {
     const t = THEMES.find(x => x.key === currentKey) ?? THEMES[0]!;
@@ -393,6 +418,61 @@ export default function Personalizar() {
             </div>
           </div>
         </motion.div>
+      </motion.div>
+
+      {/* ── Font Picker ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12 }}
+        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6"
+      >
+        <div className="flex items-center gap-3 mb-6">
+          <Type className="w-4 h-4 text-primary" />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Fonte do Painel</h2>
+          <span
+            className="ml-auto text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-full border"
+            style={{ background: `hsl(${current.primary} / 0.12)`, borderColor: `hsl(${current.primary} / 0.35)`, color: `hsl(${current.primary})` }}
+          >
+            {FONTS.find(f => f.key === currentFont)?.name ?? "Inter"}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {FONTS.map((f, i) => {
+            const isActive = f.key === currentFont;
+            const hslP = `hsl(${current.primary})`;
+            return (
+              <motion.button
+                key={f.key}
+                initial={{ opacity: 0, scale: 0.93 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.04, type: "spring", stiffness: 260, damping: 20 }}
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => { setCurrentFont(f.key); applyFont(f.key); }}
+                className="relative flex flex-col items-start gap-2.5 p-4 rounded-2xl border text-left transition-colors overflow-hidden"
+                style={{
+                  borderColor: isActive ? hslP : "rgba(255,255,255,0.07)",
+                  background: isActive ? `linear-gradient(135deg, hsl(${current.primary}/0.16), hsl(${current.accent}/0.08))` : "rgba(0,0,0,0.28)",
+                  boxShadow: isActive ? `0 0 22px -6px hsl(${current.primary}/0.45)` : "none",
+                }}
+              >
+                {isActive && (
+                  <div className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: hslP }}>
+                    <Check className="w-2.5 h-2.5 text-black" strokeWidth={3} />
+                  </div>
+                )}
+                <span className="text-2xl font-bold leading-none" style={{ fontFamily: f.family, color: isActive ? hslP : "rgba(255,255,255,0.55)" }}>Aa</span>
+                <div>
+                  <p className="text-[11px] font-semibold leading-tight" style={{ fontFamily: f.family, color: isActive ? hslP : "rgba(255,255,255,0.7)" }}>{f.name}</p>
+                  <p className="text-[9px] text-white/25 uppercase tracking-wide mt-0.5">{f.category}</p>
+                </div>
+              </motion.button>
+            );
+          })}
+        </div>
+        <p className="text-[9px] text-white/20 uppercase tracking-widest mt-4">Afeta todo o painel · Salvo automaticamente</p>
       </motion.div>
     </div>
   );

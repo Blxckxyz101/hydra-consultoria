@@ -899,26 +899,44 @@ export default function Perfil() {
                   onChange={async (e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
-                    if (f.size > 9.5 * 1024 * 1024) { alert("Arquivo muito grande. Máximo ~9MB."); return; }
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                      const dataUrl = ev.target?.result as string;
+                    setSocialSaving(true);
+                    try {
+                      // Compress via canvas (resize to max 1920px, JPEG q0.82) — keeps data URL small
+                      const compress = (): Promise<string> => new Promise((resolve, reject) => {
+                        if (f.type === "image/gif") {
+                          const fr = new FileReader();
+                          fr.onload = ev => resolve(ev.target?.result as string);
+                          fr.onerror = reject;
+                          fr.readAsDataURL(f);
+                          return;
+                        }
+                        const img = new Image();
+                        const objUrl = URL.createObjectURL(f);
+                        img.onload = () => {
+                          URL.revokeObjectURL(objUrl);
+                          const MAX = 1920;
+                          const ratio = Math.min(1, MAX / Math.max(img.width, img.height, 1));
+                          const canvas = document.createElement("canvas");
+                          canvas.width = Math.round(img.width * ratio);
+                          canvas.height = Math.round(img.height * ratio);
+                          canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+                          resolve(canvas.toDataURL("image/jpeg", 0.82));
+                        };
+                        img.onerror = () => reject(new Error("Erro ao ler imagem"));
+                        img.src = objUrl;
+                      });
+                      const dataUrl = await compress();
                       setSocialBgValue(dataUrl);
                       setSocialBgType("image");
-                      // AUTO-SAVE imediato — sem precisar clicar em "Salvar"
-                      setSocialSaving(true);
-                      try {
-                        const r = await fetch("/api/infinity/me/social", {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json", ...authHeaders() },
-                          body: JSON.stringify({ bgType: "image", bgValue: dataUrl }),
-                        });
-                        if (r.ok) { setSocialSaved(true); setTimeout(() => setSocialSaved(false), 2200); }
-                        else { const j = await r.json().catch(() => ({})); alert(j.error || "Erro ao salvar fundo"); }
-                      } catch { alert("Erro de conexão"); }
-                      finally { setSocialSaving(false); }
-                    };
-                    reader.readAsDataURL(f);
+                      const r = await fetch("/api/infinity/me/social", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json", ...authHeaders() },
+                        body: JSON.stringify({ bgType: "image", bgValue: dataUrl }),
+                      });
+                      if (r.ok) { setSocialSaved(true); setTimeout(() => setSocialSaved(false), 2200); }
+                      else { const j = await r.json().catch(() => ({})); alert(j.error || "Erro ao salvar fundo. Tente imagem menor."); }
+                    } catch (err) { alert("Erro ao processar imagem: " + String(err)); }
+                    finally { setSocialSaving(false); }
                   }}
                 />
                 <ImageIcon className="w-6 h-6 text-white/25" />

@@ -213,10 +213,13 @@ router.get("/friends", requireAuth, async (req, res): Promise<void> => {
     }
 
     res.json(friends.map(f => ({
-      ...f,
+      id: f.id,
+      username: f.username,
+      direction: f.direction,
+      friendStatus: f.status,   // friendship status: "pending" | "accepted"
       displayName: profileMap[f.username]?.displayName ?? f.username,
       photo: profileMap[f.username]?.photo ?? null,
-      status: profileMap[f.username]?.status ?? "offline",
+      status: profileMap[f.username]?.status ?? "offline",  // user online status
       role: profileMap[f.username]?.role ?? "user",
     })));
   } catch (err) {

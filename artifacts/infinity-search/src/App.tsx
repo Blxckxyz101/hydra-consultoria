@@ -14,7 +14,7 @@ import Perfil from "@/pages/perfil";
 import Bases from "@/pages/bases";
 import Favoritos from "@/pages/favoritos";
 import { AdminGuard } from "@/components/layout/AdminGuard";
-import Personalizar, { initSavedTheme } from "@/pages/personalizar";
+import Personalizar, { initSavedTheme, initSavedFont } from "@/pages/personalizar";
 import Skylers from "@/pages/skylers";
 import Suporte from "@/pages/suporte";
 import Historico from "@/pages/historico";
@@ -25,8 +25,9 @@ import Comunidade from "@/pages/comunidade";
 import PerfilPublico from "@/pages/perfil-publico";
 import DM from "@/pages/dm";
 
-// Apply saved color theme immediately on load
+// Apply saved color theme + font immediately on load
 initSavedTheme();
+initSavedFont();
 
 function NotFound() {
   return (

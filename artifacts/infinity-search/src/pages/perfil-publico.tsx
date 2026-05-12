@@ -393,14 +393,14 @@ export default function PerfilPublico() {
               style={{
                 objectFit: "cover",
                 filter: bgIsGif
-                  ? "blur(24px) saturate(1.35) brightness(0.36)"
-                  : "blur(30px) saturate(1.25) brightness(0.32)",
-                transform: "scale(1.12)",
+                  ? "blur(22px) saturate(1.4) brightness(0.48)"
+                  : "blur(28px) saturate(1.3) brightness(0.44)",
+                transform: "scale(1.1)",
               }}
             />
             <div
               className="absolute inset-0"
-              style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.50) 0%, rgba(0,0,0,0.28) 35%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.78) 100%)" }}
+              style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.18) 30%, rgba(0,0,0,0.40) 65%, rgba(0,0,0,0.68) 100%)" }}
             />
           </>
         )}
