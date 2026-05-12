@@ -801,6 +801,9 @@ export default function Comunidade() {
   const [showCreate, setShowCreate] = useState(false);
   const [showGif, setShowGif] = useState(false);
   const [wsReady, setWsReady] = useState(false);
+  const [wsKey, setWsKey] = useState(0);
+  const wsDelayRef = useRef(1_500);
+  const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const [selectedUser, setSelectedUser] = useState<MiniUser | null>(null);
   const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
@@ -864,13 +867,23 @@ export default function Comunidade() {
     loadMessages(activeRoom.slug);
   }, [activeRoom, loadMessages]);
 
-  // WebSocket
+  // WebSocket with auto-reconnect
   useEffect(() => {
     if (!me) return;
     const ws = new WebSocket(getWsUrl());
     wsRef.current = ws;
-    ws.onopen = () => setWsReady(true);
-    ws.onclose = () => setWsReady(false);
+    ws.onopen = () => {
+      setWsReady(true);
+      wsDelayRef.current = 1_500;
+    };
+    ws.onclose = () => {
+      setWsReady(false);
+      wsRef.current = null;
+      if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      const d = wsDelayRef.current;
+      wsDelayRef.current = Math.min(d * 2, 30_000);
+      wsTimerRef.current = setTimeout(() => setWsKey(k => k + 1), d);
+    };
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data as string) as Record<string, unknown>;
@@ -911,9 +924,15 @@ export default function Comunidade() {
         }
       } catch {}
     };
-    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25000);
-    return () => { clearInterval(ping); ws.close(); wsRef.current = null; };
-  }, [me, myUsername]);
+    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25_000);
+    return () => {
+      clearInterval(ping);
+      if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      ws.onclose = null;
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [me, myUsername, wsKey]);
 
   useEffect(() => {
     if (!activeRoom || !wsRef.current || wsRef.current.readyState !== 1) return;
@@ -1052,7 +1071,7 @@ export default function Comunidade() {
   const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading;
 
   return (
-    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+    <div className="flex h-full overflow-hidden relative">
       <AnimatePresence>
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}

@@ -225,6 +225,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const isAdmin = user?.role === "admin";
+  const isChatPage = location === "/comunidade" || location.startsWith("/dm");
 
   // Friend request badge count
   const [pendingFriends, setPendingFriends] = useState(0);
@@ -641,7 +642,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </button>
       </nav>
 
-      <main className="flex-1 h-screen overflow-y-auto z-10 pt-14 lg:pt-0 pb-[76px] lg:pb-0">
+      <main className={`flex-1 h-screen z-10 pt-14 lg:pt-0 pb-[76px] lg:pb-0 ${isChatPage ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
         {/* Expiry warning banner */}
         <AnimatePresence>
           {expiryWarningDays !== null && !expiryDismissed && (
@@ -649,7 +650,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="mx-4 mt-3 lg:mx-6 lg:mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-amber-400/30 bg-amber-400/8 backdrop-blur-xl"
+              className="mx-4 mt-3 lg:mx-6 lg:mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-amber-400/30 bg-amber-400/8 backdrop-blur-xl shrink-0"
             >
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
               <p className="text-xs text-amber-200 flex-1">
@@ -669,15 +670,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </motion.div>
           )}
         </AnimatePresence>
-        <motion.div
-          key={location}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8"
-        >
-          {children}
-        </motion.div>
+        {isChatPage ? (
+          <motion.div
+            key={location}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.18 }}
+            className="flex-1 min-h-0 overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        ) : (
+          <motion.div
+            key={location}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8"
+          >
+            {children}
+          </motion.div>
+        )}
       </main>
     </div>
   );

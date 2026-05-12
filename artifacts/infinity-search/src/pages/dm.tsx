@@ -183,6 +183,9 @@ export default function DM() {
   const [searchResults, setSearchResults] = useState<OtherUser[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
 
+  const [wsKey, setWsKey] = useState(0);
+  const wsDelayRef = useRef(1_500);
+  const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -242,12 +245,22 @@ export default function DM() {
       .finally(() => setLoading(false));
   }, [otherUsername]);
 
-  // WebSocket
+  // WebSocket with auto-reconnect
   useEffect(() => {
     if (!roomSlug || !myUsername) return;
     const ws = new WebSocket(`${WS_URL}?token=${getToken()}`);
     wsRef.current = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ type: "join", roomSlug }));
+    ws.onopen = () => {
+      wsDelayRef.current = 1_500;
+      ws.send(JSON.stringify({ type: "join", roomSlug }));
+    };
+    ws.onclose = () => {
+      wsRef.current = null;
+      if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      const d = wsDelayRef.current;
+      wsDelayRef.current = Math.min(d * 2, 30_000);
+      wsTimerRef.current = setTimeout(() => setWsKey(k => k + 1), d);
+    };
     ws.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data) as Record<string, unknown>;
@@ -282,9 +295,15 @@ export default function DM() {
         }
       } catch {}
     };
-    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25000);
-    return () => { clearInterval(ping); ws.close(); };
-  }, [roomSlug, myUsername, loadConvos]);
+    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25_000);
+    return () => {
+      clearInterval(ping);
+      if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      ws.onclose = null;
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [roomSlug, myUsername, loadConvos, wsKey]);
 
   // Auto-scroll
   useEffect(() => {
