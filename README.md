@@ -77,6 +77,49 @@ hydra-consultoria/
 
 ---
 
+## Segurança & Credenciais
+
+O repositório é **público**. Nunca commite chaves de API, tokens ou senhas reais.
+
+### Regras gerais
+
+- Copie `.env.example` para `.env` e preencha com seus valores — o `.env` nunca sobe para o git
+- Todos os arquivos `*.env`, `secrets.*`, `*.pem` e `*.key` estão no `.gitignore`
+
+### Pre-commit hook (detecção de tokens)
+
+Um hook de pre-commit bloqueia automaticamente qualquer commit que contenha padrões de credenciais conhecidas, incluindo:
+
+| Tipo | Exemplos de padrão detectado |
+|------|------------------------------|
+| GitHub PAT / Fine-Grained / OAuth / Actions | `ghp_…`, `github_pat_…`, `gho_…`, `ghs_…` |
+| Telegram Bot Token | `123456789:AAF…` |
+| AWS Access / Secret Key | `AKIA…`, `aws_secret_access_key = …` |
+| Slack token | `xoxb-…`, `xoxp-…` |
+| Stripe secret / restricted key | `sk_live_…`, `rk_test_…` |
+| Groq API key | `gsk_…` |
+| Discord bot token | formato `<id>.<timestamp>.<hmac>` |
+| Database URL com senha | `postgres://user:senha@host` |
+| Atribuição genérica de API key | `api_key = "abc123"`, `auth_token: "xyz"` |
+| Bearer token hardcoded | `Authorization: Bearer <token>` |
+| Chave privada PEM | `-----BEGIN PRIVATE KEY-----` |
+
+### Ativar o hook após clonar
+
+```bash
+bash scripts/src/install-hooks.sh
+```
+
+Isso configura o git para usar os hooks de `.githooks/` neste repositório. O `post-merge.sh` já faz isso automaticamente no ambiente Replit.
+
+Para ignorar pontualmente (não recomendado):
+
+```bash
+git commit --no-verify
+```
+
+---
+
 ## Contato & Suporte
 
 - Canal oficial: [@hydraconsultoria](https://t.me/hydraconsultoria)

@@ -46,17 +46,25 @@ declare -A PATTERNS
 PATTERNS["GitHub Personal Access Token (ghp_)"]='ghp_[A-Za-z0-9]{36,}'
 PATTERNS["GitHub Fine-Grained Token (github_pat_)"]='github_pat_[A-Za-z0-9_]{80,}'
 PATTERNS["GitHub OAuth token (gho_)"]='gho_[A-Za-z0-9]{36,}'
+PATTERNS["GitHub Actions token (ghs_)"]='ghs_[A-Za-z0-9]{36,}'
 PATTERNS["Telegram Bot Token"]='[0-9]{8,10}:[A-Za-z0-9_-]{35}'
 PATTERNS["AWS Access Key"]='AKIA[0-9A-Z]{16}'
+PATTERNS["AWS Secret Key assignment"]='aws_secret_access_key\s*=\s*[A-Za-z0-9/+]{40}'
 PATTERNS["Slack token"]='xox[baprs]-[A-Za-z0-9-]+'
 PATTERNS["Stripe secret key"]='sk_(live|test)_[A-Za-z0-9]{24,}'
+PATTERNS["Stripe restricted key"]='rk_(live|test)_[A-Za-z0-9]{24,}'
 PATTERNS["Private key header"]='-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+PATTERNS["Groq API key"]='gsk_[A-Za-z0-9]{52}'
+PATTERNS["Discord bot token"]='[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}'
+PATTERNS["Database URL with password"]='(postgres|mysql|mongodb)(\+[a-z]+)?://[^:]+:[^@]{6,}@'
+PATTERNS["Generic API key assignment"]='(api_key|apikey|api_secret|auth_token|access_token|secret_key)\s*[=:]\s*["\x27][A-Za-z0-9_\-\.]{20,}["\x27]'
+PATTERNS["Bearer token hardcoded"]='Authorization:\s+Bearer\s+[A-Za-z0-9_\-\.]{20,}'
 
 for FILE in $STAGED; do
   case "$FILE" in
     *.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.ttf|*.eot|*.svg|*.pdf|*.zip)
       continue ;;
-    .env.example|.gitignore|*.md|pnpm-lock.yaml|*.lock)
+    .env.example|.gitignore|pnpm-lock.yaml|*.lock)
       continue ;;
   esac
 
