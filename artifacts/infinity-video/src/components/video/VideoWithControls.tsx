@@ -11,9 +11,9 @@ const PROGRESS_TICK_MS = 50;
 
 const SCENE_LABELS: Record<string, string> = {
   hook:       'INTRO',
-  reveal:     'PLATAFORMA',
-  capability: 'RECURSOS',
-  speed:      'VELOCIDADE',
+  reveal:     'COMANDO',
+  capability: 'MÓDULOS',
+  speed:      'FERRAMENTAS',
   closing:    'ACESSO',
 };
 
