@@ -4,6 +4,7 @@ import path from "path";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { solveHCaptchaWithAI } from "../services/hcaptcha-ai-solver.js";
 import { getResidentialCreds } from "./proxies.js";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -234,9 +235,9 @@ async function solveCaptcha2captcha(
     const body = new URLSearchParams(params);
     const r = await fetch("https://2captcha.com/in.php", { method: "POST", body });
     const d = await r.json() as { status: number; request: string };
-    console.log(`[2captcha] submit status=${d.status} id=${d.request}`);
+    logger.info(`[2captcha] submit status=${d.status} id=${d.request}`);
     if (d.status !== 1) {
-      console.error(`[2captcha] submit failed: ${d.request}`);
+      logger.error(`[2captcha] submit failed: ${d.request}`);
       return null;
     }
     const id = d.request;
@@ -247,18 +248,18 @@ async function solveCaptcha2captcha(
       const p = await fetch(`https://2captcha.com/res.php?key=${apiKey}&action=get&id=${id}&json=1`);
       const pd = await p.json() as { status: number; request: string };
       if (pd.status === 1) {
-        console.log(`[2captcha] solved after ${(i + 1) * 3}s`);
+        logger.info(`[2captcha] solved after ${(i + 1) * 3}s`);
         return pd.request;
       }
       if (pd.request !== "CAPCHA_NOT_READY") {
-        console.error(`[2captcha] poll error: ${pd.request}`);
+        logger.error(`[2captcha] poll error: ${pd.request}`);
         return null;
       }
     }
-    console.error("[2captcha] timeout after 120s");
+    logger.error("[2captcha] timeout after 120s");
     return null;
   } catch (e) {
-    console.error("[2captcha] error:", e);
+    logger.error({ e }, "[2captcha] error");
     return null;
   }
 }
@@ -284,7 +285,7 @@ async function solveCaptchaCapmonster(
       body: JSON.stringify({ clientKey: apiKey, task: taskBody }),
     });
     const d = await r.json() as { taskId?: number; errorId?: number; errorCode?: string };
-    console.log(`[capmonster] create taskId=${d.taskId} errorId=${d.errorId} errorCode=${d.errorCode}`);
+    logger.info(`[capmonster] create taskId=${d.taskId} errorId=${d.errorId} errorCode=${d.errorCode}`);
     if (!d.taskId) return null;
 
     for (let i = 0; i < 40; i++) {
@@ -296,18 +297,18 @@ async function solveCaptchaCapmonster(
       });
       const pd = await p.json() as { status?: string; solution?: { gRecaptchaResponse?: string }; errorCode?: string };
       if (pd.status === "ready") {
-        console.log(`[capmonster] solved after ${(i + 1) * 3}s`);
+        logger.info(`[capmonster] solved after ${(i + 1) * 3}s`);
         return pd.solution?.gRecaptchaResponse ?? null;
       }
       if (pd.status === "failed") {
-        console.error(`[capmonster] failed: ${pd.errorCode}`);
+        logger.error(`[capmonster] failed: ${pd.errorCode}`);
         return null;
       }
     }
-    console.error("[capmonster] timeout after 120s");
+    logger.error("[capmonster] timeout after 120s");
     return null;
   } catch (e) {
-    console.error("[capmonster] error:", e);
+    logger.error({ e }, "[capmonster] error");
     return null;
   }
 }
@@ -464,7 +465,7 @@ async function createOneAccount(
     });
 
     const body1 = await attempt1.json() as Record<string, unknown>;
-    console.log(`[register] attempt1 status=${attempt1.status} proxy=${currentProxy ?? "none"} body=${JSON.stringify(body1).slice(0, 250)}`);
+    logger.info(`[register] attempt1 status=${attempt1.status} proxy=${currentProxy ?? "none"} body=${JSON.stringify(body1).slice(0, 250)}`);
 
     // Token returned on first try (clean residential IP)
     if (body1.token && typeof body1.token === "string") {
@@ -474,7 +475,7 @@ async function createOneAccount(
     // Retry with new email AND new proxy if this email is already registered
     const errCheck = extractDiscordError(body1, attempt1.status);
     if (errCheck.includes("EMAIL_ALREADY_REGISTERED")) {
-      console.log(`[register] email ${mail.full} already registered, rotating proxy and retrying (try ${emailTry + 1}/3)`);
+      logger.info(`[register] email already registered, rotating proxy and retrying (try ${emailTry + 1}/3)`);
       continue;
     }
 
@@ -514,7 +515,7 @@ async function createOneAccount(
       });
 
       const body2 = await attempt2.json() as Record<string, unknown>;
-      console.log(`[register] attempt2 (post-captcha) status=${attempt2.status} body=${JSON.stringify(body2).slice(0, 200)}`);
+      logger.info(`[register] attempt2 (post-captcha) status=${attempt2.status} body=${JSON.stringify(body2).slice(0, 200)}`);
 
       if (body2.token && typeof body2.token === "string") {
         return { status: "ok", token: body2.token as string, username, email: mail.full, password, detail: "Conta criada (captcha resolvido)" };
@@ -731,7 +732,7 @@ router.get("/discord/accounts/free-proxy", async (_req, res) => {
         const nonHostingIPs = new Set(ipData.filter(d => !d.hosting && !d.proxy).map(d => d.query));
         const filtered = candidates.filter(p => nonHostingIPs.has(p.split(":")[0]));
         if (filtered.length > 0) residentialCandidates = filtered;
-        console.log(`[free-proxy] IP classify: ${candidates.length} total, ${filtered.length} non-datacenter`);
+        logger.info(`[free-proxy] IP classify: ${candidates.length} total, ${filtered.length} non-datacenter`);
       }
     } catch { /* fallback: test all */ }
 
@@ -831,7 +832,7 @@ router.post("/discord/accounts/create", async (req, res) => {
     if (rc) {
       const resUrl = `http://${rc.username}:${rc.password}@${rc.host}:${rc.port}`;
       proxyPool = Array.from({ length: safeCount }, () => resUrl);
-      console.log(`[create] Using residential proxy: ${rc.host}:${rc.port} for ${safeCount} accounts`);
+      logger.info(`[create] Using residential proxy: ${rc.host}:${rc.port} for ${safeCount} accounts`);
     } else {
       proxyPool = [undefined];
     }

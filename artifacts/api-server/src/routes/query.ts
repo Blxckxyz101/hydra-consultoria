@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { logger } from "../lib/logger.js";
 
 // esbuild bundles all routes into dist/index.mjs so import.meta.url always
 // resolves to dist/, not dist/routes/. Try multiple candidate paths.
@@ -57,7 +58,7 @@ function loadCSV(): void {
     if (rec.prontuario) byProntuario.set(rec.prontuario.toLowerCase(), rec);
     if (rec.cpf && rec.cpf !== rec.prontuario) byCpf.set(rec.cpf.toLowerCase(), rec);
   }
-  console.log(`[DB] Loaded ${records.length} unique records from db.csv (${dupes} duplicates removed)`);
+  logger.info(`[DB] Loaded ${records.length} unique records from db.csv (${dupes} duplicates removed)`);
 }
 
 loadCSV();

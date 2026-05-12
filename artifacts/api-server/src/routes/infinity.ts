@@ -2849,7 +2849,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   // sisreg and sipni are not yet connected — return a clear error
   if (source === "sisreg" || source === "sipni") {
     const label = source === "sisreg" ? "SISREG-III" : "SI-PNI";
-    res.json({ success: false, error: `O módulo ${label} está temporariamente indisponível. Tente pela base Infinity.` });
+    res.json({ success: false, error: `O módulo ${label} está temporariamente indisponível. Tente pela base Hydra.` });
     return;
   }
 
@@ -2908,7 +2908,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const errorMsg = !success && isAuthError
       ? tipoLower === "credilink"
         ? "CrediLink temporariamente indisponível. O módulo requer acesso especial — contate o suporte."
-        : "Autenticação com a Skylers API falhou. Tente novamente em instantes ou acesse pela base Infinity."
+        : "Autenticação com a Skylers API falhou. Tente novamente em instantes ou acesse pela base Hydra."
       : provider.error ?? "Sem resultado";
     // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
     if (!res.headersSent) {

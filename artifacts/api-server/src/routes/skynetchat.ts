@@ -2,6 +2,7 @@ import { Router } from "express";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -65,7 +66,7 @@ async function runKeepalive() {
       // Only mark expired if it was previously alive (has lastSeen) or is old
       const ageMs = now - acc.addedAt;
       if (acc.lastSeen || ageMs > 60 * 60 * 1000) {
-        console.log(`[SKYNETCHAT-POOL] Cookie expired — nid=${acc.nid.slice(0, 12)}...`);
+        logger.warn(`[SKYNETCHAT-POOL] Cookie expired — nid=${acc.nid.slice(0, 12)}...`);
         acc.expired = true;
       }
     }
@@ -74,7 +75,7 @@ async function runKeepalive() {
 
   if (changed) savePool(pool);
   const active = pool.filter(a => !a.expired).length;
-  console.log(`[SKYNETCHAT-POOL] Keepalive done — ${active}/${pool.length} accounts active`);
+  logger.info(`[SKYNETCHAT-POOL] Keepalive done — ${active}/${pool.length} accounts active`);
 }
 
 // Start keepalive loop
@@ -400,10 +401,10 @@ router.post("/skynetchat/ask", async (req, res) => {
       return;
     }
     // Non-OK but not 429 → fall through to strategy 2
-    console.warn("[SKYNET-ASK] Discord bot returned non-OK:", r.status, data);
+    logger.warn({ status: r.status, data }, "[SKYNET-ASK] Discord bot returned non-OK");
   } catch (e) {
     // Discord bot unavailable (not started yet, or crashed) → fall through
-    console.warn("[SKYNET-ASK] Discord bot internal server unavailable, falling back:", (e as Error).message?.slice(0, 80));
+    logger.warn(`[SKYNET-ASK] Discord bot internal server unavailable, falling back: ${(e as Error).message?.slice(0, 80)}`);
   }
 
   // ── Strategy 2: Direct call (no CF clearance, but works sometimes) ─────────
