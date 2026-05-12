@@ -93,7 +93,20 @@ router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
   if (Array.isArray(socialLinks)) patch.profileSocialLinks = sanitizeLinks(socialLinks) as any;
   if (typeof accentColor === "string" || accentColor === null) patch.profileAccentColor = typeof accentColor === "string" ? accentColor.slice(0, 20) : null;
   if (typeof bgType === "string") patch.profileBgType = bgType.slice(0, 20);
-  if (typeof bgValue === "string" || bgValue === null) patch.profileBgValue = typeof bgValue === "string" ? bgValue.slice(0, 500) : null;
+  if (typeof bgValue === "string" || bgValue === null) {
+    if (typeof bgValue === "string") {
+      // Allow data URLs (base64 images) up to ~10MB; allow plain URLs up to 2KB
+      const isDataUrl = bgValue.startsWith("data:");
+      const max = isDataUrl ? 10 * 1024 * 1024 : 2000;
+      if (bgValue.length > max) {
+        res.status(413).json({ error: isDataUrl ? "Imagem muito grande (máx ~7MB). Comprima ou use uma URL." : "URL muito longa (máx 2000 chars)." });
+        return;
+      }
+      patch.profileBgValue = bgValue;
+    } else {
+      patch.profileBgValue = null;
+    }
+  }
   if (typeof cardTheme === "string") {
     // Validate theme against allowed themes by plan
     const userRow = await db.select({ planType: infinityUsersTable.planType, planExpiresAt: infinityUsersTable.planExpiresAt }).from(infinityUsersTable).where(eq(infinityUsersTable.username, me)).limit(1);
