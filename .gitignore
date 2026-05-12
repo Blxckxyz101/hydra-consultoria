@@ -51,3 +51,4 @@ Thumbs.db
 # Sensitive runtime data files — contain credentials/tokens at runtime
 artifacts/api-server/data/proxy-config.json
 artifacts/api-server/data/ip-tracker.json
+artifacts/api-server/.skynet-pool.json
