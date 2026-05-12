@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable } from "@workspace/db";
-import { eq, or, and, desc, asc, ne, sql, inArray, lt } from "drizzle-orm";
+import { eq, or, and, desc, asc, ne, sql, inArray, lt, like } from "drizzle-orm";
 import { requireAuth } from "../lib/infinity-auth.js";
 import { logger } from "../lib/logger.js";
 import { randomBytes } from "node:crypto";
@@ -335,6 +335,59 @@ router.get("/me/dm/:username", requireAuth, async (req, res): Promise<void> => {
     res.json({ room, otherUser: targetRows[0] });
   } catch (err) {
     logger.error({ err }, "Failed to get/create DM room");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ── List my DMs ───────────────────────────────────────────────────────────────
+
+router.get("/me/dms", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    const dmRooms = await db.select()
+      .from(infinityChatRoomsTable)
+      .where(
+        and(
+          eq(infinityChatRoomsTable.type, "dm"),
+          or(
+            like(infinityChatRoomsTable.slug, `dm:${me}:%`),
+            like(infinityChatRoomsTable.slug, `dm:%:${me}`)
+          )
+        )
+      );
+
+    const results = await Promise.all(dmRooms.map(async (room) => {
+      const parts = room.slug.split(":");
+      const otherUsername = parts[1] === me ? parts[2] : parts[1];
+
+      const [otherUser] = await db.select({
+        username: infinityUsersTable.username,
+        displayName: infinityUsersTable.displayName,
+        profilePhoto: infinityUsersTable.profilePhoto,
+        profileAccentColor: infinityUsersTable.profileAccentColor,
+      }).from(infinityUsersTable).where(eq(infinityUsersTable.username, otherUsername!)).limit(1);
+
+      const [lastMsg] = await db.select({
+        content: infinityChatMessagesTable.content,
+        username: infinityChatMessagesTable.username,
+        createdAt: infinityChatMessagesTable.createdAt,
+      }).from(infinityChatMessagesTable)
+        .where(eq(infinityChatMessagesTable.roomSlug, room.slug))
+        .orderBy(desc(infinityChatMessagesTable.createdAt))
+        .limit(1);
+
+      return { room, otherUser: otherUser ?? null, lastMessage: lastMsg ?? null };
+    }));
+
+    results.sort((a, b) => {
+      const aTime = a.lastMessage?.createdAt ? new Date(String(a.lastMessage.createdAt)).getTime() : 0;
+      const bTime = b.lastMessage?.createdAt ? new Date(String(b.lastMessage.createdAt)).getTime() : 0;
+      return bTime - aTime;
+    });
+
+    res.json(results);
+  } catch (err) {
+    logger.error({ err }, "Failed to list DMs");
     res.status(500).json({ error: "Erro interno" });
   }
 });

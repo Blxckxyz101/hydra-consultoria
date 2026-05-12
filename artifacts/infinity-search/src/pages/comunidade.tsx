@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Send, X, Globe, AtSign, Crown, Shield,
-  ChevronRight, Users, Loader2, Gift, Image as ImageIcon,
+  ChevronRight, Loader2, Gift, Image as ImageIcon,
   UserCircle, UserPlus, MessageSquareDiff, Search, CornerUpLeft,
-  Trash2, Smile, ZoomIn, Paperclip, File as FileIcon,
+  Trash2, Smile, ZoomIn, Paperclip, File as FileIcon, ArrowDown,
+  Hash, Settings, Users,
 } from "lucide-react";
 import { useInfinityMe } from "@workspace/api-client-react";
 import { Link } from "wouter";
@@ -36,6 +37,20 @@ function formatTime(iso: string) {
     return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
+function formatDaySeparator(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  if (msgDay.getTime() === today.getTime()) return "Hoje";
+  if (msgDay.getTime() === yesterday.getTime()) return "Ontem";
+  return d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+}
+function isSameDay(a: string, b: string): boolean {
+  const da = new Date(a), db = new Date(b);
+  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+}
 
 // ── Emoji categories ──────────────────────────────────────────────────────────
 const EMOJI_CATS = [
@@ -49,7 +64,6 @@ const EMOJI_CATS = [
   { label: "🍕 Comida",    emojis: ["🍕","🍔","🌮","🌯","🥙","🍜","🍝","🍛","🍣","🍱","🍤","🍗","🍖","🍞","🥐","🥖","🧀","🥚","🍳","🥞","🧇","🥓","🥩","🍇","🍓","🫐","🍊","🍋","🍌","🍉","🍎","🍏","🥝","🍑","🍒","🍈","🍍","🥭","🥥","🥑","🍅","🥕","🌽","🌶️","🧄","🧅","🥔","🍠","🫘","🧆","🥜","🌰","🫚","🍫","🍬","🍭","🍮","🍯","🍰","🎂","🧁","🥧","🍦","🍧","🍨","🍩","🍪","☕","🧃","🍺","🥤","🧋","🧉"] },
 ];
 const QUICK_EMOJIS = EMOJI_CATS[0]!.emojis.slice(0, 6);
-
 const GIF_API_KEY = "AIzaSyB0hVxdDsEaGWJmcAZdgqh3BQiqeKxvb0o";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -77,6 +91,17 @@ function Avatar({ username, photo, size = 8 }: { username: string; photo: string
   return <div className={cls} style={{ background: hashColor(username), color: "#000" }}>{username[0]?.toUpperCase()}</div>;
 }
 
+// ── Day Separator ─────────────────────────────────────────────────────────────
+function DaySeparator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 select-none">
+      <div className="flex-1 h-px bg-white/[0.07]" />
+      <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/25 shrink-0 px-1">{label}</span>
+      <div className="flex-1 h-px bg-white/[0.07]" />
+    </div>
+  );
+}
+
 // ── Content renderer ──────────────────────────────────────────────────────────
 function renderContent(content: string, accent: string, onImgClick?: (src: string) => void) {
   const imgRegex = /(?:https?:\/\/\S+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*)?\b|\/api\/infinity\/chat\/img\/[a-f0-9]+)/i;
@@ -86,29 +111,25 @@ function renderContent(content: string, accent: string, onImgClick?: (src: strin
     if (imgRegex.test(part)) {
       const src = part.startsWith("/") ? `${window.location.origin}${part}` : part;
       return (
-        <div key={i} className="mt-1 relative group/img inline-block">
-          <img
-            src={src} alt=""
-            className="max-w-[240px] max-h-48 rounded-xl object-cover border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+        <div key={i} className="mt-1.5 relative group/img inline-block">
+          <img src={src} alt=""
+            className="max-w-[260px] max-h-52 rounded-xl object-cover border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
             onError={e => { e.currentTarget.style.display = "none"; }}
-            onClick={() => onImgClick?.(src)}
-          />
-          <button
-            className="absolute top-1 right-1 w-6 h-6 rounded-lg bg-black/60 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity"
-            onClick={() => onImgClick?.(src)}
-          >
+            onClick={() => onImgClick?.(src)} />
+          <button className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/60 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity"
+            onClick={() => onImgClick?.(src)}>
             <ZoomIn className="w-3 h-3 text-white" />
           </button>
         </div>
       );
     }
     if (/^https?:\/\/\S+/.test(part)) {
-      return <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline break-all" style={{ color: accent }}>{part}</a>;
+      return <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="underline break-all hover:opacity-80 transition-opacity" style={{ color: accent }}>{part}</a>;
     }
     const mention = part.split(/(@\w+)/g);
     return <span key={i}>{mention.map((m, j) =>
       m.startsWith("@")
-        ? <Link key={j} href={`/u/${m.slice(1)}`}><span className="font-semibold cursor-pointer hover:underline" style={{ color: accent }}>{m}</span></Link>
+        ? <Link key={j} href={`/u/${m.slice(1)}`}><span className="font-semibold cursor-pointer hover:underline px-0.5 rounded" style={{ color: accent, background: `${accent}18` }}>{m}</span></Link>
         : <span key={j}>{m}</span>
     )}</span>;
   });
@@ -118,44 +139,29 @@ function renderContent(content: string, accent: string, onImgClick?: (src: strin
 function EmojiPickerPopup({ onSelect, onClose }: { onSelect: (e: string) => void; onClose: () => void }) {
   const [cat, setCat] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
     setTimeout(() => document.addEventListener("mousedown", handler), 0);
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
-
   return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, scale: 0.9, y: 8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.9, y: 8 }}
-      transition={{ type: "spring", stiffness: 400, damping: 28 }}
+    <motion.div ref={ref}
+      initial={{ opacity: 0, scale: 0.9, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.9, y: 8 }} transition={{ type: "spring", stiffness: 400, damping: 28 }}
       className="absolute bottom-full right-0 mb-2 w-72 rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
-      style={{ background: "hsl(220 35% 7%)" }}
-    >
-      {/* Category tabs */}
+      style={{ background: "hsl(220 35% 7%)" }}>
       <div className="flex border-b border-white/[0.06] overflow-x-auto scrollbar-none">
         {EMOJI_CATS.map((c, i) => (
           <button key={i} onClick={() => setCat(i)}
             className={`px-2 py-2 text-base shrink-0 transition-colors ${cat === i ? "bg-white/10" : "hover:bg-white/5"}`}
-            title={c.label}>
-            {c.emojis[0]}
-          </button>
+            title={c.label}>{c.emojis[0]}</button>
         ))}
       </div>
-      {/* Label */}
-      <div className="px-3 pt-2 pb-1 text-[9px] font-semibold text-muted-foreground/50 tracking-widest uppercase">
-        {EMOJI_CATS[cat]?.label}
-      </div>
-      {/* Grid */}
+      <div className="px-3 pt-2 pb-1 text-[9px] font-bold text-white/25 tracking-widest uppercase">{EMOJI_CATS[cat]?.label}</div>
       <div className="grid grid-cols-8 gap-0.5 px-2 pb-3 max-h-40 overflow-y-auto">
         {EMOJI_CATS[cat]?.emojis.map((e, i) => (
           <button key={i} onClick={() => onSelect(e)}
-            className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-lg transition-colors">
-            {e}
-          </button>
+            className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-lg transition-colors">{e}</button>
         ))}
       </div>
     </motion.div>
@@ -170,19 +176,13 @@ function LightboxModal({ src, onClose }: { src: string; onClose: () => void }) {
     return () => document.removeEventListener("keydown", h);
   }, [onClose]);
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.92)" }}
-      onClick={onClose}
-    >
-      <motion.img
-        src={src} alt=""
-        initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
+      style={{ background: "rgba(0,0,0,0.94)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+      <motion.img src={src} alt=""
+        initial={{ scale: 0.85 }} animate={{ scale: 1 }} exit={{ scale: 0.85 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        className="max-w-full max-h-full rounded-2xl object-contain shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      />
+        className="max-w-full max-h-full rounded-2xl object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
       <button onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors">
         <X className="w-4 h-4" />
       </button>
@@ -200,6 +200,7 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
   onImgClick: (src: string) => void;
 }) {
   const isConsecutive = prev && prev.username === msg.username &&
+    !(!prev || !isSameDay(prev.createdAt, msg.createdAt)) &&
     (new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime()) < 5 * 60 * 1000;
   const time = formatTime(msg.createdAt);
   const accent = msg.accentColor ?? "var(--color-primary)";
@@ -207,21 +208,18 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
   const [showActions, setShowActions] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  const handleUserClick = () => {
-    onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor });
-  };
-
   return (
     <div
-      className={`flex items-start gap-3 group hover:bg-white/[0.02] px-2 py-1 rounded-xl transition-colors relative ${isConsecutive ? "mt-0.5" : "mt-3"}`}
+      className={`flex items-start gap-3 group hover:bg-white/[0.025] px-3 py-0.5 rounded-xl transition-colors relative ${isConsecutive ? "mt-0" : "mt-3"}`}
       onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => { setShowActions(false); if (!showEmojiPicker) setShowEmojiPicker(false); }}
+      onMouseLeave={() => { setShowActions(false); }}
     >
       {/* Avatar column */}
-      <div className="w-8 shrink-0">
+      <div className="w-9 shrink-0 mt-0.5">
         {!isConsecutive && (
-          <button onClick={handleUserClick} className="focus:outline-none" title={`Ver perfil de ${msg.username}`}>
-            <Avatar username={msg.username} photo={msg.photo} size={8} />
+          <button onClick={() => onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor })}
+            className="focus:outline-none hover:scale-105 transition-transform">
+            <Avatar username={msg.username} photo={msg.photo} size={9} />
           </button>
         )}
       </div>
@@ -230,28 +228,29 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
       <div className="flex-1 min-w-0">
         {!isConsecutive && (
           <div className="flex items-baseline gap-2 mb-0.5">
-            <button onClick={handleUserClick} className="focus:outline-none hover:underline font-semibold text-sm" style={{ color: accent }}>
+            <button onClick={() => onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor })}
+              className="focus:outline-none hover:underline font-semibold text-sm" style={{ color: accent }}>
               {msg.displayName ?? msg.username}
             </button>
             <RoleBadge role={msg.role} />
-            <span className="text-[10px] text-muted-foreground/40">{time}</span>
-            {isOwn && <span className="text-[9px] text-muted-foreground/25 ml-0.5">• você</span>}
+            <span className="text-[10px] text-white/25">{time}</span>
+            {isOwn && <span className="text-[9px] text-white/20">• você</span>}
           </div>
         )}
 
         {/* Reply preview */}
         {msg.replyToUsername && msg.replyToContent && (
-          <div className="flex items-start gap-1.5 mb-1 pl-2 border-l-2 rounded cursor-pointer hover:bg-white/5 transition-colors py-0.5"
+          <div className="flex items-start gap-1.5 mb-1 pl-2 border-l-2 rounded py-0.5 cursor-pointer hover:bg-white/5 transition-colors"
             style={{ borderColor: accent + "60" }}>
             <CornerUpLeft className="w-3 h-3 shrink-0 mt-0.5 opacity-40" />
             <div className="min-w-0">
               <span className="text-[10px] font-semibold opacity-60" style={{ color: accent }}>@{msg.replyToUsername}</span>
-              <p className="text-[11px] text-muted-foreground/50 truncate">{msg.replyToContent}</p>
+              <p className="text-[11px] text-white/40 truncate max-w-[300px]">{msg.replyToContent}</p>
             </div>
           </div>
         )}
 
-        <div className="text-sm text-foreground/90 break-words leading-relaxed">
+        <div className="text-sm text-white/90 break-words leading-relaxed">
           {renderContent(msg.content, accent, onImgClick)}
         </div>
 
@@ -269,64 +268,48 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
             ))}
           </div>
         )}
+
+        {/* Consecutive timestamp on hover */}
+        {isConsecutive && showActions && (
+          <span className="text-[9px] text-white/20 absolute left-3.5 top-1 leading-none pointer-events-none">{time}</span>
+        )}
       </div>
 
       {/* Hover action toolbar */}
       <AnimatePresence>
         {showActions && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 4 }}
-            transition={{ duration: 0.12 }}
-            className="absolute right-2 -top-4 flex items-center gap-0.5 rounded-xl px-1.5 py-1 shadow-xl z-20 border border-white/10"
-            style={{ background: "hsl(220 35% 9%)" }}
+            initial={{ opacity: 0, scale: 0.9, y: 4 }} animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 4 }} transition={{ duration: 0.1 }}
+            className="absolute right-3 -top-4 flex items-center gap-0.5 rounded-xl px-1.5 py-1 shadow-xl z-20 border border-white/[0.08]"
+            style={{ background: "hsl(220 35% 10%)" }}
           >
-            {/* Quick emojis */}
             {QUICK_EMOJIS.map(e => (
               <button key={e} onClick={() => onReact(msg.id, e)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-sm hover:bg-white/10 transition-colors">{e}</button>
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-sm hover:bg-white/10 hover:scale-110 transition-all">{e}</button>
             ))}
-
             <div className="w-px h-4 bg-white/10 mx-0.5" />
-
-            {/* Full emoji picker */}
             <div className="relative">
-              <button
-                onClick={() => setShowEmojiPicker(v => !v)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-white/10 transition-colors"
-                title="Mais emojis"
-              >
+              <button onClick={() => setShowEmojiPicker(v => !v)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-white/40 hover:text-primary hover:bg-white/10 transition-colors" title="Mais emojis">
                 <Smile className="w-3.5 h-3.5" />
               </button>
               <AnimatePresence>
                 {showEmojiPicker && (
                   <EmojiPickerPopup
                     onSelect={e => { onReact(msg.id, e); setShowEmojiPicker(false); }}
-                    onClose={() => setShowEmojiPicker(false)}
-                  />
+                    onClose={() => setShowEmojiPicker(false)} />
                 )}
               </AnimatePresence>
             </div>
-
             <div className="w-px h-4 bg-white/10 mx-0.5" />
-
-            {/* Reply */}
-            <button
-              onClick={() => onReply({ id: msg.id, username: msg.username, displayName: msg.displayName, content: msg.content })}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-white/10 transition-colors"
-              title="Responder"
-            >
+            <button onClick={() => onReply({ id: msg.id, username: msg.username, displayName: msg.displayName, content: msg.content })}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-white/40 hover:text-primary hover:bg-white/10 transition-colors" title="Responder">
               <CornerUpLeft className="w-3.5 h-3.5" />
             </button>
-
-            {/* Delete (own only) */}
             {isOwn && (
-              <button
-                onClick={() => onDelete(msg.id)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                title="Apagar mensagem"
-              >
+              <button onClick={() => onDelete(msg.id)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-white/40 hover:text-red-400 hover:bg-red-400/10 transition-colors" title="Apagar">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             )}
@@ -358,24 +341,18 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 12 }}
+      style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }} onClick={onClose}>
+      <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 12 }}
         transition={{ type: "spring", stiffness: 380, damping: 28 }}
         className="w-full max-w-xs rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
-        style={{ background: "color-mix(in srgb, var(--color-card) 98%, transparent)" }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="h-16 relative" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 28%, transparent), color-mix(in srgb, hsl(220 35% 8%) 85%, transparent))` }}>
-          <button onClick={onClose} className="absolute top-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center hover:bg-black/25 text-white/60 transition-colors">
+        style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
+        <div className="h-20 relative" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 35%, transparent), hsl(220 35% 8%))` }}>
+          <button onClick={onClose} className="absolute top-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center hover:bg-black/30 text-white/60 transition-colors">
             <X className="w-4 h-4" />
           </button>
-          <div className="absolute -bottom-8 left-4">
+          <div className="absolute -bottom-9 left-4">
             <div className="w-16 h-16 rounded-2xl overflow-hidden" style={{ boxShadow: `0 0 0 4px hsl(220 35% 8%)` }}>
               {user.photo
                 ? <img src={user.photo} alt="" className="w-full h-full object-cover" />
@@ -385,39 +362,36 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
             </div>
           </div>
         </div>
-        <div className="pt-10 px-4 pb-4">
+        <div className="pt-11 px-4 pb-4">
           <div className="flex items-center gap-1.5 mb-0.5">
             <span className="font-bold text-base" style={{ color: accent }}>{user.displayName ?? user.username}</span>
             <RoleBadge role={user.role} />
           </div>
-          <p className="text-xs text-muted-foreground/50 mb-3">@{user.username}</p>
-          {user.bio && <p className="text-xs text-muted-foreground/70 mb-3 line-clamp-2 leading-relaxed">{user.bio}</p>}
+          <p className="text-xs text-white/35 mb-3">@{user.username}</p>
+          {user.bio && <p className="text-xs text-white/60 mb-3 line-clamp-2 leading-relaxed border-l-2 pl-2" style={{ borderColor: accent + "50" }}>{user.bio}</p>}
           <div className={`grid gap-2 mt-2 ${isSelf ? "grid-cols-1" : "grid-cols-3"}`}>
             <Link href={`/u/${user.username}`} onClick={onClose}>
               <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors w-full">
-                <UserCircle className="w-4 h-4 text-muted-foreground" />
-                <span className="text-[9px] text-muted-foreground font-medium">Ver Perfil</span>
+                <UserCircle className="w-4 h-4 text-white/40" />
+                <span className="text-[9px] text-white/50 font-medium">Ver Perfil</span>
               </button>
             </Link>
             {!isSelf && (
-              <button
-                onClick={sendFriendRequest}
-                disabled={friendStatus !== "none"}
-                className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60"
-              >
-                {friendStatus === "sending" ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                  : friendStatus === "sent"    ? <span className="text-green-400 text-sm font-bold">✓</span>
-                  : friendStatus === "error"   ? <span className="text-red-400 text-sm">!</span>
-                  : <UserPlus className="w-4 h-4 text-muted-foreground" />}
-                <span className="text-[9px] text-muted-foreground font-medium">
+              <button onClick={sendFriendRequest} disabled={friendStatus !== "none"}
+                className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60">
+                {friendStatus === "sending" ? <Loader2 className="w-4 h-4 animate-spin text-white/40" />
+                  : friendStatus === "sent" ? <span className="text-green-400 text-sm font-bold">✓</span>
+                  : friendStatus === "error" ? <span className="text-red-400 text-sm">!</span>
+                  : <UserPlus className="w-4 h-4 text-white/40" />}
+                <span className="text-[9px] text-white/50 font-medium">
                   {friendStatus === "sent" ? "Enviado!" : friendStatus === "error" ? "Erro" : "Add Amigo"}
                 </span>
               </button>
             )}
             {!isSelf && (
               <Link href={`/dm/${user.username}`} onClick={onClose}>
-                <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl w-full transition-colors"
-                  style={{ background: "color-mix(in srgb, var(--color-primary) 16%, transparent)" }}>
+                <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-colors w-full"
+                  style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)" }}>
                   <AtSign className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
                   <span className="text-[9px] font-medium" style={{ color: "var(--color-primary)" }}>Enviar DM</span>
                 </button>
@@ -437,7 +411,7 @@ function CreateRoomModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [icon, setIcon] = useState("💬");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const ICONS = ["💬", "🎮", "🎵", "📊", "🔥", "⚡", "🌊", "🏆", "💡", "🎯", "🛡️", "🌐"];
+  const ICONS = ["💬","🎮","🎵","📊","🔥","⚡","🌊","🏆","💡","🎯","🛡️","🌐","🤖","⚗️","🗡️","🌿"];
 
   const create = async () => {
     if (!name.trim()) return;
@@ -451,46 +425,46 @@ function CreateRoomModal({ onClose, onCreated }: { onClose: () => void; onCreate
       if (!r.ok) { setErr("Erro ao criar sala"); return; }
       const room = await r.json() as Room;
       onCreated(room); onClose();
-    } catch { setErr("Erro de conexão"); }
-    finally { setLoading(false); }
+    } catch { setErr("Erro de conexão"); } finally { setLoading(false); }
   };
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}>
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
       <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
         className="w-full max-w-sm rounded-2xl border border-white/10 p-6 space-y-4"
-        style={{ background: "color-mix(in srgb, var(--color-card) 98%, transparent)" }}
-        onClick={e => e.stopPropagation()}>
+        style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-base">Criar Sala</h2>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground"><X className="w-4 h-4" /></button>
+          <div>
+            <h2 className="font-bold text-base">Criar Sala</h2>
+            <p className="text-xs text-white/30 mt-0.5">Crie um espaço público para conversar</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 text-white/40"><X className="w-4 h-4" /></button>
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5 block">Ícone</label>
+          <label className="text-[10px] uppercase tracking-widest text-white/30 mb-2 block font-semibold">Ícone</label>
           <div className="flex flex-wrap gap-2">
             {ICONS.map(ic => (
               <button key={ic} onClick={() => setIcon(ic)}
-                className={`w-9 h-9 rounded-xl text-lg transition-all ${icon === ic ? "border-2 scale-110" : "border border-white/10 hover:border-white/20"}`}
-                style={{ borderColor: icon === ic ? "var(--color-primary)" : undefined }}>{ic}</button>
+                className={`w-9 h-9 rounded-xl text-lg transition-all ${icon === ic ? "border-2 scale-110" : "border border-white/10 hover:border-white/25 hover:bg-white/5"}`}
+                style={{ borderColor: icon === ic ? "var(--color-primary)" : undefined, background: icon === ic ? "color-mix(in srgb, var(--color-primary) 15%, transparent)" : undefined }}>{ic}</button>
             ))}
           </div>
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5 block">Nome da sala *</label>
+          <label className="text-[10px] uppercase tracking-widest text-white/30 mb-2 block font-semibold">Nome da sala *</label>
           <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && create()}
             placeholder="ex: discussão geral"
-            className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-primary transition-colors" maxLength={50} />
+            className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-primary/50 transition-colors" maxLength={50} />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5 block">Descrição</label>
+          <label className="text-[10px] uppercase tracking-widest text-white/30 mb-2 block font-semibold">Descrição</label>
           <input value={desc} onChange={e => setDesc(e.target.value)} placeholder="Opcional"
-            className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-primary transition-colors" maxLength={200} />
+            className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-primary/50 transition-colors" maxLength={200} />
         </div>
         {err && <p className="text-xs text-red-400">{err}</p>}
         <button onClick={create} disabled={!name.trim() || loading}
-          className="w-full py-3 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-40"
+          className="w-full py-3 rounded-xl font-bold text-sm uppercase tracking-widest transition-all disabled:opacity-40 hover:opacity-90"
           style={{ background: "var(--color-primary)", color: "#000" }}>
           {loading ? "Criando..." : "Criar sala"}
         </button>
@@ -512,25 +486,24 @@ function GifPicker({ onSelect, onClose }: { onSelect: (url: string) => void; onC
       const r = await fetch(`https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(q)}&key=${GIF_API_KEY}&limit=12&media_filter=gif`);
       const d = await r.json() as { results?: { media_formats?: { gif?: { url: string }; tinygif?: { url: string } } }[] };
       setGifs((d.results ?? []).map(g => ({ url: g.media_formats?.gif?.url ?? "", preview: g.media_formats?.tinygif?.url ?? g.media_formats?.gif?.url ?? "" })).filter(g => g.url));
-    } catch { setGifs([]); }
-    finally { setLoading(false); }
+    } catch { setGifs([]); } finally { setLoading(false); }
   };
 
   return (
-    <div className="border-t border-white/[0.06] bg-[hsl(220_35%_5%)] p-3">
-      <div className="flex gap-2 mb-2">
+    <div className="border-t border-white/[0.06] p-3" style={{ background: "rgba(2,6,18,0.6)" }}>
+      <div className="flex gap-2 mb-2.5">
         <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && search()}
           placeholder="Buscar GIFs (Tenor)..."
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/50" />
-        <button onClick={search} className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white/60 rounded-xl text-xs transition-colors">Buscar</button>
-        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-white/40"><X className="w-4 h-4" /></button>
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary/50 placeholder-white/25" />
+        <button onClick={search} className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white/50 rounded-xl text-xs transition-colors">Buscar</button>
+        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-white/30 transition-colors"><X className="w-4 h-4" /></button>
       </div>
-      {loading && <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-cyan-400" /></div>}
-      {!loading && gifs.length === 0 && <p className="text-white/30 text-xs text-center py-3">Digite e pressione Enter para buscar</p>}
+      {loading && <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>}
+      {!loading && gifs.length === 0 && <p className="text-white/25 text-xs text-center py-3">Digite e pressione Enter para buscar</p>}
       <div className="grid grid-cols-4 gap-1.5 max-h-40 overflow-y-auto">
         {gifs.map((g, i) => (
           <button key={i} onClick={() => { onSelect(g.url); onClose(); }}
-            className="aspect-video rounded-lg overflow-hidden hover:opacity-80 transition-opacity">
+            className="aspect-video rounded-xl overflow-hidden hover:opacity-80 hover:scale-105 transition-all">
             <img src={g.preview} alt="" className="w-full h-full object-cover" />
           </button>
         ))}
@@ -554,38 +527,36 @@ function SearchUsersModal({ onClose, onUserClick }: { onClose: () => void; onUse
       try {
         const r = await fetch(`/api/infinity/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
         if (r.ok) setResults(await r.json() as MiniUser[]);
-      } catch {}
-      finally { setLoading(false); }
+      } catch {} finally { setLoading(false); }
     }, 300);
     return () => clearTimeout(t);
   }, [q]);
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-20"
-      onClick={onClose}>
+      className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-20" onClick={onClose}>
       <motion.div initial={{ scale: 0.95, y: -20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: -20 }}
         className="w-full max-w-sm rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
-        style={{ background: "color-mix(in srgb, var(--color-card) 98%, transparent)" }}
-        onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-white/5 flex items-center gap-3">
-          <Search className="w-4 h-4 text-muted-foreground/60 shrink-0" />
+        style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-white/[0.06] flex items-center gap-3">
+          <Search className="w-4 h-4 text-white/30 shrink-0" />
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar usuários..."
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/40" />
-          {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 shrink-0" />}
-          <button onClick={onClose} className="shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors"><X className="w-4 h-4" /></button>
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-white/25" />
+          {loading && <Loader2 className="w-4 h-4 animate-spin text-white/30 shrink-0" />}
+          <button onClick={onClose} className="shrink-0 text-white/30 hover:text-white/70 transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <div className="max-h-72 overflow-y-auto">
-          {q.length < 2 && <p className="text-xs text-muted-foreground/40 text-center py-6">Digite ao menos 2 caracteres</p>}
-          {q.length >= 2 && !loading && results.length === 0 && <p className="text-xs text-muted-foreground/40 text-center py-6">Nenhum usuário encontrado</p>}
+          {q.length < 2 && <p className="text-xs text-white/25 text-center py-6">Digite ao menos 2 caracteres</p>}
+          {q.length >= 2 && !loading && results.length === 0 && <p className="text-xs text-white/25 text-center py-6">Nenhum usuário encontrado</p>}
           {results.map(u => (
             <button key={u.username} onClick={() => { onUserClick(u); onClose(); }}
               className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left">
               <Avatar username={u.username} photo={u.photo} size={9} />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold truncate" style={{ color: u.accentColor ?? "var(--color-primary)" }}>{u.displayName ?? u.username}</div>
-                <div className="text-[10px] text-muted-foreground/50">@{u.username}</div>
+                <div className="text-[10px] text-white/30">@{u.username}</div>
               </div>
+              <RoleBadge role={u.role} />
             </button>
           ))}
         </div>
@@ -607,11 +578,11 @@ function TypingIndicator({ typingUsers }: { typingUsers: Map<string, string> }) 
       className="flex items-center gap-2 px-4 py-1.5">
       <div className="flex gap-0.5">
         {[0, 1, 2].map(i => (
-          <motion.span key={i} className="w-1 h-1 rounded-full bg-muted-foreground/50 inline-block"
+          <motion.span key={i} className="w-1.5 h-1.5 rounded-full bg-white/30 inline-block"
             animate={{ y: [0, -3, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
         ))}
       </div>
-      <span className="text-[10px] text-muted-foreground/50 italic">{text}...</span>
+      <span className="text-[10px] text-white/30 italic">{text}...</span>
     </motion.div>
   );
 }
@@ -620,10 +591,8 @@ function TypingIndicator({ typingUsers }: { typingUsers: Map<string, string> }) 
 function PendingFileBar({ file, onRemove }: { file: PendingFile; onRemove: () => void }) {
   const isImg = file.mimeType.startsWith("image/");
   return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-      className="border-t border-white/[0.06] px-3 py-2.5 bg-white/[0.02]"
-    >
+    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+      className="border-t border-white/[0.06] px-3 py-2.5 bg-white/[0.02]">
       <div className="flex items-center gap-3">
         {isImg ? (
           <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 border border-white/10">
@@ -631,15 +600,15 @@ function PendingFileBar({ file, onRemove }: { file: PendingFile; onRemove: () =>
           </div>
         ) : (
           <div className="w-14 h-14 rounded-xl shrink-0 border border-white/10 bg-white/5 flex items-center justify-center">
-            <FileIcon className="w-6 h-6 text-muted-foreground/50" />
+            <FileIcon className="w-6 h-6 text-white/30" />
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-foreground/80 truncate">{file.filename}</p>
-          <p className="text-[10px] text-muted-foreground/40 mt-0.5">{file.sizeLabel} · {isImg ? "Imagem" : "Arquivo"}</p>
+          <p className="text-xs font-medium text-white/80 truncate">{file.filename}</p>
+          <p className="text-[10px] text-white/30 mt-0.5">{file.sizeLabel} · {isImg ? "Imagem" : "Arquivo"}</p>
           <p className="text-[9px] text-primary/60 mt-0.5">Pronto para enviar — adicione uma legenda ou envie direto</p>
         </div>
-        <button onClick={onRemove} className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center hover:bg-red-400/10 text-muted-foreground/40 hover:text-red-400 transition-colors">
+        <button onClick={onRemove} className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center hover:bg-red-400/10 text-white/30 hover:text-red-400 transition-colors">
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -652,25 +621,23 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
-      onClick={onCancel}>
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }} onClick={onCancel}>
       <motion.div initial={{ scale: 0.9, y: 8 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 8 }}
         transition={{ type: "spring", stiffness: 400, damping: 28 }}
         className="w-full max-w-xs rounded-2xl border border-white/10 p-5 shadow-2xl"
-        style={{ background: "hsl(220 35% 9%)" }}
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-xl bg-red-400/10 flex items-center justify-center">
+        style={{ background: "hsl(220 35% 9%)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-red-400/10 flex items-center justify-center shrink-0">
             <Trash2 className="w-4 h-4 text-red-400" />
           </div>
           <div>
             <p className="font-semibold text-sm">Apagar mensagem</p>
-            <p className="text-[10px] text-muted-foreground/50">Essa ação não pode ser desfeita.</p>
+            <p className="text-[10px] text-white/30">Essa ação não pode ser desfeita.</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={onCancel} className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-sm transition-colors">Cancelar</button>
-          <button onClick={onConfirm} className="flex-1 py-2 rounded-xl bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold transition-colors">Apagar</button>
+          <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-sm transition-colors">Cancelar</button>
+          <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold transition-colors">Apagar</button>
         </div>
       </motion.div>
     </motion.div>
@@ -699,9 +666,11 @@ export default function Comunidade() {
   const [showSearch, setShowSearch] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -743,7 +712,6 @@ export default function Comunidade() {
     ws.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data as string) as Record<string, unknown>;
-
         if (data.type === "message") {
           const msg = data as unknown as ChatMsg;
           setMessages(prev => {
@@ -757,17 +725,14 @@ export default function Comunidade() {
             if (t) { clearTimeout(t); typingUserTimers.current.delete(from); }
           }
         }
-
         if (data.type === "reaction_update") {
           const { messageId, reactions } = data as { messageId: number; reactions: Reaction[] };
           setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions } : m));
         }
-
         if (data.type === "message_delete") {
           const { messageId } = data as { messageId: number };
           setMessages(prev => prev.filter(m => m.id !== messageId));
         }
-
         if (data.type === "typing") {
           const from = String(data.username ?? "");
           const displayName = String(data.displayName ?? from);
@@ -794,7 +759,16 @@ export default function Comunidade() {
     setTypingUsers(new Map());
   }, [activeRoom, wsReady]);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  // Auto-scroll only when at bottom
+  useEffect(() => {
+    if (isAtBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isAtBottom]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setIsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 100);
+  }, []);
 
   const sendTyping = useCallback(() => {
     if (!activeRoom || wsRef.current?.readyState !== 1) return;
@@ -817,13 +791,13 @@ export default function Comunidade() {
           body: JSON.stringify({ content: trimmed, replyToId: rToId ?? null }),
         });
         await loadMessages(activeRoom.slug);
-      } catch {}
-      finally { setSending(false); }
+      } catch {} finally { setSending(false); }
     }
+    setIsAtBottom(true);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 80);
     inputRef.current?.focus();
   }, [activeRoom, sending, loadMessages]);
 
-  // Send with optional pending file attachment
   const handleSend = useCallback(async () => {
     if (!activeRoom) return;
     if (pendingFile) {
@@ -842,8 +816,7 @@ export default function Comunidade() {
           await sendMessage(content, replyTo?.id);
           setPendingFile(null);
         }
-      } catch {}
-      finally { setImgUploading(false); }
+      } catch {} finally { setImgUploading(false); }
     } else {
       await sendMessage(input, replyTo?.id);
     }
@@ -853,13 +826,11 @@ export default function Comunidade() {
     setInput(value);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     typingTimerRef.current = setTimeout(() => sendTyping(), 500);
-
     const atMatch = value.match(/@(\w*)$/);
     if (atMatch) setMentionQuery(atMatch[1] ?? "");
     else { setMentionQuery(null); setMentionSuggestions([]); }
   }, [sendTyping]);
 
-  // @ mention suggestions (include self)
   useEffect(() => {
     if (mentionQuery === null || !activeRoom) { setMentionSuggestions([]); return; }
     const t = setTimeout(async () => {
@@ -868,13 +839,8 @@ export default function Comunidade() {
         if (r.ok) {
           const members = await r.json() as { username: string; displayName: string | null }[];
           const q = mentionQuery.toLowerCase();
-          // Include self in suggestions
-          const withSelf = members.some(m => m.username === myUsername)
-            ? members
-            : [{ username: myUsername, displayName: null }, ...members];
-          setMentionSuggestions(
-            withSelf.filter(m => m.username.toLowerCase().includes(q) || (m.displayName ?? "").toLowerCase().includes(q)).slice(0, 7)
-          );
+          const withSelf = members.some(m => m.username === myUsername) ? members : [{ username: myUsername, displayName: null }, ...members];
+          setMentionSuggestions(withSelf.filter(m => m.username.toLowerCase().includes(q) || (m.displayName ?? "").toLowerCase().includes(q)).slice(0, 7));
         }
       } catch {}
     }, 200);
@@ -889,7 +855,6 @@ export default function Comunidade() {
     inputRef.current?.focus();
   }, [input]);
 
-  // File select → preview (don't send)
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -897,24 +862,15 @@ export default function Comunidade() {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUri = reader.result as string;
-      setPendingFile({
-        dataUri,
-        mimeType: file.type,
-        filename: file.name,
-        sizeLabel: formatBytes(file.size),
-        previewUrl: URL.createObjectURL(file),
-      });
+      setPendingFile({ dataUri, mimeType: file.type, filename: file.name, sizeLabel: formatBytes(file.size), previewUrl: URL.createObjectURL(file) });
     };
     reader.readAsDataURL(file);
   }, []);
 
-  // React to message
   const handleReact = async (messageId: number, emoji: string) => {
     try {
       const r = await fetch(`/api/infinity/chat/messages/${messageId}/react`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ emoji }),
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ emoji }),
       });
       if (r.ok) {
         const d = await r.json() as { reactions: Reaction[] };
@@ -923,16 +879,10 @@ export default function Comunidade() {
     } catch {}
   };
 
-  // Delete message
   const handleDelete = async (messageId: number) => {
     try {
-      const r = await fetch(`/api/infinity/chat/messages/${messageId}`, {
-        method: "DELETE",
-        headers: authHeaders(),
-      });
-      if (r.ok) {
-        setMessages(prev => prev.filter(m => m.id !== messageId));
-      }
+      const r = await fetch(`/api/infinity/chat/messages/${messageId}`, { method: "DELETE", headers: authHeaders() });
+      if (r.ok) setMessages(prev => prev.filter(m => m.id !== messageId));
     } catch {}
     setDeleteConfirmId(null);
   };
@@ -941,59 +891,92 @@ export default function Comunidade() {
 
   return (
     <div className="flex h-[calc(100vh-3.5rem-76px)] lg:h-screen overflow-hidden">
+      <AnimatePresence>
+        {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
+        {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}
+        {selectedUser && <UserPopup user={selectedUser} onClose={() => setSelectedUser(null)} myUsername={myUsername} />}
+        {showSearch && <SearchUsersModal onClose={() => setShowSearch(false)} onUserClick={u => { setSelectedUser(u); setShowSearch(false); }} />}
+        {deleteConfirmId !== null && (
+          <DeleteConfirm
+            onConfirm={() => handleDelete(deleteConfirmId)}
+            onCancel={() => setDeleteConfirmId(null)} />
+        )}
+      </AnimatePresence>
 
       {/* ── Sidebar ── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
-            initial={{ width: 0, opacity: 0 }} animate={{ width: 220, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
+            initial={{ width: 0, opacity: 0 }} animate={{ width: 228, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden"
-            style={{ background: "rgba(2,6,18,0.4)", backdropFilter: "blur(16px)" }}>
-            <div className="px-3 py-3 border-b border-white/5">
-              <div className="flex items-center justify-between mb-2">
+            style={{ background: "hsl(220 35% 5%)" }}>
+
+            {/* Sidebar header */}
+            <div className="px-3 py-3 border-b border-white/[0.06]">
+              <div className="flex items-center justify-between mb-2.5">
                 <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
-                  <span className="font-bold text-sm uppercase tracking-[0.15em]">Salas</span>
+                  <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ background: "color-mix(in srgb, var(--color-primary) 18%, transparent)" }}>
+                    <Hash className="w-3 h-3" style={{ color: "var(--color-primary)" }} />
+                  </div>
+                  <span className="font-bold text-xs uppercase tracking-[0.18em] text-white/50">Comunidade</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setShowSearch(true)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors" title="Buscar usuários">
+                  <button onClick={() => setShowSearch(true)}
+                    className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-white/25 hover:text-primary transition-colors" title="Buscar usuários">
                     <Search className="w-3.5 h-3.5" />
                   </button>
-                  <button onClick={() => setShowCreate(true)} className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground hover:text-primary transition-colors" title="Criar sala">
+                  <button onClick={() => setShowCreate(true)}
+                    className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-white/25 hover:text-primary transition-colors" title="Criar sala">
                     <Plus className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
+
+              {/* Connection status */}
               <div className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${wsReady ? "bg-green-400 animate-pulse" : "bg-yellow-400"}`} />
-                <span className="text-[10px] text-muted-foreground/50">{wsReady ? "Ao vivo" : "Reconectando..."}</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${wsReady ? "bg-green-400" : "bg-yellow-400 animate-pulse"}`} />
+                <span className="text-[10px] text-white/30">{wsReady ? "Conectado" : "Reconectando..."}</span>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+
+            {/* Channel list label */}
+            <div className="px-3 pt-3 pb-1">
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20">Canais de texto</span>
+            </div>
+
+            {/* Room list */}
+            <div className="flex-1 overflow-y-auto pb-2 px-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-white/10">
               {rooms.map(room => {
                 const isActive = activeRoom?.slug === room.slug;
                 return (
-                  <button key={room.slug} onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all ${isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-white/5"}`}
-                    style={isActive ? { background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 25%, transparent)" } : {}}>
-                    <span className="text-base w-5 text-center shrink-0">{room.icon ?? "#"}</span>
+                  <button key={room.slug}
+                    onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all relative group ${isActive ? "text-white" : "text-white/35 hover:text-white/70 hover:bg-white/[0.04]"}`}
+                    style={isActive ? { background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 22%, transparent)" } : {}}>
+                    {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full" style={{ background: "var(--color-primary)" }} />}
+                    <span className="text-base w-5 text-center shrink-0 leading-none">{room.icon ?? "#"}</span>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{room.name}</div>
+                      {room.description && isActive && (
+                        <div className="text-[10px] text-white/30 truncate mt-0.5">{room.description}</div>
+                      )}
                     </div>
-                    {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-muted-foreground/40 ml-auto" />}
+                    {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-white/20 ml-auto" />}
                   </button>
                 );
               })}
-              {rooms.length === 0 && <div className="px-3 py-8 text-center"><p className="text-xs text-muted-foreground/40">Nenhuma sala ainda</p></div>}
+              {rooms.length === 0 && <div className="px-3 py-8 text-center"><p className="text-xs text-white/20">Nenhuma sala ainda</p></div>}
             </div>
-            <div className="p-3 border-t border-white/5 space-y-1">
+
+            {/* Sidebar footer */}
+            <div className="p-2.5 border-t border-white/[0.06] space-y-1">
               <button onClick={() => setShowCreate(true)}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 border border-dashed border-white/10 hover:border-white/20 transition-all">
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 border border-dashed border-white/[0.08] hover:border-white/20 transition-all">
                 <Plus className="w-3.5 h-3.5" /> Nova sala
               </button>
               <Link href="/dm/...">
-                <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all">
+                <button className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
                   <MessageSquareDiff className="w-3.5 h-3.5" /> Nova DM
                 </button>
               </Link>
@@ -1003,94 +986,125 @@ export default function Comunidade() {
       </AnimatePresence>
 
       {/* ── Main chat area ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
 
         {/* Header */}
-        <div className="shrink-0 px-3 py-2.5 border-b border-white/5 flex items-center gap-3"
-          style={{ background: "rgba(2,6,18,0.3)", backdropFilter: "blur(12px)" }}>
+        <div className="shrink-0 px-3 py-2.5 border-b border-white/[0.06] flex items-center gap-3"
+          style={{ background: "rgba(2,6,18,0.4)", backdropFilter: "blur(16px)" }}>
           <button onClick={() => setSidebarOpen(v => !v)}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground shrink-0">
-            <ChevronRight className={`w-4 h-4 transition-transform ${sidebarOpen ? "rotate-180" : ""}`} />
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-white/30 hover:text-white/70 shrink-0 transition-colors">
+            <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${sidebarOpen ? "rotate-180" : ""}`} />
           </button>
           {activeRoom ? (
             <>
-              <span className="text-xl">{activeRoom.icon ?? "💬"}</span>
-              <div className="min-w-0">
-                <div className="font-bold text-sm truncate">{activeRoom.name}</div>
-                {activeRoom.description && <div className="text-[10px] text-muted-foreground/50 truncate">{activeRoom.description}</div>}
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <span className="text-xl leading-none shrink-0">{activeRoom.icon ?? "💬"}</span>
+                <div className="min-w-0">
+                  <div className="font-bold text-sm text-white truncate leading-none">{activeRoom.name}</div>
+                  {activeRoom.description && (
+                    <div className="text-[10px] text-white/30 truncate mt-0.5">{activeRoom.description}</div>
+                  )}
+                </div>
               </div>
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <button onClick={() => setShowSearch(true)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white/5 text-muted-foreground/50 hover:text-primary transition-colors" title="Buscar usuários">
-                  <Search className="w-3.5 h-3.5" />
+                <button onClick={() => setShowSearch(true)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-white/25 hover:text-primary transition-colors" title="Buscar usuários">
+                  <Users className="w-3.5 h-3.5" />
                 </button>
-                <span className={`w-2 h-2 rounded-full ${wsReady ? "bg-green-400" : "bg-yellow-400"}`} />
-                <span className="text-[10px] text-muted-foreground/40 hidden sm:block">{wsReady ? "ao vivo" : "offline"}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${wsReady ? "bg-green-400" : "bg-yellow-400"}`} />
+                  <span className="text-[10px] text-white/25 hidden sm:block">{wsReady ? "ao vivo" : "offline"}</span>
+                </div>
               </div>
             </>
-          ) : <span className="text-sm text-muted-foreground">Selecione uma sala</span>}
+          ) : <span className="text-sm text-white/30">Selecione uma sala</span>}
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-1 sm:px-2 py-3">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-white/10">
           {!activeRoom && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-              <div className="text-4xl">💬</div>
-              <p className="text-sm text-muted-foreground">Selecione uma sala para começar</p>
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-4">
+              <div className="w-14 h-14 rounded-2xl border border-white/[0.08] flex items-center justify-center" style={{ background: "hsl(220 35% 7%)" }}>
+                <Hash className="w-7 h-7 text-white/15" />
+              </div>
+              <p className="text-sm text-white/30">Selecione uma sala para começar</p>
             </div>
           )}
           {activeRoom && messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-              <span className="text-4xl">{activeRoom.icon ?? "💬"}</span>
-              <p className="font-semibold text-base">#{activeRoom.name}</p>
-              <p className="text-xs text-muted-foreground/60">Seja o primeiro a enviar uma mensagem.</p>
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-4">
+              <div className="text-5xl">{activeRoom.icon ?? "💬"}</div>
+              <div>
+                <p className="font-bold text-lg text-white/80">#{activeRoom.name}</p>
+                {activeRoom.description && <p className="text-sm text-white/30 mt-1">{activeRoom.description}</p>}
+                <p className="text-xs text-white/20 mt-2">Seja o primeiro a enviar uma mensagem neste canal.</p>
+              </div>
             </div>
           )}
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={msg.id}
-              msg={msg}
-              prev={messages[i - 1]}
-              myUsername={myUsername}
-              onReact={handleReact}
-              onUserClick={setSelectedUser}
-              onReply={r => { setReplyTo(r); inputRef.current?.focus(); }}
-              onDelete={id => setDeleteConfirmId(id)}
-              onImgClick={setLightboxSrc}
-            />
-          ))}
+
+          {/* Messages list with day separators */}
+          {messages.map((msg, i) => {
+            const prev = messages[i - 1];
+            const showDay = !prev || !isSameDay(prev.createdAt, msg.createdAt);
+            return (
+              <div key={msg.id}>
+                {showDay && <DaySeparator label={formatDaySeparator(msg.createdAt)} />}
+                <MessageBubble
+                  msg={msg}
+                  prev={showDay ? undefined : prev}
+                  myUsername={myUsername}
+                  onReact={handleReact}
+                  onUserClick={setSelectedUser}
+                  onReply={r => { setReplyTo(r); inputRef.current?.focus(); }}
+                  onDelete={id => setDeleteConfirmId(id)}
+                  onImgClick={setLightboxSrc}
+                />
+              </div>
+            );
+          })}
+
           <AnimatePresence>
             <TypingIndicator typingUsers={typingUsers} />
           </AnimatePresence>
           <div ref={bottomRef} />
         </div>
 
+        {/* Jump to bottom FAB */}
+        <AnimatePresence>
+          {!isAtBottom && activeRoom && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8, y: 8 }}
+              onClick={() => { setIsAtBottom(true); bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }}
+              className="absolute bottom-20 right-4 w-9 h-9 rounded-full flex items-center justify-center shadow-xl border border-white/15 hover:scale-110 hover:border-primary/40 transition-all z-10"
+              style={{ background: "hsl(220 35% 12%)" }}
+            >
+              <ArrowDown className="w-4 h-4 text-white/50" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+
         {/* GIF Picker */}
         {showGif && activeRoom && (
-          <GifPicker
-            onSelect={url => sendMessage(url, replyTo?.id)}
-            onClose={() => setShowGif(false)}
-          />
+          <GifPicker onSelect={url => sendMessage(url, replyTo?.id)} onClose={() => setShowGif(false)} />
         )}
 
         {/* Input zone */}
-        <div className="shrink-0 border-t border-white/[0.06]" style={{ background: "rgba(2,6,18,0.5)", backdropFilter: "blur(12px)" }}>
+        <div className="shrink-0 border-t border-white/[0.06]" style={{ background: "rgba(2,6,18,0.55)", backdropFilter: "blur(16px)" }}>
 
           {/* @ Mention suggestions */}
           <AnimatePresence>
             {mentionSuggestions.length > 0 && mentionQuery !== null && (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
-                className="border-t border-white/5 bg-[hsl(220_35%_6%)] divide-y divide-white/[0.04]">
+                className="border-t border-white/[0.05] divide-y divide-white/[0.04]"
+                style={{ background: "hsl(220 35% 7%)" }}>
                 {mentionSuggestions.map(u => (
                   <button key={u.username} onClick={() => insertMention(u.username)}
-                    className="w-full flex items-center gap-2.5 px-4 py-2 hover:bg-white/5 text-left transition-colors">
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-white/5 text-left transition-colors">
                     <Avatar username={u.username} photo={null} size={6} />
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm font-semibold">{u.displayName ?? u.username}</span>
-                      <span className="text-xs text-muted-foreground/50 ml-1.5">@{u.username}</span>
+                      <span className="text-sm font-semibold text-white/90">{u.displayName ?? u.username}</span>
+                      <span className="text-xs text-white/30 ml-1.5">@{u.username}</span>
                     </div>
-                    {u.username === myUsername && (
-                      <span className="text-[9px] text-primary/60 shrink-0">você</span>
-                    )}
+                    {u.username === myUsername && <span className="text-[9px] text-primary/60 shrink-0">você</span>}
                   </button>
                 ))}
               </motion.div>
@@ -1102,14 +1116,14 @@ export default function Comunidade() {
             {replyTo && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
                 className="flex items-center gap-3 px-4 py-2 bg-white/[0.02] border-t border-white/[0.04]">
-                <CornerUpLeft className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
+                <CornerUpLeft className="w-3.5 h-3.5 text-white/30 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <span className="text-[10px] font-semibold" style={{ color: "var(--color-primary)" }}>
                     @{replyTo.username}{replyTo.username === myUsername ? " (você)" : ""}
                   </span>
-                  <p className="text-[11px] text-muted-foreground/50 truncate">{replyTo.content}</p>
+                  <p className="text-[11px] text-white/35 truncate">{replyTo.content}</p>
                 </div>
-                <button onClick={() => setReplyTo(null)} className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-muted-foreground/40">
+                <button onClick={() => setReplyTo(null)} className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-white/25 transition-colors">
                   <X className="w-3 h-3" />
                 </button>
               </motion.div>
@@ -1123,17 +1137,14 @@ export default function Comunidade() {
 
           {/* Input row */}
           <div className="flex items-center gap-2 px-3 py-3">
-            {/* GIF */}
             <button onClick={() => setShowGif(v => !v)}
-              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${showGif ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${showGif ? "text-primary bg-primary/10" : "text-white/25 hover:text-primary hover:bg-primary/10"}`}
               title="GIF" disabled={!activeRoom}>
               <Gift className="w-4 h-4" />
             </button>
-
-            {/* Attach file */}
             <button onClick={() => fileInputRef.current?.click()}
-              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${pendingFile ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
-              title="Anexar arquivo/foto" disabled={!activeRoom || imgUploading}>
+              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${pendingFile ? "text-primary bg-primary/10" : "text-white/25 hover:text-primary hover:bg-primary/10"}`}
+              title="Anexar foto" disabled={!activeRoom || imgUploading}>
               {imgUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
             </button>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
@@ -1150,59 +1161,28 @@ export default function Comunidade() {
                     if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username);
                     else void handleSend();
                   }
-                  if (e.key === "Escape") {
-                    setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]);
-                    setPendingFile(null);
-                  }
+                  if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); setPendingFile(null); }
                 }}
                 placeholder={
-                  pendingFile
-                    ? "Adicione uma legenda (opcional)..."
-                    : activeRoom
-                    ? `Mensagem em #${activeRoom.name}...`
+                  pendingFile ? "Adicione uma legenda (opcional)..."
+                    : activeRoom ? `Mensagem em #${activeRoom.name}...`
                     : "Selecione uma sala"
                 }
                 disabled={!activeRoom || sending}
-                className="w-full bg-white/[0.06] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/30 disabled:opacity-50"
+                className="w-full bg-white/[0.07] border border-white/[0.1] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/15 transition-all placeholder:text-white/20 disabled:opacity-40"
               />
             </div>
 
-            {/* Send */}
             <button
               onClick={handleSend}
               disabled={!canSend}
-              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all disabled:opacity-30"
-              style={{ background: "var(--color-primary)", color: "#000" }}
-            >
-              {sending || imgUploading
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4" />}
+              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all disabled:opacity-25 hover:scale-105 active:scale-95"
+              style={{ background: "var(--color-primary)", color: "#000" }}>
+              {sending || imgUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
         </div>
       </div>
-
-      {/* ── Modals ── */}
-      <AnimatePresence>
-        {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => setRooms(prev => [...prev, r])} />}
-      </AnimatePresence>
-      <AnimatePresence>
-        {selectedUser && <UserPopup user={selectedUser} onClose={() => setSelectedUser(null)} myUsername={myUsername} />}
-      </AnimatePresence>
-      <AnimatePresence>
-        {showSearch && <SearchUsersModal onClose={() => setShowSearch(false)} onUserClick={u => { setSelectedUser(u); }} />}
-      </AnimatePresence>
-      <AnimatePresence>
-        {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
-      </AnimatePresence>
-      <AnimatePresence>
-        {deleteConfirmId !== null && (
-          <DeleteConfirm
-            onConfirm={() => handleDelete(deleteConfirmId)}
-            onCancel={() => setDeleteConfirmId(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }
