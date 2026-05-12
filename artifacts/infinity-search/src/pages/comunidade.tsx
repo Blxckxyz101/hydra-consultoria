@@ -113,7 +113,7 @@ function renderContent(content: string, accent: string, onImgClick?: (src: strin
       return (
         <div key={i} className="mt-1.5 relative group/img inline-block">
           <img src={src} alt=""
-            className="max-w-[260px] max-h-52 rounded-xl object-cover border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+            className="max-w-[240px] sm:max-w-[360px] md:max-w-[440px] max-h-72 rounded-xl object-cover border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
             onError={e => { e.currentTarget.style.display = "none"; }}
             onClick={() => onImgClick?.(src)} />
           <button className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/60 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity"
@@ -210,9 +210,15 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
 
   return (
     <div
-      className={`flex items-start gap-3 group hover:bg-white/[0.025] px-3 py-0.5 rounded-xl transition-colors relative ${isConsecutive ? "mt-0" : "mt-3"}`}
+      className={`flex items-start gap-2 sm:gap-3 group hover:bg-white/[0.025] px-2 sm:px-3 py-0.5 rounded-xl transition-colors relative ${isConsecutive ? "mt-0" : "mt-3"} ${showActions ? "bg-white/[0.025]" : ""}`}
       onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => { setShowActions(false); }}
+      onMouseLeave={() => { setShowActions(false); setShowEmojiPicker(false); }}
+      onClick={(e) => {
+        // Tap-to-toggle actions on touch devices (ignore taps on links/buttons/images)
+        const t = e.target as HTMLElement;
+        if (t.closest("button, a, img, input, textarea")) return;
+        setShowActions(v => !v);
+      }}
     >
       {/* Avatar column */}
       <div className="w-9 shrink-0 mt-0.5">
@@ -890,7 +896,7 @@ export default function Comunidade() {
   const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem-76px)] lg:h-screen overflow-hidden">
+    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       <AnimatePresence>
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}
@@ -903,13 +909,25 @@ export default function Comunidade() {
         )}
       </AnimatePresence>
 
+      {/* ── Sidebar mobile backdrop ── */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden fixed inset-0 z-20 bg-black/55 backdrop-blur-[2px]"
+          />
+        )}
+      </AnimatePresence>
+
       {/* ── Sidebar ── */}
       <AnimatePresence>
         {sidebarOpen && (
           <motion.div
-            initial={{ width: 0, opacity: 0 }} animate={{ width: 228, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
+            initial={{ x: -260, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -260, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden"
+            className="absolute lg:relative inset-y-0 left-0 z-30 w-[260px] lg:w-[228px] shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden shadow-2xl lg:shadow-none"
             style={{ background: "hsl(220 35% 5%)" }}>
 
             {/* Sidebar header */}

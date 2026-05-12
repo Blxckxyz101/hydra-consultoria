@@ -560,7 +560,8 @@ function extractPhotoFromResult(res: ModuleResult): string | null {
   return null;
 }
 function extractPhoto(results: Record<string, ModuleResult>): string | null {
-  for (const key of ["fotonc", "foto"]) {
+  // Search all known photo / biometry modules in priority order
+  for (const key of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotogo", "fotopb", "fotope", "fotoal", "fotodf", "fototo"]) {
     const r = results[key];
     if (r?.data) { const p = extractPhotoFromResult(r); if (p) return p; }
   }
@@ -1939,19 +1940,27 @@ export function CpfFullPanel({ cpf }: Props) {
 
                       // For dívidas/bens: detect when the API echoes back the subject's personal data
                       // instead of returning actual financial/property records
-                      const FINANCIAL_RE = /VALOR|DIVIDA|DEVEDOR|CREDITOR|CREDOR|DESCRICAO.*DIV|AREA.*M2|MATRICULA|IMOVEL|VENCIMENTO|PARCELA|DEBITO|INADIMPL|AVERBAC|GRAVAME/i;
-                      const PERSONAL_KEY_RE = /^(CPF|NOME|MAE|PAI|SEXO|NASC|FILIACAO|SITUACAO|RACA|ESCOLAR|DEFICI|NACION|NATURAL|ESTADO|EMISSAO|TITULO|PIS|NIS|RG|IDENT)/i;
+                      const FINANCIAL_RE = /VALOR|R\$|DIVIDA|DÍVIDA|DEVEDOR|CREDITOR|CREDOR|DESCRICAO.*DIV|DESCRIÇÃO.*DÍV|AREA.*M2|ÁREA.*M2|MATRICULA|MATRÍCULA|IMOVEL|IMÓVEL|VENCIMENTO|PARCELA|DEBITO|DÉBITO|INADIMPL|AVERBAC|AVERBAÇ|GRAVAME|HIPOTECA|FINANC|EMPRESTIMO|EMPRÉSTIMO|VEICULO|VEÍCULO|PLACA|CHASSI|RENAVAM|MARCA|MODELO|FABRIC|COMBUSTIV|RESTRIC|RESTRIÇ|PROTESTO|TITULO\s*PROTESTAD|CARTORIO|CARTÓRIO|BANCO|AGENCIA|AGÊNCIA|CONTA\s*\d|CHEQUE|BOLETO|FATURA|CARTAO|CARTÃO|CONTRATO|EMPRESA|RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|CNPJ\s*DEV|CNPJ\s*CRED|REGISTRO|SERVENTIA|COMARCA/i;
+                      const PERSONAL_KEY_RE = /^(CPF|NOME|MAE|MÃE|PAI|SEXO|NASC|FILIACAO|FILIAÇÃO|SITUACAO|SITUAÇÃO|RACA|RAÇA|ESCOLAR|DEFICI|NACION|NATURAL|ESTADO|EMISSAO|EMISSÃO|TITULO|TÍTULO|PIS|NIS|RG|IDENT)/i;
                       const isMoneyModule = key === "dividas" || key === "bens";
                       const subjectCpfNorm = cpf.replace(/\D/g, "");
                       const hasRealFinancialData = !isMoneyModule || (
                         fields.some(([k, v]) => FINANCIAL_RE.test(k) || FINANCIAL_RE.test(v)) ||
-                        sections.some(sec => sec.items.some(item => FINANCIAL_RE.test(item)))
+                        sections.some(sec =>
+                          FINANCIAL_RE.test(sec.name ?? "") ||
+                          sec.items.some(item => FINANCIAL_RE.test(item))
+                        )
                       );
-                      // Detect echo: all fields are personal-type AND subject CPF appears in data
-                      const isEcho = isMoneyModule && !hasRealFinancialData && (
-                        fields.some(([, v]) => subjectCpfNorm.length >= 11 && v.replace(/\D/g,"").includes(subjectCpfNorm)) ||
-                        sections.some(sec => sec.items.some(item => subjectCpfNorm.length >= 11 && item.replace(/\D/g,"").includes(subjectCpfNorm)))
-                      ) && fields.every(([k]) => PERSONAL_KEY_RE.test(k.replace(/[\s_-]/g,"")));
+                      // Echo detection — only treat as echo when ALL of these are true:
+                      //  * It's a money module (dividas / bens)
+                      //  * No financial keywords found anywhere
+                      //  * NO sections returned (real records always come as sections)
+                      //  * There ARE fields, and ALL field keys are personal-data type
+                      //  * The subject's own CPF appears verbatim in the field values (echo)
+                      const allFieldsPersonal = fields.length > 0 && fields.every(([k]) => PERSONAL_KEY_RE.test(k.replace(/[\s_-]/g, "")));
+                      const subjectCpfEchoed = subjectCpfNorm.length >= 11 &&
+                        fields.some(([, v]) => v.replace(/\D/g, "").includes(subjectCpfNorm));
+                      const isEcho = isMoneyModule && !hasRealFinancialData && sections.length === 0 && allFieldsPersonal && subjectCpfEchoed;
 
                       return (
                         <div key={key} className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(9,9,15,0.6)" }}>
