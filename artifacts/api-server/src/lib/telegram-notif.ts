@@ -65,37 +65,30 @@ export async function sendSaleNotification(params: SaleNotifParams): Promise<voi
   const valor = "R$ " + (amountCents / 100).toFixed(2).replace(".", ",");
   const validade = fmtDateBR(expiresAt);
 
-  const divider = "━━━━━━━━━━━━━━━━━━━━━";
-
+  // <blockquote> creates the card-with-left-border effect in Telegram (like the screenshot)
   let text: string;
 
   if (isRenewal) {
     text = [
-      divider,
-      `⚡ <b>RENOVAÇÃO CONFIRMADA</b>`,
-      `<b>⚔ Hydra Consultoria</b>`,
-      divider,
+      `🔁 <b>RENOVAÇÃO VIP  ⚔ HYDRA</b>`,
       ``,
-      `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,
-      `💳 <b>Valor ······</b> <b>${valor}</b>`,
-      `📦 <b>Plano ······</b> <b>${planLabel}</b>`,
-      `⏳ <b>Válido até ·</b> <code>${validade}</code>`,
+      `<blockquote>🪪  ID          <code>${maskedId}</code>`,
+      `💰  Valor      <b>${valor}</b>`,
+      `📦  Plano      <b>${planLabel}</b>`,
+      `📅  Válido até  <code>${validade}</code></blockquote>`,
       ``,
-      `<blockquote>Renovação processada com sucesso. Continue explorando sem limites. 🔁</blockquote>`,
+      `<i>Renovação processada. Continue explorando sem limites. 🔁</i>`,
     ].join("\n");
   } else {
     text = [
-      divider,
-      `🔓 <b>NOVO ACESSO VIP</b>`,
-      `<b>⚔ Hydra Consultoria</b>`,
-      divider,
+      `🎉 <b>NOVO CLIENTE VIP  ⚔ HYDRA</b>`,
       ``,
-      `🪪 <b>ID ·········</b> <code>${maskedId}</code>`,
-      `💳 <b>Valor ······</b> <b>${valor}</b>`,
-      `📦 <b>Plano ······</b> <b>${planLabel}</b>`,
-      `⏳ <b>Válido até ·</b> <code>${validade}</code>`,
+      `<blockquote>🪪  ID          <code>${maskedId}</code>`,
+      `💰  Valor      <b>${valor}</b>`,
+      `📦  Plano      <b>${planLabel}</b>`,
+      `📅  Válido até  <code>${validade}</code></blockquote>`,
       ``,
-      `<blockquote>Acesso ao painel mais completo do Brasil. Bem-vindo ao time. 🇧🇷</blockquote>`,
+      `<i>Bem-vindo ao painel mais completo do Brasil. 🇧🇷</i>`,
     ].join("\n");
   }
 
