@@ -20,10 +20,13 @@ REMOTE="https://hydra-bot:${GH_TOKEN}@github.com/Blxckxyz101/hydra-consultoria.g
 LOCAL_SHA=$(git rev-parse HEAD)
 
 echo "[push-github] Pushing commit ${LOCAL_SHA:0:8} to GitHub (main)..."
-PUSH_ERR=$(git push "$REMOTE" HEAD:main --force 2>&1 | grep -v "hydra-bot" || true)
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
+# Capture output AND exit code correctly.
+# Note: var=$(cmd) — $? after assignment reflects cmd's exit code in bash.
+# Using `if !` avoids the PIPESTATUS-after-subshell trap.
+PUSH_OUT=$(git push "$REMOTE" HEAD:main --force 2>&1) || {
+  PUSH_ERR=$(echo "$PUSH_OUT" | grep -v "hydra-bot")
   notify_failure "git push falhou para o commit ${LOCAL_SHA:0:8}. Detalhe: ${PUSH_ERR}"
   exit 1
-fi
+}
 
 echo "[push-github] Push complete."
