@@ -80,6 +80,7 @@ function Router() {
                 <Route path="/afiliados" component={Afiliados} />
                 <Route path="/carteira" component={Carteira} />
                 <Route path="/comunidade" component={Comunidade} />
+                <Route path="/dm" component={DM} />
                 <Route path="/dm/:username" component={DM} />
                 <Route path="/face-match" component={FaceMatch} />
                 <Route path="/investigacao" component={Investigacao} />

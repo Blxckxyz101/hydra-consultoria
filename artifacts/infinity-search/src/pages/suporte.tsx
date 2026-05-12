@@ -38,7 +38,7 @@ const LINKS = [
   {
     label: "Suporte via WhatsApp",
     desc: "Fale com o suporte pelo WhatsApp",
-    url: "https://wa.me/5511999999999",
+    url: "https://wa.me/5581999377369",
     icon: "📱",
     color: "--color-chart-2",
   },

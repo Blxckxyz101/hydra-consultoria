@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, Users, Camera, ScanSearch, type LucideIcon } from "lucide-react";
+import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, MessageCircle, UserCircle, Star, Server, Settings, Palette, Bell, Headphones, Zap, History, AlertTriangle, Gift, Wallet, Users, type LucideIcon } from "lucide-react";
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 
@@ -261,8 +261,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
     {
       label: "Ferramentas",
       items: [
-        { href: "/investigacao", label: "Investigação", icon: ScanSearch },
-        { href: "/face-match", label: "Face Match", icon: Camera },
         { href: "/historico", label: "Histórico", icon: History },
         { href: "/dossie", label: "Dossiê", icon: FolderOpen },
         { href: "/favoritos", label: "Favoritos", icon: Star },
