@@ -211,8 +211,8 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
   return (
     <div
       className={`flex items-start gap-3 sm:gap-4 group px-3 sm:px-4 py-0.5 transition-colors relative ${isConsecutive ? "mt-0" : "mt-4"}`}
-      style={{ background: showActions ? "#20232a" : undefined }}
-      onMouseEnter={e => { setShowActions(true); e.currentTarget.style.background = "#20232a"; }}
+      style={{ background: showActions ? "rgba(255,255,255,0.04)" : undefined }}
+      onMouseEnter={e => { setShowActions(true); e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
       onMouseLeave={e => { setShowActions(false); setShowEmojiPicker(false); e.currentTarget.style.background = ""; }}
       onClick={(e) => {
         // Tap-to-toggle actions on touch devices (ignore taps on links/buttons/images)
@@ -263,16 +263,27 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
 
         {/* Reactions */}
         {msg.reactions.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1.5">
-            {msg.reactions.map(r => (
-              <button key={r.emoji} onClick={() => onReact(msg.id, r.emoji)}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/10 hover:border-white/25 transition-all"
-                style={{ background: r.users.includes(myUsername) ? "color-mix(in srgb, var(--color-primary) 18%, transparent)" : "rgba(255,255,255,0.04)" }}
-                title={r.users.join(", ")}>
-                <span>{r.emoji}</span>
-                <span className="text-white/50 text-[10px]">{r.count}</span>
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {msg.reactions.map(r => {
+              const mine = r.users.includes(myUsername);
+              return (
+                <motion.button key={r.emoji} onClick={() => onReact(msg.id, r.emoji)}
+                  whileTap={{ scale: 0.85 }}
+                  whileHover={{ y: -2 }}
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-sm transition-all border"
+                  style={{
+                    background: mine ? "color-mix(in srgb, var(--color-primary) 18%, transparent)" : "rgba(255,255,255,0.06)",
+                    borderColor: mine ? "color-mix(in srgb, var(--color-primary) 50%, transparent)" : "rgba(255,255,255,0.08)",
+                  }}
+                  title={r.users.join(", ")}>
+                  <span className="text-base leading-none">{r.emoji}</span>
+                  <span className={`text-xs font-bold ${mine ? "text-primary" : "text-white/65"}`}>{r.count}</span>
+                </motion.button>
+              );
+            })}
+            <button onClick={() => setShowEmojiPicker(true)} className="opacity-0 group-hover:opacity-100 w-7 h-6 rounded-lg border border-dashed border-white/20 hover:border-primary hover:bg-primary/10 text-white/40 hover:text-primary flex items-center justify-center transition-all" title="Adicionar reação">
+              <Smile className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
@@ -897,7 +908,7 @@ export default function Comunidade() {
   const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading;
 
   return (
-    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ background: "#1a1d24", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       <AnimatePresence>
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}
@@ -928,8 +939,8 @@ export default function Comunidade() {
           <motion.div
             initial={{ x: -260, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -260, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute lg:relative inset-y-0 left-0 z-30 w-[240px] lg:w-[240px] shrink-0 h-full flex flex-col border-r border-black/40 overflow-hidden shadow-2xl lg:shadow-none"
-            style={{ background: "#16181f" }}>
+            className="absolute lg:relative inset-y-0 left-0 z-30 w-[240px] lg:w-[240px] shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden shadow-2xl lg:shadow-none"
+            style={{ background: "rgba(15,18,28,0.55)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}>
 
             {/* Sidebar header */}
             <div className="px-3 py-3 border-b border-white/[0.06]">
@@ -1005,8 +1016,8 @@ export default function Comunidade() {
       <div className="flex-1 flex flex-col min-w-0 relative">
 
         {/* Header */}
-        <div className="shrink-0 px-4 h-12 flex items-center gap-3 shadow-md z-10"
-          style={{ background: "#1a1d24", borderBottom: "1px solid rgba(0,0,0,0.4)" }}>
+        <div className="shrink-0 px-4 h-12 flex items-center gap-3 shadow-lg z-10"
+          style={{ background: "rgba(15,18,28,0.5)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
           <button onClick={() => setSidebarOpen(v => !v)}
             className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-white/5 text-white/40 hover:text-white shrink-0 transition-colors lg:hidden">
             <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${sidebarOpen ? "rotate-180" : ""}`} />
@@ -1105,7 +1116,7 @@ export default function Comunidade() {
         )}
 
         {/* Input zone */}
-        <div className="shrink-0 px-3 sm:px-4 pb-3 pt-1" style={{ background: "#1a1d24" }}>
+        <div className="shrink-0 px-3 sm:px-4 pb-3 pt-1" style={{ background: "rgba(15,18,28,0.45)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)" }}>
 
           {/* @ Mention suggestions */}
           <AnimatePresence>
@@ -1153,7 +1164,7 @@ export default function Comunidade() {
           </AnimatePresence>
 
           {/* Input row — Discord-style pill */}
-          <div className="flex items-end gap-2 rounded-xl px-3 py-2.5" style={{ background: "#383a40" }}>
+          <div className="flex items-end gap-2 rounded-2xl px-3 py-2.5 border border-white/10" style={{ background: "rgba(56,58,64,0.55)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
             <button onClick={() => fileInputRef.current?.click()}
               className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all ${pendingFile ? "bg-primary text-black" : "bg-white/55 hover:bg-white text-[#383a40]"}`}
               title="Anexar foto" disabled={!activeRoom || imgUploading}>

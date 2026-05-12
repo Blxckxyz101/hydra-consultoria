@@ -18,22 +18,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "artifacts/discord-bot: Discord Bot"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
 args = "artifacts/telegram-bot: Telegram Bot"
-
-[[workflows.workflow]]
-name = "artifacts/discord-bot: Discord Bot"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/discord-bot run dev"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [[workflows.workflow]]
 name = "artifacts/telegram-bot: Telegram Bot"

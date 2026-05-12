@@ -899,8 +899,25 @@ export default function Perfil() {
                   onChange={async (e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
+                    if (f.size > 9.5 * 1024 * 1024) { alert("Arquivo muito grande. Máximo ~9MB."); return; }
                     const reader = new FileReader();
-                    reader.onload = (ev) => setSocialBgValue(ev.target?.result as string);
+                    reader.onload = async (ev) => {
+                      const dataUrl = ev.target?.result as string;
+                      setSocialBgValue(dataUrl);
+                      setSocialBgType("image");
+                      // AUTO-SAVE imediato — sem precisar clicar em "Salvar"
+                      setSocialSaving(true);
+                      try {
+                        const r = await fetch("/api/infinity/me/social", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json", ...authHeaders() },
+                          body: JSON.stringify({ bgType: "image", bgValue: dataUrl }),
+                        });
+                        if (r.ok) { setSocialSaved(true); setTimeout(() => setSocialSaved(false), 2200); }
+                        else { const j = await r.json().catch(() => ({})); alert(j.error || "Erro ao salvar fundo"); }
+                      } catch { alert("Erro de conexão"); }
+                      finally { setSocialSaving(false); }
+                    };
                     reader.readAsDataURL(f);
                   }}
                 />
