@@ -66,22 +66,41 @@ function normalizeFields(raw: unknown): [string, string][] {
   return [];
 }
 
+/**
+ * Normalize a field key for comparison:
+ * 1. Uppercase
+ * 2. NFD decomposition → strip combining diacritics (Ã→A, É→E, etc.)
+ * 3. Remove underscores, hyphens, whitespace, and the middle-dot separator
+ *    (·, U+00B7) that Skylers uses in compound keys like "Filiacao · Nome Pai".
+ *
+ * This ensures "NOME MÃE" == "NOME MAE" and "Filiacao · Nome Pai" == "FILIACAONOMEPAI".
+ */
+function normKey(k: string): string {
+  return k
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")   // strip combining diacritics
+    .replace(/[_\-\s\u00B7]/g, "");    // strip separators and middle-dot
+}
+
 function gf(fields: [string, string][], ...keys: string[]): string {
   for (const key of keys) {
-    const ku = key.toUpperCase().replace(/[_\-\s]/g, "");
+    const ku = normKey(key);
     const f = fields.find(([fk]) => {
-      const fku = fk.toUpperCase().replace(/[_\-\s]/g, "");
-      return fku === ku || fku.includes(ku) || ku.includes(fku);
+      const fku = normKey(fk);
+      // Only fku.includes(ku) — never ku.includes(fku), which would cause
+      // "NOME" to falsely match searches for "NOMEPAI" / "NOMEMAE".
+      return fku === ku || fku.includes(ku);
     });
     if (f?.[1]?.trim()) return f[1].trim();
   }
   return "";
 }
-/** Exact-match only — prevents "NOME" from matching "NOMEMAE", "MUNICIPIONASCIMENTO" from matching "NASCIMENTO", etc. */
+/** Exact-match only — prevents "NOME" from matching "NOMEMAE", etc. */
 function gfExact(fields: [string, string][], ...keys: string[]): string {
   for (const key of keys) {
-    const ku = key.toUpperCase().replace(/[_\-\s]/g, "");
-    const found = fields.find(([fk]) => fk.toUpperCase().replace(/[_\-\s]/g, "") === ku);
+    const ku = normKey(key);
+    const found = fields.find(([fk]) => normKey(fk) === ku);
     if (found?.[1]?.trim()) return found[1].trim();
   }
   return "";
@@ -204,10 +223,12 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const cpfVal = gfExact(f, "CPF", "NUMERO CPF", "NUMEROCPF") || gf(f, "CPF", "NUMEROCPF") || rxv(raw, "CPF");
   const rg     = gf(f,"RG","REGISTRO GERAL","NUMERORG","IDENTIDADE") || rxv(raw,"RG","IDENTIDADE");
 
-  const rawMae = gfExact(f,"NOME MAE","NOMEMAE","MAE","FILIACAO1","FILIACAO 1") ||
+  // "FILIACAO NOME MAE" / "FILIACAO NOME PAI" match the Skylers compound keys
+  // "Filiacao · Nome Mae" / "Filiacao · Nome Pai" after stripping the · separator.
+  const rawMae = gfExact(f,"NOME MAE","NOMEMAE","FILIACAO NOME MAE","MAE","FILIACAO1","FILIACAO 1") ||
                 gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1") ||
                 rxv(raw,"NOME DA MÃE","NOME MAE","NOMEMAE","MAE","FILIACAO 1");
-  const rawPai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2","FILIACAO NOME PAI","FILIACAONOMEPAI","FILIACAOPAI","FILIACAO PAI","GENITOR","PAI BIOLOGICO","NOMEPAIBIOLOGICO") ||
+  const rawPai = gfExact(f,"NOME PAI","NOMEPAI","FILIACAO NOME PAI","PAI","FILIACAO2","FILIACAO 2","FILIACAO NOME PAI","FILIACAONOMEPAI","FILIACAOPAI","FILIACAO PAI","GENITOR","PAI BIOLOGICO","NOMEPAIBIOLOGICO") ||
                 gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2","FILIACAO NOME PAI","FILIACAONOMEPAI","FILIACAOPAI","FILIACAO PAI","GENITOR") ||
                 rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO NOME PAI","FILIACAO PAI","GENITOR");
   const BOGUS_NAME_RE = /^(brasil|brazil|brasil[ei]iro?a?|portuguesa?|argentina|paraguai|bolivian?|chile|colombi[ao]|venezuela|peru|equador|uruguai|desconhecido|nao\s+consta|não\s+consta|sem\s+informacao|sem\s+informação|nao\s+informado|não\s+informado|nao\s+declarado|não\s+declarado|nao\s+encontrado|não\s+encontrado|nao\s+cadastrado|não\s+cadastrado|constam\s+como|consta\s+como|masculino|feminino|masc|fem)$/i;

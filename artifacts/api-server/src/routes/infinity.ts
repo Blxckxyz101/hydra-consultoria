@@ -522,9 +522,13 @@ function parseProviderText(raw: string): Parsed {
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
       if (i === parts.length - 1) {
-        // Strip any trailing ⎯ left by the slice boundary, then skip if it's just a key name
+        // Strip any trailing ⎯ left by the slice boundary.
+        // We do NOT skip uppercase-only values here — single-word uppercase strings
+        // like "MASCULINO", "CASADO", "CANCELADA" are valid values (e.g. SEXO, ESTADO CIVIL).
+        // Only skip truly empty or very-short (≤2 char) tokens that are almost certainly
+        // orphan key names with no value (e.g. bare "RG" or "UF" at end of text).
         const val = part.trim().replace(/\s*\u23AF\s*$/, "").replace(/\s+/g, " ").trim();
-        if (curKey && val && !PURE_KEY_RE.test(val)) {
+        if (curKey && val && val.length > 2) {
           result.fields.push({ key: curKey, value: val });
         }
         break;
