@@ -21,7 +21,7 @@ args = ["sh", "-c", "pnpm --filter @workspace/api-server run build"]
 NODE_ENV = "production"
 
 [services.production.run]
-args = ["sh", "start-all.sh"]
+args = ["node", "--max-old-space-size=768", "--max-http-header-size=16384", "artifacts/api-server/dist/index.mjs"]
 
 [services.production.run.env]
 PORT = "8080"
