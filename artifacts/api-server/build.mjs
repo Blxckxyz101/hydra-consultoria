@@ -14,38 +14,6 @@ async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
 
-  // Build the Discord bot alongside the API server so it is available in production.
-  // The bot is spawned as a child process by the API server when REPLIT_DEPLOYMENT=1.
-  const botSrc = path.resolve(artifactDir, "../discord-bot/src/index.ts");
-  const botDist = path.resolve(artifactDir, "../discord-bot/dist");
-  await rm(botDist, { recursive: true, force: true });
-  await esbuild({
-    entryPoints: [botSrc],
-    platform: "node",
-    target: "node20",
-    bundle: true,
-    format: "esm",
-    outfile: path.join(botDist, "index.mjs"),
-    logLevel: "info",
-    external: [
-      "canvas", "*.node", "bufferutil", "utf-8-validate", "fsevents",
-      // @discordjs/voice native/optional dependencies
-      "@discordjs/opus", "opusscript", "sodium-native", "sodium-plus",
-      "prism-media", "ffmpeg-static",
-      "@snazzah/davey", "@snazzah/davey-linux-x64-gnu", "@snazzah/*",
-      "tweetnacl", "@discordjs/voice",
-    ],
-    define: { "process.env.NODE_ENV": '"production"' },
-    banner: {
-      js: `import { createRequire as __bannerCrReq } from 'node:module';
-import __bannerPath from 'node:path';
-import __bannerUrl from 'node:url';
-globalThis.require = __bannerCrReq(import.meta.url);
-globalThis.__filename = __bannerUrl.fileURLToPath(import.meta.url);
-globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);`,
-    },
-  });
-
   // Build the Telegram bot so it is available in production (spawned by API server).
   const tgBotSrc = path.resolve(artifactDir, "../telegram-bot/src/index.ts");
   const tgBotDist = path.resolve(artifactDir, "../telegram-bot/dist");

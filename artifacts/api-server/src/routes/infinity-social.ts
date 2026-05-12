@@ -28,6 +28,11 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
   const links = Array.isArray(row.profileSocialLinks) ? row.profileSocialLinks : [];
   const now = new Date();
   const isPro = row.planType === "pro" && (row.planExpiresAt == null || row.planExpiresAt > now);
+  const bgType = row.profileBgType ?? "default";
+  const hasBgImage = bgType === "image" && !!row.profileBgValue;
+
+  // Serve photo/banner as data URLs (small enough), but serve bg image via dedicated endpoint
+  // to avoid embedding a 300–500KB data URL in the main profile JSON
   return {
     username:     row.username,
     displayName:  row.displayName ?? row.username,
@@ -35,19 +40,34 @@ function publicProfile(row: typeof infinityUsersTable.$inferSelect) {
     bio:          row.profileBio ?? null,
     status:       row.profileStatus ?? "online",
     statusMsg:    row.profileStatusMsg ?? null,
-    photo:        row.profilePhoto ?? null,
-    banner:       row.profileBanner ?? null,
+    // Serve photo/banner via dedicated endpoints to avoid embedding data URLs in JSON
+    photoUrl:     row.profilePhoto   ? `/api/infinity/u/${row.username}/photo`  : null,
+    bannerUrl:    row.profileBanner  ? `/api/infinity/u/${row.username}/banner` : null,
     location:     row.profileLocation ?? null,
     musicUrl:     row.profileMusicUrl ?? null,
     socialLinks:  links,
     accentColor:  row.profileAccentColor ?? null,
-    bgType:       row.profileBgType ?? "default",
-    bgValue:      row.profileBgValue ?? null,
+    bgType,
+    // Instead of embedding the full data URL (can be 300-500KB), return a URL to the dedicated endpoint
+    bgImageUrl:   hasBgImage ? `/api/infinity/u/${row.username}/bg` : null,
+    // Keep bgValue for color type (short hex string), null for image type
+    bgValue:      bgType === "color" ? (row.profileBgValue ?? null) : null,
     cardTheme:    row.cardTheme ?? "default",
     planType:     isPro ? "pro" : "free",
     views:        row.profileViews ?? 0,
     createdAt:    row.createdAt,
   };
+}
+
+// Helper to serve a data URL as raw image bytes
+function serveDataUrl(dataUrl: string, res: import("express").Response): void {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/s);
+  if (!match) { res.status(404).end(); return; }
+  const mimeType = match[1]!;
+  const data = Buffer.from(match[2]!, "base64");
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  res.end(data);
 }
 
 // Push notification helper — broadcasts to connected WS clients
@@ -56,6 +76,67 @@ function pushUserNotification(username: string, payload: object) {
     globalThis.__notifyUser(username, payload);
   }
 }
+
+// ── GET /api/infinity/u/:username/photo — serve profile photo directly ────────
+router.get("/u/:username/photo", async (req, res): Promise<void> => {
+  const { username } = req.params as { username: string };
+  const u = safeUsername(username);
+  if (!u) { res.status(400).end(); return; }
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    const rows = await db.select({ photo: infinityUsersTable.profilePhoto })
+      .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+    const row = rows[0];
+    if (!row?.photo) { res.status(404).end(); return; }
+    serveDataUrl(row.photo, res);
+  } catch (err) {
+    logger.error({ err }, "Failed to serve profile photo");
+    res.status(500).end();
+  }
+});
+
+// ── GET /api/infinity/u/:username/banner — serve banner directly ──────────────
+router.get("/u/:username/banner", async (req, res): Promise<void> => {
+  const { username } = req.params as { username: string };
+  const u = safeUsername(username);
+  if (!u) { res.status(400).end(); return; }
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  try {
+    const rows = await db.select({ banner: infinityUsersTable.profileBanner })
+      .from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+    const row = rows[0];
+    if (!row?.banner) { res.status(404).end(); return; }
+    serveDataUrl(row.banner, res);
+  } catch (err) {
+    logger.error({ err }, "Failed to serve banner");
+    res.status(500).end();
+  }
+});
+
+// ── GET /api/infinity/u/:username/bg — serve bg image directly ────────────────
+router.get("/u/:username/bg", async (req, res): Promise<void> => {
+  const { username } = req.params as { username: string };
+  const u = safeUsername(username);
+  if (!u) { res.status(400).end(); return; }
+
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  try {
+    const rows = await db.select({
+      bgType:  infinityUsersTable.profileBgType,
+      bgValue: infinityUsersTable.profileBgValue,
+    }).from(infinityUsersTable).where(eq(infinityUsersTable.username, u)).limit(1);
+
+    const row = rows[0];
+    if (!row || row.bgType !== "image" || !row.bgValue) {
+      res.status(404).end(); return;
+    }
+    serveDataUrl(row.bgValue, res);
+  } catch (err) {
+    logger.error({ err }, "Failed to serve bg image");
+    res.status(500).end();
+  }
+});
 
 // ── GET /api/infinity/u/:username — public profile (NO auth required) ──────────
 router.get("/u/:username", async (req, res): Promise<void> => {

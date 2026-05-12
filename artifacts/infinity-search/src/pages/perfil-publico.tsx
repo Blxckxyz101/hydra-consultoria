@@ -27,10 +27,13 @@ interface SocialLink { type: string; value: string }
 interface PublicProfile {
   username: string; displayName: string; role: string;
   bio: string | null; status: string; statusMsg: string | null;
-  photo: string | null; banner: string | null;
+  photoUrl: string | null;   // URL to /api/infinity/u/:username/photo
+  bannerUrl: string | null;  // URL to /api/infinity/u/:username/banner
   location: string | null; musicUrl: string | null;
   socialLinks: SocialLink[]; accentColor: string | null;
-  bgType: string; bgValue: string | null;
+  bgType: string;
+  bgImageUrl: string | null;  // URL to /api/infinity/u/:username/bg (served as image bytes)
+  bgValue: string | null;     // Only for color type (short hex), null for image type
   views: number; createdAt: string; cardTheme: string;
 }
 
@@ -298,7 +301,8 @@ export default function PerfilPublico() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ profilePhoto: dataUrl }),
       }).catch(() => {});
-      if (profile) setProfile({ ...profile, photo: dataUrl });
+      // Bust cache so the browser reloads the new photo from the server endpoint
+      if (profile) setProfile({ ...profile, photoUrl: `/api/infinity/u/${profile.username}/photo?t=${Date.now()}` });
     };
     reader.readAsDataURL(f);
   };
@@ -360,10 +364,11 @@ export default function PerfilPublico() {
   const joinDate = new Date(profile.createdAt).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
   const isSpotify = profile.musicUrl?.includes("spotify.com");
 
-  const hasBgImage = profile.bgType === "image" && !!profile.bgValue;
+  const hasBgImage = profile.bgType === "image" && !!profile.bgImageUrl;
   const hasBgColor = profile.bgType === "color" && !!profile.bgValue;
-  const bgSource = hasBgImage ? profile.bgValue! : (profile.banner ?? null);
-  const bgIsGif = bgSource ? isGifUrl(bgSource) : false;
+  // Use dedicated image endpoint URL (not data URL embedded in JSON)
+  const bgSource = hasBgImage ? profile.bgImageUrl! : (profile.bannerUrl ?? null);
+  const bgIsGif = false; // bgImageUrl is always a served image, not a GIF URL
   const initial = (profile.displayName || profile.username || "?").charAt(0).toUpperCase();
 
   return (
@@ -386,26 +391,33 @@ export default function PerfilPublico() {
 
         {bgSource && (
           <>
+            {/* Custom background image — served directly as image bytes for fast loading */}
             <img
               src={bgSource}
               alt=""
               className="absolute inset-0 w-full h-full"
               style={{
                 objectFit: "cover",
-                filter: bgIsGif
-                  ? "blur(22px) saturate(1.4) brightness(0.48)"
-                  : "blur(28px) saturate(1.3) brightness(0.44)",
-                transform: "scale(1.1)",
+                objectPosition: "center top",
+                filter: hasBgImage
+                  ? "blur(6px) saturate(1.6) brightness(0.72)"
+                  : "blur(18px) saturate(1.3) brightness(0.5)",
+                transform: "scale(1.08)",
               }}
             />
+            {/* Subtle dark gradient at edges — keeps text readable without hiding the BG */}
             <div
               className="absolute inset-0"
-              style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.18) 30%, rgba(0,0,0,0.40) 65%, rgba(0,0,0,0.68) 100%)" }}
+              style={{
+                background: hasBgImage
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0.05) 25%, rgba(0,0,0,0.10) 60%, rgba(0,0,0,0.55) 100%)"
+                  : "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.18) 30%, rgba(0,0,0,0.40) 65%, rgba(0,0,0,0.68) 100%)",
+              }}
             />
           </>
         )}
 
-        {/* Animated floating orbs — ALWAYS rendered so the glass card has something to blur over */}
+        {/* Animated floating orbs — dims when custom bg image is active so the image shows through */}
         <>
             <motion.div
               className="absolute pointer-events-none rounded-full"
@@ -413,7 +425,7 @@ export default function PerfilPublico() {
                 width: 700, height: 700, top: "-18%", left: "-12%",
                 background: `radial-gradient(circle, ${accent} 0%, ${accent}55 30%, ${accent}15 55%, transparent 75%)`,
                 filter: "blur(40px)",
-                opacity: 0.9,
+                opacity: hasBgImage ? 0.3 : 0.9,
               }}
               animate={{ x: [0, 80, -40, 0], y: [0, 60, 100, 0], scale: [1, 1.15, 0.92, 1] }}
               transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
@@ -424,7 +436,7 @@ export default function PerfilPublico() {
                 width: 620, height: 620, bottom: "-14%", right: "-10%",
                 background: `radial-gradient(circle, #7c3aed 0%, #6366f199 30%, #6366f130 55%, transparent 75%)`,
                 filter: "blur(45px)",
-                opacity: 0.85,
+                opacity: hasBgImage ? 0.2 : 0.85,
               }}
               animate={{ x: [0, -70, 50, 0], y: [0, -50, -30, 0], scale: [1, 0.9, 1.12, 1] }}
               transition={{ duration: 28, repeat: Infinity, ease: "easeInOut" }}
@@ -436,7 +448,7 @@ export default function PerfilPublico() {
                 background: `radial-gradient(circle, ${accent}cc 0%, ${accent}40 40%, transparent 75%)`,
                 filter: "blur(50px)",
               }}
-              animate={{ x: [0, 40, -50, 0], y: [0, -40, 50, 0], opacity: [0.7, 1, 0.7] }}
+              animate={{ x: [0, 40, -50, 0], y: [0, -40, 50, 0], opacity: hasBgImage ? [0.15, 0.25, 0.15] : [0.7, 1, 0.7] }}
               transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
             />
             <motion.div
@@ -446,7 +458,7 @@ export default function PerfilPublico() {
                 background: `radial-gradient(circle, #ec4899bb 0%, #ec489930 45%, transparent 75%)`,
                 filter: "blur(50px)",
               }}
-              animate={{ x: [0, 50, -30, 0], y: [0, 40, -40, 0], opacity: [0.6, 0.95, 0.6] }}
+              animate={{ x: [0, 50, -30, 0], y: [0, 40, -40, 0], opacity: hasBgImage ? [0.12, 0.22, 0.12] : [0.6, 0.95, 0.6] }}
               transition={{ duration: 24, repeat: Infinity, ease: "easeInOut" }}
             />
             <motion.div
@@ -456,7 +468,7 @@ export default function PerfilPublico() {
                 background: `radial-gradient(circle, #22d3eebb 0%, #22d3ee30 45%, transparent 75%)`,
                 filter: "blur(45px)",
               }}
-              animate={{ x: [0, -30, 40, 0], y: [0, 50, 20, 0], opacity: [0.5, 0.85, 0.5] }}
+              animate={{ x: [0, -30, 40, 0], y: [0, 50, 20, 0], opacity: hasBgImage ? [0.1, 0.2, 0.1] : [0.5, 0.85, 0.5] }}
               transition={{ duration: 20, repeat: Infinity, ease: "easeInOut" }}
             />
 
@@ -644,14 +656,14 @@ export default function PerfilPublico() {
                 <motion.div
                   className="w-[112px] h-[112px] rounded-full overflow-hidden flex items-center justify-center text-[44px] font-extrabold relative z-10"
                   style={{
-                    background: profile.photo ? "transparent" : hashColor(profile.username),
+                    background: profile.photoUrl ? "transparent" : hashColor(profile.username),
                     boxShadow: `0 0 0 4px rgba(8,10,18,0.9), 0 0 0 5px ${accent}, 0 0 0 8px ${accent}22, 0 18px 50px rgba(0,0,0,0.7)`,
                   }}
                   whileHover={{ scale: 1.05 }}
                   transition={{ type: "spring", stiffness: 300, damping: 20 }}
                 >
-                  {profile.photo
-                    ? <img src={profile.photo} alt={profile.displayName} className="w-full h-full object-cover" />
+                  {profile.photoUrl
+                    ? <img src={profile.photoUrl} alt={profile.displayName} className="w-full h-full object-cover" />
                     : <span style={{ color: "rgba(0,0,0,0.78)", fontFamily: "'Outfit', sans-serif" }}>{initial}</span>
                   }
                   {/* Owner camera overlay */}
