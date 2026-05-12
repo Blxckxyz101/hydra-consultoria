@@ -1361,7 +1361,16 @@ async function callSkylers(
     // returned only dados_basicos identity fields (no actual module sections),
     // treat as "not found" so we don't display CPF data under a beneficios/
     // dividas/bens/titulo card.
-    const IDENTITY_MODULES = new Set(["iseek-cpf", "iseek-cpfbasico"]);
+    const IDENTITY_MODULES = new Set([
+      "iseek-cpf",
+      "iseek-cpfbasico",
+      "iseek-dados---mae",
+      "iseek-dados---pai",
+      "iseek-dados---nasc",
+      "iseek-dados---rg",
+      "iseek-dados---obito",
+      "iseek-dados---nomeabreviadofiltros",
+    ]);
     if (!endpoint && !IDENTITY_MODULES.has(modulo) && parsed.sections.length === 0 && parsed.fields.length > 0) {
       const IDENTITY_KEYS = new Set([
         "cpf", "nome", "nome completo", "data nascimento", "data de nascimento",

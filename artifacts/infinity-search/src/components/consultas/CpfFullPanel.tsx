@@ -1242,9 +1242,14 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
           <>
             <div className="flex items-end justify-center gap-10">
               {parents.map((p, i) => {
-                // For parents with CPF: use np(). For parents with name-only: look up by lowercase name key.
-                const pPhoto = p.rel ? np(p.rel).photo : (photos[p.nome.toLowerCase()] ?? undefined);
-                const pLoading = p.rel ? np(p.rel).loading : (p.nome ? loadingPhotos.has(p.nome.toLowerCase()) : false);
+                // For parents with CPF: use np() photo (keyed by CPF).
+                // Fallback to name key for: parents with empty CPF from parentes, and identity-only parents.
+                const pPhoto = p.rel
+                  ? (np(p.rel).photo ?? photos[p.nome.toLowerCase()] ?? undefined)
+                  : (photos[p.nome.toLowerCase()] ?? undefined);
+                const pLoading = p.rel
+                  ? (np(p.rel).loading || (p.nome ? loadingPhotos.has(p.nome.toLowerCase()) : false))
+                  : (p.nome ? loadingPhotos.has(p.nome.toLowerCase()) : false);
                 return (
                   <motion.div key={i} initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
                     <PersonNode nome={p.nome} cpf={p.cpf} nasc={p.nasc} label={p.label} photo={pPhoto} loading={pLoading} />
@@ -1453,25 +1458,60 @@ export function CpfFullPanel({ cpf }: Props) {
     (async () => {
       const acc = finalResultsRef.current;
       const rels = buildRelatives([acc["parentes"]]);
+      const subjectClean = cpf.replace(/\D/g, "");
 
       // CPFs already known from the parentes result
       const cpfSet = new Set(rels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf));
 
-      // For parents that don't have CPF in the parentes list, look them up by name
-      // Keys for relPhotos will be CPF (if found) or lowercase name (fallback)
-      const parentNamesToResolve: { name: string; key: string }[] = [];
       const maeInRels = rels.some(r => categorizeRel(r) === "mae" && r.cpf.length === 11);
       const paiInRels = rels.some(r => categorizeRel(r) === "pai" && r.cpf.length === 11);
       const identityNow = buildIdentity(acc);
-      if (!maeInRels && identityNow.mae) {
-        parentNamesToResolve.push({ name: identityNow.mae, key: identityNow.mae.toLowerCase() });
-      }
-      if (!paiInRels && identityNow.pai) {
-        parentNamesToResolve.push({ name: identityNow.pai, key: identityNow.pai.toLowerCase() });
+
+      // nameKeyMap: maps parentCpf → lowercased parent name key so that after fetching
+      // the photo we also store it under nome.toLowerCase() for CPF-less tree nodes.
+      const nameKeyMap: Record<string, string> = {};
+
+      // Strategy 1 (primary): query Skylers mae/pai modules with the subject CPF.
+      // These modules return the parent's full record including their CPF — much more
+      // reliable than a text-name search. The server IDENTITY_MODULES whitelist now
+      // allows these modules to pass through the identity-only guard.
+      if (subjectClean.length === 11) {
+        const resolveParentViaSkylers = async (tipo: "mae" | "pai", nameKey: string): Promise<void> => {
+          if (cancelled) return;
+          try {
+            const res = await fetchModule(tipo, subjectClean, true, true);
+            if (cancelled || !res.data) return;
+            const parentCpf = (
+              gfExact(res.data.fields, "CPF") ||
+              gf(res.data.fields, "CPF", "NUMEROCPF", "CPFRELACIONADO")
+            )?.replace(/\D/g, "");
+            if (parentCpf && parentCpf.length === 11) {
+              cpfSet.add(parentCpf);
+              nameKeyMap[parentCpf] = nameKey;
+            }
+          } catch { /* ignore */ }
+        };
+
+        await Promise.all([
+          !maeInRels && identityNow.mae
+            ? resolveParentViaSkylers("mae", identityNow.mae.toLowerCase())
+            : Promise.resolve(),
+          !paiInRels && identityNow.pai
+            ? resolveParentViaSkylers("pai", identityNow.pai.toLowerCase())
+            : Promise.resolve(),
+        ]);
       }
 
-      // Resolve parent names → CPFs using the nome API
-      const nameKeyMap: Record<string, string> = {}; // cpf/name-key → relPhotos key
+      // Strategy 2 (fallback): nome text search via Geass for parents still missing CPF.
+      const maeCpfResolved = maeInRels || Object.values(nameKeyMap).includes(identityNow.mae.toLowerCase());
+      const paiCpfResolved = paiInRels || Object.values(nameKeyMap).includes(identityNow.pai.toLowerCase());
+
+      const parentNamesToResolve: { name: string; key: string }[] = [];
+      if (!maeCpfResolved && identityNow.mae)
+        parentNamesToResolve.push({ name: identityNow.mae, key: identityNow.mae.toLowerCase() });
+      if (!paiCpfResolved && identityNow.pai)
+        parentNamesToResolve.push({ name: identityNow.pai, key: identityNow.pai.toLowerCase() });
+
       for (const { name, key } of parentNamesToResolve) {
         if (cancelled) return;
         try {
@@ -1481,9 +1521,8 @@ export function CpfFullPanel({ cpf }: Props) {
               ?.replace(/\D/g, "");
             if (resolvedCpf && resolvedCpf.length === 11) {
               cpfSet.add(resolvedCpf);
-              nameKeyMap[resolvedCpf] = key; // after photo fetch, also store under name key
+              nameKeyMap[resolvedCpf] = key;
             } else {
-              // Can't resolve CPF — mark name key as loading anyway so tree shows spinner
               nameKeyMap[key] = key;
             }
           }
@@ -1496,7 +1535,7 @@ export function CpfFullPanel({ cpf }: Props) {
       await Promise.allSettled(
         [...cpfSet].map(async (relCpf) => {
           let ph: string | null = null;
-          for (const tipo of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce"]) {
+          for (const tipo of ["fotonc", "foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotogo", "fotoal", "fotodf"]) {
             if (cancelled) break;
             const res = await fetchModule(tipo, relCpf, true, true);
             ph = res.data ? extractPhotoFromResult(res) : null;
@@ -1507,7 +1546,6 @@ export function CpfFullPanel({ cpf }: Props) {
           if (ph) {
             setRelPhotos(prev => {
               const next = { ...prev, [relCpf]: ph! };
-              // Also store under the name key so FamilyTree can find it for CPF-less parents
               const nameKey = nameKeyMap[relCpf];
               if (nameKey) next[nameKey] = ph!;
               return next;
@@ -1518,6 +1556,7 @@ export function CpfFullPanel({ cpf }: Props) {
     })();
 
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done]);
 
   // ── Foto cascade: try additional photo sources if main foto module returned nothing ─
