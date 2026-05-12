@@ -1374,11 +1374,12 @@ async function callSkylers(
         "municipio de nascimento", "município de nascimento", "estado civil",
         "titulo eleitoral", "titulo eleitor", "naturalidade", "idade",
       ]);
+      const hasFotoUrl = parsed.fields.some(f => f.key === "FOTO_URL");
       const nonIdentityFields = parsed.fields.filter(
         f => f.key !== "FOTO_URL" &&
           !IDENTITY_KEYS.has(f.key.toLowerCase().replace(/[·_]/g, " ").trim()),
       );
-      if (nonIdentityFields.length === 0) {
+      if (!hasFotoUrl && nonIdentityFields.length === 0) {
         return {
           ok: false,
           error: "Não encontrado na base para este módulo",
