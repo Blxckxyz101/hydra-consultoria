@@ -3,7 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FolderOpen, Plus, Trash2, Download, Copy, Check, FileText,
   ChevronDown, ChevronUp, StickyNote, Search, X, AlertTriangle, FileDown,
+  BookOpen, Layers,
 } from "lucide-react";
+
+const LS_PHYSICAL_MODE = "infinity_dossie_physical";
 
 type EvidenceItem = {
   id: string;
@@ -347,12 +350,172 @@ function EvidenceCard({ item, onDelete, onNoteChange }: {
   );
 }
 
+function PhysicalEvidenceCard({ item, onDelete, onNoteChange }: {
+  item: EvidenceItem; onDelete: () => void; onNoteChange: (note: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [editNote, setEditNote] = useState(false);
+  const [noteVal, setNoteVal] = useState(item.note);
+  const totalFields = item.fields.length + item.sections.reduce((s, sec) => s + sec.items.length, 0);
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8, rotate: -0.3 }}
+      animate={{ opacity: 1, y: 0, rotate: 0 }}
+      exit={{ opacity: 0, x: -30 }}
+      whileHover={{ y: -2, rotate: 0.2 }}
+      className="relative overflow-hidden"
+      style={{
+        background: "linear-gradient(160deg, #f5e6c8 0%, #f0ddb4 40%, #e8d49a 100%)",
+        border: "1px solid rgba(160,120,60,0.35)",
+        borderRadius: 8,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.5)",
+        color: "#2a1a0a",
+      }}
+    >
+      {/* Paper texture lines */}
+      <div className="absolute inset-0 opacity-[0.07] pointer-events-none"
+        style={{
+          backgroundImage: "repeating-linear-gradient(transparent, transparent 27px, #8b6914 27px, #8b6914 28px)",
+          backgroundPosition: "0 32px",
+        }}
+      />
+      {/* Fold corner */}
+      <div className="absolute top-0 right-0 w-8 h-8 pointer-events-none"
+        style={{
+          background: "linear-gradient(225deg, #c9a85c 0%, #c9a85c 45%, #f0ddb4 45%)",
+          clipPath: "polygon(100% 0, 0 0, 100% 100%)",
+        }}
+      />
+
+      <div className="relative z-10 flex items-center gap-3 px-4 pt-4 pb-3">
+        <span className="text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded"
+          style={{ background: "#8b1a1a", color: "#f0ddb4", letterSpacing: "0.3em" }}>
+          {item.tipo}
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold truncate" style={{ fontFamily: "monospace", color: "#1a0f00" }}>{item.query}</p>
+          <p className="text-[10px] mt-0.5" style={{ color: "#7a5c2a" }}>
+            {new Date(item.addedAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+            {" · "}{totalFields} dado{totalFields !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button onClick={() => setEditNote(v => !v)}
+            className="p-1.5 rounded transition-colors hover:opacity-70"
+            style={{ background: "rgba(139,106,20,0.15)", color: "#8b6414" }}>
+            <StickyNote className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => setExpanded(v => !v)}
+            className="p-1.5 rounded transition-colors hover:opacity-70"
+            style={{ background: "rgba(139,26,26,0.12)", color: "#8b1a1a" }}>
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <button onClick={onDelete}
+            className="p-1.5 rounded transition-colors hover:opacity-70"
+            style={{ background: "rgba(139,26,26,0.12)", color: "#8b1a1a" }}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {editNote && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden relative z-10" style={{ borderTop: "1px solid rgba(139,106,20,0.2)" }}>
+            <div className="p-3" style={{ background: "rgba(139,106,20,0.06)" }}>
+              <textarea value={noteVal} onChange={e => setNoteVal(e.target.value)} onBlur={() => onNoteChange(noteVal)}
+                placeholder="Anotação do agente..." rows={2}
+                className="w-full rounded px-3 py-2 text-sm resize-none focus:outline-none transition-colors"
+                style={{ background: "rgba(255,248,220,0.7)", border: "1px solid rgba(139,106,20,0.3)", color: "#2a1a0a", fontFamily: "monospace" }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {item.note && !editNote && (
+        <div className="relative z-10 px-4 pb-2 flex items-start gap-2">
+          <StickyNote className="w-3 h-3 mt-0.5 shrink-0" style={{ color: "#8b6414" }} />
+          <p className="text-xs italic" style={{ color: "#6b4c1a", fontFamily: "Georgia, serif" }}>{item.note}</p>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {expanded && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden relative z-10" style={{ borderTop: "1px solid rgba(139,106,20,0.2)" }}>
+            {/* CONFIDENCIAL stamp */}
+            <div className="absolute top-4 right-6 select-none pointer-events-none z-20" style={{
+              transform: "rotate(-15deg)",
+              border: "2px solid #8b1a1a",
+              color: "#8b1a1a",
+              padding: "2px 8px",
+              borderRadius: 2,
+              fontSize: 10,
+              fontWeight: 900,
+              letterSpacing: "0.4em",
+              opacity: 0.2,
+            }}>CONFIDENCIAL</div>
+            <div className="p-4 space-y-3">
+              {item.fields.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                  {item.fields.map((f, i) => (
+                    <div key={i} className="flex flex-col gap-0.5 py-1" style={{ borderBottom: "1px solid rgba(139,106,20,0.2)" }}>
+                      <p className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: "#8b6414" }}>{f.key}</p>
+                      <p className="text-sm break-words" style={{ fontFamily: "monospace", color: "#1a0f00" }}>{f.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {item.sections.map((sec, i) => (
+                <div key={i} className="space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em]" style={{ color: "#8b1a1a" }}>
+                    {sec.name} <span style={{ color: "#7a5c2a" }}>({sec.items.length})</span>
+                  </p>
+                  <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                    {sec.items.map((it, j) => (
+                      <div key={j} className="flex items-start gap-2 text-xs p-2 rounded"
+                        style={{ background: "rgba(255,248,220,0.5)", border: "1px solid rgba(139,106,20,0.15)" }}>
+                        <span style={{ color: "#8b6414" }}>{j + 1}.</span>
+                        <span style={{ fontFamily: "monospace", color: "#1a0f00" }} className="break-all">{it}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {!item.fields.length && !item.sections.length && item.raw && (
+                <pre className="text-xs whitespace-pre-wrap break-words max-h-40 overflow-y-auto p-2 rounded"
+                  style={{ fontFamily: "monospace", color: "#4a3010", background: "rgba(255,248,220,0.5)" }}>
+                  {item.raw.slice(0, 800)}
+                </pre>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 export default function Dossie() {
   const [dossies, setDossies] = useState<Dossie[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [physicalMode, setPhysicalMode] = useState<boolean>(
+    () => localStorage.getItem(LS_PHYSICAL_MODE) === "true"
+  );
+
+  const togglePhysicalMode = () => {
+    setPhysicalMode(v => {
+      const next = !v;
+      next ? localStorage.setItem(LS_PHYSICAL_MODE, "true") : localStorage.removeItem(LS_PHYSICAL_MODE);
+      return next;
+    });
+  };
 
   // On mount: fetch from API, migrate any localStorage-only dossiers
   useEffect(() => {
@@ -443,12 +606,31 @@ export default function Dossie() {
             Evidências forenses compiladas
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-300 text-xs font-bold uppercase tracking-widest hover:bg-amber-400/20 transition-all"
-        >
-          <Plus className="w-3.5 h-3.5" /> Novo Dossiê
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={togglePhysicalMode}
+            title={physicalMode ? "Modo Digital" : "Modo Físico (pasta manila)"}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border"
+            style={physicalMode ? {
+              background: "linear-gradient(135deg, #c9a85c20, #8b691410)",
+              borderColor: "rgba(139,106,20,0.5)",
+              color: "#c9a85c",
+            } : {
+              background: "rgba(255,255,255,0.04)",
+              borderColor: "rgba(255,255,255,0.1)",
+              color: "rgba(255,255,255,0.4)",
+            }}
+          >
+            {physicalMode ? <BookOpen className="w-3.5 h-3.5" /> : <Layers className="w-3.5 h-3.5" />}
+            {physicalMode ? "Físico" : "Digital"}
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-300 text-xs font-bold uppercase tracking-widest hover:bg-amber-400/20 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" /> Novo Dossiê
+          </button>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -494,26 +676,54 @@ export default function Dossie() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
           {/* Sidebar */}
-          <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-4 space-y-2 self-start">
-            <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground px-2 mb-3">Dossiês</p>
+          <div
+            className="rounded-2xl p-4 space-y-2 self-start"
+            style={physicalMode ? {
+              background: "linear-gradient(160deg, #e8d49a, #d4b877)",
+              border: "1px solid rgba(160,120,60,0.4)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+            } : {
+              background: "rgba(0,0,0,0.3)",
+              backdropFilter: "blur(24px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <p className="text-[10px] uppercase tracking-[0.4em] px-2 mb-3"
+              style={{ color: physicalMode ? "#7a5c2a" : "rgba(255,255,255,0.4)" }}>
+              Dossiês
+            </p>
             {dossies.map((d) => (
               <div
                 key={d.id}
                 onClick={() => setSelected(d.id)}
-                className={`group flex items-center gap-2 p-3 rounded-xl cursor-pointer transition-all ${
-                  selected === d.id
-                    ? "bg-amber-400/10 border border-amber-400/30"
-                    : "hover:bg-white/5 border border-transparent"
-                }`}
+                className="group flex items-center gap-2 p-3 rounded-xl cursor-pointer transition-all"
+                style={selected === d.id
+                  ? physicalMode
+                    ? { background: "rgba(139,106,20,0.25)", border: "1px solid rgba(139,106,20,0.4)" }
+                    : { background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)" }
+                  : physicalMode
+                    ? { background: "rgba(139,106,20,0.08)", border: "1px solid transparent" }
+                    : { background: "transparent", border: "1px solid transparent" }
+                }
               >
-                <FolderOpen className={`w-4 h-4 shrink-0 ${selected === d.id ? "text-amber-300" : "text-muted-foreground"}`} />
+                <FolderOpen className="w-4 h-4 shrink-0"
+                  style={{ color: selected === d.id
+                    ? physicalMode ? "#8b6414" : "#fbbf24"
+                    : physicalMode ? "#a07830" : "rgba(255,255,255,0.4)"
+                  }} />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium truncate ${selected === d.id ? "text-amber-200" : ""}`}>{d.title}</p>
-                  <p className="text-[10px] text-muted-foreground">{d.items.length} evidência{d.items.length !== 1 ? "s" : ""}</p>
+                  <p className="text-sm font-medium truncate"
+                    style={{ color: physicalMode ? "#2a1a0a" : selected === d.id ? "#fde68a" : undefined }}>
+                    {d.title}
+                  </p>
+                  <p className="text-[10px]" style={{ color: physicalMode ? "#7a5c2a" : "rgba(255,255,255,0.35)" }}>
+                    {d.items.length} evidência{d.items.length !== 1 ? "s" : ""}
+                  </p>
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteDossie(d.id); }}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:text-destructive transition-all"
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                  style={{ color: physicalMode ? "#8b1a1a" : undefined }}
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -579,7 +789,14 @@ export default function Dossie() {
                 ) : (
                   <div className="space-y-3">
                     <AnimatePresence mode="popLayout">
-                      {filteredItems.map((item) => (
+                      {filteredItems.map((item) => physicalMode ? (
+                        <PhysicalEvidenceCard
+                          key={item.id}
+                          item={item}
+                          onDelete={() => deleteItem(item.id)}
+                          onNoteChange={(note) => updateNote(item.id, note)}
+                        />
+                      ) : (
                         <EvidenceCard
                           key={item.id}
                           item={item}

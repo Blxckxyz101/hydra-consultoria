@@ -5,11 +5,12 @@ import {
   User as UserIcon, FileText, Circle, Lock, Eye, EyeOff, Check, Pencil, AtSign,
   Bookmark, BookmarkPlus, Play, Plus, X as XIcon,
   MapPin, Music, Globe, Instagram, Twitter, Youtube, Github, Twitch, UserPlus, Users as UsersIcon,
-  CheckCircle, XCircle, Loader2, CreditCard, Sparkles, Crown,
+  CheckCircle, XCircle, Loader2, CreditCard, Sparkles, Crown, IdCard, Wand2,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useInfinityMe, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { THEMES, applyTheme } from "@/pages/personalizar";
+import { AgentCard, CARD_ANIMS, LS_CARD_ANIM, type CardAnimId } from "@/components/profile/AgentCard";
 
 const LS_PHOTO    = "infinity_profile_photo";
 const LS_BANNER   = "infinity_profile_banner";
@@ -144,6 +145,26 @@ export default function Perfil() {
   const [planBuying, setPlanBuying] = useState(false);
   const [planMsg, setPlanMsg] = useState("");
   const [themeSaving, setThemeSaving] = useState(false);
+
+  // ── Card Animation ────────────────────────────────────────────────────────
+  const [cardAnimation, setCardAnimation] = useState<CardAnimId>(
+    () => (localStorage.getItem(LS_CARD_ANIM) as CardAnimId) ?? "none"
+  );
+  const [animSaving, setAnimSaving] = useState(false);
+
+  const saveCardAnimation = async (anim: CardAnimId) => {
+    setCardAnimation(anim);
+    localStorage.setItem(LS_CARD_ANIM, anim);
+    setAnimSaving(true);
+    try {
+      await fetch("/api/infinity/me/social", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ cardAnimation: anim }),
+      });
+    } catch { /* silent */ }
+    finally { setAnimSaving(false); }
+  };
 
   const PRO_THEMES = ["aurora","matrix","neon","holographic","particles","glitch","cyberpunk"];
   const ALL_THEMES = [
@@ -397,21 +418,39 @@ export default function Perfil() {
     finally { setPinSaving(false); }
   };
 
-  const readFile = (file: File): Promise<string> =>
+  const compressAndRead = (file: File, maxPx = 1200, quality = 0.84): Promise<string> =>
     new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload  = e => resolve(e.target?.result as string);
-      r.onerror = reject;
-      r.readAsDataURL(file);
+      if (file.type === "image/gif") {
+        const fr = new FileReader();
+        fr.onload  = e => resolve(e.target?.result as string);
+        fr.onerror = reject;
+        fr.readAsDataURL(file);
+        return;
+      }
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        const ratio = Math.min(1, maxPx / Math.max(img.width, img.height, 1));
+        const canvas = document.createElement("canvas");
+        canvas.width  = Math.round(img.width  * ratio);
+        canvas.height = Math.round(img.height * ratio);
+        canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("Erro ao ler imagem"));
+      img.src = objUrl;
     });
 
   const handlePhotoChange  = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
-    setPhoto(await readFile(f));
+    if (f.size > 5 * 1024 * 1024) { alert("Arquivo muito grande. Máx. 5 MB."); return; }
+    setPhoto(await compressAndRead(f, 800, 0.82));
   };
   const handleBannerChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
-    setBanner(await readFile(f));
+    if (f.size > 8 * 1024 * 1024) { alert("Arquivo muito grande. Máx. 8 MB."); return; }
+    setBanner(await compressAndRead(f, 1400, 0.84));
   };
 
   const handleSave = async () => {
@@ -448,6 +487,33 @@ export default function Perfil() {
           Personalize sua identidade na plataforma
         </p>
       </div>
+
+      {/* ── Cartão de Identidade Animado ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="space-y-3"
+      >
+        <div className="flex items-center gap-2">
+          <IdCard className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.4em] text-muted-foreground">
+            Cartão de Agente
+          </span>
+          {cardAnimation !== "none" && (
+            <span className="text-[8px] uppercase tracking-widest px-2 py-0.5 rounded-full font-bold text-black"
+              style={{ background: "var(--color-primary)" }}>
+              {CARD_ANIMS.find(a => a.id === cardAnimation)?.label}
+            </span>
+          )}
+        </div>
+        <AgentCard
+          username={user?.username ?? "agente"}
+          displayName={displayName || user?.username}
+          role={user?.role}
+          photo={photo}
+          anim={cardAnimation}
+        />
+      </motion.div>
 
       {/* ── Banner + Avatar card ── */}
       <motion.div
@@ -1183,6 +1249,84 @@ export default function Perfil() {
         {themeSaving && <p className="text-[10px] text-muted-foreground/50 text-center animate-pulse">Salvando tema...</p>}
       </motion.div>
 
+      {/* ── Animação do Cartão ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.187 }}
+        className="rounded-2xl border border-white/8 p-5 space-y-4"
+        style={{ background: "rgba(0,0,0,0.35)", backdropFilter: "blur(20px)" }}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Wand2 className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
+            <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Animação do Cartão</h2>
+          </div>
+          {animSaving && <span className="text-[10px] text-muted-foreground/50 animate-pulse">Salvando...</span>}
+        </div>
+
+        <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest -mt-1">
+          Efeito visual do seu cartão de agente
+        </p>
+
+        <div className="grid grid-cols-5 gap-2">
+          {CARD_ANIMS.map(anim => {
+            const isSelected = cardAnimation === anim.id;
+            const previewStyles: Record<string, React.CSSProperties> = {
+              none:    { background: "linear-gradient(135deg, #04060f, #0b1530)" },
+              pulse:   { background: "linear-gradient(135deg, #04060f, #0b1530)", boxShadow: "0 0 14px -4px var(--color-primary)" },
+              shimmer: { background: "linear-gradient(90deg, #04060f 0%, color-mix(in srgb,var(--color-primary) 20%,#04060f) 50%, #04060f 100%)" },
+              glitch:  { background: "linear-gradient(135deg, #04060f 40%, #ff008020 40%, #ff008020 60%, #04060f 60%)" },
+              holo:    { background: "linear-gradient(135deg, #ff008040, #00ffff40, #8000ff40)" },
+            };
+            return (
+              <button
+                key={anim.id}
+                onClick={() => void saveCardAnimation(anim.id)}
+                title={anim.desc}
+                className={`relative flex flex-col items-center gap-2 p-2.5 rounded-xl border transition-all ${isSelected ? "scale-105" : "opacity-60 hover:opacity-90"}`}
+                style={{
+                  borderColor: isSelected ? "var(--color-primary)" : "rgba(255,255,255,0.07)",
+                  background: isSelected ? "color-mix(in srgb, var(--color-primary) 10%, transparent)" : "rgba(255,255,255,0.03)",
+                }}
+              >
+                {/* Mini preview */}
+                <div className="w-full h-7 rounded-lg overflow-hidden relative"
+                  style={previewStyles[anim.id]}>
+                  {anim.id === "pulse" && (
+                    <div className="absolute inset-0 rounded-lg border-2 animate-pulse"
+                      style={{ borderColor: "var(--color-primary)" }} />
+                  )}
+                  {anim.id === "shimmer" && (
+                    <div className="absolute inset-y-0 w-1/3 rounded-lg opacity-60"
+                      style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)", left: "30%" }} />
+                  )}
+                  {anim.id === "glitch" && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-4 h-0.5 bg-rose-400/70" style={{ transform: "translateY(-2px)" }} />
+                    </div>
+                  )}
+                  {anim.id === "holo" && (
+                    <div className="absolute inset-0 rounded-lg opacity-50"
+                      style={{ background: "linear-gradient(90deg, #ff0080, #00ffff, #8000ff)" }} />
+                  )}
+                </div>
+                <span className="text-[9px] text-center leading-tight"
+                  style={{ color: isSelected ? "var(--color-primary)" : "rgba(255,255,255,0.45)" }}>
+                  {anim.label}
+                </span>
+                {isSelected && (
+                  <span className="absolute top-1 left-1 w-3 h-3 rounded-full flex items-center justify-center"
+                    style={{ background: "var(--color-primary)" }}>
+                    <Check className="w-2 h-2 text-black" />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </motion.div>
+
       {/* ── Presets ── */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -1335,7 +1479,7 @@ export default function Perfil() {
         </div>
 
         <p className="text-[10px] text-muted-foreground/50 uppercase tracking-widest">
-          Salvo automaticamente na nuvem — disponível em qualquer dispositivo
+          Suporta JPG, PNG, WebP e <span className="text-primary/70">GIF animado</span> · Salvo na nuvem
         </p>
 
         <AnimatePresence mode="wait">
