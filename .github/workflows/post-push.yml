@@ -1,0 +1,21 @@
+name: Post-Push Sync Log
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  log-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log sync event
+        run: |
+          echo "✅ Hydra Consultoria — sync received from Replit"
+          echo "Commit: ${{ github.sha }}"
+          echo "Author: ${{ github.actor }}"
+          echo "Message: ${{ github.event.head_commit.message }}"
+          echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"

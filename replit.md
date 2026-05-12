@@ -60,5 +60,9 @@ Prefer iterative development with detailed explanations of changes. Functional p
 ## GitHub
 
 Repo: `https://github.com/Blxckxyz101/hydra-consultoria` (public)
-Push: `git push "https://hydra-bot:${GH_TOKEN}@github.com/Blxckxyz101/hydra-consultoria.git" HEAD:main --force`
+Push: automated via `scripts/push-github.sh` — runs as the last step of `scripts/post-merge.sh` after every task merge.
+- Uses `--force-with-lease=refs/heads/main:<remote-sha>` (safe, not bare `--force`)
+- Fetches remote state first; aborts explicitly if fetch fails
+- No-ops if already up to date or if `GH_TOKEN` is absent
+- Push activity is logged in GitHub Actions (`.github/workflows/post-push.yml`)
 Note: `GH_TOKEN` must be set via `setEnvVars` (not `setSecret` — token-detection blocks it).
