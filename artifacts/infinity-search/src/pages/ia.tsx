@@ -672,7 +672,7 @@ export default function IA() {
                 </span>
               </div>
               <div>
-                <div className="text-sm font-bold tracking-tight leading-tight">Infinity IA</div>
+                <div className="text-sm font-bold tracking-tight leading-tight">Hydra IA</div>
                 <div className="text-[9px] uppercase tracking-[0.35em] text-emerald-400/75 mt-0.5">Online · Llama 3.3</div>
               </div>
             </div>
@@ -938,7 +938,7 @@ export default function IA() {
           </form>
 
           <p className="text-[9px] text-muted-foreground/25 text-center mt-2 uppercase tracking-[0.35em]">
-            Infinity IA · Llama 3.3 70B · Pode cometer erros
+            Hydra IA · Llama 3.3 70B · Pode cometer erros
           </p>
         </div>
       </div>

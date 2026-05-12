@@ -1,6 +1,6 @@
 kind = "web"
   previewPath = "/"
-  title = "Infinity Search"
+  title = "Hydra Consultoria"
   version = "1.0.0"
   id = "artifacts/infinity-search"
   router = "path"
@@ -29,4 +29,3 @@ kind = "web"
   [services.env]
   PORT = "22153"
   BASE_PATH = "/"
-  

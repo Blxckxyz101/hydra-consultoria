@@ -1393,7 +1393,7 @@ export function CpfFullPanel({ cpf }: Props) {
         try {
           const r = await fetch(
             `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=br`,
-            { headers: { "Accept-Language": "pt-BR", "User-Agent": "InfinitySearch/1.0" } }
+            { headers: { "Accept-Language": "pt-BR", "User-Agent": "HydraConsultoria/1.0" } }
           );
           const data = await r.json() as { lat: string; lon: string }[];
           if (data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };

@@ -34,7 +34,7 @@ const THEMES: ThemeDef[] = [
     borderOverride: "0 0% 10%",
     mutedOverride:  "0 0% 13%",
   },
-  { key: "sky",        name: "Hydra Infinity", icon: Waves,    desc: "Padrão · oceano de dados",      primary: "195 90% 55%",  accent: "195 90% 20%",  ring: "195 90% 55%"  },
+  { key: "sky",        name: "Hydra Ocean",    icon: Waves,    desc: "Padrão · oceano de dados",      primary: "195 90% 55%",  accent: "195 90% 20%",  ring: "195 90% 55%"  },
   { key: "violeta",    name: "Violeta Zero",   icon: Zap,      desc: "Poder dos dados",               primary: "270 80% 65%",  accent: "270 80% 20%",  ring: "270 80% 65%"  },
   { key: "esmeralda",  name: "Esmeralda",      icon: Leaf,     desc: "Vida nos dados",                primary: "160 70% 50%",  accent: "160 70% 18%",  ring: "160 70% 50%"  },
   { key: "ambar",      name: "Âmbar Real",     icon: Crown,    desc: "Nobreza dourada",               primary: "38 95% 58%",   accent: "38 95% 18%",   ring: "38 95% 58%"   },
