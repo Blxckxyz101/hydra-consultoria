@@ -180,8 +180,10 @@ export default function Overview() {
   const [period, setPeriod] = useState(30);
   const { data, loading, error } = useOverview(period);
   const me = useMe();
-  const [profilePhoto] = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
-  const [profileBanner] = useState<string | null>(() => localStorage.getItem("infinity_profile_banner"));
+  const [profilePhotoErr, setProfilePhotoErr] = useState(false);
+  const [profileBannerErr, setProfileBannerErr] = useState(false);
+  const profilePhoto = me?.username && !profilePhotoErr ? `/api/infinity/u/${me.username}/photo` : null;
+  const profileBanner = me?.username && !profileBannerErr ? `/api/infinity/u/${me.username}/banner` : null;
   const latestNotifs = useLatestNotifs(3);
 
   const isAdmin = me?.role === "admin";
@@ -255,7 +257,7 @@ export default function Overview() {
       >
         <div className="relative h-32 sm:h-40 w-full overflow-hidden rounded-t-3xl">
           {profileBanner ? (
-            <img src={profileBanner} alt="banner" className="w-full h-full object-cover" />
+            <img src={profileBanner} alt="banner" className="w-full h-full object-cover" onError={() => setProfileBannerErr(true)} />
           ) : (
             <div className="w-full h-full" style={{ background: "linear-gradient(to right, color-mix(in srgb, var(--color-primary) 35%, transparent), color-mix(in srgb, var(--color-chart-2) 25%, transparent), color-mix(in srgb, var(--color-primary) 30%, transparent))" }} />
           )}
@@ -292,7 +294,7 @@ export default function Overview() {
                 border: "2.5px solid color-mix(in srgb, var(--color-primary) 85%, transparent)",
               }}>
               {profilePhoto ? (
-                <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" />
+                <img src={profilePhoto} alt="avatar" className="w-full h-full object-cover" onError={() => setProfilePhotoErr(true)} />
               ) : (
                 <span>{me?.username?.[0]?.toUpperCase() ?? "?"}</span>
               )}

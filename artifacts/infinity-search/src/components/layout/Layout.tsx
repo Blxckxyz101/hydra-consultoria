@@ -141,7 +141,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { data: user } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
   const logout = useInfinityLogout();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [profilePhoto, setProfilePhoto]   = useState<string | null>(() => localStorage.getItem("infinity_profile_photo"));
+  const [sidebarPhotoErr, setSidebarPhotoErr] = useState(false);
   const [profileStatus, setProfileStatus] = useState<string>(() => localStorage.getItem("infinity_profile_status") ?? "online");
   const [bellOpen, setBellOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -204,7 +204,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const handler = () => {
-      setProfilePhoto(localStorage.getItem("infinity_profile_photo"));
+      setSidebarPhotoErr(false);
       setProfileStatus(localStorage.getItem("infinity_profile_status") ?? "online");
     };
     window.addEventListener("infinity-profile-updated", handler);
@@ -412,13 +412,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <div
                 className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center font-bold text-sm"
                 style={{
-                  background: profilePhoto ? "transparent" : hashColor(user?.username ?? "?"),
+                  background: (user?.username && !sidebarPhotoErr) ? "transparent" : hashColor(user?.username ?? "?"),
                   color: "#000",
                   boxShadow: `0 0 16px ${hashColor(user?.username ?? "?")}55`,
                 }}
               >
-                {profilePhoto ? (
-                  <img src={profilePhoto} alt="" className="w-full h-full object-cover" />
+                {user?.username && !sidebarPhotoErr ? (
+                  <img src={`/api/infinity/u/${user.username}/photo`} alt="" className="w-full h-full object-cover" onError={() => setSidebarPhotoErr(true)} />
                 ) : (
                   ((user as any)?.displayName ?? user?.username)?.[0]?.toUpperCase() ?? "?"
                 )}
@@ -455,7 +455,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         <div className="space-y-1">
           <a
-            href="https://t.me/infinitysearchchannel"
+            href="https://t.me/hydraconsultoria"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"
@@ -476,7 +476,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span>Precisa de ajuda?</span>
           </a>
           <a
-            href="https://t.me/infinitysearchchannel"
+            href="https://t.me/hydraconsultoria"
             target="_blank"
             rel="noopener noreferrer"
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-muted-foreground transition-colors text-sm font-medium border border-transparent"

@@ -734,7 +734,7 @@ export default function DM() {
             </AnimatePresence>
 
             {/* Input bar */}
-            <div className="shrink-0 border-t border-white/[0.06] px-4 py-3" style={{ background: "hsl(220 35% 5%)" }}>
+            <div className="shrink-0 border-t border-white/[0.06] px-4 py-3" style={{ background: "hsl(220 35% 5%)", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}>
               <div className="flex items-end gap-2">
                 <button onClick={() => setShowGif(g => !g)}
                   className={`p-2.5 rounded-xl transition-all shrink-0 mb-0.5 ${showGif ? "text-cyan-400 bg-cyan-400/10" : "text-white/25 hover:text-cyan-400 hover:bg-white/5"}`}
