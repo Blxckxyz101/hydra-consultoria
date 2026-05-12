@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Pre-commit hook — detecta tokens e segredos antes de commitar
+# Instalado via: git config core.hooksPath .githooks
+# Para desabilitar pontualmente: git commit --no-verify
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+FOUND=0
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Arquivos que nunca devem ser commitados
+# ---------------------------------------------------------------------------
+BLOCKED_FILES=(
+  ".env"
+  ".env.local"
+  ".env.production"
+  ".env.staging"
+  ".replit.env"
+  "secrets.json"
+  "secrets.toml"
+  "secrets.yaml"
+  "secrets.yml"
+)
+
+for BLOCKED in "${BLOCKED_FILES[@]}"; do
+  if echo "$STAGED" | grep -qF "$BLOCKED"; then
+    echo -e "${RED}[pre-commit] BLOQUEADO: arquivo de credenciais no stage: $BLOCKED${NC}" >&2
+    FOUND=1
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Padrões de segredo a detectar no conteúdo dos arquivos
+# ---------------------------------------------------------------------------
+declare -A PATTERNS
+PATTERNS["GitHub Personal Access Token (ghp_)"]='ghp_[A-Za-z0-9]{36,}'
+PATTERNS["GitHub Fine-Grained Token (github_pat_)"]='github_pat_[A-Za-z0-9_]{80,}'
+PATTERNS["GitHub OAuth token (gho_)"]='gho_[A-Za-z0-9]{36,}'
+PATTERNS["Telegram Bot Token"]='[0-9]{8,10}:[A-Za-z0-9_-]{35}'
+PATTERNS["AWS Access Key"]='AKIA[0-9A-Z]{16}'
+PATTERNS["Slack token"]='xox[baprs]-[A-Za-z0-9-]+'
+PATTERNS["Stripe secret key"]='sk_(live|test)_[A-Za-z0-9]{24,}'
+PATTERNS["Private key header"]='-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+
+for FILE in $STAGED; do
+  case "$FILE" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff|*.woff2|*.ttf|*.eot|*.svg|*.pdf|*.zip)
+      continue ;;
+    .env.example|.gitignore|*.md|pnpm-lock.yaml|*.lock)
+      continue ;;
+  esac
+
+  CONTENT=$(git show ":$FILE" 2>/dev/null || true)
+  [ -z "$CONTENT" ] && continue
+
+  for LABEL in "${!PATTERNS[@]}"; do
+    PATTERN="${PATTERNS[$LABEL]}"
+    MATCH=$(echo "$CONTENT" | grep -oE "$PATTERN" | head -1 || true)
+    if [ -n "$MATCH" ]; then
+      echo -e "${RED}[pre-commit] POSSÍVEL SEGREDO detectado em: $FILE${NC}" >&2
+      echo -e "  Padrão: ${YELLOW}${LABEL}${NC}" >&2
+      FOUND=1
+    fi
+  done
+done
+
+if [ "$FOUND" -ne 0 ]; then
+  echo "" >&2
+  echo -e "${RED}Commit bloqueado — remova as credenciais antes de commitar.${NC}" >&2
+  echo "Para ignorar (não recomendado): git commit --no-verify" >&2
+  exit 1
+fi
+
+exit 0

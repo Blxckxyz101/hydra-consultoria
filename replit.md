@@ -57,6 +57,14 @@ Prefer iterative development with detailed explanations of changes. Functional p
 - `WEBSHARE_PROXY_PASS` — residential proxy password
 - `NEDPAY_PRIVATE_KEY` — payment integration
 
+## Segurança de credenciais
+
+- **Nunca commite credenciais reais.** Use `.env.example` como referência; valores reais ficam no painel de secrets do Replit.
+- `.gitignore` exclui `.env`, `.env.local`, `.env.production`, `.replit.env`, `secrets.*`, `*.pem`, `*.key`, etc.
+- O diretório `.githooks/` contém um **pre-commit hook** que bloqueia commits com padrões de token (GitHub PAT, Telegram, AWS, Stripe, etc.).
+- O hook é ativado automaticamente pelo `post-merge.sh` via `git config core.hooksPath .githooks`.
+- Para ativar manualmente em um clone novo: `bash scripts/src/install-hooks.sh`
+
 ## GitHub
 
 Repo: `https://github.com/Blxckxyz101/hydra-consultoria` (public)
