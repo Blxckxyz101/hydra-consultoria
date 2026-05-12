@@ -594,11 +594,11 @@ export default function PerfilPublico() {
           <motion.div
             className="w-full rounded-[28px] overflow-hidden relative"
             style={{
-              background: "linear-gradient(155deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.05) 100%)",
-              backdropFilter: "blur(52px) saturate(2.2) brightness(1.05)",
-              WebkitBackdropFilter: "blur(52px) saturate(2.2) brightness(1.05)",
-              border: "1px solid rgba(255,255,255,0.18)",
-              boxShadow: `0 0 0 1px rgba(255,255,255,0.10) inset, 0 1px 0 rgba(255,255,255,0.16) inset, 0 36px 90px rgba(0,0,0,0.5), 0 0 80px -10px ${accent}3a`,
+              background: "linear-gradient(155deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.006) 50%, rgba(255,255,255,0.018) 100%)",
+              backdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
+              WebkitBackdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
+              border: "1px solid rgba(255,255,255,0.22)",
+              boxShadow: `0 0 0 1px rgba(255,255,255,0.12) inset, 0 1px 0 rgba(255,255,255,0.22) inset, 0 0 0 0.5px rgba(255,255,255,0.08) inset, 0 32px 80px rgba(0,0,0,0.38), 0 0 80px -10px ${accent}2a`,
               rotateX: stiltX,
               rotateY: stiltY,
               transformStyle: "preserve-3d",
