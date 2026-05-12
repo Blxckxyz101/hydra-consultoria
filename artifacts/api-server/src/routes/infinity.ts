@@ -932,6 +932,9 @@ async function callBrasilApiCnpj(cnpj: string, signal: AbortSignal): Promise<{
 const JUNK_VALUES = new Set(["None", "null", "undefined", "N/A", "n/a", "-", "", "0"]);
 const JUNK_KEYS_SKYLERS = new Set([
   "status", "token", "criador", "creditos", "creditos_restantes", "api_info", "mensagem",
+  // "consulta" always contains query metadata {modulo, valor} — never result data.
+  // If it leaks into parsed fields it produces false "2 CAMPOS" hits when data is empty.
+  "consulta",
   // Additional token/auth-related keys that Skylers may return
   "token_info", "tokeninfo", "api_token", "access_token", "apikey", "api_key",
   "chave_api", "api_secret", "authorization", "bearer", "hash_token",
