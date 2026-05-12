@@ -129,7 +129,7 @@ function renderContent(content: string, accent: string, onImgClick?: (src: strin
     const mention = part.split(/(@\w+)/g);
     return <span key={i}>{mention.map((m, j) =>
       m.startsWith("@")
-        ? <Link key={j} href={`/u/${m.slice(1)}`}><span className="font-semibold cursor-pointer hover:underline px-0.5 rounded" style={{ color: accent, background: `${accent}18` }}>{m}</span></Link>
+        ? <Link key={j} href={`/u/${m.slice(1)}`}><span className="font-semibold cursor-pointer transition-colors px-1.5 py-0.5 rounded-md mx-0.5 inline-block" style={{ color: accent, background: `color-mix(in srgb, ${accent} 18%, transparent)` }} onMouseEnter={e => e.currentTarget.style.background = `color-mix(in srgb, ${accent} 35%, transparent)`} onMouseLeave={e => e.currentTarget.style.background = `color-mix(in srgb, ${accent} 18%, transparent)`}>{m}</span></Link>
         : <span key={j}>{m}</span>
     )}</span>;
   });
@@ -210,9 +210,10 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
 
   return (
     <div
-      className={`flex items-start gap-2 sm:gap-3 group hover:bg-white/[0.025] px-2 sm:px-3 py-0.5 rounded-xl transition-colors relative ${isConsecutive ? "mt-0" : "mt-3"} ${showActions ? "bg-white/[0.025]" : ""}`}
-      onMouseEnter={() => setShowActions(true)}
-      onMouseLeave={() => { setShowActions(false); setShowEmojiPicker(false); }}
+      className={`flex items-start gap-3 sm:gap-4 group px-3 sm:px-4 py-0.5 transition-colors relative ${isConsecutive ? "mt-0" : "mt-4"}`}
+      style={{ background: showActions ? "#20232a" : undefined }}
+      onMouseEnter={e => { setShowActions(true); e.currentTarget.style.background = "#20232a"; }}
+      onMouseLeave={e => { setShowActions(false); setShowEmojiPicker(false); e.currentTarget.style.background = ""; }}
       onClick={(e) => {
         // Tap-to-toggle actions on touch devices (ignore taps on links/buttons/images)
         const t = e.target as HTMLElement;
@@ -221,11 +222,11 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
       }}
     >
       {/* Avatar column */}
-      <div className="w-9 shrink-0 mt-0.5">
+      <div className="w-10 shrink-0 mt-0.5">
         {!isConsecutive && (
           <button onClick={() => onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor })}
             className="focus:outline-none hover:scale-105 transition-transform">
-            <Avatar username={msg.username} photo={msg.photo} size={9} />
+            <Avatar username={msg.username} photo={msg.photo} size={10} />
           </button>
         )}
       </div>
@@ -235,12 +236,12 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
         {!isConsecutive && (
           <div className="flex items-baseline gap-2 mb-0.5">
             <button onClick={() => onUserClick({ username: msg.username, displayName: msg.displayName, photo: msg.photo, role: msg.role, bio: null, accentColor: msg.accentColor })}
-              className="focus:outline-none hover:underline font-semibold text-sm" style={{ color: accent }}>
+              className="focus:outline-none hover:underline font-bold text-[15px] leading-tight" style={{ color: accent }}>
               {msg.displayName ?? msg.username}
             </button>
             <RoleBadge role={msg.role} />
-            <span className="text-[10px] text-white/25">{time}</span>
-            {isOwn && <span className="text-[9px] text-white/20">• você</span>}
+            <span className="text-[11px] text-white/40 font-medium">{isSameDay(msg.createdAt, new Date().toISOString()) ? `Hoje às ${time}` : time}</span>
+            {isOwn && <span className="text-[10px] text-white/30">• você</span>}
           </div>
         )}
 
@@ -896,7 +897,7 @@ export default function Comunidade() {
   const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading;
 
   return (
-    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+    <div className="flex h-[100dvh] lg:h-screen overflow-hidden relative" style={{ background: "#1a1d24", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       <AnimatePresence>
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}
@@ -927,8 +928,8 @@ export default function Comunidade() {
           <motion.div
             initial={{ x: -260, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -260, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute lg:relative inset-y-0 left-0 z-30 w-[260px] lg:w-[228px] shrink-0 h-full flex flex-col border-r border-white/[0.06] overflow-hidden shadow-2xl lg:shadow-none"
-            style={{ background: "hsl(220 35% 5%)" }}>
+            className="absolute lg:relative inset-y-0 left-0 z-30 w-[240px] lg:w-[240px] shrink-0 h-full flex flex-col border-r border-black/40 overflow-hidden shadow-2xl lg:shadow-none"
+            style={{ background: "#16181f" }}>
 
             {/* Sidebar header */}
             <div className="px-3 py-3 border-b border-white/[0.06]">
@@ -970,17 +971,14 @@ export default function Comunidade() {
                 return (
                   <button key={room.slug}
                     onClick={() => { setActiveRoom(room); if (window.innerWidth < 1024) setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-all relative group ${isActive ? "text-white" : "text-white/35 hover:text-white/70 hover:bg-white/[0.04]"}`}
-                    style={isActive ? { background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 22%, transparent)" } : {}}>
-                    {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full" style={{ background: "var(--color-primary)" }} />}
-                    <span className="text-base w-5 text-center shrink-0 leading-none">{room.icon ?? "#"}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate">{room.name}</div>
-                      {room.description && isActive && (
-                        <div className="text-[10px] text-white/30 truncate mt-0.5">{room.description}</div>
-                      )}
-                    </div>
-                    {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-white/20 ml-auto" />}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors relative group ${isActive ? "text-white" : "text-white/45 hover:text-white/85"}`}
+                    style={isActive ? { background: "rgba(255,255,255,0.08)" } : {}}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}>
+                    {isActive && <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-1 h-7 rounded-r-full" style={{ background: "var(--color-primary)" }} />}
+                    <Hash className="w-4 h-4 shrink-0 text-white/40" />
+                    <span className="text-[15px] font-medium truncate flex-1">{room.name}</span>
+                    {room.type === "global" && <Globe className="w-3 h-3 shrink-0 text-white/25" />}
                   </button>
                 );
               })}
@@ -1007,32 +1005,33 @@ export default function Comunidade() {
       <div className="flex-1 flex flex-col min-w-0 relative">
 
         {/* Header */}
-        <div className="shrink-0 px-3 py-2.5 border-b border-white/[0.06] flex items-center gap-3"
-          style={{ background: "rgba(2,6,18,0.4)", backdropFilter: "blur(16px)" }}>
+        <div className="shrink-0 px-4 h-12 flex items-center gap-3 shadow-md z-10"
+          style={{ background: "#1a1d24", borderBottom: "1px solid rgba(0,0,0,0.4)" }}>
           <button onClick={() => setSidebarOpen(v => !v)}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-white/30 hover:text-white/70 shrink-0 transition-colors">
-            <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${sidebarOpen ? "rotate-180" : ""}`} />
+            className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-white/5 text-white/40 hover:text-white shrink-0 transition-colors lg:hidden">
+            <ChevronRight className={`w-5 h-5 transition-transform duration-200 ${sidebarOpen ? "rotate-180" : ""}`} />
           </button>
           {activeRoom ? (
             <>
-              <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                <span className="text-xl leading-none shrink-0">{activeRoom.icon ?? "💬"}</span>
-                <div className="min-w-0">
-                  <div className="font-bold text-sm text-white truncate leading-none">{activeRoom.name}</div>
-                  {activeRoom.description && (
-                    <div className="text-[10px] text-white/30 truncate mt-0.5">{activeRoom.description}</div>
-                  )}
-                </div>
+              <Hash className="w-5 h-5 text-white/40 shrink-0" />
+              <div className="min-w-0 flex items-baseline gap-3">
+                <span className="font-bold text-[15px] text-white truncate">{activeRoom.name}</span>
+                {activeRoom.description && (
+                  <>
+                    <span className="hidden sm:inline w-px h-4 bg-white/10 self-center" />
+                    <span className="hidden sm:inline text-[13px] text-white/45 truncate">{activeRoom.description}</span>
+                  </>
+                )}
               </div>
-              <div className="ml-auto flex items-center gap-2 shrink-0">
-                <button onClick={() => setShowSearch(true)}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/5 text-white/25 hover:text-primary transition-colors" title="Buscar usuários">
-                  <Users className="w-3.5 h-3.5" />
-                </button>
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${wsReady ? "bg-green-400" : "bg-yellow-400"}`} />
-                  <span className="text-[10px] text-white/25 hidden sm:block">{wsReady ? "ao vivo" : "offline"}</span>
+              <div className="ml-auto flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-md" style={{ background: wsReady ? "rgba(34,197,94,0.12)" : "rgba(234,179,8,0.12)" }}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${wsReady ? "bg-green-400 animate-pulse" : "bg-yellow-400"}`} />
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide ${wsReady ? "text-green-400" : "text-yellow-400"}`}>{wsReady ? "ao vivo" : "offline"}</span>
                 </div>
+                <button onClick={() => setShowSearch(true)}
+                  className="w-8 h-8 rounded-md flex items-center justify-center hover:bg-white/5 text-white/45 hover:text-white transition-colors" title="Buscar usuários">
+                  <Users className="w-4 h-4" />
+                </button>
               </div>
             </>
           ) : <span className="text-sm text-white/30">Selecione uma sala</span>}
@@ -1106,7 +1105,7 @@ export default function Comunidade() {
         )}
 
         {/* Input zone */}
-        <div className="shrink-0 border-t border-white/[0.06]" style={{ background: "rgba(2,6,18,0.55)", backdropFilter: "blur(16px)" }}>
+        <div className="shrink-0 px-3 sm:px-4 pb-3 pt-1" style={{ background: "#1a1d24" }}>
 
           {/* @ Mention suggestions */}
           <AnimatePresence>
@@ -1153,51 +1152,52 @@ export default function Comunidade() {
             {pendingFile && <PendingFileBar file={pendingFile} onRemove={() => setPendingFile(null)} />}
           </AnimatePresence>
 
-          {/* Input row */}
-          <div className="flex items-center gap-2 px-3 py-3">
-            <button onClick={() => setShowGif(v => !v)}
-              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${showGif ? "text-primary bg-primary/10" : "text-white/25 hover:text-primary hover:bg-primary/10"}`}
-              title="GIF" disabled={!activeRoom}>
-              <Gift className="w-4 h-4" />
-            </button>
+          {/* Input row — Discord-style pill */}
+          <div className="flex items-end gap-2 rounded-xl px-3 py-2.5" style={{ background: "#383a40" }}>
             <button onClick={() => fileInputRef.current?.click()}
-              className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${pendingFile ? "text-primary bg-primary/10" : "text-white/25 hover:text-primary hover:bg-primary/10"}`}
+              className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all ${pendingFile ? "bg-primary text-black" : "bg-white/55 hover:bg-white text-[#383a40]"}`}
               title="Anexar foto" disabled={!activeRoom || imgUploading}>
-              {imgUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+              {imgUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-5 h-5" />}
             </button>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
 
             {/* Text input */}
-            <div className="flex-1 relative">
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={e => handleInputChange(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username);
-                    else void handleSend();
-                  }
-                  if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); setPendingFile(null); }
-                }}
-                placeholder={
-                  pendingFile ? "Adicione uma legenda (opcional)..."
-                    : activeRoom ? `Mensagem em #${activeRoom.name}...`
-                    : "Selecione uma sala"
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={e => handleInputChange(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username);
+                  else void handleSend();
                 }
-                disabled={!activeRoom || sending}
-                className="w-full bg-white/[0.07] border border-white/[0.1] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/15 transition-all placeholder:text-white/20 disabled:opacity-40"
-              />
-            </div>
+                if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); setPendingFile(null); }
+              }}
+              placeholder={
+                pendingFile ? "Adicione uma legenda (opcional)..."
+                  : activeRoom ? `Conversar em #${activeRoom.name}`
+                  : "Selecione uma sala"
+              }
+              disabled={!activeRoom || sending}
+              className="flex-1 min-w-0 bg-transparent border-0 text-[15px] text-white focus:outline-none transition-colors placeholder:text-white/40 disabled:opacity-40"
+            />
 
-            <button
-              onClick={handleSend}
-              disabled={!canSend}
-              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center font-bold transition-all disabled:opacity-25 hover:scale-105 active:scale-95"
-              style={{ background: "var(--color-primary)", color: "#000" }}>
-              {sending || imgUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            <button onClick={() => setShowGif(v => !v)}
+              className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-colors ${showGif ? "text-primary" : "text-white/55 hover:text-white"}`}
+              title="GIF" disabled={!activeRoom}>
+              <Gift className="w-5 h-5" />
             </button>
+
+            {canSend ? (
+              <button onClick={handleSend}
+                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-all hover:scale-110"
+                style={{ color: "var(--color-primary)" }}>
+                {sending || imgUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+              </button>
+            ) : (
+              <Smile className="w-5 h-5 text-white/55 shrink-0" />
+            )}
           </div>
         </div>
       </div>

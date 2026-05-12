@@ -99,7 +99,7 @@ router.patch("/me/social", requireAuth, async (req, res): Promise<void> => {
       const isDataUrl = bgValue.startsWith("data:");
       const max = isDataUrl ? 10 * 1024 * 1024 : 2000;
       if (bgValue.length > max) {
-        res.status(413).json({ error: isDataUrl ? "Imagem muito grande (máx ~7MB). Comprima ou use uma URL." : "URL muito longa (máx 2000 chars)." });
+        res.status(413).json({ error: isDataUrl ? "Imagem muito grande (máx ~10MB). Comprima ou use uma URL." : "URL muito longa (máx 2000 chars)." });
         return;
       }
       patch.profileBgValue = bgValue;
