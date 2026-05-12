@@ -594,19 +594,22 @@ export default function PerfilPublico() {
           <motion.div
             className="w-full rounded-[28px] overflow-hidden relative"
             style={{
-              background: "linear-gradient(135deg, rgba(14,18,32,0.55) 0%, rgba(8,10,18,0.45) 100%)",
-              backdropFilter: "blur(40px) saturate(1.7)",
-              WebkitBackdropFilter: "blur(40px) saturate(1.7)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: `0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.08) inset, 0 36px 90px rgba(0,0,0,0.65), 0 0 80px -10px ${accent}3a`,
+              background: "linear-gradient(155deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.05) 100%)",
+              backdropFilter: "blur(52px) saturate(2.2) brightness(1.05)",
+              WebkitBackdropFilter: "blur(52px) saturate(2.2) brightness(1.05)",
+              border: "1px solid rgba(255,255,255,0.18)",
+              boxShadow: `0 0 0 1px rgba(255,255,255,0.10) inset, 0 1px 0 rgba(255,255,255,0.16) inset, 0 36px 90px rgba(0,0,0,0.5), 0 0 80px -10px ${accent}3a`,
               rotateX: stiltX,
               rotateY: stiltY,
               transformStyle: "preserve-3d",
             }}
           >
             {/* Inner shimmer line on top */}
-            <div className="absolute top-0 inset-x-8 h-px"
-                 style={{ background: `linear-gradient(to right, transparent, ${accent}80, transparent)`, opacity: 0.6 }} />
+            <div className="absolute top-0 inset-x-6 h-px"
+                 style={{ background: `linear-gradient(to right, transparent, rgba(255,255,255,0.55), ${accent}90, rgba(255,255,255,0.55), transparent)` }} />
+            {/* Subtle left-edge highlight */}
+            <div className="absolute top-8 left-0 bottom-8 w-px"
+                 style={{ background: `linear-gradient(to bottom, transparent, rgba(255,255,255,0.12), transparent)` }} />
 
             {/* ── Avatar section ── */}
             <div className="flex flex-col items-center pt-9 pb-5 px-6 relative">
@@ -725,7 +728,7 @@ export default function PerfilPublico() {
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.22 }}
                 className="flex items-center gap-1.5 mt-2.5 px-3 py-1.5 rounded-full"
-                style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
+                style={{ background: "rgba(255,255,255,0.07)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.13)" }}
               >
                 <span className="relative w-1.5 h-1.5 rounded-full shrink-0" style={{ background: statusColor }}>
                   {profile.status === "online" && (
@@ -824,7 +827,7 @@ export default function PerfilPublico() {
             )}
 
             {/* ── Divider ── */}
-            <div className="mx-6 h-px mb-4" style={{ background: "rgba(255,255,255,0.06)" }} />
+            <div className="mx-6 h-px mb-4" style={{ background: "rgba(255,255,255,0.10)" }} />
 
             {/* ── Action buttons ── */}
             <motion.div
@@ -850,7 +853,7 @@ export default function PerfilPublico() {
                   <button
                     onClick={() => photoRef.current?.click()}
                     className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center transition-all hover:bg-white/10 active:scale-[0.95] shrink-0"
-                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}
+                    style={{ background: "rgba(255,255,255,0.08)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.14)" }}
                     title="Trocar foto"
                   >
                     <Camera className="w-5 h-5 text-white/65" />
