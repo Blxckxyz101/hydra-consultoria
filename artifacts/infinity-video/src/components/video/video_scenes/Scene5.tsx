@@ -1,122 +1,153 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { sceneTransitions } from '@/lib/video/animations';
-import hydraLogo from '@assets/4dd5ed63-e0ef-48f8-a1ca-d13c3c00d495_1778525084093.jpeg';
+import hydraLogo from '@/hydra-logo.jpg';
 
 export function Scene5() {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
     const timers = [
-      setTimeout(() => setPhase(1), 500),  // Logo
-      setTimeout(() => setPhase(2), 1200), // Tagline
-      setTimeout(() => setPhase(3), 2000), // CTA buttons
-      setTimeout(() => setPhase(4), 3200), // Contact line
-      setTimeout(() => setPhase(5), 5500), // Exit
+      setTimeout(() => setPhase(1), 400),
+      setTimeout(() => setPhase(2), 1000),
+      setTimeout(() => setPhase(3), 1700),
+      setTimeout(() => setPhase(4), 2400),
     ];
     return () => timers.forEach(t => clearTimeout(t));
   }, []);
 
   return (
-    <motion.div 
-      className="absolute inset-0 flex flex-col items-center justify-center p-6 bg-[#030712]"
+    <motion.div
+      className="absolute inset-0 flex flex-col items-center justify-end bg-[#020408] overflow-hidden"
       {...sceneTransitions.morphExpand}
     >
-      <div className="relative z-20 flex flex-col items-center">
-        {/* Hydra Logo */}
-        <motion.div 
-          className="relative w-36 h-36 mb-6"
-          initial={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
-          animate={phase >= 1 ? { opacity: 1, scale: 1, filter: 'blur(0px)' } : { opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
+      {/* Cyber floor grid (perspective) */}
+      <motion.div
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 pointer-events-none"
+        style={{
+          width: '200%',
+          height: '45vh',
+          transform: 'perspective(400px) rotateX(55deg) translateX(-50%) translateY(10%)',
+          background: 'linear-gradient(to top, rgba(14,165,233,0.15) 0%, transparent 100%)',
+          backgroundImage: 'linear-gradient(rgba(14,165,233,0.25) 1px, transparent 1px), linear-gradient(90deg, rgba(14,165,233,0.25) 1px, transparent 1px)',
+          backgroundSize: '50px 50px',
+        }}
+        initial={{ opacity: 0 }}
+        animate={phase >= 1 ? { opacity: 1 } : { opacity: 0 }}
+        transition={{ duration: 1.5, ease: 'easeOut' }}
+      />
+
+      {/* Horizon glow */}
+      <motion.div
+        className="absolute pointer-events-none"
+        style={{
+          bottom: '32%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '120%',
+          height: '2px',
+          background: 'linear-gradient(90deg, transparent, #0ea5e9, #38bdf8, #0ea5e9, transparent)',
+          boxShadow: '0 0 40px 4px rgba(14,165,233,0.6)',
+        }}
+        initial={{ opacity: 0, scaleX: 0 }}
+        animate={phase >= 1 ? { opacity: 1, scaleX: 1 } : { opacity: 0, scaleX: 0 }}
+        transition={{ duration: 1 }}
+      />
+
+      {/* Main content (above grid) */}
+      <div className="relative z-20 flex flex-col items-center pb-[38%] gap-3">
+        {/* Logo */}
+        <motion.div
+          className="w-20 h-20 rounded-2xl overflow-hidden border border-[#0ea5e9]/40 shadow-[0_0_30px_rgba(14,165,233,0.4)] shrink-0"
+          initial={{ opacity: 0, scale: 0.4, filter: 'blur(15px)' }}
+          animate={phase >= 1 ? { opacity: 1, scale: 1, filter: 'blur(0px)' } : {}}
           transition={{ type: 'spring', stiffness: 200, damping: 20 }}
         >
-          <img 
-            src={hydraLogo} 
-            alt="Hydra Consultoria" 
-            className="w-full h-full object-contain drop-shadow-[0_0_20px_rgba(14,165,233,0.8)]"
-          />
+          <img src={hydraLogo} alt="Hydra" className="w-full h-full object-cover" />
         </motion.div>
 
-        <motion.h1 
-          className="text-4xl font-bold tracking-widest text-white mb-1"
-          initial={{ opacity: 0, y: 20 }}
-          animate={phase >= 1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
-          transition={{ duration: 0.8, delay: 0.5 }}
-        >
-          HYDRA
-        </motion.h1>
+        {/* Brand name */}
         <motion.div
-          className="text-xs font-mono text-[#0ea5e9]/70 tracking-[0.4em] uppercase mb-6"
-          initial={{ opacity: 0 }}
-          animate={phase >= 1 ? { opacity: 1 } : { opacity: 0 }}
-          transition={{ duration: 0.8, delay: 0.7 }}
+          className="text-center"
+          initial={{ opacity: 0, y: 15 }}
+          animate={phase >= 2 ? { opacity: 1, y: 0 } : { opacity: 0, y: 15 }}
+          transition={{ duration: 0.6 }}
         >
-          CONSULTORIA
+          <div className="text-3xl font-black tracking-[0.25em] text-white" style={{ textShadow: '0 0 20px rgba(14,165,233,0.5)' }}>
+            HYDRA
+          </div>
+          <div className="text-[10px] font-mono text-[#0ea5e9]/70 tracking-[0.5em] uppercase -mt-0.5">
+            CONSULTORIA
+          </div>
         </motion.div>
 
-        <motion.div 
-          className="text-sm font-mono text-[#0ea5e9] tracking-widest mb-8 text-center"
+        {/* Tagline */}
+        <motion.div
+          className="text-[10px] font-mono text-[#38bdf8]/60 tracking-[0.25em] text-center uppercase"
           initial={{ opacity: 0 }}
           animate={phase >= 2 ? { opacity: 1 } : { opacity: 0 }}
-          transition={{ duration: 1 }}
+          transition={{ duration: 0.8, delay: 0.3 }}
         >
-          INTELIGÊNCIA EM<br/>CADA CONSULTA
+          INTELIGÊNCIA EM CADA CONSULTA
         </motion.div>
 
-        {/* CTA Buttons */}
+        {/* CTA */}
         <motion.div
-          className="flex flex-col items-center gap-3 mb-6 w-full max-w-xs"
-          initial={{ opacity: 0, scale: 0.9, y: 20 }}
-          animate={phase >= 3 ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 20 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+          className="flex flex-col items-center gap-2 w-full max-w-[220px]"
+          initial={{ opacity: 0, scale: 0.9, y: 15 }}
+          animate={phase >= 3 ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.9, y: 15 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 22 }}
         >
-          <div className="w-full px-6 py-3 bg-[#0ea5e9]/15 border border-[#0ea5e9] rounded-full text-white text-sm font-bold tracking-wider backdrop-blur-sm text-center">
+          <motion.div
+            className="w-full py-2.5 rounded-full text-center text-white text-xs font-bold tracking-[0.2em] cursor-pointer select-none uppercase"
+            style={{
+              background: 'linear-gradient(135deg, #0369a1, #0ea5e9)',
+              boxShadow: '0 0 20px rgba(14,165,233,0.5), 0 0 40px rgba(14,165,233,0.2)',
+            }}
+            animate={{ boxShadow: ['0 0 20px rgba(14,165,233,0.5)', '0 0 35px rgba(14,165,233,0.8)', '0 0 20px rgba(14,165,233,0.5)'] }}
+            transition={{ duration: 2, repeat: Infinity }}
+          >
             ACESSE AGORA
-          </div>
+          </motion.div>
+
           <div className="flex gap-2 w-full">
-            <div className="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-full text-[#7dd3fc] text-xs font-semibold tracking-wider text-center">
-              CONHEÇA OS PLANOS
-            </div>
-            <div className="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-full text-[#7dd3fc] text-xs font-semibold tracking-wider text-center">
-              SOLICITE UM TESTE
-            </div>
+            {['VER PLANOS', 'TESTAR GRÁTIS'].map((label, i) => (
+              <div key={label} className="flex-1 py-2 rounded-full text-center text-[9px] font-semibold tracking-wider text-[#7dd3fc] border border-[#0ea5e9]/25 bg-[#0ea5e9]/5">
+                {label}
+              </div>
+            ))}
           </div>
         </motion.div>
 
-        {/* Contact / site line */}
+        {/* Website */}
         <motion.div
-          className="flex flex-col items-center gap-1.5"
+          className="flex flex-col items-center gap-1 mt-1"
           initial={{ opacity: 0, y: 8 }}
           animate={phase >= 4 ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
-          transition={{ duration: 0.7 }}
+          transition={{ duration: 0.5 }}
         >
           <div className="flex items-center gap-2">
-            <span className="w-12 h-px bg-[#0ea5e9]/40" />
-            <span className="text-[10px] font-mono text-[#0ea5e9]/70 tracking-[0.25em] uppercase">entre em contato conosco</span>
-            <span className="w-12 h-px bg-[#0ea5e9]/40" />
+            <span className="w-10 h-px bg-[#0ea5e9]/30" />
+            <span className="text-[8px] font-mono text-white/30 tracking-[0.3em] uppercase">entre em contato</span>
+            <span className="w-10 h-px bg-[#0ea5e9]/30" />
           </div>
-          <p className="text-[11px] text-white/50 tracking-widest font-mono">
+          <span className="text-[10px] font-mono">
             🌐 <span className="text-[#38bdf8]">hydraconsultoria.pro</span>
-          </p>
-          <p className="text-[11px] text-white/50 tracking-widest font-mono">
-            💬 <span className="text-[#38bdf8]">Entre em contato via WhatsApp</span>
-          </p>
+          </span>
         </motion.div>
       </div>
 
-      {/* Cyber grid floor */}
-      <motion.div 
-        className="absolute bottom-0 w-[200%] h-[40vh] border-t border-[#0ea5e9]/30"
-        style={{
-          background: 'linear-gradient(to top, rgba(14,165,233,0.1) 0%, transparent 100%)',
-          transform: 'perspective(500px) rotateX(60deg)',
-          backgroundImage: 'linear-gradient(rgba(14,165,233,0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(14,165,233,0.2) 1px, transparent 1px)',
-          backgroundSize: '40px 40px'
-        }}
-        initial={{ opacity: 0, y: 50 }}
-        animate={phase >= 1 ? { opacity: 1, y: 0 } : { opacity: 0, y: 50 }}
-        transition={{ duration: 1.5, ease: 'easeOut' }}
-      />
+      {/* Top particles flying in */}
+      {Array.from({ length: 6 }).map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute w-1 h-1 rounded-full bg-[#0ea5e9]"
+          style={{ left: `${15 + i * 12}%` }}
+          initial={{ top: '-5%', opacity: 0 }}
+          animate={phase >= 1 ? { top: `${30 + (i % 3) * 8}%`, opacity: [0, 0.8, 0] } : {}}
+          transition={{ delay: i * 0.15, duration: 1.5, ease: 'easeOut' }}
+        />
+      ))}
     </motion.div>
   );
 }
