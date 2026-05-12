@@ -207,9 +207,9 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   const rawMae = gfExact(f,"NOME MAE","NOMEMAE","MAE","FILIACAO1","FILIACAO 1") ||
                 gf(f,"NOME MAE","NOMEMAE","MAE","FILIACAO 1","FILIACAO1") ||
                 rxv(raw,"NOME DA MÃE","NOME MAE","NOMEMAE","MAE","FILIACAO 1");
-  const rawPai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2") ||
-                gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2") ||
-                rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2");
+  const rawPai = gfExact(f,"NOME PAI","NOMEPAI","PAI","FILIACAO2","FILIACAO 2","FILIACAO NOME PAI","FILIACAONOMEPAI","FILIACAOPAI","FILIACAO PAI","GENITOR","PAI BIOLOGICO","NOMEPAIBIOLOGICO") ||
+                gf(f,"NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO2","FILIACAO NOME PAI","FILIACAONOMEPAI","FILIACAOPAI","FILIACAO PAI","GENITOR") ||
+                rxv(raw,"NOME DO PAI","NOME PAI","NOMEPAI","PAI","FILIACAO 2","FILIACAO NOME PAI","FILIACAO PAI","GENITOR");
   const BOGUS_NAME_RE = /^(brasil|brazil|brasil[ei]iro?a?|portuguesa?|argentina|paraguai|bolivian?|chile|colombi[ao]|venezuela|peru|equador|uruguai|desconhecido|nao\s+consta|não\s+consta|sem\s+informacao|sem\s+informação|nao\s+informado|não\s+informado|nao\s+declarado|não\s+declarado|nao\s+encontrado|não\s+encontrado|nao\s+cadastrado|não\s+cadastrado|constam\s+como|consta\s+como|masculino|feminino|masc|fem)$/i;
   const isValidParent = (v: string, subj: string) =>
     v.length >= 5 &&
@@ -1935,6 +1935,23 @@ export function CpfFullPanel({ cpf }: Props) {
                       if (!meta || !res?.data) return null;
                       const { label, icon: Icon } = meta;
                       const { fields, sections, raw } = res.data;
+
+                      // For dívidas/bens: detect when the API echoes back the subject's personal data
+                      // instead of returning actual financial/property records
+                      const FINANCIAL_RE = /VALOR|DIVIDA|DEVEDOR|CREDITOR|CREDOR|DESCRICAO.*DIV|AREA.*M2|MATRICULA|IMOVEL|VENCIMENTO|PARCELA|DEBITO|INADIMPL|AVERBAC|GRAVAME/i;
+                      const PERSONAL_KEY_RE = /^(CPF|NOME|MAE|PAI|SEXO|NASC|FILIACAO|SITUACAO|RACA|ESCOLAR|DEFICI|NACION|NATURAL|ESTADO|EMISSAO|TITULO|PIS|NIS|RG|IDENT)/i;
+                      const isMoneyModule = key === "dividas" || key === "bens";
+                      const subjectCpfNorm = cpf.replace(/\D/g, "");
+                      const hasRealFinancialData = !isMoneyModule || (
+                        fields.some(([k, v]) => FINANCIAL_RE.test(k) || FINANCIAL_RE.test(v)) ||
+                        sections.some(sec => sec.items.some(item => FINANCIAL_RE.test(item)))
+                      );
+                      // Detect echo: all fields are personal-type AND subject CPF appears in data
+                      const isEcho = isMoneyModule && !hasRealFinancialData && (
+                        fields.some(([, v]) => subjectCpfNorm.length >= 11 && v.replace(/\D/g,"").includes(subjectCpfNorm)) ||
+                        sections.some(sec => sec.items.some(item => subjectCpfNorm.length >= 11 && item.replace(/\D/g,"").includes(subjectCpfNorm)))
+                      ) && fields.every(([k]) => PERSONAL_KEY_RE.test(k.replace(/[\s_-]/g,"")));
+
                       return (
                         <div key={key} className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.08)", background: "rgba(9,9,15,0.6)" }}>
                           <div className="px-4 py-3 flex items-center gap-2" style={{ background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -1942,21 +1959,27 @@ export function CpfFullPanel({ cpf }: Props) {
                             <span className="text-[11px] uppercase tracking-widest font-bold text-white">{label}</span>
                           </div>
                           <div className="p-4 space-y-3">
-                            {fields.length > 0 && (
-                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                                {fields.map(([k, v], i) => <div key={i}><p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p><p className="text-sm font-semibold text-white">{v}</p></div>)}
-                              </div>
-                            )}
-                            {sections.map((sec, si) => (
-                              <div key={si}>
-                                {sec.name && <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">{sec.name}</p>}
-                                <div className="divide-y rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)", borderColor: "rgba(255,255,255,0.04)" }}>
-                                  {sec.items.map((item, ii) => <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>)}
-                                </div>
-                              </div>
-                            ))}
-                            {!fields.length && !sections.length && raw && (
-                              <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-48 overflow-y-auto">{raw}</pre>
+                            {isEcho ? (
+                              <p className="text-xs text-white/30 text-center py-2">Nenhum registro encontrado</p>
+                            ) : (
+                              <>
+                                {fields.length > 0 && (
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                    {fields.map(([k, v], i) => <div key={i}><p className="text-[8.5px] uppercase tracking-[0.18em] text-white/25 mb-0.5">{k}</p><p className="text-sm font-semibold text-white">{v}</p></div>)}
+                                  </div>
+                                )}
+                                {sections.map((sec, si) => (
+                                  <div key={si}>
+                                    {sec.name && <p className="text-[9px] uppercase tracking-widest text-white/25 mb-1.5">{sec.name}</p>}
+                                    <div className="divide-y rounded-xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.06)", borderColor: "rgba(255,255,255,0.04)" }}>
+                                      {sec.items.map((item, ii) => <div key={ii} className="px-3 py-2 text-sm text-white/55">{item}</div>)}
+                                    </div>
+                                  </div>
+                                ))}
+                                {!fields.length && !sections.length && raw && (
+                                  <pre className="text-xs text-white/40 whitespace-pre-wrap break-words font-mono max-h-48 overflow-y-auto">{raw}</pre>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>

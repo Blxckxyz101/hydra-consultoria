@@ -124,6 +124,8 @@ export default function Perfil() {
   const [socialLocation, setSocialLocation] = useState("");
   const [socialMusicUrl, setSocialMusicUrl] = useState("");
   const [socialLinks, setSocialLinks] = useState<{ type: string; value: string }[]>([]);
+  const [socialBgType, setSocialBgType] = useState<"default" | "image" | "color">("default");
+  const [socialBgValue, setSocialBgValue] = useState("");
   const [socialSaving, setSocialSaving] = useState(false);
   const [socialSaved, setSocialSaved] = useState(false);
   const [newLinkType, setNewLinkType] = useState("instagram");
@@ -288,12 +290,14 @@ export default function Perfil() {
     // Load social profile
     fetch("/api/infinity/me/social", { headers: authHeaders() })
       .then(r => r.json())
-      .then((d: { location?: string | null; musicUrl?: string | null; socialLinks?: { type: string; value: string }[]; cardTheme?: string; planType?: string }) => {
+      .then((d: { location?: string | null; musicUrl?: string | null; socialLinks?: { type: string; value: string }[]; cardTheme?: string; planType?: string; bgType?: string; bgValue?: string | null }) => {
         setSocialLocation(d.location ?? "");
         setSocialMusicUrl(d.musicUrl ?? "");
         setSocialLinks(Array.isArray(d.socialLinks) ? d.socialLinks : []);
         if (d.cardTheme) setCardTheme(d.cardTheme);
         if (d.planType) setPlanType(d.planType);
+        if (d.bgType && (d.bgType === "image" || d.bgType === "color" || d.bgType === "default")) setSocialBgType(d.bgType);
+        setSocialBgValue(d.bgValue ?? "");
       })
       .catch(() => {});
 
@@ -311,6 +315,8 @@ export default function Perfil() {
           location: socialLocation.trim() || null,
           musicUrl: socialMusicUrl.trim() || null,
           socialLinks,
+          bgType: socialBgType,
+          bgValue: socialBgValue.trim() || null,
         }),
       });
       setSocialSaved(true);
@@ -829,6 +835,52 @@ export default function Perfil() {
           <input value={socialMusicUrl} onChange={e => setSocialMusicUrl(e.target.value.slice(0, 200))}
             placeholder="https://open.spotify.com/..."
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40" />
+        </div>
+
+        {/* Background personalizado */}
+        <div>
+          <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2 flex items-center gap-1.5">
+            <Globe className="w-3 h-3" /> Fundo do Perfil Público
+          </label>
+          <div className="flex gap-2 mb-2">
+            {(["default", "image", "color"] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setSocialBgType(t)}
+                className="flex-1 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-widest transition-all"
+                style={socialBgType === t
+                  ? { background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)" }
+                  : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.08)" }
+                }
+              >
+                {t === "default" ? "Padrão" : t === "image" ? "Imagem" : "Cor"}
+              </button>
+            ))}
+          </div>
+          {socialBgType === "image" && (
+            <input
+              value={socialBgValue}
+              onChange={e => setSocialBgValue(e.target.value.slice(0, 500))}
+              placeholder="https://i.imgur.com/..."
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-colors placeholder:text-muted-foreground/40"
+            />
+          )}
+          {socialBgType === "color" && (
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={socialBgValue || "#07090f"}
+                onChange={e => setSocialBgValue(e.target.value)}
+                className="w-10 h-10 rounded-lg cursor-pointer border border-white/10 bg-transparent"
+              />
+              <span className="text-xs text-muted-foreground/50">{socialBgValue || "#07090f"}</span>
+            </div>
+          )}
+          {socialBgType !== "default" && (
+            <p className="text-[10px] text-muted-foreground/30 mt-1.5">
+              {socialBgType === "image" ? "URL direta de uma imagem (aparece desfocada como fundo na sua página pública)" : "Cor sólida de fundo"}
+            </p>
+          )}
         </div>
 
         {/* Social Links */}

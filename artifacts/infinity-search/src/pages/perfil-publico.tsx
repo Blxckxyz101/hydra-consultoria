@@ -276,16 +276,44 @@ export default function PerfilPublico() {
   const joinDate = new Date(profile.createdAt).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
   const isSpotify = profile.musicUrl?.includes("spotify.com");
 
+  const hasBgImage = profile.bgType === "image" && !!profile.bgValue;
+  const hasBgColor = profile.bgType === "color" && !!profile.bgValue;
+  const bgSource = hasBgImage ? profile.bgValue! : (profile.banner ?? null);
+
   return (
-    <div className="min-h-screen relative overflow-hidden" style={{ background: "#07090f" }}>
+    <div
+      className="min-h-screen relative overflow-hidden"
+      style={{ background: hasBgColor ? profile.bgValue! : "#07090f" }}
+    >
       {/* ── Ambient background ── */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {/* Banner blurred background */}
-        {profile.banner && (
+        {/* Custom image background (guns.lol style) OR banner blur fallback */}
+        {bgSource && (
           <div className="absolute inset-0">
-            <img src={profile.banner} alt="" className="w-full h-full object-cover" style={{ filter: "blur(40px) saturate(0.7)", transform: "scale(1.1)" }} />
-            <div className="absolute inset-0" style={{ background: "rgba(7,9,15,0.82)" }} />
+            <img
+              src={bgSource}
+              alt=""
+              className="w-full h-full object-cover"
+              style={{
+                filter: hasBgImage
+                  ? "blur(28px) saturate(1.15) brightness(0.38)"
+                  : "blur(40px) saturate(0.7)",
+                transform: "scale(1.12)",
+              }}
+            />
+            <div
+              className="absolute inset-0"
+              style={{
+                background: hasBgImage
+                  ? "linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.45) 60%, rgba(0,0,0,0.65) 100%)"
+                  : "rgba(7,9,15,0.82)",
+              }}
+            />
           </div>
+        )}
+        {/* Color overlay when solid bg chosen */}
+        {hasBgColor && (
+          <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.18)" }} />
         )}
         {/* Glow blobs */}
         <motion.div
@@ -300,9 +328,11 @@ export default function PerfilPublico() {
           animate={{ scale: [1, 1.2, 1] }}
           transition={{ duration: 12, repeat: Infinity, ease: "easeInOut", delay: 3 }}
         />
-        {/* Subtle grid */}
-        <div className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
+        {/* Subtle grid — only when no custom bg */}
+        {!hasBgImage && !hasBgColor && (
+          <div className="absolute inset-0 opacity-[0.025]"
+            style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
+        )}
       </div>
 
       {/* ── Page content ── */}
