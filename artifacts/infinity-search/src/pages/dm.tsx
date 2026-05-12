@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, Loader2, X, Gift, Plus, Search, MessageSquarePlus,
   CornerUpLeft, Smile, Trash2, ZoomIn, ArrowDown, UserCircle,
-  AtSign, Crown, Shield,
+  AtSign, Crown, Shield, ArrowLeft,
 } from "lucide-react";
 
 function authHeaders(): Record<string, string> {
@@ -346,8 +346,8 @@ export default function DM() {
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
       </AnimatePresence>
 
-      {/* ── Sidebar ── */}
-      <div className="w-64 shrink-0 flex flex-col border-r border-white/[0.06] overflow-hidden" style={{ background: "hsl(220 35% 5%)" }}>
+      {/* ── Sidebar — hidden on mobile when a chat is open ── */}
+      <div className={`${otherUsername ? "hidden md:flex" : "flex"} w-full md:w-64 shrink-0 flex-col border-r border-white/[0.06] overflow-hidden`} style={{ background: "hsl(220 35% 5%)" }}>
         {/* Sidebar header */}
         <div className="px-3 pt-3 pb-2 border-b border-white/[0.06]">
           <div className="flex items-center justify-between mb-2.5">
@@ -454,8 +454,8 @@ export default function DM() {
         )}
       </div>
 
-      {/* ── Main Chat Area ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* ── Main Chat Area — hidden on mobile when no chat selected ── */}
+      <div className={`${otherUsername ? "flex" : "hidden md:flex"} flex-1 flex-col min-w-0`}>
         {!otherUsername ? (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
@@ -477,6 +477,14 @@ export default function DM() {
           <>
             {/* Header */}
             <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]" style={{ background: "hsl(220 35% 5%)" }}>
+              {/* Mobile back button */}
+              <button
+                className="md:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-white/10 text-white/50 hover:text-white/90 transition-colors shrink-0"
+                onClick={() => setLocation("/dm")}
+                aria-label="Voltar"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
               {otherUser ? (
                 <>
                   <div className="relative">

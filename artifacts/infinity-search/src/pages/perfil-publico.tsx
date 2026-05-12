@@ -590,20 +590,38 @@ export default function PerfilPublico() {
             perspective: 1200,
           }}
         >
-          {/* ═══ THE CARD ═══ */}
+          {/* ═══ THE CARD ═══
+               iOS/Android fix: backdrop-filter MUST be on a separate element
+               from overflow:hidden — WebKit breaks glass when both are on the
+               same element. Structure: outer (border+shadow+transform) →
+               glass layer (backdrop-filter, no overflow) → content (overflow:hidden). */}
           <motion.div
-            className="w-full rounded-[28px] overflow-hidden relative"
+            className="w-full relative"
             style={{
-              background: "linear-gradient(155deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.006) 50%, rgba(255,255,255,0.018) 100%)",
-              backdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
-              WebkitBackdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
+              borderRadius: 28,
               border: "1px solid rgba(255,255,255,0.22)",
-              boxShadow: `0 0 0 1px rgba(255,255,255,0.12) inset, 0 1px 0 rgba(255,255,255,0.22) inset, 0 0 0 0.5px rgba(255,255,255,0.08) inset, 0 32px 80px rgba(0,0,0,0.38), 0 0 80px -10px ${accent}2a`,
+              boxShadow: `0 0 0 1px rgba(255,255,255,0.12) inset, 0 1px 0 rgba(255,255,255,0.22) inset, 0 32px 80px rgba(0,0,0,0.38), 0 0 80px -10px ${accent}2a`,
               rotateX: stiltX,
               rotateY: stiltY,
               transformStyle: "preserve-3d",
             }}
           >
+            {/* Glass frost layer — isolated from overflow:hidden for full iOS/Android compat */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute", inset: 0,
+                borderRadius: 28,
+                backdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
+                WebkitBackdropFilter: "blur(72px) saturate(2.8) brightness(1.12)",
+                background: "linear-gradient(155deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.006) 50%, rgba(255,255,255,0.018) 100%)",
+                pointerEvents: "none",
+                zIndex: 0,
+              }}
+            />
+
+            {/* Content wrapper — overflow:hidden here for corner clipping ONLY, no backdrop-filter */}
+            <div className="relative w-full" style={{ borderRadius: 28, overflow: "hidden", zIndex: 1 }}>
             {/* Inner shimmer line on top */}
             <div className="absolute top-0 inset-x-6 h-px"
                  style={{ background: `linear-gradient(to right, transparent, rgba(255,255,255,0.55), ${accent}90, rgba(255,255,255,0.55), transparent)` }} />
@@ -941,6 +959,7 @@ export default function PerfilPublico() {
             {/* Bottom shimmer */}
             <div className="absolute bottom-0 inset-x-8 h-px"
                  style={{ background: `linear-gradient(to right, transparent, ${accent}50, transparent)`, opacity: 0.4 }} />
+            </div>{/* /content wrapper (overflow:hidden) */}
           </motion.div>
         </motion.div>
       </div>
