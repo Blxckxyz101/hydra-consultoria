@@ -910,7 +910,7 @@ export default function Consultas() {
       </motion.div>
 
       {/* CPF Full panel — rendered below the form block */}
-      {tab === "cpffull" && cpfFullQuery && (
+      {((tab === "cpf" && cpfVariant === "cpffull") || tab === "cpffull") && cpfFullQuery && (
         <CpfFullPanel cpf={cpfFullQuery} />
       )}
 
