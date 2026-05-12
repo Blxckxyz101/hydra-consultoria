@@ -1517,6 +1517,7 @@ export function CpfFullPanel({ cpf }: Props) {
             ...prev,
             fotonc: { status: "done", data: { fields: [["FOTO_URL", ph]], sections: [], raw: "" } },
           }));
+          setMStates(prev => ({ ...prev, fotonc: "done" }));
           break;
         }
       }
