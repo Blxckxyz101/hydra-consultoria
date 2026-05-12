@@ -8,6 +8,8 @@ import Login from "@/pages/login";
 import Overview from "@/pages/overview";
 import IA from "@/pages/ia";
 import Consultas from "@/pages/consultas";
+import FaceMatch from "@/pages/face-match";
+import Investigacao from "@/pages/investigacao";
 import Configuracoes from "@/pages/configuracoes";
 import Dossie from "@/pages/dossie";
 import Perfil from "@/pages/perfil";
@@ -79,6 +81,8 @@ function Router() {
                 <Route path="/carteira" component={Carteira} />
                 <Route path="/comunidade" component={Comunidade} />
                 <Route path="/dm/:username" component={DM} />
+                <Route path="/face-match" component={FaceMatch} />
+                <Route path="/investigacao" component={Investigacao} />
                 <Route component={NotFound} />
               </Switch>
             </Layout>
