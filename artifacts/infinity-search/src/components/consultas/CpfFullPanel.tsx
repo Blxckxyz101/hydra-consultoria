@@ -488,9 +488,11 @@ function buildRelatives(...entries: ([ModuleResult | undefined, string?])[]): Re
     for (const sec of res.data!.sections) {
       const items = sec.items;
       if (!items.length) continue;
-      const isFullRecord = items.some(it =>
-        (it.includes("CPF") || it.includes("NOME")) && (it.includes("·") || it.includes("|") || it.match(/[A-Z]{2,}:.*[A-Z]{2,}:/))
-      );
+      const isFullRecord = items.some(it => {
+        const itl = it.toLowerCase();
+        return (itl.includes("cpf") || itl.includes("nome")) &&
+          (it.includes("·") || it.includes("|") || /[A-Za-záéíóúâêôãõç]{2,}:.*[A-Za-záéíóúâêôãõç]{2,}:/.test(it));
+      });
       if (isFullRecord) {
         for (const item of items) {
           const cpf    = item.match(/CPF[\s:·]+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{11})/i)?.[1]?.replace(/\D/g,"") ?? "";
@@ -1460,62 +1462,77 @@ export function CpfFullPanel({ cpf }: Props) {
       const subjectClean = cpf.replace(/\D/g, "");
       const identityNow = buildIdentity(acc);
 
-      // Quick baseline: CPFs already in Geass parentes result
-      const geassRels = buildRelatives([acc["parentes"]]);
-      const maeInGeass = geassRels.some(r => categorizeRel(r) === "mae" && r.cpf.length === 11);
-      const paiInGeass = geassRels.some(r => categorizeRel(r) === "pai" && r.cpf.length === 11);
       const hasSubject = subjectClean.length === 11;
 
-      // === PHASE 1: fire all enrichment requests in parallel ==================
-      // • Skylers parentes  — richest source, returns all relatives with CPFs
-      // • Skylers mae       — direct mother record keyed by subject CPF
-      // • Skylers pai       — direct father record keyed by subject CPF
+      // === PHASE 1: fire Skylers parentes in parallel with any other requests ===
+      // NOTE: iseek-dados---mae / pai modules expect a NAME, not a CPF — calling
+      // them with a CPF returns "Informe um nome válido." so we do NOT call them here.
+      // CPFs for parents are extracted directly from the raw JSON of the parentes response.
       const NOOP: ModuleResult = { status: "error" };
-      const [skParentesR, skMaeR, skPaiR] = await Promise.allSettled([
+      const [skParentesR] = await Promise.allSettled([
         hasSubject
           ? fetchModule("parentes", subjectClean, true, true)
-          : Promise.resolve(NOOP),
-        hasSubject && !maeInGeass && identityNow.mae
-          ? fetchModule("mae", subjectClean, true, true)
-          : Promise.resolve(NOOP),
-        hasSubject && !paiInGeass && identityNow.pai
-          ? fetchModule("pai", subjectClean, true, true)
           : Promise.resolve(NOOP),
       ]);
 
       if (cancelled) return;
 
       const skParentesRes = skParentesR.status === "fulfilled" ? skParentesR.value : null;
-      const skMaeRes      = skMaeR.status === "fulfilled"      ? skMaeR.value      : null;
-      const skPaiRes      = skPaiR.status === "fulfilled"      ? skPaiR.value      : null;
 
-      // Inject Skylers parentes into mResults → FamilyTree re-renders with more relatives
-      if (skParentesRes?.data) {
-        setMResults(prev => ({ ...prev, parentesSky: skParentesRes }));
-      }
-
-      // === PHASE 2: merge relatives from all sources to collect CPFs ===========
-      const relEntries: [ModuleResult | undefined, string?][] = [[acc["parentes"]]];
-      if (skParentesRes?.data) relEntries.push([skParentesRes]);
-      if (skMaeRes?.data)      relEntries.push([skMaeRes, "MAE"]);
-      if (skPaiRes?.data)      relEntries.push([skPaiRes, "PAI"]);
-
-      const allRels = buildRelatives(...relEntries);
-      const cpfSet  = new Set(allRels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf));
-
-      // nameKeyMap: parentCpf → name key so photos are also stored under nome.toLowerCase()
-      // (FamilyTree looks up photos[p.nome.toLowerCase()] for CPF-less parent nodes)
+      // === PHASE 2: extract CPFs from raw JSON (most reliable path) ============
+      // parseSkylers can lose the "parentes" array when it early-returns on the
+      // inner "data" wrapper — reading the raw JSON directly is the safest approach.
       const nameKeyMap: Record<string, string> = {};
-      for (const r of allRels) {
+      const maeNameUp = (identityNow.mae || "").toUpperCase();
+      const paiNameUp = (identityNow.pai || "").toUpperCase();
+      // words ≥ 4 chars to avoid matching "DA", "DE", "DOS" etc.
+      const maeWords = maeNameUp.split(/\s+/).filter(w => w.length >= 4);
+      const paiWords = paiNameUp.split(/\s+/).filter(w => w.length >= 4);
+
+      // Seed cpfSet from Geass parentes (already parsed)
+      const geassRels = buildRelatives([acc["parentes"]]);
+      const cpfSet = new Set(geassRels.filter(r => r.cpf && r.cpf.length === 11).map(r => r.cpf));
+      for (const r of geassRels) {
         if (!r.cpf || r.cpf.length !== 11) continue;
         const cat = categorizeRel(r);
         if (cat === "mae" && identityNow.mae) nameKeyMap[r.cpf] = identityNow.mae.toLowerCase();
         else if (cat === "pai" && identityNow.pai) nameKeyMap[r.cpf] = identityNow.pai.toLowerCase();
       }
 
+      // Parse Skylers parentes raw JSON to get ALL relative CPFs including parents
+      if (skParentesRes?.data?.raw) {
+        try {
+          const rawObj = JSON.parse(skParentesRes.data.raw) as Record<string, unknown>;
+          // Structure: { data: { api_info, data: { filiacao, ... }, parentes: [...] } }
+          const outerData = (rawObj?.data ?? rawObj) as Record<string, unknown>;
+          const parentesArr = (outerData?.parentes ?? []) as Array<Record<string, unknown>>;
+          for (const rel of parentesArr) {
+            if (!rel?.cpf) continue;
+            const cleanCpf = String(rel.cpf).replace(/\D/g, "");
+            if (cleanCpf.length !== 11) continue;
+            cpfSet.add(cleanCpf);
+            const relNome = String(rel.nome ?? "").toUpperCase();
+            // Match to mae/pai by word overlap — ignore tipoRelacao (Skylers data can be wrong)
+            const maeMatch = maeWords.length >= 2 &&
+              maeWords.filter(w => relNome.includes(w)).length >= 2;
+            const paiMatch = paiWords.length >= 2 &&
+              paiWords.filter(w => relNome.includes(w)).length >= 2;
+            if (maeMatch && !paiMatch && identityNow.mae) {
+              nameKeyMap[cleanCpf] = identityNow.mae.toLowerCase();
+            } else if (paiMatch && !maeMatch && identityNow.pai) {
+              nameKeyMap[cleanCpf] = identityNow.pai.toLowerCase();
+            }
+          }
+        } catch { /* ignore malformed JSON */ }
+      }
+
       // === PHASE 3: last-resort — Geass nome search for parents still without CPF =
-      const maeHasCpf = allRels.some(r => categorizeRel(r) === "mae" && r.cpf.length === 11);
-      const paiHasCpf = allRels.some(r => categorizeRel(r) === "pai" && r.cpf.length === 11);
+      const maeHasCpf = Object.entries(nameKeyMap).some(
+        ([, v]) => v === identityNow.mae?.toLowerCase()
+      );
+      const paiHasCpf = Object.entries(nameKeyMap).some(
+        ([, v]) => v === identityNow.pai?.toLowerCase()
+      );
       const toResolve: { name: string; key: string }[] = [];
       if (!maeHasCpf && identityNow.mae) toResolve.push({ name: identityNow.mae, key: identityNow.mae.toLowerCase() });
       if (!paiHasCpf && identityNow.pai) toResolve.push({ name: identityNow.pai, key: identityNow.pai.toLowerCase() });
@@ -1613,12 +1630,10 @@ export function CpfFullPanel({ cpf }: Props) {
   const addresses   = useMemo(() => buildAddresses(mResults),             [mResults]);
   const employments = useMemo(() => buildEmployments(mResults["empregos"]), [mResults]);
   const relatives   = useMemo(() => {
-    // Include Skylers parentes (richer dataset, populated asynchronously)
-    const sources: [ModuleResult | undefined, string?][] = [
-      [mResults["parentes"]],
-      ...(mResults["parentesSky"] ? [[mResults["parentesSky"]] as [ModuleResult | undefined, string?]] : []),
-    ];
-    const rels = buildRelatives(...sources);
+    // Geass parentes is the source for the FamilyTree.
+    // Skylers parentes raw JSON is used only in the photo effect (CPF extraction)
+    // to avoid display bugs from incorrect tipoRelacao values in Skylers data.
+    const rels = buildRelatives([mResults["parentes"]]);
     // Never show the subject themselves as a relative node
     const subCpf  = cpf.replace(/\D/g, "");
     const subNome = (identity.nome || "").toUpperCase().trim();

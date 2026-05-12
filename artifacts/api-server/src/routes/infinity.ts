@@ -1136,7 +1136,22 @@ function parseSkylers(data: unknown): Parsed {
         (typeof innerLower.content === "string" && /^<(!doctype|html)/i.test(String(innerLower.content).trimStart())));
       if (innerIsErr) continue;
       const inner = parseSkylers(d[w]);
-      if (inner.fields.length > 0 || inner.sections.length > 0) return { ...inner, raw };
+      if (inner.fields.length > 0 || inner.sections.length > 0) {
+        // Also capture sibling array keys at this level — e.g. the "parentes" array that sits
+        // alongside a "data" object wrapper in some Skylers module responses.
+        const extraSections: ParsedSection[] = [];
+        for (const [sk, sv] of Object.entries(d)) {
+          if (sk === w || JUNK_KEYS_SKYLERS.has(sk.toLowerCase())) continue;
+          if (Array.isArray(sv) && sv.length > 0) {
+            const secItems = processArray(sv as unknown[], fotoUrl);
+            if (secItems.length > 0) extraSections.push({ name: sectionName(sk), items: secItems });
+          }
+        }
+        if (extraSections.length > 0) {
+          return { ...inner, raw, sections: [...inner.sections, ...extraSections] };
+        }
+        return { ...inner, raw };
+      }
     }
     if (Array.isArray(d[w]) && (d[w] as unknown[]).length > 0) {
       return { ...parseSkylers(d[w]), raw };
