@@ -52,3 +52,21 @@ Thumbs.db
 artifacts/api-server/data/proxy-config.json
 artifacts/api-server/data/ip-tracker.json
 artifacts/api-server/.skynet-pool.json
+
+# Environment / secret files — never commit real credentials
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+.replit.env
+*.secret
+*.secrets
+secrets.json
+secrets.toml
+secrets.yaml
+secrets.yml
+*.pem
+*.key
+*.p12
+*.pfx
