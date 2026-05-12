@@ -591,22 +591,19 @@ export default function PerfilPublico() {
           }}
         >
           {/* ═══ THE CARD ═══
-               iOS/Android fix: backdrop-filter MUST be on a separate element
-               from overflow:hidden — WebKit breaks glass when both are on the
-               same element. Structure: outer (border+shadow+transform) →
-               glass layer (backdrop-filter, no overflow) → content (overflow:hidden). */}
-          <motion.div
+               iOS/Android definitive fix:
+               Layer 1 — static <div>: border, shadow. NO transform, NO overflow.
+               Layer 2 — glass <div>: backdrop-filter. Parent has NO transform → iOS works!
+               Layer 3 — <motion.div>: overflow:hidden + tilt transforms. No backdrop-filter here. */}
+          <div
             className="w-full relative"
             style={{
               borderRadius: 28,
               border: "1px solid rgba(255,255,255,0.22)",
               boxShadow: `0 0 0 1px rgba(255,255,255,0.12) inset, 0 1px 0 rgba(255,255,255,0.22) inset, 0 32px 80px rgba(0,0,0,0.38), 0 0 80px -10px ${accent}2a`,
-              rotateX: stiltX,
-              rotateY: stiltY,
-              transformStyle: "preserve-3d",
             }}
           >
-            {/* Glass frost layer — isolated from overflow:hidden for full iOS/Android compat */}
+            {/* Glass frost layer — parent (div above) has NO transform → backdrop-filter works on iOS/Android */}
             <div
               aria-hidden="true"
               style={{
@@ -620,8 +617,8 @@ export default function PerfilPublico() {
               }}
             />
 
-            {/* Content wrapper — overflow:hidden here for corner clipping ONLY, no backdrop-filter */}
-            <div className="relative w-full" style={{ borderRadius: 28, overflow: "hidden", zIndex: 1 }}>
+            {/* Content wrapper — tilt lives here (transform away from glass layer), overflow clips corners */}
+            <motion.div className="relative w-full" style={{ borderRadius: 28, overflow: "hidden", zIndex: 1, rotateX: stiltX, rotateY: stiltY }}>
             {/* Inner shimmer line on top */}
             <div className="absolute top-0 inset-x-6 h-px"
                  style={{ background: `linear-gradient(to right, transparent, rgba(255,255,255,0.55), ${accent}90, rgba(255,255,255,0.55), transparent)` }} />
@@ -959,8 +956,8 @@ export default function PerfilPublico() {
             {/* Bottom shimmer */}
             <div className="absolute bottom-0 inset-x-8 h-px"
                  style={{ background: `linear-gradient(to right, transparent, ${accent}50, transparent)`, opacity: 0.4 }} />
-            </div>{/* /content wrapper (overflow:hidden) */}
-          </motion.div>
+            </motion.div>{/* /content wrapper */}
+          </div>
         </motion.div>
       </div>
     </div>
