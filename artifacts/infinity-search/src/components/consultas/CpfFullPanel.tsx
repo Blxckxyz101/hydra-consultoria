@@ -1511,8 +1511,10 @@ export function CpfFullPanel({ cpf }: Props) {
       for (const tipo of ["foto", "biometria", "fotosp", "fotomg", "fotoba", "fotopr", "fotoce", "fotorn", "fotogo", "fotopb", "fotope", "fotoal", "fotodf", "fototo"]) {
         if (cancelled) break;
         const res = await fetchModule(tipo, clean, true, true);
+        if (cancelled) break; // bail out if effect was cleaned up during await
         const ph = res.data ? extractPhotoFromResult(res) : null;
         if (ph) {
+          if (cancelled) break;
           // Inject the found photo into the fotonc module result so it shows in the panel
           setMResults(prev => ({
             ...prev,
