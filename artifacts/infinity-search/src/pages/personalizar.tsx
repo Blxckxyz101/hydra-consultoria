@@ -202,7 +202,6 @@ export default function Personalizar() {
   const current = THEMES.find(t => t.key === currentKey) ?? THEMES[0]!;
   const CurrentIcon = current.icon;
 
-  const tierLabel = isAdmin || planTier === "ultra" ? null : planTier === "vip" ? "VIP" : "VIP";
 
   return (
     <div className="space-y-8">

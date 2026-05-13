@@ -394,39 +394,109 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
     y += 3;
   }
 
-  // ── PROCESSOS & MANDADOS ───────────────────────────────────────────────────
-  const legalSecs = ["processos", "mandado"].flatMap(tipo => {
-    const res = data.mResults[tipo];
-    if (!res?.data) return [];
-    return res.data.sections.map(sec => ({ tipo, ...sec }));
+  // ── PROCESSOS JURÍDICOS ────────────────────────────────────────────────────
+  const LEGAL_KEYS = ["processo", "processos", "mandado", "advogadooab", "advogadooabuf", "advogadocpf", "oab"];
+  const LEGAL_LABELS: Record<string,string> = {
+    processo:"Processo Judicial", processos:"Processos Judiciais",
+    mandado:"Mandado de Prisão", advogadooab:"Advogado (OAB)",
+    advogadooabuf:"Advogado (OAB/UF)", advogadocpf:"Advogado (CPF)", oab:"Registro OAB",
+  };
+  const legalModules = LEGAL_KEYS.filter(k => {
+    const r = data.mResults[k];
+    return r?.status === "done" && r.data && (r.data.fields.length > 0 || r.data.sections.length > 0);
   });
-  if (legalSecs.length > 0) {
+  if (legalModules.length > 0) {
     divider();
-    sectionHeader("Processos & Mandados");
-    for (const sec of legalSecs) {
-      checkY(12);
+    sectionHeader("Processos & Dados Jurídicos");
+    for (const modKey of legalModules) {
+      const res = data.mResults[modKey]!;
+      const label = LEGAL_LABELS[modKey] || modKey.toUpperCase();
+      // Sub-header for each module
+      checkY(10);
       doc.setFillColor(...hex("#7f1d1d"));
-      doc.roundedRect(margin, y, col, 7.5, 1.5, 1.5, "F");
+      doc.roundedRect(margin, y, col, 8, 1.5, 1.5, "F");
       doc.setTextColor(255, 180, 180);
-      doc.setFontSize(7.5);
+      doc.setFontSize(8);
       doc.setFont("helvetica", "bold");
-      doc.text(`⚠ ${sec.name || sec.tipo.toUpperCase()}`, margin + 4, y + 5);
-      y += 10;
-      for (const item of sec.items.slice(0, 15)) {
-        checkY(6);
-        doc.setFontSize(7.5);
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(...hex(C.text));
-        const lines = doc.splitTextToSize(`• ${item}`, col - 4);
-        doc.text(lines.slice(0, 2), margin + 3, y + 4);
-        y += Math.min(lines.length, 2) * 4 + 1;
+      doc.text(`⚖  ${label.toUpperCase()}`, margin + 5, y + 5.5);
+      y += 11;
+      // Fields (for OAB / advogado modules that return structured fields)
+      if (res.data!.fields.length > 0) {
+        fieldGrid(res.data!.fields.slice(0, 12).map(([k, v]) => ({ label: k, value: v })), 3);
+        y += 2;
       }
-      y += 3;
+      // Sections (for processo/processos lists)
+      for (const sec of res.data!.sections.slice(0, 8)) {
+        checkY(10);
+        doc.setFillColor(...hex("#450a0a"));
+        doc.roundedRect(margin + 2, y, col - 4, 6.5, 1, 1, "F");
+        doc.setTextColor(255, 160, 160);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "bold");
+        doc.text(`▸ ${sec.name}  (${sec.items.length})`, margin + 6, y + 4.5);
+        y += 8.5;
+        for (const item of sec.items.slice(0, 12)) {
+          checkY(6);
+          doc.setFontSize(7);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(...hex(C.text));
+          const lines = doc.splitTextToSize(`• ${item}`, col - 8);
+          doc.text(lines.slice(0, 3), margin + 5, y + 4);
+          y += Math.min(lines.length, 3) * 4.2 + 1;
+        }
+        y += 2;
+      }
+      y += 4;
+    }
+  }
+
+  // ── FINANCEIRO E PATRIMÔNIO ────────────────────────────────────────────────
+  const FINANCIAL_KEYS = ["dividas","bens","cheque","certidoes","spc"];
+  const FINANCIAL_LABELS: Record<string,string> = {
+    dividas:"Dívidas (BACEN / FGTS)", bens:"Bens Registrados",
+    cheque:"Cheques sem Fundos", certidoes:"Certidões", spc:"SPC / Negativação",
+  };
+  const financialModules = FINANCIAL_KEYS.filter(k => {
+    const r = data.mResults[k];
+    return r?.status === "done" && r.data && (r.data.fields.length > 0 || r.data.sections.length > 0 || r.data.raw.length > 20);
+  });
+  if (financialModules.length > 0) {
+    divider();
+    sectionHeader("Financeiro & Patrimônio");
+    for (const modKey of financialModules) {
+      const res = data.mResults[modKey]!;
+      const label = FINANCIAL_LABELS[modKey] || modKey.toUpperCase();
+      checkY(10);
+      const finColor = modKey === "bens" ? "#14532d" : "#7c2d12";
+      const finTextColor: [number,number,number] = modKey === "bens" ? [180, 255, 180] : [255, 200, 150];
+      doc.setFillColor(...hex(finColor));
+      doc.roundedRect(margin, y, col, 8, 1.5, 1.5, "F");
+      doc.setTextColor(...finTextColor);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      const finIcon = modKey === "bens" ? "🏠" : modKey === "dividas" ? "💳" : "⚠";
+      doc.text(`${finIcon}  ${label.toUpperCase()}`, margin + 5, y + 5.5);
+      y += 11;
+      if (res.data!.fields.length > 0) {
+        fieldGrid(res.data!.fields.slice(0, 9).map(([k, v]) => ({ label: k, value: v })), 3);
+      }
+      for (const sec of res.data!.sections.slice(0, 5)) {
+        for (const item of sec.items.slice(0, 8)) {
+          checkY(5);
+          doc.setFontSize(7);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(...hex(C.text));
+          const lines = doc.splitTextToSize(`• ${item}`, col - 6);
+          doc.text(lines.slice(0, 2), margin + 4, y + 4);
+          y += Math.min(lines.length, 2) * 4.2 + 0.5;
+        }
+      }
+      y += 4;
     }
   }
 
   // ── DADOS EXTRAS ───────────────────────────────────────────────────────────
-  const extras = ["irpf","beneficios","dividas","bens","titulo","spc"].filter(k => {
+  const extras = ["irpf","beneficios","titulo","score","score2"].filter(k => {
     const r = data.mResults[k];
     return r?.status === "done" && r.data && (r.data.fields.length > 0 || r.data.sections.length > 0 || r.data.raw.length > 20);
   });
@@ -436,7 +506,7 @@ export async function generateLaudoPDF(data: LaudoData): Promise<void> {
     for (const key of extras) {
       const res = data.mResults[key];
       if (!res?.data) continue;
-      const labels: Record<string,string> = { irpf:"IRPF / Imposto de Renda", beneficios:"Benefícios Sociais", dividas:"Dívidas", bens:"Bens Registrados", titulo:"Título de Eleitor", spc:"SPC / Negativação" };
+      const labels: Record<string,string> = { irpf:"IRPF / Imposto de Renda", beneficios:"Benefícios Sociais", titulo:"Título de Eleitor", score:"Score de Crédito", score2:"Score Bureau 2" };
       checkY(10);
       doc.setFontSize(8);
       doc.setFont("helvetica", "bold");

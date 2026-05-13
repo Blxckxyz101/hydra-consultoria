@@ -321,9 +321,11 @@ const CREDITS_PER_CONSULTA = 5;
 
 // ─── Tipos que consomem da cota de fotos (limite separado por tier) ───────────
 const FOTO_TIPOS = new Set([
-  "foto", "biometria", "fotodetran", "fotoma", "fotoce", "fotonc", "fotoes",
-  "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr", "fotodf", "fotoal",
-  "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg", "crlvtofoto", "crlvmtfoto",
+  "foto", "biometria", "fotodetran",
+  "fotoma", "fotoce", "fotosp", "fotorj", "fotoms", "fotonc",
+  "fotoes", "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr",
+  "fotodf", "fotoal", "fotogo", "fotopb", "fotope", "fotorn",
+  "fotoba", "fotomg", "crlvtofoto", "crlvmtfoto",
 ]);
 
 // ─── Tipos de processos jurídicos (bloqueado para planos free/padrão) ─────────
@@ -403,9 +405,18 @@ async function checkAndDebitQuery(
     };
   }
 
-  // 2. Try plan quota (atomic debit, only when plan is within its active period)
+  // 3. Plan quota handling
   const now = new Date();
   const planActive = !!user.accountExpiresAt && user.accountExpiresAt > now && user.planQueryQuota !== null;
+
+  // VIP/Ultra: per-module daily limit is the only gate — allow directly without debiting planQueryQuota
+  // This prevents the shared quota from being exhausted across modules, causing "apenas 3 processos/dia"
+  const isVipOrUltra = user.planTier === "vip" || user.planTier === "ultra";
+  if (isVipOrUltra && planActive) {
+    return { allowed: true, tier: "plan" };
+  }
+
+  // Padrão: debit from shared planQueryQuota (atomic)
   if (planActive) {
     const debitResult = await db.update(infinityUsersTable)
       .set({ planQueriesUsed: sql`plan_queries_used + 1` })

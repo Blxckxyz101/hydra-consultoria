@@ -155,16 +155,44 @@ function isParsed(d: unknown): d is Parsed {
 }
 
 const KEY_FIXES: Record<string, string> = {
+  // Veículo
   "MARCA_MODEL0": "Marca / Modelo", "MARCA_MODELO": "Marca / Modelo",
   "PROPRIETARIO_NOME": "Proprietário", "PROPRIETARIO_CPF": "CPF do Proprietário",
   "ESTADO_ENDERECO": "Estado (Endereço)", "TIPO_VEICULO": "Tipo de Veículo",
   "ANO_MODELO": "Ano do Modelo", "ANO_FABRICACAO": "Ano de Fabricação",
-  "HABILITADO_PARA_DIRIGIR": "Habilitado p/ Dirigir", "DATA_NASCIMENTO": "Data de Nascimento",
-  "NOME_MAE": "Nome da Mãe", "NOME_PAI": "Nome do Pai",
+  "HABILITADO_PARA_DIRIGIR": "Habilitado p/ Dirigir",
+  // Pessoa
+  "DATA_NASCIMENTO": "Data de Nascimento", "NOME_MAE": "Nome da Mãe", "NOME_PAI": "Nome do Pai",
+  // Empresa
   "RAZAO_SOCIAL": "Razão Social", "NOME_FANTASIA": "Nome Fantasia",
   "CAPITAL_SOCIAL": "Capital Social", "NATUREZA_JURIDICA": "Natureza Jurídica",
   "DATA_ABERTURA": "Data de Abertura", "DATA_SITUACAO": "Data da Situação",
   "ULTIMA_ATUALIZACAO": "Última Atualização",
+  // Processos / Jurídico
+  "NUMERO_PROCESSO": "Nº do Processo", "NUM_PROCESSO": "Nº do Processo",
+  "NUMERO_OAB": "Nº OAB", "NUM_OAB": "Nº OAB",
+  "UF_OAB": "UF da OAB", "ESTADO_OAB": "UF da OAB",
+  "NOME_ADVOGADO": "Nome do Advogado", "ADVOGADO": "Advogado",
+  "TIPO_ACAO": "Tipo da Ação", "TIPO_PROCESSO": "Tipo do Processo",
+  "TIPO_INSCRICAO": "Tipo de Inscrição", "SITUACAO_INSCRICAO": "Situação da Inscrição",
+  "DATA_DISTRIBUICAO": "Data de Distribuição", "DATA_JULGAMENTO": "Data do Julgamento",
+  "DATA_AUTUACAO": "Data de Autuação", "DATA_BAIXA": "Data de Baixa",
+  "VARA": "Vara", "COMARCA": "Comarca", "TRIBUNAL": "Tribunal",
+  "ORGAO_JULGADOR": "Órgão Julgador", "INSTANCIA": "Instância",
+  "ASSUNTO": "Assunto / Matéria", "CLASSE_PROCESSUAL": "Classe Processual",
+  "PARTES_ENVOLVIDAS": "Partes Envolvidas", "POLO_ATIVO": "Polo Ativo", "POLO_PASSIVO": "Polo Passivo",
+  "VALOR_CAUSA": "Valor da Causa", "VALOR_DEBITO": "Valor do Débito",
+  "SITUACAO_PROCESSO": "Situação do Processo", "FASE_ATUAL": "Fase Atual",
+  "NUMERO_MANDADO": "Nº do Mandado", "TIPO_MANDADO": "Tipo do Mandado",
+  "MOTIVO_PRISAO": "Motivo da Prisão", "DATA_EXPEDICAO": "Data de Expedição",
+  "BANCO_CHEQUE": "Banco", "AGENCIA_CHEQUE": "Agência", "NUMERO_CHEQUE": "Nº do Cheque",
+  "DATA_CHEQUE": "Data do Cheque", "VALOR_CHEQUE": "Valor do Cheque",
+  "CERTIDAO_TIPO": "Tipo de Certidão", "CERTIDAO_STATUS": "Status da Certidão",
+  "NUMERO_CERTIDAO": "Nº da Certidão", "DATA_EMISSAO_CERTIDAO": "Data de Emissão",
+  "BEM_TIPO": "Tipo do Bem", "BEM_DESCRICAO": "Descrição do Bem",
+  "BEM_VALOR": "Valor do Bem", "REGISTRO_IMOVEL": "Registro de Imóvel",
+  "DIVIDA_TIPO": "Tipo da Dívida", "DIVIDA_VALOR": "Valor da Dívida",
+  "DIVIDA_CREDOR": "Credor", "DIVIDA_STATUS": "Status da Dívida",
 };
 
 function humanizeKey(key: string): string {
@@ -498,18 +526,201 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
 
   const downloadPdf = () => {
     const date = new Date().toLocaleString("pt-BR");
-    const fotoForPdf = parsed.fields.find(f => f.key === "FOTO_URL");
-    const fieldsHtml = parsed.fields.filter(f => f.key !== "FOTO_URL").map(f => `<tr><td class="key">${f.key}</td><td class="val">${f.value || "—"}</td></tr>`).join("");
-    const sectionsHtml = parsed.sections.map(s => `<div class="section"><div class="sec-title">${s.name} <span class="badge">${s.items.length}</span></div><ul>${s.items.map(it => `<li>${it}</li>`).join("")}</ul></div>`).join("");
-    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Hydra Consultoria · ${tipo.toUpperCase()} · ${query}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111;padding:28px 36px;font-size:13px}.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2.5px solid #0891b2;padding-bottom:14px;margin-bottom:20px}.logo{font-size:22px;font-weight:900;letter-spacing:4px;text-transform:uppercase;color:#0891b2}.meta{text-align:right;color:#555;font-size:11px;line-height:1.7}.meta strong{color:#111}table{width:100%;border-collapse:collapse;margin-bottom:20px}tr:nth-child(even){background:#f4fbfd}td{padding:7px 10px;border-bottom:1px solid #e0f2f8;vertical-align:top}td.key{font-weight:700;color:#0e7490;text-transform:uppercase;font-size:11px;letter-spacing:1px;width:36%;white-space:nowrap}td.val{color:#111;font-size:13px;word-break:break-all}.section{margin-bottom:18px}.sec-title{font-weight:800;text-transform:uppercase;letter-spacing:2px;font-size:11px;color:#0891b2;margin-bottom:8px;display:flex;align-items:center;gap:8px}.badge{background:#0891b2;color:#fff;border-radius:9px;padding:1px 7px;font-size:10px}ul{list-style:none;padding:0}li{padding:5px 10px;background:#f4fbfd;border-left:3px solid #0891b2;margin-bottom:4px;font-size:12px;font-family:monospace;word-break:break-all}.footer{margin-top:24px;border-top:1px solid #e0f2f8;padding-top:10px;text-align:center;color:#aaa;font-size:10px;letter-spacing:2px;text-transform:uppercase}@media print{body{padding:10px 16px}}</style></head>
-<body><div class="header"><div><div class="logo">⚔ Hydra Consultoria</div><div style="margin-top:4px;font-size:11px;color:#555">Relatório OSINT gerado automaticamente</div></div>
-<div class="meta"><div><strong>Tipo:</strong> ${tipo.toUpperCase()}</div><div><strong>Consulta:</strong> ${query}</div><div><strong>Data:</strong> ${date}</div><div><strong>Campos:</strong> ${parsed.fields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div></div></div>
-${fotoForPdf ? `<div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;padding:12px;border:1px solid #e0f2f8;border-radius:8px;background:#f4fbfd;"><img src="${fotoForPdf.value}" alt="Foto" style="width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid #0891b2;" onerror="this.style.display='none'" /><div><div style="font-weight:700;color:#0e7490;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Foto Biométrica</div></div></div>` : ""}
-${parsed.fields.length > 0 ? `<table>${fieldsHtml}</table>` : ""}${sectionsHtml}
-<div class="footer">Hydra Consultoria · ${date}</div>
-<script>setTimeout(()=>window.print(),300)</script></body></html>`;
-    const win = window.open("", "_blank", "width=900,height=700");
+    const protocol = `INF-${Date.now().toString(36).toUpperCase().slice(-8)}`;
+
+    // ── Theming by module type ──────────────────────────────────────────────
+    const LEGAL_TIPOS  = new Set(["processo","processos","mandado","advogadooab","advogadooabuf","advogadocpf","oab","cheque","certidoes","dividas","bens"]);
+    const VEH_TIPOS    = new Set(["placa","chassi","renavam","motor","cnh","cnhfull","cnham","cnhnc","cnhrs","cnhrr","crlvto","crlvmt","vistoria","frota","placafipe","placaserpro"]);
+    const COMPANY_TIPOS= new Set(["cnpj","socios","funcionarios","empregos","iptu"]);
+    const PHOTO_TIPOS  = new Set(["foto","biometria","fotodetran","fotoma","fotoce","fotosp","fotorj"]);
+    const isLegal   = LEGAL_TIPOS.has(tipo);
+    const isVehicle = VEH_TIPOS.has(tipo);
+    const isCompany = COMPANY_TIPOS.has(tipo);
+    const isPhoto   = PHOTO_TIPOS.has(tipo);
+
+    const theme = isLegal
+      ? { primary:"#b91c1c", light:"#fef2f2", mid:"#fca5a5", dark:"#7f1d1d", border:"#fecaca", accent:"#dc2626", tag:"Jurídico / Processos", icon:"⚖" }
+      : isVehicle
+      ? { primary:"#c2410c", light:"#fff7ed", mid:"#fdba74", dark:"#7c2d12", border:"#fed7aa", accent:"#ea580c", tag:"Veicular", icon:"🚗" }
+      : isCompany
+      ? { primary:"#7c3aed", light:"#f5f3ff", mid:"#c4b5fd", dark:"#4c1d95", border:"#ddd6fe", accent:"#8b5cf6", tag:"Empresarial", icon:"🏢" }
+      : isPhoto
+      ? { primary:"#0e7490", light:"#ecfeff", mid:"#67e8f9", dark:"#164e63", border:"#a5f3fc", accent:"#06b6d4", tag:"Biometria / Foto", icon:"📷" }
+      : { primary:"#0891b2", light:"#f0f9ff", mid:"#7dd3fc", dark:"#0c4a6e", border:"#bae6fd", accent:"#0ea5e9", tag:"OSINT", icon:"🔍" };
+
+    const MODULE_LABELS: Record<string,string> = {
+      processo:"Processo Judicial",processos:"Processos Judiciais",mandado:"Mandado de Prisão",
+      advogadooab:"Advogado por OAB",advogadooabuf:"Advogado OAB/UF",advogadocpf:"Advogado por CPF",
+      oab:"Registro OAB",cheque:"Cheques sem Fundos",certidoes:"Certidões",
+      dividas:"Dívidas BACEN/FGTS",bens:"Bens Registrados",
+      cpf:"CPF Completo",cpfbasico:"CPF Básico",cpffull:"CPF Full",nome:"Busca por Nome",
+      telefone:"Telefone",email:"Email",placa:"Placa",cnpj:"CNPJ",
+      foto:"Foto Biométrica",biometria:"Biometria",score:"Score de Crédito",
+      score2:"Score Bureau",irpf:"IRPF",beneficios:"Benefícios Sociais",
+      spc:"SPC / Negativação",parentes:"Parentes",endereco:"Endereço",
+      rg:"RG",cnh:"CNH",cnhfull:"CNH Completo",
+    };
+    const moduleTitle = MODULE_LABELS[tipo] || tipo.toUpperCase();
+
+    // ── Build HTML parts ────────────────────────────────────────────────────
+    const fotoField = parsed.fields.find(f => f.key === "FOTO_URL");
+    const bodyFields = parsed.fields.filter(f => f.key !== "FOTO_URL");
+
+    // Fields rendered as 2-column pairs
+    const fieldsHtml = bodyFields.length === 0 ? "" : `
+      <section class="card">
+        <div class="card-header"><span class="card-icon">📋</span>Campos Encontrados<span class="badge">${bodyFields.length}</span></div>
+        <table class="fields-table">
+          ${bodyFields.map((f, i) => `
+            <tr class="${i % 2 === 0 ? "row-a" : "row-b"}">
+              <td class="fkey">${f.key}</td>
+              <td class="fval">${formatValue(f.key, f.value) || "—"}</td>
+            </tr>
+          `).join("")}
+        </table>
+      </section>`;
+
+    // Sections rendered with appropriate styling
+    const sectionsHtml = parsed.sections.map(s => {
+      const isLegalSec = /processo|mandado|crime|judicial|prisão|pena|delito/i.test(s.name);
+      const isCheque   = /cheque|fundos/i.test(s.name);
+      const isDivida   = /dívida|debito|fgts|bacen/i.test(s.name);
+      const isBem      = /\bbem\b|\bimóvel\b|\bimóv|terreno|veículo registr/i.test(s.name);
+      const secClass = isLegalSec ? "sec-legal" : isCheque ? "sec-cheque" : isDivida ? "sec-divida" : isBem ? "sec-bem" : "sec-normal";
+      const secIcon  = isLegalSec ? "⚠" : isCheque ? "🏦" : isDivida ? "💳" : isBem ? "🏠" : "▸";
+      return `
+        <section class="card sec-card ${secClass}">
+          <div class="card-header">
+            <span class="card-icon">${secIcon}</span>
+            ${s.name}
+            <span class="badge">${s.items.length}</span>
+          </div>
+          <div class="sec-items">
+            ${s.items.map(it => `<div class="sec-item">${it}</div>`).join("")}
+          </div>
+        </section>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Hydra · ${moduleTitle} · ${query}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+/* Cover band */
+.cover{background:linear-gradient(135deg,${theme.dark} 0%,${theme.primary} 100%);color:#fff;padding:28px 36px 24px;display:flex;justify-content:space-between;align-items:flex-start}
+.cover-left{}
+.cover-logo{font-size:10px;font-weight:700;letter-spacing:.5em;text-transform:uppercase;opacity:.7;margin-bottom:6px}
+.cover-title{font-size:22px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+.cover-subtitle{font-size:11px;opacity:.65;letter-spacing:1px}
+.cover-right{text-align:right;font-size:11px;line-height:2;opacity:.85}
+.cover-right strong{opacity:1;font-weight:700}
+.cover-type{display:inline-block;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:2px 12px;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+
+/* Accent stripe */
+.stripe{height:4px;background:linear-gradient(to right,${theme.accent},${theme.mid},transparent)}
+
+/* Main body */
+.body{padding:24px 36px;max-width:100%}
+
+/* Photo block */
+.photo-block{display:flex;align-items:center;gap:20px;background:${theme.light};border:1px solid ${theme.border};border-radius:10px;padding:16px;margin-bottom:18px;border-left:4px solid ${theme.accent}}
+.photo-block img{width:96px;height:120px;object-fit:cover;border-radius:6px;border:2px solid ${theme.primary};flex-shrink:0}
+.photo-meta .label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${theme.primary};margin-bottom:4px}
+.photo-meta .query-val{font-size:16px;font-weight:900;color:#0f172a}
+.photo-meta .tipo-val{font-size:11px;color:#64748b;margin-top:3px}
+
+/* Cards */
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card-header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:${theme.light};border-bottom:1px solid ${theme.border};font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:${theme.primary}}
+.card-icon{font-size:13px}
+.badge{margin-left:auto;background:${theme.primary};color:#fff;border-radius:20px;padding:1px 9px;font-size:10px;font-weight:700;letter-spacing:.5px}
+
+/* Fields table */
+.fields-table{width:100%;border-collapse:collapse}
+.fields-table td{padding:7px 14px;vertical-align:top;border-bottom:1px solid #f1f5f9;font-size:12.5px}
+.fkey{font-weight:700;color:${theme.primary};text-transform:uppercase;font-size:10.5px;letter-spacing:.8px;width:35%;white-space:normal;padding-right:8px}
+.fval{color:#0f172a;word-break:break-word}
+.row-a{background:#fff}
+.row-b{background:#f8fafc}
+
+/* Section cards */
+.sec-card .card-header{background:${theme.light}}
+.sec-legal .card-header{background:#fef2f2;color:#991b1b;border-color:#fecaca}
+.sec-legal .badge{background:#b91c1c}
+.sec-cheque .card-header{background:#fffbeb;color:#92400e;border-color:#fde68a}
+.sec-cheque .badge{background:#d97706}
+.sec-divida .card-header{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
+.sec-divida .badge{background:#ea580c}
+.sec-bem .card-header{background:#f0fdf4;color:#166534;border-color:#bbf7d0}
+.sec-bem .badge{background:#16a34a}
+.sec-items{padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+.sec-item{font-size:12px;font-family:"Courier New",monospace;background:#f8fafc;border-left:3px solid ${theme.border};padding:6px 10px;border-radius:3px;word-break:break-all;line-height:1.5}
+.sec-legal .sec-item{background:#fff5f5;border-left-color:#fca5a5}
+.sec-cheque .sec-item{background:#fffbeb;border-left-color:#fcd34d}
+.sec-divida .sec-item{background:#fff7ed;border-left-color:#fdba74}
+.sec-bem .sec-item{background:#f0fdf4;border-left-color:#86efac}
+
+/* Footer */
+.footer{margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px}
+.footer strong{color:#64748b}
+
+@media print{
+  body{background:#fff}
+  .cover{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .stripe{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .card-header{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-left">
+    <div class="cover-logo">⚔ Hydra Consultoria — Sistema OSINT</div>
+    <div class="cover-title">${moduleTitle}</div>
+    <div class="cover-subtitle">Relatório de Inteligência Digital · Confidencial</div>
+  </div>
+  <div class="cover-right">
+    <div class="cover-type">${theme.icon} ${theme.tag}</div><br>
+    <div><strong>Consulta:</strong> ${query || "—"}</div>
+    <div><strong>Data:</strong> ${date}</div>
+    <div><strong>Protocolo:</strong> ${protocol}</div>
+    <div><strong>Campos:</strong> ${bodyFields.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${parsed.sections.length}</div>
+  </div>
+</div>
+<div class="stripe"></div>
+
+<div class="body">
+
+${fotoField ? `
+<div class="photo-block">
+  <img src="${fotoField.value}" alt="Foto" onerror="this.style.display='none'" />
+  <div class="photo-meta">
+    <div class="label">Foto Biométrica Encontrada</div>
+    <div class="query-val">${query || "—"}</div>
+    <div class="tipo-val">Módulo: ${tipo.toUpperCase()} · Gerado em ${date}</div>
+  </div>
+</div>` : ""}
+
+${fieldsHtml}
+${sectionsHtml}
+
+<div class="footer">
+  <span>Hydra Consultoria · ${date} · ${protocol}</span>
+  <span>Documento confidencial — uso restrito</span>
+</div>
+
+</div>
+
+<script>setTimeout(()=>window.print(),400)</script>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=960,height=780");
     if (win) { win.document.write(html); win.document.close(); }
   };
 
