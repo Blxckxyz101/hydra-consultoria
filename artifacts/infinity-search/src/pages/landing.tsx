@@ -341,7 +341,7 @@ export default function Landing() {
           })}
         </div>
         <p className="text-center text-xs text-muted-foreground mt-6">
-          Planos de 1, 7, 14 e 30 dias disponíveis para todos os tipos. <Link href="/registro" className="text-sky-400 hover:underline">Ver todos os planos →</Link>
+          Planos de 1, 7, 14 e 30 dias disponíveis para todos os tipos. <Link href="/registro" className="text-sky-400 hover:underline">Criar conta e acessar todos →</Link>
         </p>
       </section>
 

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Wallet, Plus, ArrowUpRight, ArrowDownLeft, Loader2, QrCode,
   Clock, Check, Copy, X, TrendingUp, History, RefreshCw,
-  Zap, BatteryLow, Battery, BatteryMedium, BatteryFull, CheckCircle2,
+  Zap, BatteryLow, Battery, BatteryMedium, BatteryFull, CheckCircle2, XCircle,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -77,6 +77,7 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
   const [polling, setPolling] = useState(false);
   const [countdown, setCountdown] = useState(180);
   const [paid, setPaid] = useState(false);
+  const [expired, setExpired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => { abortRef.current?.abort(); }, []);
@@ -89,7 +90,9 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setPolling(true);
+    setExpired(false);
     setCountdown(180);
+    let settled = false;
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
     (async () => {
       try {
@@ -97,7 +100,7 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
         const r = await fetch(`${BASE}/api/infinity/wallet/topup/${paymentId}/watch`, {
           headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal,
         });
-        if (!r.ok || !r.body) return;
+        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); setExpired(true); return; }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -112,17 +115,20 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
             try {
               const d = JSON.parse(line.slice(6)) as { status: string };
               if (d.status === "paid") {
+                settled = true;
                 clearInterval(cdInt); setPolling(false); setPaid(true);
                 setTimeout(() => onSuccess(), 1500); return;
               }
               if (d.status === "expired" || d.status === "failed") {
-                clearInterval(cdInt); setPolling(false); return;
+                settled = true;
+                clearInterval(cdInt); setPolling(false); setExpired(true); return;
               }
             } catch {}
           }
         }
       } catch {}
       clearInterval(cdInt); setPolling(false);
+      if (!settled) setExpired(true);
     })();
   };
 
@@ -209,13 +215,23 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
                 </div>
                 <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{pixData.pixCopiaECola}</p>
               </div>
-              <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
-                {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
-                <div className="text-xs">
-                  <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
-                  {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+              {expired ? (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-center gap-3">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div className="text-xs">
+                    <span className="text-rose-300 font-semibold">PIX expirado</span>
+                    <span className="text-muted-foreground ml-2">· Feche e gere um novo para tentar novamente</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
+                  {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
+                  <div className="text-xs">
+                    <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
+                    {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+                  </div>
+                </div>
+              )}
               <p className="text-center text-[10px] text-muted-foreground/50 mt-2">
                 ✓ Saldo creditado em média em 15 segundos após confirmação do PIX
               </p>
@@ -237,6 +253,7 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
   const [polling, setPolling] = useState(false);
   const [countdown, setCountdown] = useState(300);
   const [paid, setPaid] = useState(false);
+  const [expired, setExpired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => { abortRef.current?.abort(); }, []);
@@ -248,7 +265,9 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setPolling(true);
+    setExpired(false);
     setCountdown(300);
+    let settled = false;
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
     (async () => {
       try {
@@ -256,7 +275,7 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
         const r = await fetch(`${BASE}/api/infinity/payments/${paymentId}/watch`, {
           headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal,
         });
-        if (!r.ok || !r.body) return;
+        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); setExpired(true); return; }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -271,17 +290,20 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
             try {
               const d = JSON.parse(line.slice(6)) as { status: string };
               if (d.status === "paid") {
+                settled = true;
                 clearInterval(cdInt); setPolling(false); setPaid(true);
                 setTimeout(() => onSuccess(), 2000); return;
               }
               if (d.status === "expired" || d.status === "failed") {
-                clearInterval(cdInt); setPolling(false); return;
+                settled = true;
+                clearInterval(cdInt); setPolling(false); setExpired(true); return;
               }
             } catch {}
           }
         }
       } catch {}
       clearInterval(cdInt); setPolling(false);
+      if (!settled) setExpired(true);
     })();
   };
 
@@ -380,13 +402,23 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
                 </div>
                 <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{pixData.pixCopiaECola}</p>
               </div>
-              <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
-                {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
-                <div className="text-xs">
-                  <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
-                  {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+              {expired ? (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-center gap-3">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div className="text-xs">
+                    <span className="text-rose-300 font-semibold">PIX expirado</span>
+                    <span className="text-muted-foreground ml-2">· Feche e gere um novo para tentar novamente</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
+                  {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
+                  <div className="text-xs">
+                    <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
+                    {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+                  </div>
+                </div>
+              )}
               <p className="text-center text-[10px] text-muted-foreground/50 mt-2">
                 ✓ Consultas creditadas em média em 15 segundos após confirmação do PIX
               </p>

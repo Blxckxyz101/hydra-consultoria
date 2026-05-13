@@ -74,6 +74,7 @@ function BuyPackModal({ pack, onClose, onSuccess }: { pack: GiftPack; onClose: (
   const [polling, setPolling] = useState(false);
   const [countdown, setCountdown] = useState(300);
   const [done, setDone] = useState<GiftCode[]>([]);
+  const [expired, setExpired] = useState(false);
   const [method, setMethod] = useState<"pix" | "wallet">("pix");
 
   const handleBuy = async () => {
@@ -94,6 +95,7 @@ function BuyPackModal({ pack, onClose, onSuccess }: { pack: GiftPack; onClose: (
       setLoading(false);
 
       setPolling(true);
+      setExpired(false);
       setCountdown(300);
       const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
       const poll = async () => {
@@ -107,7 +109,7 @@ function BuyPackModal({ pack, onClose, onSuccess }: { pack: GiftPack; onClose: (
             }
           } catch {}
         }
-        clearInterval(cdInt); setPolling(false);
+        clearInterval(cdInt); setPolling(false); setExpired(true);
       };
       poll();
     } catch { setError("Falha na conexão"); setLoading(false); }
@@ -201,13 +203,23 @@ function BuyPackModal({ pack, onClose, onSuccess }: { pack: GiftPack; onClose: (
                 </div>
                 <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{pixData.pixCopiaECola}</p>
               </div>
-              <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
-                {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
-                <div className="text-xs">
-                  <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
-                  {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+              {expired ? (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-center gap-3">
+                  <X className="w-4 h-4 text-rose-400 shrink-0" />
+                  <div className="text-xs">
+                    <span className="text-rose-300 font-semibold">PIX expirado</span>
+                    <span className="text-muted-foreground ml-2">· Feche e tente novamente</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
+                  {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
+                  <div className="text-xs">
+                    <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
+                    {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
