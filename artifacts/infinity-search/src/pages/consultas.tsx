@@ -13,6 +13,7 @@ import {
   Calendar, MessageCircle, GraduationCap, Hash, ThumbsUp, ClipboardList,
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
+import { QueryBlockedBanner } from "@/components/consultas/QueryBlockedBanner";
 import { CpfFullPanel } from "@/components/consultas/CpfFullPanel";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
 
@@ -245,8 +246,9 @@ export default function Consultas() {
   const queryClient = useQueryClient();
 
   const [skylersTotal, setSkylersTotal] = useState<number | null>(null);
-  const [skylersLimit, setSkylersLimit] = useState<number>(25);
+  const [skylersLimit, setSkylersLimit] = useState<number>(45);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [blockedState, setBlockedState] = useState<{ upgradeNeeded?: boolean; moduleLimited?: boolean; message?: string; limitInfo?: { used?: number; limit?: number } } | null>(null);
 
   type ProviderStatus = { online: boolean; ms: number; circuitOpen: boolean } | null;
   const [geassStatus, setGeassStatus]     = useState<ProviderStatus>(null);
@@ -309,6 +311,7 @@ export default function Consultas() {
 
   const executeQuery = async (tipo: Tipo, dados: string, base: ExternalBase | null) => {
     setResult(null);
+    setBlockedState(null);
     setPending(true);
     setShowBaseSelector(false);
     setPendingQuery(null);
@@ -354,8 +357,16 @@ export default function Consultas() {
         );
       }
       const rawData = await r.json() as Record<string, unknown>;
-      const data = { success: r.ok, ...rawData } as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean };
-      if (data.rateLimited) {
+      const data = { success: r.ok, ...rawData } as { success: boolean; error?: string | null; data?: unknown; rateLimited?: boolean; upgradeNeeded?: boolean; moduleLimited?: boolean; limitInfo?: { used?: number; limit?: number } };
+      if (data.upgradeNeeded) {
+        setBlockedState({ upgradeNeeded: true, message: data.error ?? undefined, limitInfo: data.limitInfo });
+        setResult({ success: false, error: data.error ?? "Sem consultas disponíveis." });
+        toast.error("Sem consultas disponíveis. Faça upgrade ou recarregue créditos.");
+      } else if (data.moduleLimited) {
+        setBlockedState({ moduleLimited: true, message: data.error ?? undefined, limitInfo: data.limitInfo });
+        setResult({ success: false, error: data.error ?? "Limite do módulo atingido." });
+        toast.error("Limite diário deste módulo atingido.");
+      } else if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
         toast.error("Limite diário atingido.");
       } else if (base && base !== "credilink" && data.success && typeof data.data === "string") {
@@ -899,7 +910,18 @@ export default function Consultas() {
               <InfinityLoader size={72} label="Consultando fontes" />
             </motion.div>
           )}
-          {!pending && !showBaseSelector && result && tab !== "cpffull" && (
+          {!pending && blockedState && (
+            <motion.div key="blocked" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+              <QueryBlockedBanner
+                upgradeNeeded={blockedState.upgradeNeeded}
+                moduleLimited={blockedState.moduleLimited}
+                message={blockedState.message}
+                limitInfo={blockedState.limitInfo}
+                onDismiss={() => setBlockedState(null)}
+              />
+            </motion.div>
+          )}
+          {!pending && !showBaseSelector && result && tab !== "cpffull" && !blockedState && (
             <ResultViewer
               tipo={tab}
               query={query}

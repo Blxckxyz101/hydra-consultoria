@@ -316,7 +316,96 @@ async function getUserSkylersDailyByTipo(username: string, tipoKey: string): Pro
   return count;
 }
 
-const SKYLERS_TOTAL_LIMIT = 25;
+const PER_MODULE_DAILY_LIMIT = 45;
+const FREE_DAILY_LIMIT = 2;
+const CREDITS_PER_CONSULTA = 5;
+
+// ─── Free-tier daily cache (only bumped when free tier is actually used) ─────
+const _freeDailyCache = new Map<string, { date: string; count: number }>();
+
+function getFreeUsedToday(username: string): number {
+  const today = new Date().toISOString().slice(0, 10);
+  const c = _freeDailyCache.get(username);
+  return c?.date === today ? c.count : 0;
+}
+
+function bumpFreeCache(username: string): void {
+  const today = new Date().toISOString().slice(0, 10);
+  const c = _freeDailyCache.get(username);
+  if (c?.date === today) _freeDailyCache.set(username, { date: today, count: c.count + 1 });
+  else _freeDailyCache.set(username, { date: today, count: 1 });
+}
+
+// Bumps only per-tipo module cache (for Geass routes); does NOT touch Skylers badge total
+function bumpModuleTipoCache(username: string, tipoKey: string): void {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!_userSkylersTipoCache.has(username)) _userSkylersTipoCache.set(username, new Map());
+  const tipoMap = _userSkylersTipoCache.get(username)!;
+  const t = tipoMap.get(tipoKey);
+  if (t?.date === today) tipoMap.set(tipoKey, { date: today, count: t.count + 1 });
+  else tipoMap.set(tipoKey, { date: today, count: 1 });
+}
+
+type QueryCheckResult =
+  | { allowed: true; tier: "admin" | "plan" | "credits" | "free" }
+  | { allowed: false; upgradeNeeded?: boolean; moduleLimited?: boolean; reason: string; limitInfo?: object };
+
+async function checkAndDebitQuery(
+  username: string,
+  tipoKey: string,
+  user: import("../lib/infinity-auth.js").InfinityAuthUser,
+): Promise<QueryCheckResult> {
+  if (user.role === "admin") return { allowed: true, tier: "admin" };
+
+  // 1. Per-module limit (45/day — universal anti-abuse, applies to everyone)
+  const moduleCount = await getUserSkylersDailyByTipo(username, tipoKey);
+  if (moduleCount >= PER_MODULE_DAILY_LIMIT) {
+    return {
+      allowed: false,
+      moduleLimited: true,
+      reason: `Limite de ${PER_MODULE_DAILY_LIMIT} consultas do módulo '${tipoKey}' atingido hoje.`,
+      limitInfo: { used: moduleCount, limit: PER_MODULE_DAILY_LIMIT },
+    };
+  }
+
+  // 2. Try plan quota (atomic debit, only when plan is within its active period)
+  const now = new Date();
+  const planActive = !!user.accountExpiresAt && user.accountExpiresAt > now && user.planQueryQuota !== null;
+  if (planActive) {
+    const debitResult = await db.update(infinityUsersTable)
+      .set({ planQueriesUsed: sql`plan_queries_used + 1` })
+      .where(and(
+        eq(infinityUsersTable.username, username),
+        sql`plan_queries_used < plan_query_quota`,
+      ))
+      .returning({ used: infinityUsersTable.planQueriesUsed });
+    if (debitResult.length > 0) return { allowed: true, tier: "plan" };
+    // Quota exhausted → fall through to credits
+  }
+
+  // 3. Try credits (5 créditos por consulta, atomic debit)
+  const creditDebit = await db.update(infinityUsersTable)
+    .set({ creditBalance: sql`credit_balance - ${CREDITS_PER_CONSULTA}` })
+    .where(and(
+      eq(infinityUsersTable.username, username),
+      sql`credit_balance >= ${CREDITS_PER_CONSULTA}`,
+    ))
+    .returning({ balance: infinityUsersTable.creditBalance });
+  if (creditDebit.length > 0) return { allowed: true, tier: "credits" };
+
+  // 4. Free tier: 2 consultas por dia (tracked separately so plan/credit queries don't consume it)
+  const freeUsed = getFreeUsedToday(username);
+  if (freeUsed < FREE_DAILY_LIMIT) return { allowed: true, tier: "free" };
+
+  // 5. Blocked — suggest upgrade
+  return {
+    allowed: false,
+    upgradeNeeded: true,
+    reason: planActive
+      ? `Cota do plano esgotada. Adquira uma recarga ou aguarde a renovação.`
+      : `Limite diário gratuito (${FREE_DAILY_LIMIT} consultas) atingido. Assine um plano ou adquira recargas.`,
+  };
+}
 
 // ─── Temp tokens for 2-step PIN login ───────────────────────────────────────
 interface TempToken { username: string; step: "setup-pin" | "verify-pin" | "verify-totp"; expiresAt: number }
@@ -363,7 +452,7 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null; profilePhoto?: string | null; profileBanner?: string | null; profileBio?: string | null; profileStatus?: string | null; profileStatusMsg?: string | null; hideUsername?: boolean | null }) {
+function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null; profilePhoto?: string | null; profileBanner?: string | null; profileBio?: string | null; profileStatus?: string | null; profileStatusMsg?: string | null; hideUsername?: boolean | null; creditBalance?: number | null; planQueryQuota?: number | null; planQueriesUsed?: number | null }) {
   return {
     username: row.username,
     displayName: row.displayName ?? null,
@@ -379,6 +468,9 @@ function serializeUser(row: { username: string; role: string; createdAt: Date; l
     profileStatus: row.profileStatus ?? "online",
     profileStatusMsg: row.profileStatusMsg ?? null,
     hideUsername: row.hideUsername ?? false,
+    creditBalance: row.creditBalance ?? 0,
+    planQueryQuota: row.planQueryQuota ?? null,
+    planQueriesUsed: row.planQueriesUsed ?? 0,
   };
 }
 
@@ -1620,7 +1712,8 @@ router.get("/me", requireAuth, async (req, res) => {
     return;
   }
   const skylersTotal = await getUserSkylersDaily(username);
-  res.json({ ...serializeUser(u), skylersTotal, skylersLimit: SKYLERS_TOTAL_LIMIT });
+  const freeUsedToday = getFreeUsedToday(username);
+  res.json({ ...serializeUser(u), skylersTotal, skylersLimit: PER_MODULE_DAILY_LIMIT, freeUsedToday, freeDailyLimit: FREE_DAILY_LIMIT });
 });
 
 router.patch("/me/display-name", requireAuth, async (req, res) => {
@@ -2205,13 +2298,10 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
 
   const tipoKey = `skylers:${ep ?? modulo ?? "unknown"}`;
 
+  let qCheck: QueryCheckResult | null = null;
   if (!isAdmin) {
-    const [globalCount, userCount, skylersTipoCount] = await Promise.all([
-      getGlobalDailyCount(),
-      getUserDailyCount(username),
-      getUserSkylersDailyByTipo(username, tipoKey),
-    ]);
-
+    // Global platform safety valve
+    const globalCount = await getGlobalDailyCount();
     if (globalCount >= DAILY_RATE_LIMIT) {
       res.status(429).json({
         success: false,
@@ -2221,24 +2311,15 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
       return;
     }
 
-    const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
-    if (userCount >= userLimit) {
-      res.status(429).json({
+    qCheck = await checkAndDebitQuery(username, tipoKey, req.infinityUser!);
+    if (!qCheck.allowed) {
+      res.status(qCheck.upgradeNeeded ? 402 : 429).json({
         success: false,
-        error: `Limite diário de ${userLimit} consultas atingido. Tente novamente amanhã.`,
-        rateLimited: true,
-        limitInfo: { used: userCount, limit: userLimit },
-      });
-      return;
-    }
-
-    if (skylersTipoCount >= SKYLERS_TOTAL_LIMIT) {
-      res.status(429).json({
-        success: false,
-        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas '${ep ?? modulo}' Skylers atingido hoje.`,
-        rateLimited: true,
-        skylersLimited: true,
-        limitInfo: { used: skylersTipoCount, limit: SKYLERS_TOTAL_LIMIT },
+        error: qCheck.reason,
+        rateLimited: !qCheck.upgradeNeeded,
+        upgradeNeeded: qCheck.upgradeNeeded ?? false,
+        moduleLimited: qCheck.moduleLimited ?? false,
+        limitInfo: qCheck.limitInfo,
       });
       return;
     }
@@ -2285,8 +2366,11 @@ router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const data = sortedParsed ?? { fields: [], sections: [], raw: "" };
   const tipoLog = `skylers:${ep ?? modulo ?? "unknown"}`;
 
-  bumpCaches(username);
-  bumpSkylersTipoCache(username, tipoKey);
+  if (!isAdmin) {
+    bumpCaches(username);
+    bumpSkylersTipoCache(username, tipoKey);
+    if ((qCheck as { tier?: string }).tier === "free") bumpFreeCache(username);
+  }
   // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
   if (!res.headersSent) {
     res.json({ success, data, error: provider.error ?? null });
@@ -2312,12 +2396,10 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
   const username = req.infinityUser!.username;
   const isAdmin  = req.infinityUser!.role === "admin";
 
-  // Global + per-user daily rate limits — skipped entirely for admins
-  if (!isAdmin) {
-    const [globalCount, userCount] = await Promise.all([
-      getGlobalDailyCount(),
-      getUserDailyCount(username),
-    ]);
+  // Rate limits — skipped entirely for admins
+  let qCheckConsulta: QueryCheckResult | null = null;
+  if (!isAdmin && !skipLog) {
+    const globalCount = await getGlobalDailyCount();
     if (globalCount >= DAILY_RATE_LIMIT) {
       res.status(429).json({
         error: `Limite diário de ${DAILY_RATE_LIMIT} consultas atingido para toda a plataforma. Tente novamente amanhã.`,
@@ -2325,12 +2407,14 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
       });
       return;
     }
-    const userLimit = req.infinityUser!.queryDailyLimit ?? PER_USER_DAILY_LIMIT;
-    if (userCount >= userLimit) {
-      res.status(429).json({
-        error: `Seu limite diário de ${userLimit} consultas foi atingido. Tente novamente amanhã.`,
-        rateLimited: true,
-        limitInfo: { used: userCount, limit: userLimit },
+    qCheckConsulta = await checkAndDebitQuery(username, tipo, req.infinityUser!);
+    if (!qCheckConsulta.allowed) {
+      res.status(qCheckConsulta.upgradeNeeded ? 402 : 429).json({
+        error: qCheckConsulta.reason,
+        rateLimited: !qCheckConsulta.upgradeNeeded,
+        upgradeNeeded: qCheckConsulta.upgradeNeeded ?? false,
+        moduleLimited: qCheckConsulta.moduleLimited ?? false,
+        limitInfo: qCheckConsulta.limitInfo,
       });
       return;
     }
@@ -2427,7 +2511,11 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     error: provider.error ?? null,
   });
   if (!skipLog) {
-    bumpCaches(username);
+    if (!isAdmin) {
+      bumpCaches(username);
+      bumpModuleTipoCache(username, tipo);
+      if (qCheckConsulta?.allowed && qCheckConsulta.tier === "free") bumpFreeCache(username);
+    }
     void logConsulta({ tipo, query: dados, username, success, result: data }).catch(() => {});
   }
 });
@@ -2913,14 +3001,20 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       return;
     }
     if (!skipLog && req.infinityUser && req.infinityUser.role !== "admin") {
-      const skylersTipoCount = await getUserSkylersDailyByTipo(req.infinityUser.username, extTipoKey);
-      if (skylersTipoCount >= SKYLERS_TOTAL_LIMIT) {
-        res.status(429).json({
+      const extGlobalCount = await getGlobalDailyCount();
+      if (extGlobalCount >= DAILY_RATE_LIMIT) {
+        res.status(429).json({ success: false, error: `Limite diário da plataforma atingido.`, rateLimited: true });
+        return;
+      }
+      const extCheck = await checkAndDebitQuery(req.infinityUser.username, extTipoKey, req.infinityUser);
+      if (!extCheck.allowed) {
+        res.status(extCheck.upgradeNeeded ? 402 : 429).json({
           success: false,
-          error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas '${tipo}' Skylers atingido hoje.`,
-          rateLimited: true,
-          skylersLimited: true,
-          limitInfo: { used: skylersTipoCount, limit: SKYLERS_TOTAL_LIMIT },
+          error: extCheck.reason,
+          rateLimited: !extCheck.upgradeNeeded,
+          upgradeNeeded: extCheck.upgradeNeeded ?? false,
+          moduleLimited: extCheck.moduleLimited ?? false,
+          limitInfo: extCheck.limitInfo,
         });
         return;
       }
@@ -2953,12 +3047,13 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       }
     }
     if (req.infinityUser && !skipLog) {
-      bumpCaches(req.infinityUser.username);
-      bumpSkylersTipoCache(req.infinityUser.username, extTipoKey);
+      const _extUser = req.infinityUser;
+      bumpCaches(_extUser.username);
+      bumpSkylersTipoCache(_extUser.username, extTipoKey);
       void logConsulta({
         tipo,
         query: dadosStr,
-        username: req.infinityUser.username,
+        username: _extUser.username,
         success,
         result: provider.parsed ?? {},
         skylers: true,
@@ -2991,22 +3086,31 @@ router.post("/log-cpffull", requireAuth, async (req, res) => {
   _cpfFullDedup.set(dedupKey, Date.now());
   const isAdmin = req.infinityUser!.role === "admin";
   if (!isAdmin) {
-    const cpfFullCount = await getUserSkylersDailyByTipo(username, "cpffull");
-    if (cpfFullCount >= SKYLERS_TOTAL_LIMIT) {
-      res.status(429).json({
+    const cpfFullGlobal = await getGlobalDailyCount();
+    if (cpfFullGlobal >= DAILY_RATE_LIMIT) {
+      res.status(429).json({ success: false, error: "Limite diário da plataforma atingido.", rateLimited: true });
+      return;
+    }
+    const cpfFullCheck = await checkAndDebitQuery(username, "cpffull", req.infinityUser!);
+    if (!cpfFullCheck.allowed) {
+      res.status(cpfFullCheck.upgradeNeeded ? 402 : 429).json({
         success: false,
-        error: `Limite de ${SKYLERS_TOTAL_LIMIT} consultas CPF Full Skylers atingido hoje.`,
-        rateLimited: true,
-        skylersLimited: true,
-        limitInfo: { used: cpfFullCount, limit: SKYLERS_TOTAL_LIMIT },
+        error: cpfFullCheck.reason,
+        rateLimited: !cpfFullCheck.upgradeNeeded,
+        upgradeNeeded: cpfFullCheck.upgradeNeeded ?? false,
+        moduleLimited: cpfFullCheck.moduleLimited ?? false,
+        limitInfo: cpfFullCheck.limitInfo,
       });
       return;
     }
+    if (cpfFullCheck.tier === "free") bumpFreeCache(username);
   }
   const query = String(cpf ?? "").replace(/\D/g, "").slice(0, 11) || "unknown";
   await logConsulta({ tipo: "cpffull", query, username, success: true, result: { fields: [], sections: [], raw: "" } });
-  bumpCaches(username);
-  bumpSkylersTipoCache(username, "cpffull");
+  if (!isAdmin) {
+    bumpCaches(username);
+    bumpSkylersTipoCache(username, "cpffull");
+  }
   res.json({ ok: true });
 });
 

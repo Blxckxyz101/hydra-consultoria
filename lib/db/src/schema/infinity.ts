@@ -36,6 +36,10 @@ export const infinityUsersTable = pgTable("infinity_users", {
   // 2FA TOTP
   totpSecret:         text("totp_secret"),
   totpEnabled:        boolean("totp_enabled").notNull().default(false),
+  // Credits & plan quota
+  creditBalance:      integer("credit_balance").notNull().default(0),
+  planQueryQuota:     integer("plan_query_quota"),           // null = no active quota
+  planQueriesUsed:    integer("plan_queries_used").notNull().default(0),
 });
 
 export const infinitySessionsTable = pgTable("infinity_sessions", {

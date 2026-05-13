@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import crypto from "node:crypto";
 import { db, infinityPaymentsTable, infinityPendingAccountsTable, infinityUsersTable, infinityReferralsTable, infinityCouponsTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "../lib/infinity-auth.js";
 import { loginLimiter } from "../middlewares/rateLimit.js";
@@ -18,18 +18,41 @@ export interface Plan {
   label: string;
   days: number;
   amountCents: number;
+  queryQuota: number;
   highlight?: boolean;
 }
 
 export const PLANS: Plan[] = [
-  { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500 },
-  { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000 },
-  { id: "14d", label: "14 Dias", days: 14, amountCents: 7000, highlight: true },
-  { id: "30d", label: "30 Dias", days: 30, amountCents: 10000 },
+  { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  queryQuota: 40 },
+  { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  queryQuota: 130 },
+  { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  queryQuota: 280, highlight: true },
+  { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, queryQuota: 500 },
 ];
 
 function getPlan(id: string): Plan | undefined {
   return PLANS.find(p => p.id === id);
+}
+
+// ─── Recharge Packs ───────────────────────────────────────────────────────────
+export interface RechargePack {
+  id: string;
+  label: string;
+  credits: number;
+  consultas: number;
+  amountCents: number;
+  highlight?: boolean;
+}
+
+export const RECHARGE_PACKS: RechargePack[] = [
+  { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  790 },
+  { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents: 1990 },
+  { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents: 3490, highlight: true },
+  { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 7990 },
+  { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 13990 },
+];
+
+function getRechargePack(id: string): RechargePack | undefined {
+  return RECHARGE_PACKS.find(p => p.id === id);
 }
 
 // ─── Promst Pagamentos API ─────────────────────────────────────────────────────
@@ -77,8 +100,66 @@ router.get("/plans", (_req, res) => {
     days: p.days,
     amountCents: p.amountCents,
     amountBrl: (p.amountCents / 100).toFixed(2),
+    queryQuota: p.queryQuota,
     highlight: p.highlight ?? false,
   })));
+});
+
+// ─── GET /recharges ───────────────────────────────────────────────────────────
+router.get("/recharges", (_req, res) => {
+  res.json(RECHARGE_PACKS.map(p => ({
+    id: p.id,
+    label: p.label,
+    credits: p.credits,
+    consultas: p.consultas,
+    amountCents: p.amountCents,
+    amountBrl: (p.amountCents / 100).toFixed(2),
+    highlight: p.highlight ?? false,
+  })));
+});
+
+// ─── POST /recharges/create — buy credits (logged-in only) ───────────────────
+router.post("/recharges/create", requireAuth, async (req, res) => {
+  const { packId } = req.body ?? {};
+  const pack = getRechargePack(String(packId ?? ""));
+  if (!pack) { res.status(400).json({ error: "Pacote de recarga inválido" }); return; }
+
+  const username = req.infinityUser!.username;
+  const paymentId = crypto.randomBytes(16).toString("hex");
+  const userId = generateUserId(username + paymentId);
+
+  let promstData: PromstCreateResponse;
+  try {
+    promstData = await createPromstPayment(userId, pack.amountCents / 100);
+  } catch {
+    res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+  await db.insert(infinityPaymentsTable).values({
+    id: paymentId,
+    username,
+    planId: pack.id,
+    amountCents: pack.amountCents,
+    status: "pending",
+    nedpayId: promstData.txid,
+    pixCode: promstData.pixCopiaECola,
+    pixQr: promstData.qrcode_base64,
+    expiresAt,
+  });
+
+  res.json({
+    paymentId,
+    txid: promstData.txid,
+    pixCopiaECola: promstData.pixCopiaECola,
+    qrcode_base64: promstData.qrcode_base64,
+    amountBrl: (pack.amountCents / 100).toFixed(2),
+    taxa: promstData.taxa,
+    pack: { id: pack.id, label: pack.label, credits: pack.credits, consultas: pack.consultas },
+    expiresAt: expiresAt.toISOString(),
+  });
 });
 
 // ─── Coupon helpers ────────────────────────────────────────────────────────────
@@ -507,10 +588,30 @@ async function applyReferralBonus(referredUsername: string, referredBy: string) 
 
 // ─── Payment confirmed: auto-activate ─────────────────────────────────────────
 async function handlePaymentConfirmed(paymentId: string, username: string | null, planId: string) {
-  const plan = getPlan(planId);
-  if (!plan || !username) return;
+  if (!username) return;
 
-  // Check if existing user → extend account
+  // ── Recharge pack: add credits to existing user ───────────────────────────
+  if (planId.startsWith("rc_")) {
+    const pack = getRechargePack(planId);
+    if (!pack) return;
+    await db.update(infinityUsersTable)
+      .set({ creditBalance: sql`credit_balance + ${pack.credits}` })
+      .where(eq(infinityUsersTable.username, username));
+    void sendSaleNotification({
+      username,
+      planLabel: `Recarga ${pack.label} (${pack.consultas} consultas)`,
+      amountCents: pack.amountCents,
+      expiresAt: null,
+      isRenewal: true,
+    });
+    return;
+  }
+
+  // ── Plan purchase ─────────────────────────────────────────────────────────
+  const plan = getPlan(planId);
+  if (!plan) return;
+
+  // Check if existing user → extend account and reset quota
   const existingUser = await db.select({ username: infinityUsersTable.username, accountExpiresAt: infinityUsersTable.accountExpiresAt })
     .from(infinityUsersTable)
     .where(eq(infinityUsersTable.username, username))
@@ -522,7 +623,11 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
       : new Date();
     const newExpiry = new Date(base.getTime() + plan.days * 24 * 60 * 60 * 1000);
     await db.update(infinityUsersTable)
-      .set({ accountExpiresAt: newExpiry })
+      .set({
+        accountExpiresAt: newExpiry,
+        planQueryQuota: plan.queryQuota,
+        planQueriesUsed: 0,
+      })
       .where(eq(infinityUsersTable.username, username));
     void sendSaleNotification({
       username,
@@ -550,12 +655,13 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
       passwordHash: pending.passwordHash,
       role: "user",
       accountExpiresAt,
+      planQueryQuota: plan.queryQuota,
+      planQueriesUsed: 0,
     });
     await db.update(infinityPendingAccountsTable)
       .set({ status: "approved", updatedAt: new Date() })
       .where(eq(infinityPendingAccountsTable.id, pending.id));
 
-    // Send welcome email if the user provided one
     if (pending.email) {
       void sendWelcomeEmail({
         to: pending.email,
@@ -565,7 +671,6 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
       });
     }
 
-    // Apply referral bonus if invited
     if (pending.referredBy) {
       void applyReferralBonus(pending.username, pending.referredBy);
     }

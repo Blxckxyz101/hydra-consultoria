@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
+import { QueryBlockedBanner } from "@/components/consultas/QueryBlockedBanner";
 
 type InputType = "cpf" | "cnpj" | "placa" | "text" | "tel" | "username" | "renavam" | "chassi" | "cep" | "id" | "email" | "oab" | "numero";
 
@@ -165,6 +166,7 @@ export default function Skylers() {
   const [search, setSearch] = useState("");
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [blockedState, setBlockedState] = useState<{ upgradeNeeded?: boolean; moduleLimited?: boolean; message?: string; limitInfo?: { used?: number; limit?: number } } | null>(null);
   const queryClient = useQueryClient();
 
   const modsInCategory = useMemo(
@@ -194,6 +196,7 @@ export default function Skylers() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModule || !query.trim() || pending) return;
+    setBlockedState(null);
 
     setPending(true);
     setResult(null);
@@ -214,10 +217,17 @@ export default function Skylers() {
         signal: skyCtrl.signal,
       });
       clearTimeout(skyTimer);
-      const data = await r.json() as QueryResult & { rateLimited?: boolean };
-      if (data.rateLimited) {
+      const data = await r.json() as QueryResult & { rateLimited?: boolean; upgradeNeeded?: boolean; moduleLimited?: boolean; limitInfo?: { used?: number; limit?: number } };
+      if (data.upgradeNeeded) {
+        setBlockedState({ upgradeNeeded: true, message: data.error ?? undefined, limitInfo: data.limitInfo });
+        setResult({ success: false, error: data.error ?? "Sem consultas disponíveis." });
+      } else if (data.moduleLimited) {
+        setBlockedState({ moduleLimited: true, message: data.error ?? undefined, limitInfo: data.limitInfo });
+        setResult({ success: false, error: data.error ?? "Limite do módulo atingido." });
+      } else if (data.rateLimited) {
         setResult({ success: false, error: data.error ?? "Limite diário atingido." });
       } else {
+        setBlockedState(null);
         setResult(data);
       }
     } catch (err) {
@@ -418,8 +428,21 @@ export default function Skylers() {
                 </motion.div>
               )}
 
+              {/* Blocked state */}
+              {!pending && blockedState && (
+                <motion.div key="blocked" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                  <QueryBlockedBanner
+                    upgradeNeeded={blockedState.upgradeNeeded}
+                    moduleLimited={blockedState.moduleLimited}
+                    message={blockedState.message}
+                    limitInfo={blockedState.limitInfo}
+                    onDismiss={() => setBlockedState(null)}
+                  />
+                </motion.div>
+              )}
+
               {/* Result */}
-              {!pending && result && (
+              {!pending && result && !blockedState && (
                 <motion.div
                   key="result"
                   initial={{ opacity: 0, y: 6 }}

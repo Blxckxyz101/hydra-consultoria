@@ -9,6 +9,10 @@ export interface InfinityAuthUser {
   username: string;
   role: InfinityRole;
   queryDailyLimit: number | null;
+  creditBalance: number;
+  planQueryQuota: number | null;
+  planQueriesUsed: number;
+  accountExpiresAt: Date | null;
 }
 
 declare global {
@@ -49,10 +53,13 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
   const now = new Date();
   const rows = await db
     .select({
-      username: infinityUsersTable.username,
-      role: infinityUsersTable.role,
+      username:       infinityUsersTable.username,
+      role:           infinityUsersTable.role,
       accountExpiresAt: infinityUsersTable.accountExpiresAt,
-      queryDailyLimit: infinityUsersTable.queryDailyLimit,
+      queryDailyLimit:  infinityUsersTable.queryDailyLimit,
+      creditBalance:    infinityUsersTable.creditBalance,
+      planQueryQuota:   infinityUsersTable.planQueryQuota,
+      planQueriesUsed:  infinityUsersTable.planQueriesUsed,
     })
     .from(infinitySessionsTable)
     .innerJoin(infinityUsersTable, eq(infinityUsersTable.username, infinitySessionsTable.username))
@@ -60,12 +67,17 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  // Block access if user account has expired (admins are never blocked)
-  if (row.role !== "admin" && row.accountExpiresAt && row.accountExpiresAt < now) return null;
+  // Admins are never blocked regardless of account state.
+  // Regular users with expired accounts may still log in if they have credits —
+  // the query tier enforcement in the route handlers handles access control.
   return {
-    username: row.username,
-    role: (row.role === "admin" ? "admin" : "user"),
+    username:       row.username,
+    role:           (row.role === "admin" ? "admin" : "user"),
     queryDailyLimit: row.queryDailyLimit ?? null,
+    creditBalance:   row.creditBalance ?? 0,
+    planQueryQuota:  row.planQueryQuota ?? null,
+    planQueriesUsed: row.planQueriesUsed ?? 0,
+    accountExpiresAt: row.accountExpiresAt ?? null,
   };
 }
 

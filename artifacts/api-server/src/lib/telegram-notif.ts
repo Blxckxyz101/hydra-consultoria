@@ -55,7 +55,7 @@ export interface SaleNotifParams {
   username: string;
   planLabel: string;
   amountCents: number;
-  expiresAt: Date;
+  expiresAt: Date | null;
   isRenewal?: boolean;
 }
 
@@ -63,7 +63,7 @@ export async function sendSaleNotification(params: SaleNotifParams): Promise<voi
   const { username, planLabel, amountCents, expiresAt, isRenewal } = params;
   const maskedId = maskUsername(username);
   const valor = "R$ " + (amountCents / 100).toFixed(2).replace(".", ",");
-  const validade = fmtDateBR(expiresAt);
+  const validade = expiresAt ? fmtDateBR(expiresAt) : "Sem validade";
 
   // <blockquote> creates the card-with-left-border effect in Telegram (like the screenshot)
   let text: string;

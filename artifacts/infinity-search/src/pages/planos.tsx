@@ -1,11 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock, Tag, X } from "lucide-react";
+import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock, Tag, X, Battery, BatteryFull, BatteryMedium, BatteryLow, Wallet } from "lucide-react";
 
 interface Plan {
   id: string;
   label: string;
   days: number;
+  amountBrl: string;
+  amountCents: number;
+  queryQuota: number;
+  highlight?: boolean;
+}
+
+interface RechargePack {
+  id: string;
+  label: string;
+  credits: number;
+  consultas: number;
   amountBrl: string;
   amountCents: number;
   highlight?: boolean;
@@ -17,6 +28,9 @@ const PLAN_ICONS: Record<string, React.ElementType> = {
   "14d": Star,
   "30d": Shield,
 };
+
+const RECHARGE_ICONS: RechargePack["id"][] = ["rc_micro", "rc_basico", "rc_padrao", "rc_avancado", "rc_pro"];
+const RECHARGE_ICON_COMPONENTS = [BatteryLow, Battery, BatteryMedium, BatteryFull, BatteryFull];
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 const apiFetch = (path: string, opts?: RequestInit) => {
@@ -32,6 +46,7 @@ const apiFetch = (path: string, opts?: RequestInit) => {
 };
 
 type Step = "plans" | "register" | "payment" | "success";
+type PageMode = "plans" | "recharges";
 
 interface PaymentData {
   paymentId: string;
@@ -40,8 +55,10 @@ interface PaymentData {
   qrcode_base64: string;
   amountBrl: string;
   taxa?: number;
-  plan: { id: string; label: string; days: number };
+  plan?: { id: string; label: string; days: number };
+  pack?: { id: string; label: string; credits: number; consultas: number };
   username?: string;
+  mode: PageMode;
 }
 
 function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean; onSelect: () => void }) {
@@ -83,11 +100,69 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
+        <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          <span className="text-foreground font-semibold">{plan.queryQuota} consultas</span>
+          <span>incluídas no período</span>
+        </div>
         {["24 tipos de consulta OSINT", "Assistente IA incluso", "Dossiê e histórico completo"].map(f => (
           <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
             <CheckCircle2 className="w-3 h-3 text-emerald-400" /> {f}
           </div>
         ))}
+      </div>
+    </motion.button>
+  );
+}
+
+function RechargeCard({ pack, selected, onSelect, idx }: { pack: RechargePack; selected: boolean; onSelect: () => void; idx: number }) {
+  const Icon = RECHARGE_ICON_COMPONENTS[idx] ?? BatteryMedium;
+  return (
+    <motion.button
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={onSelect}
+      className={`relative w-full text-left rounded-2xl border p-5 transition-all duration-200 ${
+        selected
+          ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
+          : pack.highlight
+          ? "bg-cyan-400/5 border-cyan-400/30 hover:border-cyan-400/50"
+          : "bg-black/30 border-white/10 hover:border-white/25"
+      }`}
+    >
+      {pack.highlight && !selected && (
+        <span className="absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-cyan-400 px-2 py-0.5 rounded-full">
+          Melhor custo
+        </span>
+      )}
+      {selected && (
+        <span className="absolute -top-2.5 right-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full" style={{ background: "var(--color-primary)" }}>
+          Selecionado
+        </span>
+      )}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Icon className={`w-5 h-5 mb-2 ${selected ? "text-primary" : pack.highlight ? "text-cyan-400" : "text-muted-foreground"}`} />
+          <div className="font-bold text-base">{pack.label}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5 uppercase tracking-[0.2em]">{pack.credits} créditos</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-2xl font-bold ${selected ? "text-primary" : pack.highlight ? "text-cyan-300" : "text-foreground"}`}>
+            R$ {pack.amountBrl}
+          </div>
+          <div className="text-[10px] text-muted-foreground">pagamento único</div>
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-white/5">
+        <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+          <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+          <span className="text-foreground font-semibold">{pack.consultas} consultas</span>
+          <span>· Sem prazo de validade</span>
+        </div>
+        <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1.5">
+          <CheckCircle2 className="w-3 h-3 text-cyan-400/60" />
+          R$ {(pack.amountCents / pack.consultas / 100).toFixed(2).replace(".", ",")} por consulta
+        </div>
       </div>
     </motion.button>
   );
@@ -111,8 +186,11 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function Planos() {
+  const [pageMode, setPageMode] = useState<PageMode>("plans");
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [rechargePacks, setRechargePacks] = useState<RechargePack[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string>("14d");
+  const [selectedPackId, setSelectedPackId] = useState<string>("rc_padrao");
   const [step, setStep] = useState<Step>("plans");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
@@ -121,7 +199,7 @@ export default function Planos() {
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState("");
 
-  // Coupon state
+  // Coupon state (only for plans)
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponInfo, setCouponInfo] = useState<{ discountPercent: number; description: string | null } | null>(null);
@@ -147,10 +225,27 @@ export default function Planos() {
       }
     }).catch(() => {
       setPlans([
-        { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  amountBrl: "15,00" },
-        { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  amountBrl: "40,00" },
-        { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  amountBrl: "70,00", highlight: true },
-        { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, amountBrl: "100,00" },
+        { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  amountBrl: "15,00", queryQuota: 40 },
+        { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  amountBrl: "40,00", queryQuota: 130 },
+        { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  amountBrl: "70,00", queryQuota: 280, highlight: true },
+        { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, amountBrl: "100,00", queryQuota: 500 },
+      ]);
+    });
+
+    apiFetch("/recharges").then(r => r.json()).then((data: RechargePack[]) => {
+      if (Array.isArray(data)) {
+        const mapped = data.map(p => ({ ...p, amountBrl: Number(p.amountBrl ?? p.amountCents / 100).toFixed(2).replace(".", ",") }));
+        setRechargePacks(mapped);
+        const def = mapped.find(p => p.highlight) ?? mapped[2];
+        if (def) setSelectedPackId(def.id);
+      }
+    }).catch(() => {
+      setRechargePacks([
+        { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  790, amountBrl: "7,90" },
+        { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents: 1990, amountBrl: "19,90" },
+        { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents: 3490, amountBrl: "34,90", highlight: true },
+        { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 7990, amountBrl: "79,90" },
+        { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 13990, amountBrl: "139,90" },
       ]);
     });
   }, []);
@@ -218,11 +313,31 @@ export default function Planos() {
   };
 
   const handleProceed = () => {
-    if (isLoggedIn) {
+    if (pageMode === "recharges") {
+      handleCreateRechargePayment();
+    } else if (isLoggedIn) {
       handleCreatePayment();
     } else {
       setStep("register");
     }
+  };
+
+  const handleCreateRechargePayment = async () => {
+    if (!isLoggedIn) { setError("Faça login para comprar recargas."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch("/recharges/create", { method: "POST", body: JSON.stringify({ packId: selectedPackId }) });
+      const data = await r.json() as { paymentId: string; txid: string; pixCopiaECola: string; qrcode_base64: string; amountBrl: string; taxa?: number; pack: { id: string; label: string; credits: number; consultas: number }; error?: string };
+      if (!r.ok) { setError(data.error ?? "Erro ao gerar pagamento"); setLoading(false); return; }
+      setPaymentData({ ...data, mode: "recharges" });
+      setPaymentStatus("pending");
+      setStep("payment");
+      startPolling(data.paymentId);
+    } catch {
+      setError("Erro de conexão. Tente novamente.");
+    }
+    setLoading(false);
   };
 
   const handleCreatePayment = async () => {
@@ -240,9 +355,9 @@ export default function Planos() {
           body: JSON.stringify({ planId: selectedPlanId, username: username.trim().toLowerCase(), password, couponCode }),
         });
       }
-      const data = await r.json() as PaymentData & { error?: string };
-      if (!r.ok) { setError(data.error ?? "Erro ao gerar pagamento"); setLoading(false); return; }
-      setPaymentData(data);
+      const data = await r.json() as PaymentData & { plan: { id: string; label: string; days: number }; error?: string };
+      if (!r.ok) { setError((data as { error?: string }).error ?? "Erro ao gerar pagamento"); setLoading(false); return; }
+      setPaymentData({ ...data, mode: "plans" });
       setPaymentStatus("pending");
       setStep("payment");
       startPolling(data.paymentId);
@@ -253,6 +368,13 @@ export default function Planos() {
   };
 
   const plan = plans.find(p => p.id === selectedPlanId);
+  const pack = rechargePacks.find(p => p.id === selectedPackId);
+
+  const switchMode = (mode: PageMode) => {
+    if (step !== "plans") return;
+    setPageMode(mode);
+    setError("");
+  };
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
@@ -262,69 +384,107 @@ export default function Planos() {
           animate={{ opacity: 1, y: 0 }}
           className="text-2xl sm:text-3xl font-bold tracking-[0.25em] uppercase bg-gradient-to-r from-sky-300 to-cyan-200 bg-clip-text text-transparent"
         >
-          Planos
+          {pageMode === "recharges" && step === "plans" ? "Recargas" : "Planos"}
         </motion.h1>
         <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-          Acesso completo à plataforma OSINT · Ativação automática
+          {pageMode === "recharges" && step === "plans"
+            ? "Créditos sem prazo de validade · Ativação imediata"
+            : "Acesso completo à plataforma OSINT · Ativação automática"}
         </p>
+
+        {/* Tab switcher — only visible on step "plans" */}
+        {step === "plans" && (
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => switchMode("plans")}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all ${
+                pageMode === "plans"
+                  ? "text-black"
+                  : "bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground"
+              }`}
+              style={pageMode === "plans" ? { background: "var(--color-primary)" } : {}}
+            >
+              <Shield className="w-3.5 h-3.5" /> Planos
+            </button>
+            <button
+              onClick={() => switchMode("recharges")}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold uppercase tracking-widest transition-all ${
+                pageMode === "recharges"
+                  ? "text-black"
+                  : "bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground"
+              }`}
+              style={pageMode === "recharges" ? { background: "var(--color-primary)" } : {}}
+            >
+              <Wallet className="w-3.5 h-3.5" /> Recargas
+            </button>
+          </div>
+        )}
       </div>
 
       <AnimatePresence mode="wait">
 
-        {/* ── Step 1: Plan selection ── */}
+        {/* ── Step 1: Plan/Recharge selection ── */}
         {step === "plans" && (
-          <motion.div key="plans" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} className="space-y-4">
+          <motion.div key={`plans-${pageMode}`} initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} className="space-y-4">
             <div className="grid gap-3">
-              {plans.map(p => (
-                <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
-              ))}
-            </div>
-            {/* ── Coupon input ── */}
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-1.5">
-                <Tag className="w-3 h-3" /> Cupom de Desconto
-              </p>
-              {couponInfo ? (
-                <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <div>
-                      <span className="font-mono font-bold text-emerald-300 text-sm">{couponInput.toUpperCase()}</span>
-                      <span className="ml-2 text-xs text-emerald-400 font-semibold">−{couponInfo.discountPercent}% de desconto</span>
-                      {couponInfo.description && (
-                        <p className="text-[10px] text-emerald-400/70 mt-0.5">{couponInfo.description}</p>
-                      )}
-                    </div>
-                  </div>
-                  <button onClick={handleRemoveCoupon} className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors" title="Remover cupom">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={couponInput}
-                    onChange={e => { setCouponInput(e.target.value.toUpperCase()); setCouponError(""); }}
-                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void handleValidateCoupon(); } }}
-                    placeholder="Ex: HYDRA20"
-                    maxLength={30}
-                    className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono uppercase tracking-widest focus:outline-none focus:border-primary/50 transition-colors placeholder:normal-case placeholder:tracking-normal placeholder:text-muted-foreground/50"
-                  />
-                  <button
-                    onClick={() => void handleValidateCoupon()}
-                    disabled={couponLoading || !couponInput.trim()}
-                    className="px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground hover:border-white/25 disabled:opacity-50 transition-all"
-                  >
-                    {couponLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Aplicar"}
-                  </button>
-                </div>
-              )}
-              {couponError && <p className="text-xs text-destructive">{couponError}</p>}
+              {pageMode === "plans"
+                ? plans.map(p => (
+                    <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
+                  ))
+                : rechargePacks.map((p, i) => (
+                    <RechargeCard key={p.id} pack={p} idx={RECHARGE_ICONS.indexOf(p.id)} selected={selectedPackId === p.id} onSelect={() => setSelectedPackId(p.id)} />
+                  ))
+              }
             </div>
 
-            {/* ── Price summary ── */}
-            {couponInfo && plan && (
+            {/* ── Coupon (plans only) ── */}
+            {pageMode === "plans" && (
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-1.5">
+                  <Tag className="w-3 h-3" /> Cupom de Desconto
+                </p>
+                {couponInfo ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div>
+                        <span className="font-mono font-bold text-emerald-300 text-sm">{couponInput.toUpperCase()}</span>
+                        <span className="ml-2 text-xs text-emerald-400 font-semibold">−{couponInfo.discountPercent}% de desconto</span>
+                        {couponInfo.description && (
+                          <p className="text-[10px] text-emerald-400/70 mt-0.5">{couponInfo.description}</p>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={handleRemoveCoupon} className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors" title="Remover cupom">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={couponInput}
+                      onChange={e => { setCouponInput(e.target.value.toUpperCase()); setCouponError(""); }}
+                      onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void handleValidateCoupon(); } }}
+                      placeholder="Ex: HYDRA20"
+                      maxLength={30}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono uppercase tracking-widest focus:outline-none focus:border-primary/50 transition-colors placeholder:normal-case placeholder:tracking-normal placeholder:text-muted-foreground/50"
+                    />
+                    <button
+                      onClick={() => void handleValidateCoupon()}
+                      disabled={couponLoading || !couponInput.trim()}
+                      className="px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground hover:border-white/25 disabled:opacity-50 transition-all"
+                    >
+                      {couponLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Aplicar"}
+                    </button>
+                  </div>
+                )}
+                {couponError && <p className="text-xs text-destructive">{couponError}</p>}
+              </div>
+            )}
+
+            {/* ── Price summary (with coupon) ── */}
+            {pageMode === "plans" && couponInfo && plan && (
               <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Total com desconto</span>
                 <div className="flex items-center gap-2">
@@ -336,23 +496,32 @@ export default function Planos() {
               </div>
             )}
 
+            {/* ── Recharges info note ── */}
+            {pageMode === "recharges" && !isLoggedIn && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-300">
+                Recargas são exclusivas para usuários já cadastrados. Faça login antes de comprar.
+              </div>
+            )}
+
             {error && <p className="text-xs text-red-400 text-center">{error}</p>}
             <button
               onClick={handleProceed}
-              disabled={!selectedPlanId || loading}
+              disabled={(pageMode === "plans" ? !selectedPlanId : !selectedPackId) || loading || (pageMode === "recharges" && !isLoggedIn)}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold text-sm uppercase tracking-[0.25em] text-black transition-all disabled:opacity-50"
               style={{ background: "var(--color-primary)" }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
-              {isLoggedIn ? "Pagar com PIX" : "Criar conta e pagar"}
+              {pageMode === "recharges"
+                ? (isLoggedIn ? "Pagar com PIX" : "Faça login primeiro")
+                : (isLoggedIn ? "Pagar com PIX" : "Criar conta e pagar")}
             </button>
             <p className="text-center text-[10px] text-muted-foreground">
-              ✅ Ativação automática após confirmação do pagamento
+              ✅ {pageMode === "recharges" ? "Créditos adicionados automaticamente após confirmação" : "Ativação automática após confirmação do pagamento"}
             </p>
           </motion.div>
         )}
 
-        {/* ── Step 2: Register (new users only) ── */}
+        {/* ── Step 2: Register (new users only, plan mode only) ── */}
         {step === "register" && (
           <motion.div key="register" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-4">
             <div className="flex items-center gap-3">
@@ -361,7 +530,7 @@ export default function Planos() {
               </button>
               <div>
                 <div className="font-bold text-sm">Criar conta — Plano {plan?.label}</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">R$ {plan?.amountBrl} · {plan?.days} {plan?.days === 1 ? "dia" : "dias"} de acesso</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">R$ {plan?.amountBrl} · {plan?.days} {plan?.days === 1 ? "dia" : "dias"} · {plan?.queryQuota} consultas</div>
               </div>
             </div>
 
@@ -423,13 +592,15 @@ export default function Planos() {
               <div>
                 <div className="font-bold text-sm">Pague o PIX</div>
                 <div className="text-[10px] text-muted-foreground uppercase tracking-widest">
-                  R$ {paymentData.amountBrl} · Plano {paymentData.plan.label}
+                  R$ {paymentData.amountBrl} ·{" "}
+                  {paymentData.mode === "recharges" && paymentData.pack
+                    ? `Recarga ${paymentData.pack.label} (${paymentData.pack.consultas} consultas)`
+                    : `Plano ${paymentData.plan?.label}`}
                 </div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-5">
-              {/* QR Code */}
               <div className="flex flex-col items-center gap-3">
                 <div className="rounded-2xl p-2 sm:p-3 bg-white mx-auto">
                   <img
@@ -452,7 +623,6 @@ export default function Planos() {
                 <div className="flex-1 h-px bg-white/5" />
               </div>
 
-              {/* Pix Copia e Cola */}
               <div className="space-y-2">
                 <div className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Pix Copia e Cola</div>
                 <div className="flex flex-col sm:flex-row items-stretch gap-2">
@@ -465,7 +635,6 @@ export default function Planos() {
                 </div>
               </div>
 
-              {/* Status */}
               {paymentStatus === "pending" && (
                 <div className="flex items-center gap-2 justify-center py-2 rounded-xl bg-amber-500/5 border border-amber-500/20">
                   <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
@@ -480,7 +649,7 @@ export default function Planos() {
 
               {paymentData.taxa !== undefined && (
                 <p className="text-center text-[10px] text-muted-foreground/50">
-                  Taxa da plataforma: R$ {paymentData.taxa?.toFixed(2)} · Acesso ativado automaticamente após confirmação
+                  Taxa da plataforma: R$ {paymentData.taxa?.toFixed(2)} · {paymentData.mode === "recharges" ? "Créditos adicionados automaticamente" : "Acesso ativado automaticamente"} após confirmação
                 </p>
               )}
             </div>
@@ -496,13 +665,19 @@ export default function Planos() {
               </motion.div>
               <div>
                 <div className="text-xl font-bold text-emerald-300">Pagamento confirmado!</div>
-                <div className="text-sm text-muted-foreground mt-1">
-                  Plano <span className="text-foreground font-medium">{paymentData.plan.label}</span> ativado com sucesso.
-                </div>
+                {paymentData.mode === "recharges" && paymentData.pack ? (
+                  <div className="text-sm text-muted-foreground mt-1">
+                    <span className="text-foreground font-medium">{paymentData.pack.consultas} consultas</span> ({paymentData.pack.credits} créditos) adicionadas à sua conta.
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Plano <span className="text-foreground font-medium">{paymentData.plan?.label}</span> ativado com sucesso.
+                  </div>
+                )}
               </div>
               {paymentData.username && (
                 <div className="rounded-xl bg-black/30 border border-white/10 px-5 py-3 text-sm">
-                  Sua conta <span className="text-primary font-bold">@{paymentData.username}</span> está ativa por <span className="font-bold">{paymentData.plan.days} {paymentData.plan.days === 1 ? "dia" : "dias"}</span>.
+                  Sua conta <span className="text-primary font-bold">@{paymentData.username}</span> está ativa por <span className="font-bold">{paymentData.plan?.days} {paymentData.plan?.days === 1 ? "dia" : "dias"}</span>.
                 </div>
               )}
               <a
