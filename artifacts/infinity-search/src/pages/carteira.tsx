@@ -93,6 +93,7 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
     abortRef.current = ctrl;
     setPolling(true);
     setExpired(false);
+    setError("");
     setCountdown(180);
     let settled = false;
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
@@ -102,7 +103,11 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
         const r = await fetch(`${BASE}/api/infinity/wallet/topup/${paymentId}/watch`, {
           headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal,
         });
-        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); setExpired(true); return; }
+        if (!r.ok || !r.body) {
+          clearInterval(cdInt); setPolling(false);
+          setError("Erro ao monitorar o pagamento. Verifique sua conexão e tente novamente.");
+          return;
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -128,7 +133,12 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
             } catch {}
           }
         }
-      } catch {}
+      } catch (e: unknown) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        clearInterval(cdInt); setPolling(false);
+        if (!settled) setError("Falha na conexão ao verificar pagamento. Aguarde e recarregue a página se o PIX já foi pago.");
+        return;
+      }
       clearInterval(cdInt); setPolling(false);
       if (!settled) setExpired(true);
     })();
@@ -229,7 +239,15 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
                 </div>
                 <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{pixData.pixCopiaECola}</p>
               </div>
-              {expired ? (
+              {error ? (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-start gap-3">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="text-rose-300 font-semibold block mb-0.5">Erro no monitoramento</span>
+                    <span className="text-muted-foreground">{error}</span>
+                  </div>
+                </div>
+              ) : expired ? (
                 <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-center gap-3">
                   <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   <div className="text-xs">
@@ -280,6 +298,7 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
     abortRef.current = ctrl;
     setPolling(true);
     setExpired(false);
+    setError("");
     setCountdown(300);
     let settled = false;
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
@@ -289,7 +308,11 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
         const r = await fetch(`${BASE}/api/infinity/payments/${paymentId}/watch`, {
           headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal,
         });
-        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); setExpired(true); return; }
+        if (!r.ok || !r.body) {
+          clearInterval(cdInt); setPolling(false);
+          setError("Erro ao monitorar o pagamento. Verifique sua conexão e tente novamente.");
+          return;
+        }
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -315,7 +338,12 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
             } catch {}
           }
         }
-      } catch {}
+      } catch (e: unknown) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        clearInterval(cdInt); setPolling(false);
+        if (!settled) setError("Falha na conexão ao verificar pagamento. Aguarde e recarregue a página se o PIX já foi pago.");
+        return;
+      }
       clearInterval(cdInt); setPolling(false);
       if (!settled) setExpired(true);
     })();
@@ -421,7 +449,15 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
                 </div>
                 <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{pixData.pixCopiaECola}</p>
               </div>
-              {expired ? (
+              {error ? (
+                <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-start gap-3">
+                  <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <span className="text-rose-300 font-semibold block mb-0.5">Erro no monitoramento</span>
+                    <span className="text-muted-foreground">{error}</span>
+                  </div>
+                </div>
+              ) : expired ? (
                 <div className="rounded-xl border border-rose-400/30 bg-rose-400/8 px-4 py-3 flex items-center gap-3">
                   <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   <div className="text-xs">

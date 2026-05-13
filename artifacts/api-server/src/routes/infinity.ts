@@ -2034,7 +2034,7 @@ router.post("/users/:username/reset-pin", requireAdmin, async (req, res) => {
 
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password, displayName } = req.body ?? {};
+  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password, displayName, creditBalance, addCredits } = req.body ?? {};
 
   const updateData: Partial<{
     accountExpiresAt: Date | null;
@@ -2043,6 +2043,7 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
     planTier: string;
     passwordHash: string;
     displayName: string | null;
+    creditBalance: number;
   }> = {};
 
   if (action === "revoke") {
@@ -2077,6 +2078,16 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
 
   if (displayName !== undefined) {
     updateData.displayName = String(displayName).trim().slice(0, 50) || null;
+  }
+
+  // Admin credit adjustment: set absolute value or delta
+  if (creditBalance !== undefined && creditBalance !== null && !isNaN(Number(creditBalance))) {
+    updateData.creditBalance = Math.max(0, Math.round(Number(creditBalance)));
+  } else if (addCredits !== undefined && addCredits !== null && !isNaN(Number(addCredits))) {
+    // Relative adjustment — fetch current first
+    const [cur] = await db.select({ bal: infinityUsersTable.creditBalance }).from(infinityUsersTable).where(eq(infinityUsersTable.username, target));
+    const newBal = Math.max(0, (cur?.bal ?? 0) + Math.round(Number(addCredits)));
+    updateData.creditBalance = newBal;
   }
 
   if (Object.keys(updateData).length === 0) {

@@ -677,10 +677,12 @@ export default function Consultas() {
       </div>
 
       {/* Tab grid — hidden when current category is locked */}
+      {/* key only changes when entering/exiting search mode — no remount on category switch */}
       <motion.div
-        key={isSearching ? `search-${searchTrim}` : activeCategory}
-        initial={{ opacity: 0, y: 6 }}
+        key={isSearching ? "search" : "tabs"}
+        initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15 }}
         className={`grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 ${isCurrentCategoryLocked ? "hidden" : ""}`}
       >
         {tabsInCategory.length === 0 && (
@@ -720,18 +722,19 @@ export default function Consultas() {
         })}
       </motion.div>
 
-      {/* Query form + result */}
-      <motion.div
-        key={tab}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6"
-      >
+      {/* Query form + result — container stays mounted, only inner label animates on tab switch */}
+      <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-primary/70">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.15 }}
+            className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-primary/70"
+          >
             <ActiveIcon className="w-3.5 h-3.5" />
             {activeTab.label} · {activeTab.hint}
-          </div>
+          </motion.div>
 
           {/* CPF sub-type selector */}
           {tab === "cpf" && (
@@ -955,7 +958,7 @@ export default function Consultas() {
             />
           )}
         </AnimatePresence>
-      </motion.div>
+      </div>
 
       {/* CPF Full panel — rendered below the form block */}
       {((tab === "cpf" && cpfVariant === "cpffull") || tab === "cpffull") && cpfFullQuery && (

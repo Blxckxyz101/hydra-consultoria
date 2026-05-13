@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus } from "lucide-react";
 import QRCode from "qrcode";
 
 
@@ -431,6 +431,111 @@ function PasswordEditor({ username }: { username: string }) {
           Cancelar
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── CreditEditor ─────────────────────────────────────────────────────────────
+function CreditEditor({ username, currentCredits, onSaved }: { username: string; currentCredits: number; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"set" | "add" | "sub">("add");
+  const [val, setVal] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  const num = Number(val);
+  const isValid = val !== "" && !isNaN(num) && num >= 0 && Number.isInteger(num);
+
+  const handleSave = async () => {
+    if (!isValid || saving) return;
+    setSaving(true); setErr("");
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const body = mode === "set"
+        ? { creditBalance: num }
+        : mode === "add"
+          ? { addCredits: num }
+          : { addCredits: -num };
+      const r = await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const d = await r.json() as { error?: string }; setErr(d.error ?? "Erro"); setSaving(false); return; }
+      setSaved(true);
+      setTimeout(() => { setSaved(false); setOpen(false); setVal(""); onSaved(); }, 1200);
+    } catch { setErr("Falha na conexão"); }
+    setSaving(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded border bg-white/5 border-white/10 text-muted-foreground hover:border-white/25 hover:text-foreground uppercase tracking-wider font-bold transition-all"
+        title="Editar créditos"
+      >
+        <Coins className="w-2.5 h-2.5" />
+        {currentCredits.toLocaleString("pt-BR")} cr
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 mt-0.5">
+      <div className="flex gap-1">
+        {([
+          { key: "add" as const, label: "+Adicionar", icon: Plus },
+          { key: "sub" as const, label: "−Remover",   icon: Minus },
+          { key: "set" as const, label: "=Definir",   icon: Coins },
+        ]).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setMode(key)}
+            className={`flex items-center gap-0.5 text-[8px] px-1.5 py-0.5 rounded border uppercase tracking-wider font-bold transition-all ${
+              mode === key
+                ? "bg-primary/20 border-primary/50 text-primary"
+                : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+            }`}
+          >
+            <Icon className="w-2 h-2" /> {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1 items-center">
+        <input
+          type="number"
+          min={0}
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          placeholder="Qtd"
+          aria-label={`Quantidade de créditos para ${mode === "set" ? "definir" : mode === "add" ? "adicionar" : "remover"} em ${username}`}
+          className="w-16 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-[10px] font-mono focus:outline-none focus:border-primary/40 transition-all"
+        />
+        {saved ? (
+          <span className="flex items-center gap-0.5 text-[9px] text-emerald-400 font-semibold">
+            <Check className="w-2.5 h-2.5" /> Salvo
+          </span>
+        ) : (
+          <>
+            <button
+              onClick={handleSave}
+              disabled={!isValid || saving}
+              className="text-[9px] px-1.5 py-0.5 rounded border bg-primary/15 border-primary/40 text-primary font-bold uppercase tracking-wider disabled:opacity-40 transition-all hover:bg-primary/25"
+            >
+              {saving ? "…" : "OK"}
+            </button>
+            <button
+              onClick={() => { setOpen(false); setVal(""); setErr(""); }}
+              className="text-[9px] px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-muted-foreground hover:text-foreground transition-all"
+            >
+              ✕
+            </button>
+          </>
+        )}
+      </div>
+      {err && <p className="text-[9px] text-rose-400">{err}</p>}
     </div>
   );
 }
@@ -1955,17 +2060,30 @@ export default function Configuracoes() {
                               username={u.username}
                               onReset={() => { queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() }); }}
                             />
-                            <div className="mt-1.5 pt-1.5 border-t border-white/5">
-                              <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Cargo</p>
-                              <RoleEditor
-                                username={u.username}
-                                currentRole={u.role}
-                                isMe={u.username === me?.username}
-                                onSaved={() => {
-                                  queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
-                                  refetchUsers();
-                                }}
-                              />
+                            <div className="mt-1.5 pt-1.5 border-t border-white/5 space-y-1.5">
+                              <div>
+                                <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Créditos</p>
+                                <CreditEditor
+                                  username={u.username}
+                                  currentCredits={(u as any).creditBalance ?? 0}
+                                  onSaved={() => {
+                                    queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+                                    refetchUsers();
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Cargo</p>
+                                <RoleEditor
+                                  username={u.username}
+                                  currentRole={u.role}
+                                  isMe={u.username === me?.username}
+                                  onSaved={() => {
+                                    queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+                                    refetchUsers();
+                                  }}
+                                />
+                              </div>
                             </div>
                           </div>
                           <button
