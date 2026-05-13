@@ -96,7 +96,6 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
           <div className={`text-2xl font-bold ${selected ? "text-primary" : plan.highlight ? "text-amber-300" : "text-foreground"}`}>
             R$ {plan.amountBrl}
           </div>
-          <div className="text-[10px] text-muted-foreground">≈ US$ {(plan.amountCents / 565).toFixed(2)}</div>
           <div className="text-[10px] text-muted-foreground">pagamento único</div>
         </div>
       </div>
@@ -151,7 +150,6 @@ function RechargeCard({ pack, selected, onSelect, idx }: { pack: RechargePack; s
           <div className={`text-2xl font-bold ${selected ? "text-primary" : pack.highlight ? "text-cyan-300" : "text-foreground"}`}>
             R$ {pack.amountBrl}
           </div>
-          <div className="text-[10px] text-muted-foreground">≈ US$ {(pack.amountCents / 565).toFixed(2)}</div>
           <div className="text-[10px] text-muted-foreground">pagamento único</div>
         </div>
       </div>
