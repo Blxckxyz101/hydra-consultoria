@@ -1,11 +1,12 @@
 import { Link } from "wouter";
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import logoUrl from "@/assets/hydra-icon.jpg";
 import {
   Search, Shield, Car, Building2, Scale, Camera,
   ArrowRight, CheckCircle2, Zap, Lock, Users,
-  Clock, Crown, Flame, Star, ChevronRight, Quote,
+  Clock, Crown, Flame, Star, ChevronRight, Quote, ChevronDown,
 } from "lucide-react";
 
 const STATS = [
@@ -140,11 +141,86 @@ const TESTIMONIALS = [
   },
 ];
 
+const FAQ = [
+  {
+    q: "O que é OSINT?",
+    a: "OSINT (Open Source Intelligence) é a prática de coletar e analisar informações de fontes públicas e legalmente acessíveis. A Hydra reúne dados de bases públicas brasileiras — Receita Federal, DETRAN, tribunais, entre outras — e entrega tudo em segundos.",
+  },
+  {
+    q: "Meus dados e consultas ficam seguros?",
+    a: "Sim. A plataforma usa autenticação com PIN, 2FA TOTP e sessão protegida. Suas consultas são privadas e acessíveis apenas por você. Nenhum dado é compartilhado com terceiros.",
+  },
+  {
+    q: "Como funciona o pagamento via PIX?",
+    a: "Ao escolher um plano ou recarga, geramos um QR Code PIX na hora. Após o pagamento, o saldo ou acesso é ativado automaticamente em segundos, sem aprovação manual.",
+  },
+  {
+    q: "Posso cancelar ou o plano expira sozinho?",
+    a: "Não existe mensalidade. Os planos têm prazo definido (1, 7, 14 ou 30 dias) e expiram naturalmente ao fim do período. As recargas de consultas não expiram e acumulam indefinidamente.",
+  },
+  {
+    q: "Qual a diferença entre Plano e Recarga?",
+    a: "O Plano dá acesso completo à plataforma por um período. A Recarga é um pacote de consultas avulsas sem prazo de validade, ideal para quem usa de forma pontual ou quer complementar um plano ativo.",
+  },
+  {
+    q: "Qual plano é indicado para iniciantes?",
+    a: "O plano '1 Dia Padrão' por R$ 15 é perfeito para testar a plataforma. Para uso regular, o '14 Dias Padrão' oferece o melhor custo-benefício com 420 consultas incluídas.",
+  },
+];
+
 const STEPS = [
   { num: "01", title: "Crie sua conta", desc: "Escolha seu plano e registre-se em menos de 2 minutos." },
   { num: "02", title: "Pague via PIX", desc: "QR Code gerado na hora, saldo creditado em segundos." },
   { num: "03", title: "Comece as consultas", desc: "Acesso imediato a todos os módulos do seu plano." },
 ];
+
+function FaqSection() {
+  const [open, setOpen] = useState<number | null>(null);
+  return (
+    <section className="px-6 py-20 max-w-3xl mx-auto">
+      <div className="text-center mb-12">
+        <h2 className="text-3xl font-black mb-3" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.08em" }}>
+          PERGUNTAS FREQUENTES
+        </h2>
+        <p className="text-muted-foreground text-sm">Tudo o que você precisa saber antes de começar</p>
+      </div>
+      <div className="space-y-2">
+        {FAQ.map((item, i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden transition-all hover:border-white/20"
+          >
+            <button
+              className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left"
+              onClick={() => setOpen(open === i ? null : i)}
+            >
+              <span className="font-semibold text-sm">{item.q}</span>
+              <ChevronDown
+                className="w-4 h-4 text-muted-foreground shrink-0 transition-transform duration-200"
+                style={{ transform: open === i ? "rotate(180deg)" : "rotate(0deg)" }}
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {open === i && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.22 }}
+                  className="overflow-hidden"
+                >
+                  <p className="px-5 pb-4 text-sm text-muted-foreground leading-relaxed border-t border-white/5 pt-3">
+                    {item.a}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function Landing() {
   return (
@@ -466,6 +542,9 @@ export default function Landing() {
           })}
         </div>
       </section>
+
+      {/* ── FAQ ── */}
+      <FaqSection />
 
       {/* ── CTA final ── */}
       <section className="px-6 py-24 text-center">
