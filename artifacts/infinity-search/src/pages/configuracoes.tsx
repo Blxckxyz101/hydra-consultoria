@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight } from "lucide-react";
 import QRCode from "qrcode";
 
 
@@ -829,6 +829,88 @@ export default function Configuracoes() {
     } catch {}
   };
 
+  // ── Coupons state ──────────────────────────────────────────────────────────
+  interface CouponRow {
+    code: string; discountPercent: number; maxUses: number | null; usedCount: number;
+    expiresAt: string | null; active: boolean; description: string | null;
+    createdBy: string; createdAt: string;
+  }
+  const [coupons, setCoupons] = useState<CouponRow[]>([]);
+  const [couponsLoading, setCouponsLoading] = useState(false);
+  const [couponForm, setCouponForm] = useState({ code: "", discountPercent: "", maxUses: "", expiresAt: "", description: "" });
+  const [couponFormErr, setCouponFormErr] = useState("");
+  const [couponFormOk, setCouponFormOk] = useState(false);
+  const [couponFormLoading, setCouponFormLoading] = useState(false);
+
+  const loadCoupons = useCallback(async () => {
+    if (!isAdmin) return;
+    setCouponsLoading(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/admin/coupons", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) setCoupons(await r.json());
+    } catch {} finally { setCouponsLoading(false); }
+  }, [isAdmin]);
+
+  useEffect(() => { void loadCoupons(); }, [loadCoupons]);
+
+  const generateCouponCode = () => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const code = "HYDRA" + Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    setCouponForm(f => ({ ...f, code }));
+  };
+
+  const handleCreateCoupon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCouponFormErr("");
+    setCouponFormOk(false);
+    const pct = Number(couponForm.discountPercent);
+    if (!couponForm.code.trim()) { setCouponFormErr("Código obrigatório."); return; }
+    if (!Number.isInteger(pct) || pct < 1 || pct > 100) { setCouponFormErr("Desconto deve ser entre 1 e 100%."); return; }
+    setCouponFormLoading(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/admin/coupons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          code: couponForm.code.trim().toUpperCase(),
+          discountPercent: pct,
+          maxUses: couponForm.maxUses.trim() ? Number(couponForm.maxUses) : null,
+          expiresAt: couponForm.expiresAt || null,
+          description: couponForm.description.trim() || null,
+        }),
+      });
+      const j = await r.json() as { ok?: boolean; error?: string };
+      if (!r.ok) { setCouponFormErr(j.error ?? "Erro ao criar cupom."); return; }
+      setCouponFormOk(true);
+      setCouponForm({ code: "", discountPercent: "", maxUses: "", expiresAt: "", description: "" });
+      setTimeout(() => setCouponFormOk(false), 2500);
+      await loadCoupons();
+    } catch { setCouponFormErr("Erro de conexão."); }
+    finally { setCouponFormLoading(false); }
+  };
+
+  const handleToggleCoupon = async (code: string, active: boolean) => {
+    const token = localStorage.getItem("infinity_token");
+    await fetch(`/api/infinity/admin/coupons/${encodeURIComponent(code)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ active }),
+    });
+    await loadCoupons();
+  };
+
+  const handleDeleteCoupon = async (code: string) => {
+    if (!confirm(`Excluir cupom "${code}"? Esta ação é irreversível.`)) return;
+    const token = localStorage.getItem("infinity_token");
+    await fetch(`/api/infinity/admin/coupons/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    await loadCoupons();
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
@@ -1039,6 +1121,165 @@ export default function Configuracoes() {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className="text-emerald-400 font-bold font-mono">R$ {p.amountBrl}</span>
                           <ChevronRight className="w-3 h-3 text-muted-foreground/30" />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* ── Cupons de Desconto ──────────────────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.04 }}
+            className="rounded-2xl border border-amber-500/20 bg-black/30 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-400" />
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Cupons de Desconto</h2>
+              </div>
+              <button
+                onClick={() => void loadCoupons()}
+                disabled={couponsLoading}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-white hover:bg-white/5 transition-colors border border-transparent hover:border-white/10"
+                title="Atualizar"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${couponsLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Create form */}
+            <form onSubmit={(e) => { void handleCreateCoupon(e); }} className="space-y-3 mb-6">
+              <div className="flex gap-2">
+                <input
+                  value={couponForm.code}
+                  onChange={e => setCouponForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_\-]/g, "") }))}
+                  placeholder="Código (ex: HYDRA20)"
+                  maxLength={30}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm font-mono uppercase tracking-widest focus:outline-none focus:border-amber-400/50 transition-all"
+                />
+                <button
+                  type="button"
+                  onClick={generateCouponCode}
+                  className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 text-xs text-muted-foreground hover:text-foreground hover:border-white/25 transition-all"
+                  title="Gerar código aleatório"
+                >
+                  <Hash className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-widest text-muted-foreground">Desconto %</label>
+                  <input
+                    type="number" min={1} max={100}
+                    value={couponForm.discountPercent}
+                    onChange={e => setCouponForm(f => ({ ...f, discountPercent: e.target.value }))}
+                    placeholder="Ex: 20"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400/50 transition-all"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-widest text-muted-foreground">Max usos</label>
+                  <input
+                    type="number" min={1}
+                    value={couponForm.maxUses}
+                    onChange={e => setCouponForm(f => ({ ...f, maxUses: e.target.value }))}
+                    placeholder="Ilimitado"
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400/50 transition-all"
+                  />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] uppercase tracking-widest text-muted-foreground">Válido até</label>
+                  <input
+                    type="datetime-local"
+                    value={couponForm.expiresAt}
+                    onChange={e => setCouponForm(f => ({ ...f, expiresAt: e.target.value }))}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400/50 transition-all"
+                  />
+                </div>
+              </div>
+              <input
+                value={couponForm.description}
+                onChange={e => setCouponForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="Descrição do cupom (opcional)"
+                maxLength={200}
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400/50 transition-all"
+              />
+              {couponFormErr && (
+                <div className="text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-xl px-4 py-2.5">{couponFormErr}</div>
+              )}
+              <div className="flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={couponFormLoading || !couponForm.code.trim() || !couponForm.discountPercent}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-[0.25em] text-black transition-all disabled:opacity-50 bg-amber-400 hover:bg-amber-300"
+                >
+                  {couponFormLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Tag className="w-3.5 h-3.5" />}
+                  Criar Cupom
+                </button>
+                {couponFormOk && (
+                  <motion.span initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-1 text-xs text-emerald-400">
+                    <Check className="w-3.5 h-3.5" /> Cupom criado!
+                  </motion.span>
+                )}
+              </div>
+            </form>
+
+            {/* Coupon list */}
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground mb-3">
+                Cupons ({coupons.length})
+              </p>
+              {coupons.length === 0 ? (
+                <div className="rounded-xl border border-white/5 bg-black/20 px-4 py-6 text-center text-xs text-muted-foreground">
+                  {couponsLoading ? "Carregando..." : "Nenhum cupom criado ainda."}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {coupons.map(c => {
+                    const expired = c.expiresAt ? new Date(c.expiresAt) < new Date() : false;
+                    const exhausted = c.maxUses !== null && c.usedCount >= c.maxUses;
+                    const statusBadge = !c.active ? "Inativo" : expired ? "Expirado" : exhausted ? "Esgotado" : "Ativo";
+                    const statusColor = !c.active || expired || exhausted
+                      ? "bg-destructive/10 border-destructive/30 text-destructive"
+                      : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400";
+                    return (
+                      <div key={c.code} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/20 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-bold text-sm text-amber-300">{c.code}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full border font-semibold uppercase tracking-wider bg-amber-500/10 border-amber-500/30 text-amber-300">
+                              −{c.discountPercent}%
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-semibold uppercase tracking-wider ${statusColor}`}>
+                              {statusBadge}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground flex-wrap">
+                            <span>Usos: {c.usedCount}{c.maxUses !== null ? `/${c.maxUses}` : ""}</span>
+                            {c.expiresAt && <span>Válido até: {new Date(c.expiresAt).toLocaleDateString("pt-BR")}</span>}
+                            {c.description && <span className="text-muted-foreground/70">{c.description}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => void handleToggleCoupon(c.code, !c.active)}
+                            className={`p-1.5 rounded-lg transition-colors border ${c.active ? "text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10" : "text-muted-foreground border-white/10 hover:bg-white/5"}`}
+                            title={c.active ? "Desativar" : "Ativar"}
+                          >
+                            {c.active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => void handleDeleteCoupon(c.code)}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/30"
+                            title="Excluir cupom"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     );

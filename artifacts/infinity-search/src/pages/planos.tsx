@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock } from "lucide-react";
+import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock, Tag, X } from "lucide-react";
 
 interface Plan {
   id: string;
@@ -121,6 +121,12 @@ export default function Planos() {
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState("");
 
+  // Coupon state
+  const [couponInput, setCouponInput] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponInfo, setCouponInfo] = useState<{ discountPercent: number; description: string | null } | null>(null);
+  const [couponError, setCouponError] = useState("");
+
   // Payment state
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<"pending" | "paid" | "failed">("pending");
@@ -184,6 +190,33 @@ export default function Planos() {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
+  const handleValidateCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    setCouponLoading(true);
+    setCouponError("");
+    setCouponInfo(null);
+    try {
+      const r = await apiFetch("/coupons/validate", { method: "POST", body: JSON.stringify({ code }) });
+      const data = await r.json() as { valid: boolean; discountPercent?: number; description?: string | null; error?: string };
+      if (data.valid && data.discountPercent) {
+        setCouponInfo({ discountPercent: data.discountPercent, description: data.description ?? null });
+      } else {
+        setCouponError(data.error ?? "Cupom inválido.");
+      }
+    } catch {
+      setCouponError("Erro ao validar cupom.");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setCouponInfo(null);
+    setCouponInput("");
+    setCouponError("");
+  };
+
   const handleProceed = () => {
     if (isLoggedIn) {
       handleCreatePayment();
@@ -197,13 +230,14 @@ export default function Planos() {
     setError("");
     try {
       let r: Response;
+      const couponCode = couponInfo ? couponInput.trim().toUpperCase() : undefined;
       if (isLoggedIn) {
-        r = await apiFetch("/payments/create", { method: "POST", body: JSON.stringify({ planId: selectedPlanId }) });
+        r = await apiFetch("/payments/create", { method: "POST", body: JSON.stringify({ planId: selectedPlanId, couponCode }) });
       } else {
         if (!username || !password) { setFormError("Preencha usuário e senha"); setLoading(false); return; }
         r = await apiFetch("/payments/create-guest", {
           method: "POST",
-          body: JSON.stringify({ planId: selectedPlanId, username: username.trim().toLowerCase(), password }),
+          body: JSON.stringify({ planId: selectedPlanId, username: username.trim().toLowerCase(), password, couponCode }),
         });
       }
       const data = await r.json() as PaymentData & { error?: string };
@@ -245,6 +279,63 @@ export default function Planos() {
                 <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
               ))}
             </div>
+            {/* ── Coupon input ── */}
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground flex items-center gap-1.5">
+                <Tag className="w-3 h-3" /> Cupom de Desconto
+              </p>
+              {couponInfo ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="font-mono font-bold text-emerald-300 text-sm">{couponInput.toUpperCase()}</span>
+                      <span className="ml-2 text-xs text-emerald-400 font-semibold">−{couponInfo.discountPercent}% de desconto</span>
+                      {couponInfo.description && (
+                        <p className="text-[10px] text-emerald-400/70 mt-0.5">{couponInfo.description}</p>
+                      )}
+                    </div>
+                  </div>
+                  <button onClick={handleRemoveCoupon} className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors" title="Remover cupom">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={couponInput}
+                    onChange={e => { setCouponInput(e.target.value.toUpperCase()); setCouponError(""); }}
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void handleValidateCoupon(); } }}
+                    placeholder="Ex: HYDRA20"
+                    maxLength={30}
+                    className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono uppercase tracking-widest focus:outline-none focus:border-primary/50 transition-colors placeholder:normal-case placeholder:tracking-normal placeholder:text-muted-foreground/50"
+                  />
+                  <button
+                    onClick={() => void handleValidateCoupon()}
+                    disabled={couponLoading || !couponInput.trim()}
+                    className="px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground hover:border-white/25 disabled:opacity-50 transition-all"
+                  >
+                    {couponLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Aplicar"}
+                  </button>
+                </div>
+              )}
+              {couponError && <p className="text-xs text-destructive">{couponError}</p>}
+            </div>
+
+            {/* ── Price summary ── */}
+            {couponInfo && plan && (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Total com desconto</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground line-through">R$ {plan.amountBrl}</span>
+                  <span className="text-lg font-bold text-primary">
+                    R$ {(plan.amountCents * (1 - couponInfo.discountPercent / 100) / 100).toFixed(2).replace(".", ",")}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {error && <p className="text-xs text-red-400 text-center">{error}</p>}
             <button
               onClick={handleProceed}

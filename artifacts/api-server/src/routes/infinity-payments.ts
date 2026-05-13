@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import crypto from "node:crypto";
-import { db, infinityPaymentsTable, infinityPendingAccountsTable, infinityUsersTable, infinityReferralsTable } from "@workspace/db";
+import { db, infinityPaymentsTable, infinityPendingAccountsTable, infinityUsersTable, infinityReferralsTable, infinityCouponsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { requireAuth, requireAdmin } from "../lib/infinity-auth.js";
@@ -81,11 +81,127 @@ router.get("/plans", (_req, res) => {
   })));
 });
 
+// ─── Coupon helpers ────────────────────────────────────────────────────────────
+
+/** Validate a coupon without consuming it. Returns discount info or error. */
+async function validateCoupon(code: string): Promise<
+  { valid: true; discountPercent: number; description: string | null } |
+  { valid: false; error: string }
+> {
+  const codeUpper = code.trim().toUpperCase();
+  if (!codeUpper) return { valid: false, error: "Código de cupom vazio." };
+  const [coupon] = await db.select().from(infinityCouponsTable)
+    .where(eq(infinityCouponsTable.code, codeUpper)).limit(1);
+  if (!coupon)             return { valid: false, error: "Cupom não encontrado." };
+  if (!coupon.active)      return { valid: false, error: "Cupom inativo." };
+  if (coupon.expiresAt && coupon.expiresAt < new Date())
+                           return { valid: false, error: "Cupom expirado." };
+  if (coupon.maxUses !== null && coupon.usedCount >= coupon.maxUses)
+                           return { valid: false, error: "Cupom esgotado (limite de usos atingido)." };
+  return { valid: true, discountPercent: coupon.discountPercent, description: coupon.description };
+}
+
+/** Consume a coupon (increment usedCount). Call only after payment is created. */
+async function consumeCoupon(code: string) {
+  const codeUpper = code.trim().toUpperCase();
+  const [coupon] = await db.select({ usedCount: infinityCouponsTable.usedCount })
+    .from(infinityCouponsTable).where(eq(infinityCouponsTable.code, codeUpper)).limit(1);
+  if (!coupon) return;
+  await db.update(infinityCouponsTable)
+    .set({ usedCount: coupon.usedCount + 1 })
+    .where(eq(infinityCouponsTable.code, codeUpper));
+}
+
+// ─── POST /coupons/validate — check a coupon (auth required, non-destructive) ─
+router.post("/coupons/validate", requireAuth, async (req, res) => {
+  const code = String(req.body?.code ?? "").trim();
+  if (!code) { res.status(400).json({ valid: false, error: "Código obrigatório." }); return; }
+  const result = await validateCoupon(code);
+  res.json(result);
+});
+
+// ─── Admin: coupon CRUD ────────────────────────────────────────────────────────
+
+router.get("/admin/coupons", requireAdmin, async (_req, res) => {
+  const rows = await db.select().from(infinityCouponsTable)
+    .orderBy(desc(infinityCouponsTable.createdAt));
+  res.json(rows.map(c => ({
+    code:            c.code,
+    discountPercent: c.discountPercent,
+    maxUses:         c.maxUses,
+    usedCount:       c.usedCount,
+    expiresAt:       c.expiresAt?.toISOString() ?? null,
+    active:          c.active,
+    description:     c.description,
+    createdBy:       c.createdBy,
+    createdAt:       c.createdAt.toISOString(),
+  })));
+});
+
+router.post("/admin/coupons", requireAdmin, async (req, res) => {
+  const { code, discountPercent, maxUses, expiresAt, description } = req.body ?? {};
+  const codeStr = String(code ?? "").trim().toUpperCase().replace(/[^A-Z0-9_\-]/g, "");
+  if (!codeStr || codeStr.length < 3 || codeStr.length > 30) {
+    res.status(400).json({ error: "Código inválido (3–30 chars, letras/números/_ /-)." }); return;
+  }
+  const pct = Number(discountPercent);
+  if (!Number.isInteger(pct) || pct < 1 || pct > 100) {
+    res.status(400).json({ error: "Desconto deve ser entre 1 e 100%." }); return;
+  }
+  const maxUsesVal = maxUses !== undefined && maxUses !== "" && maxUses !== null
+    ? Number(maxUses) : null;
+  if (maxUsesVal !== null && (!Number.isInteger(maxUsesVal) || maxUsesVal < 1)) {
+    res.status(400).json({ error: "Limite de usos deve ser um número positivo." }); return;
+  }
+  const expiresAtVal = expiresAt ? new Date(String(expiresAt)) : null;
+  if (expiresAtVal && isNaN(expiresAtVal.getTime())) {
+    res.status(400).json({ error: "Data de validade inválida." }); return;
+  }
+  const createdBy = req.infinityUser!.username;
+  try {
+    await db.insert(infinityCouponsTable).values({
+      code: codeStr,
+      discountPercent: pct,
+      maxUses: maxUsesVal,
+      expiresAt: expiresAtVal,
+      description: description ? String(description).slice(0, 200) : null,
+      createdBy,
+    });
+    res.json({ ok: true, code: codeStr });
+  } catch {
+    res.status(409).json({ error: "Já existe um cupom com esse código." });
+  }
+});
+
+router.patch("/admin/coupons/:code", requireAdmin, async (req, res) => {
+  const code = String(req.params.code).toUpperCase();
+  const { active } = req.body ?? {};
+  if (typeof active !== "boolean") { res.status(400).json({ error: "Campo 'active' obrigatório." }); return; }
+  await db.update(infinityCouponsTable).set({ active }).where(eq(infinityCouponsTable.code, code));
+  res.json({ ok: true });
+});
+
+router.delete("/admin/coupons/:code", requireAdmin, async (req, res) => {
+  const code = String(req.params.code).toUpperCase();
+  await db.delete(infinityCouponsTable).where(eq(infinityCouponsTable.code, code));
+  res.json({ ok: true });
+});
+
 // ─── POST /payments/create — logged-in user renewing ─────────────────────────
 router.post("/payments/create", requireAuth, async (req, res) => {
-  const { planId } = req.body ?? {};
+  const { planId, couponCode } = req.body ?? {};
   const plan = getPlan(String(planId ?? ""));
   if (!plan) { res.status(400).json({ error: "Plano inválido" }); return; }
+
+  // Apply coupon discount if provided
+  let finalAmountCents = plan.amountCents;
+  let appliedCoupon: string | null = null;
+  if (couponCode && String(couponCode).trim()) {
+    const couponResult = await validateCoupon(String(couponCode));
+    if (!couponResult.valid) { res.status(400).json({ error: couponResult.error }); return; }
+    finalAmountCents = Math.max(100, Math.round(plan.amountCents * (1 - couponResult.discountPercent / 100)));
+    appliedCoupon = String(couponCode).trim().toUpperCase();
+  }
 
   const username = req.infinityUser!.username;
   const paymentId = crypto.randomBytes(16).toString("hex");
@@ -93,7 +209,7 @@ router.post("/payments/create", requireAuth, async (req, res) => {
 
   let promstData: PromstCreateResponse;
   try {
-    promstData = await createPromstPayment(userId, plan.amountCents / 100);
+    promstData = await createPromstPayment(userId, finalAmountCents / 100);
   } catch (err) {
     res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
@@ -105,7 +221,9 @@ router.post("/payments/create", requireAuth, async (req, res) => {
     id: paymentId,
     username,
     planId: plan.id,
-    amountCents: plan.amountCents,
+    amountCents: finalAmountCents,
+    originalAmountCents: appliedCoupon ? plan.amountCents : null,
+    couponCode: appliedCoupon,
     status: "pending",
     nedpayId: promstData.txid,
     pixCode: promstData.pixCopiaECola,
@@ -113,12 +231,19 @@ router.post("/payments/create", requireAuth, async (req, res) => {
     expiresAt,
   });
 
+  // Consume coupon slot after payment record is created
+  if (appliedCoupon) await consumeCoupon(appliedCoupon);
+
   res.json({
     paymentId,
     txid: promstData.txid,
     pixCopiaECola: promstData.pixCopiaECola,
     qrcode_base64: promstData.qrcode_base64,
-    amountBrl: (plan.amountCents / 100).toFixed(2),
+    amountBrl: (finalAmountCents / 100).toFixed(2),
+    originalAmountBrl: appliedCoupon ? (plan.amountCents / 100).toFixed(2) : undefined,
+    discountPercent: appliedCoupon
+      ? Math.round((1 - finalAmountCents / plan.amountCents) * 100)
+      : undefined,
     taxa: promstData.taxa,
     plan: { id: plan.id, label: plan.label, days: plan.days },
     expiresAt: expiresAt.toISOString(),
@@ -127,7 +252,7 @@ router.post("/payments/create", requireAuth, async (req, res) => {
 
 // ─── POST /payments/create-guest — new user registering + paying ──────────────
 router.post("/payments/create-guest", loginLimiter, async (req, res) => {
-  const { planId, username, password, email, referralCode } = req.body ?? {};
+  const { planId, username, password, email, referralCode, couponCode } = req.body ?? {};
 
   if (!planId || !username || !password) {
     res.status(400).json({ error: "planId, username e password obrigatórios" });
@@ -146,6 +271,16 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
 
   const plan = getPlan(String(planId));
   if (!plan) { res.status(400).json({ error: "Plano inválido" }); return; }
+
+  // Apply coupon discount if provided
+  let finalAmountCents = plan.amountCents;
+  let appliedCoupon: string | null = null;
+  if (couponCode && String(couponCode).trim()) {
+    const couponResult = await validateCoupon(String(couponCode));
+    if (!couponResult.valid) { res.status(400).json({ error: couponResult.error }); return; }
+    finalAmountCents = Math.max(100, Math.round(plan.amountCents * (1 - couponResult.discountPercent / 100)));
+    appliedCoupon = String(couponCode).trim().toUpperCase();
+  }
 
   // Check if username already taken
   const existingUser = await db.select({ username: infinityUsersTable.username })
@@ -187,7 +322,7 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
 
   let promstData: PromstCreateResponse;
   try {
-    promstData = await createPromstPayment(userId, plan.amountCents / 100);
+    promstData = await createPromstPayment(userId, finalAmountCents / 100);
   } catch {
     res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
@@ -199,13 +334,18 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     id: paymentId,
     username: usernameStr,
     planId: plan.id,
-    amountCents: plan.amountCents,
+    amountCents: finalAmountCents,
+    originalAmountCents: appliedCoupon ? plan.amountCents : null,
+    couponCode: appliedCoupon,
     status: "pending",
     nedpayId: promstData.txid,
     pixCode: promstData.pixCopiaECola,
     pixQr: promstData.qrcode_base64,
     expiresAt,
   });
+
+  // Consume coupon slot after payment record is created
+  if (appliedCoupon) await consumeCoupon(appliedCoupon);
 
   const refBy = referralCode ? String(referralCode).trim().toLowerCase() : null;
 
@@ -224,7 +364,11 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     txid: promstData.txid,
     pixCopiaECola: promstData.pixCopiaECola,
     qrcode_base64: promstData.qrcode_base64,
-    amountBrl: (plan.amountCents / 100).toFixed(2),
+    amountBrl: (finalAmountCents / 100).toFixed(2),
+    originalAmountBrl: appliedCoupon ? (plan.amountCents / 100).toFixed(2) : undefined,
+    discountPercent: appliedCoupon
+      ? Math.round((1 - finalAmountCents / plan.amountCents) * 100)
+      : undefined,
     taxa: promstData.taxa,
     plan: { id: plan.id, label: plan.label, days: plan.days },
     username: usernameStr,

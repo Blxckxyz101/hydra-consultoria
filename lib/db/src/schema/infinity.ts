@@ -76,20 +76,22 @@ export const infinityPinsTable = pgTable("infinity_pins", {
 export const infinityPaymentsTable = pgTable(
   "infinity_payments",
   {
-    id:            text("id").primaryKey(),
-    username:      text("username"),
-    planId:        text("plan_id").notNull(),
-    amountCents:   integer("amount_cents").notNull(),
-    status:        text("status").notNull().default("pending"),
-    nedpayId:      text("nedpay_id"),
-    pixCode:       text("pix_code"),
-    pixQr:         text("pix_qr"),
-    expiresAt:     timestamp("expires_at", { withTimezone: true }),
-    paidAt:        timestamp("paid_at", { withTimezone: true }),
-    createdAt:     timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    id:                  text("id").primaryKey(),
+    username:            text("username"),
+    planId:              text("plan_id").notNull(),
+    amountCents:         integer("amount_cents").notNull(),
+    originalAmountCents: integer("original_amount_cents"),   // set when a coupon is applied
+    couponCode:          text("coupon_code"),                 // coupon used (if any)
+    status:              text("status").notNull().default("pending"),
+    nedpayId:            text("nedpay_id"),
+    pixCode:             text("pix_code"),
+    pixQr:               text("pix_qr"),
+    expiresAt:           timestamp("expires_at", { withTimezone: true }),
+    paidAt:              timestamp("paid_at", { withTimezone: true }),
+    createdAt:           timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     // Purpose field for multi-use payments
-    purpose:       text("purpose").notNull().default("subscription"),
-    purposeMeta:   text("purpose_meta"),
+    purpose:             text("purpose").notNull().default("subscription"),
+    purposeMeta:         text("purpose_meta"),
   },
   (t) => ({
     byUsername: index("infinity_payments_username_idx").on(t.username),
@@ -400,6 +402,22 @@ export const infinityChatImagesTable = pgTable(
 );
 
 export type InfinityChatImageRow = typeof infinityChatImagesTable.$inferSelect;
+
+// ─── Coupons ──────────────────────────────────────────────────────────────────
+
+export const infinityCouponsTable = pgTable("infinity_coupons", {
+  code:            text("code").primaryKey(),          // uppercase unique code e.g. HYDRA20
+  discountPercent: integer("discount_percent").notNull(), // 1–100
+  maxUses:         integer("max_uses"),                 // null = unlimited
+  usedCount:       integer("used_count").notNull().default(0),
+  expiresAt:       timestamp("expires_at", { withTimezone: true }), // null = never expires
+  active:          boolean("active").notNull().default(true),
+  description:     text("description"),
+  createdBy:       text("created_by").notNull(),
+  createdAt:       timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type InfinityCouponRow = typeof infinityCouponsTable.$inferSelect;
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
