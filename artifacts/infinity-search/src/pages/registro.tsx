@@ -6,7 +6,7 @@ import {
   BatteryLow, Battery, BatteryMedium, BatteryFull,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
-import logoUrl from "@/assets/hydra-icon.jpg";
+import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 
 interface Plan {
