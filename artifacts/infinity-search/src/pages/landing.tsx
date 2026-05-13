@@ -21,6 +21,7 @@ const CATEGORIES = [
     icon: Search,
     title: "Inteligência de Pessoas",
     color: "sky",
+    benefit: "Conheça qualquer pessoa em segundos",
     desc: "CPF Full, Score de Crédito, IRPF, Benefícios, Árvore Familiar, Título de Eleitor, NIS/PIS e muito mais.",
     count: "28 módulos",
   },
@@ -28,6 +29,7 @@ const CATEGORIES = [
     icon: Camera,
     title: "Análise Biométrica",
     color: "violet",
+    benefit: "Confirme identidades com precisão total",
     desc: "Fotos por estado (SP, RJ, MG, BA e 20+ outros), CNH, Detran, reconhecimento facial e presos.",
     count: "24 módulos",
   },
@@ -35,6 +37,7 @@ const CATEGORIES = [
     icon: Car,
     title: "Investigação Veicular",
     color: "amber",
+    benefit: "Evite fraudes e negocie com segurança",
     desc: "Placa, CRLV (TO/MT), RENAVAM, Chassi, Motor, Vistoria, Frota, FIPE e Serpro.",
     count: "18 módulos",
   },
@@ -42,6 +45,7 @@ const CATEGORIES = [
     icon: Building2,
     title: "Dados Corporativos",
     color: "emerald",
+    benefit: "Analise empresas antes de fechar negócio",
     desc: "CNPJ completo, Sócios, Quadro de Funcionários, Empregos, IPTU e vínculos empresariais.",
     count: "8 módulos",
   },
@@ -49,6 +53,7 @@ const CATEGORIES = [
     icon: Scale,
     title: "Jurídico & Patrimônio",
     color: "rose",
+    benefit: "Tome decisões jurídicas com informação real",
     desc: "Processos judiciais, Mandados de prisão, OAB, Dívidas, Bens, Certidões e SPC.",
     count: "14 módulos",
   },
@@ -344,6 +349,7 @@ export default function Landing() {
                     <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: c }}>{cat.count}</div>
                   </div>
                 </div>
+                <p className="text-xs font-medium mb-1.5" style={{ color: c }}>{cat.benefit}</p>
                 <p className="text-xs text-muted-foreground leading-relaxed">{cat.desc}</p>
               </motion.div>
             );
