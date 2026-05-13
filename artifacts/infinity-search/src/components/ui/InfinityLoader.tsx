@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import logoUrl from "@/assets/hydra-icon.png";
+import logoUrl from "@/assets/hydra-icon.jpg";
 
 type Props = {
   label?: string;

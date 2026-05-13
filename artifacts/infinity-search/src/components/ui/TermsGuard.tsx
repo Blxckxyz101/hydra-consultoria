@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShieldCheck, ChevronDown, ChevronUp, Square, CheckSquare } from "lucide-react";
-import logoUrl from "@/assets/hydra-icon.png";
+import logoUrl from "@/assets/hydra-icon.jpg";
 
 const LS_KEY = "infinity_terms_v1";
 

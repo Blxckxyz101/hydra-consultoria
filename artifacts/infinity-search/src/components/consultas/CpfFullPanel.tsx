@@ -1225,10 +1225,32 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
   const normName = (n: string) => n.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   if (cats.mae.length > 0) {
-    cats.mae.forEach(r => {
+    // Deduplicate by normalized name (APIs often return the same mother twice from
+    // different modules). Prefer the entry that matches identity.mae, then the entry
+    // with a CPF, then first occurrence. Cap at 1 — biological databases only have one mother.
+    const seenMaeNorm = new Set<string>();
+    const uniqueMae = cats.mae.filter(r => {
+      const n = normName(r.nome);
+      if (seenMaeNorm.has(n)) return false;
+      seenMaeNorm.add(n);
+      return true;
+    });
+    const matchesIdentity = identity.mae
+      ? uniqueMae.filter(r => normName(r.nome) === normName(identity.mae))
+      : [];
+    const hasCpf = uniqueMae.filter(r => r.cpf && !matchesIdentity.includes(r));
+    const rest   = uniqueMae.filter(r => !matchesIdentity.includes(r) && !hasCpf.includes(r));
+    const bestMae = [...matchesIdentity, ...hasCpf, ...rest].slice(0, 1);
+    bestMae.forEach(r => {
       parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Mãe", rel: r });
       maeNamesNorm.add(normName(r.nome));
     });
+    // If cats.mae had entries but none survived dedup and they all got filtered,
+    // fall back to identity.mae
+    if (bestMae.length === 0 && identity.mae) {
+      parents.push({ nome: identity.mae, cpf: "", nasc: "", label: "Mãe" });
+      maeNamesNorm.add(normName(identity.mae));
+    }
   } else if (identity.mae) {
     parents.push({ nome: identity.mae, cpf: "", nasc: "", label: "Mãe" });
     maeNamesNorm.add(normName(identity.mae));

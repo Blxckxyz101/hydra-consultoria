@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import logoUrl from "@/assets/hydra-icon.png";
+import logoUrl from "@/assets/hydra-icon.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock, Smartphone } from "lucide-react";
