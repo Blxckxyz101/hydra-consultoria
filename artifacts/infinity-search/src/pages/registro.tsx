@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2,
-  QrCode, User, Lock, Gift, KeyRound, UserPlus,
+  QrCode, User, Lock, Gift, KeyRound, UserPlus, Crown, Flame, Tag, X,
   BatteryLow, Battery, BatteryMedium, BatteryFull,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
@@ -21,6 +21,8 @@ interface RechargePack {
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
   "1d": Clock, "7d": Zap, "14d": Star, "30d": Shield,
+  "1d_vip": Crown, "7d_vip": Crown, "14d_vip": Crown, "30d_vip": Crown,
+  "ultra_14d": Flame,
 };
 
 const RECHARGE_ICONS: Record<string, React.ElementType> = {
@@ -185,6 +187,11 @@ export default function Registro() {
   const [error, setError] = useState("");
   const [regLoading, setRegLoading] = useState(false);
 
+  const [couponInput, setCouponInput] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponInfo, setCouponInfo] = useState<{ discountPercent: number; description: string | null } | null>(null);
+  const [couponError, setCouponError] = useState("");
+
   const [payment, setPayment] = useState<PaymentData | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [polling, setPolling] = useState(false);
@@ -256,6 +263,27 @@ export default function Registro() {
     })();
   }, []);
 
+  const handleValidateCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    setCouponLoading(true);
+    setCouponError("");
+    setCouponInfo(null);
+    try {
+      const r = await apiFetch("/coupons/validate", { method: "POST", body: JSON.stringify({ code }) });
+      const data = await r.json() as { valid: boolean; discountPercent?: number; description?: string | null; error?: string };
+      if (data.valid && data.discountPercent) {
+        setCouponInfo({ discountPercent: data.discountPercent, description: data.description ?? null });
+      } else {
+        setCouponError(data.error ?? "Cupom inválido.");
+      }
+    } catch {
+      setCouponError("Erro ao validar cupom.");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -264,6 +292,7 @@ export default function Registro() {
     if (password.length < 6) { setError("Senha deve ter ao menos 6 caracteres"); return; }
 
     const planIdToSend = purchaseMode === "plan" ? selectedPlanId : selectedPackId;
+    const couponCode = couponInfo && purchaseMode === "plan" ? couponInput.trim().toUpperCase() : undefined;
 
     setRegLoading(true);
     try {
@@ -274,6 +303,7 @@ export default function Registro() {
           email: email.trim() || undefined,
           planId: planIdToSend,
           referralCode: refCode || undefined,
+          ...(couponCode ? { couponCode } : {}),
         }),
       });
       const data = await r.json() as PaymentData & { error?: string };
@@ -442,6 +472,45 @@ export default function Registro() {
                       className="w-full pl-8 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
                       autoComplete="email" />
                   </div>
+                  {/* Cupom de desconto — apenas para planos */}
+                  {purchaseMode === "plan" && (
+                    <div className="space-y-2">
+                      {couponInfo ? (
+                        <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <div>
+                              <span className="font-mono font-bold text-emerald-300 text-xs">{couponInput.toUpperCase()}</span>
+                              <span className="ml-2 text-xs text-emerald-400 font-semibold">−{couponInfo.discountPercent}% de desconto</span>
+                              {couponInfo.description && <p className="text-[10px] text-emerald-400/70 mt-0.5">{couponInfo.description}</p>}
+                            </div>
+                          </div>
+                          <button type="button" onClick={() => { setCouponInfo(null); setCouponInput(""); setCouponError(""); }}
+                            className="p-1 rounded-md text-muted-foreground hover:text-destructive transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40" />
+                            <input type="text" placeholder="Cupom de desconto (opcional)"
+                              value={couponInput}
+                              onChange={e => { setCouponInput(e.target.value.toUpperCase()); setCouponError(""); }}
+                              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void handleValidateCoupon(); } }}
+                              maxLength={30}
+                              className="w-full pl-9 pr-3 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-mono uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors" />
+                          </div>
+                          <button type="button" onClick={() => void handleValidateCoupon()}
+                            disabled={couponLoading || !couponInput.trim()}
+                            className="px-4 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground hover:border-white/25 disabled:opacity-50 transition-all">
+                            {couponLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Aplicar"}
+                          </button>
+                        </div>
+                      )}
+                      {couponError && <p className="text-xs text-rose-400">{couponError}</p>}
+                    </div>
+                  )}
                   {error && <p className="text-xs text-rose-400 bg-rose-400/8 border border-rose-400/20 rounded-lg px-3 py-2">{error}</p>}
                   <button type="submit" disabled={regLoading}
                     className="w-full py-3.5 rounded-xl font-bold text-sm uppercase tracking-widest text-black disabled:opacity-50 flex items-center justify-center gap-2 transition-all"

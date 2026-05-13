@@ -921,6 +921,10 @@ router.post("/pending-accounts/:id/approve", requireAdmin, async (req, res) => {
     await db.insert(infinityUsersTable).values({
       username: pending.username, passwordHash: pending.passwordHash,
       role: "user", accountExpiresAt,
+      planQueryQuota: plan.queryQuota,
+      planQueriesUsed: 0,
+      planTier: plan.tier,
+      creditBalance: plan.freeCredits,
     });
     await db.update(infinityPendingAccountsTable).set({ status: "approved", updatedAt: new Date() }).where(eq(infinityPendingAccountsTable.id, id));
     res.json({ ok: true, username: pending.username });
