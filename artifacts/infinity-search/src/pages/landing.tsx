@@ -66,6 +66,7 @@ const PLANS = [
     price: "70,00",
     consultas: 420,
     tier: null as null,
+    ideal: "Ideal para quem está começando",
     features: ["30 consultas/dia por módulo", "10 fotos/dia", "Dossiê e histórico completo", "Assistente IA incluso"],
     highlight: false,
     badge: null as null,
@@ -77,6 +78,7 @@ const PLANS = [
     price: "150,00",
     consultas: 840,
     tier: "vip" as const,
+    ideal: "Para profissionais e investigadores ativos",
     features: ["60 consultas/dia por módulo", "25 fotos/dia", "Processos jurídicos incluso", "5 temas exclusivos + créditos bônus"],
     highlight: true,
     badge: "Mais Popular",
@@ -88,6 +90,7 @@ const PLANS = [
     price: "500,00",
     consultas: 2800,
     tier: "ultra" as const,
+    ideal: "Para equipes e operações de alto volume",
     features: ["200 consultas/dia por módulo", "200 fotos/dia", "Todos os temas desbloqueados", "500 créditos de bônus"],
     highlight: false,
     badge: null as null,
@@ -485,7 +488,8 @@ export default function Landing() {
                   {isUltra && <span className="text-[8px] font-black uppercase tracking-widest bg-rose-500/20 border border-rose-500/40 text-rose-300 px-2 py-0.5 rounded-full">ULTRA</span>}
                   {isVip && <span className="text-[8px] font-black uppercase tracking-widest bg-amber-400/15 border border-amber-400/35 text-amber-300 px-2 py-0.5 rounded-full">VIP</span>}
                 </div>
-                <div className="font-bold text-base mb-1">{plan.label}</div>
+                <div className="font-bold text-base mb-0.5">{plan.label}</div>
+                <div className="text-[10px] text-muted-foreground mb-2 italic">{plan.ideal}</div>
                 <div className="mb-1">
                   <span className="text-3xl font-black" style={{ color: accentColor }}>R$ {plan.price}</span>
                 </div>
