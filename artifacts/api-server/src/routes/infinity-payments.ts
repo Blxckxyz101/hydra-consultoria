@@ -30,7 +30,7 @@ export const PLANS: Plan[] = [
   // ── Padrão ────────────────────────────────────────────────────────────────
   { id: "1d",  label: "1 Dia Padrão",   days: 1,  amountCents: 1500,  queryQuota: 30,   tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
   { id: "7d",  label: "7 Dias Padrão",  days: 7,  amountCents: 4000,  queryQuota: 210,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
-  { id: "14d", label: "14 Dias Padrão", days: 14, amountCents: 7000,  queryQuota: 420,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0, highlight: true },
+  { id: "14d", label: "14 Dias Padrão", days: 14, amountCents: 7000,  queryQuota: 420,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
   { id: "30d", label: "30 Dias Padrão", days: 30, amountCents: 10000, queryQuota: 900,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
   // ── VIP ───────────────────────────────────────────────────────────────────
   { id: "1d_vip",  label: "1 Dia VIP",   days: 1,  amountCents: 3000,  queryQuota: 60,   tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 50 },

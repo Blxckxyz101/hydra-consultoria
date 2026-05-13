@@ -62,8 +62,8 @@ const PLANS = [
     consultas: 420,
     tier: null as null,
     features: ["30 consultas/dia por módulo", "10 fotos/dia", "Dossiê e histórico", "Assistente IA"],
-    highlight: true,
-    badge: "Mais Popular",
+    highlight: false,
+    badge: null as null,
     icon: Star,
   },
   {
@@ -73,8 +73,8 @@ const PLANS = [
     consultas: 840,
     tier: "vip" as const,
     features: ["60 consultas/dia por módulo", "25 fotos/dia", "Processos jurídicos", "Temas exclusivos"],
-    highlight: false,
-    badge: "VIP",
+    highlight: true,
+    badge: "Mais Popular",
     icon: Crown,
   },
   {
