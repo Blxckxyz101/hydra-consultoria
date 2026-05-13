@@ -11,8 +11,8 @@ import {
 
 const STATS = [
   { value: "92+", label: "Módulos Ativos" },
-  { value: "24", label: "Módulos Biométricos" },
-  { value: "18", label: "Módulos Veiculares" },
+  { value: "5.000+", label: "Usuários Ativos" },
+  { value: "1M+", label: "Consultas Realizadas" },
   { value: "99.9%", label: "Uptime Garantido" },
 ];
 
