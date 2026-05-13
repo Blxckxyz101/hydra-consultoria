@@ -188,15 +188,18 @@ function RechargeCard({ pack, selected, onSelect, idx }: { pack: RechargePack; s
           <div className="text-[10px] text-muted-foreground">pagamento único</div>
         </div>
       </div>
-      <div className="mt-3 pt-3 border-t border-white/5">
+      <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
         <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
           <CheckCircle2 className="w-3 h-3 text-cyan-400" />
           <span className="text-foreground font-semibold">{pack.consultas} consultas</span>
           <span>· Sem prazo de validade</span>
         </div>
-        <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1.5">
+        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
           <CheckCircle2 className="w-3 h-3 text-cyan-400/60" />
-          R$ {(pack.amountCents / pack.consultas / 100).toFixed(2).replace(".", ",")} por consulta
+          R$ {(pack.amountCents / pack.consultas / 100).toFixed(2).replace(".", ",")} por consulta · acumula com planos
+        </div>
+        <div className="text-[10px] text-muted-foreground/50 flex items-center gap-1.5 pt-1 border-t border-white/5 mt-1">
+          <span className="italic">Créditos são a unidade interna do sistema. Cada consulta consome 5 créditos, e cada módulo pode ter custo diferente.</span>
         </div>
       </div>
     </motion.button>
