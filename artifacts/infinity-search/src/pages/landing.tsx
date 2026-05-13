@@ -279,7 +279,7 @@ export default function Landing() {
             <span className="text-white">OSINT DE ELITE</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-10 leading-relaxed">
-            92+ módulos de dados brasileiros. CPF, veículos, empresas, biometria, processos e muito mais — acesso instantâneo via PIX.
+            Economize horas de investigação. Tome decisões seguras com dados reais — CPF, veículos, empresas, biometria e processos — em segundos, via PIX.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/registro">
