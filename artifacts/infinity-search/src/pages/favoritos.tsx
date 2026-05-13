@@ -1,8 +1,8 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Star, Trash2, Search, Copy, Check, FileText,
-  ChevronDown, ChevronUp, Filter, X,
+  ChevronDown, ChevronUp, Filter, X, Loader2,
 } from "lucide-react";
 
 type Favorito = {
@@ -17,31 +17,58 @@ type Favorito = {
 };
 
 const STORAGE_KEY = "infinity_favoritos";
+const API_BASE = "/api/infinity";
 
-function loadFavoritos(): Favorito[] {
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem("infinity_token");
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h.Authorization = `Bearer ${token}`;
+  return h;
+}
+
+function loadFavoritosLocal(): Favorito[] {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); } catch { return []; }
 }
 
-function saveFavoritos(f: Favorito[]) {
+function saveFavoritosLocal(f: Favorito[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(f));
 }
 
-export function addFavorito(item: Omit<Favorito, "id" | "addedAt">) {
-  const favs = loadFavoritos();
-  const exists = favs.find((f) => f.tipo === item.tipo && f.query === item.query);
+async function fetchFavoritosAPI(): Promise<Favorito[] | null> {
+  try {
+    const r = await fetch(`${API_BASE}/me/favoritos`, { headers: authHeaders() });
+    if (!r.ok) return null;
+    return await r.json() as Favorito[];
+  } catch { return null; }
+}
+
+export async function addFavorito(item: Omit<Favorito, "id" | "addedAt">): Promise<boolean> {
+  const local = loadFavoritosLocal();
+  const exists = local.find((f) => f.tipo === item.tipo && f.query === item.query);
   if (exists) return false;
+
   const newFav: Favorito = {
     ...item,
     id: Math.random().toString(36).slice(2) + Date.now().toString(36),
     addedAt: new Date().toISOString(),
   };
-  saveFavoritos([newFav, ...favs]);
+
+  saveFavoritosLocal([newFav, ...local]);
   window.dispatchEvent(new Event("infinity-favoritos-updated"));
+
+  try {
+    await fetch(`${API_BASE}/me/favoritos`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(newFav),
+    });
+  } catch { }
+
   return true;
 }
 
 export function isFavorito(tipo: string, query: string): boolean {
-  return loadFavoritos().some((f) => f.tipo === tipo && f.query === query);
+  return loadFavoritosLocal().some((f) => f.tipo === tipo && f.query === query);
 }
 
 const TIPO_GRADIENT: Record<string, string> = {
@@ -163,9 +190,40 @@ function FavCard({ item, onDelete }: { item: Favorito; onDelete: () => void }) {
 const ALL_TIPOS = ["cpf", "cnpj", "telefone", "nome", "placa", "email", "pix", "cep", "chassi", "rg"];
 
 export default function Favoritos() {
-  const [favoritos, setFavoritos] = useState<Favorito[]>(loadFavoritos);
+  const [favoritos, setFavoritos] = useState<Favorito[]>(loadFavoritosLocal);
   const [search, setSearch] = useState("");
   const [filterTipo, setFilterTipo] = useState<string>("todos");
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSyncing(true);
+    fetchFavoritosAPI().then(async (apiRows) => {
+      if (cancelled) return;
+      if (apiRows !== null) {
+        const local = loadFavoritosLocal();
+        if (apiRows.length === 0 && local.length > 0) {
+          for (const fav of local) {
+            try {
+              await fetch(`${API_BASE}/me/favoritos`, {
+                method: "POST",
+                headers: authHeaders(),
+                body: JSON.stringify(fav),
+              });
+            } catch { }
+          }
+          setSyncing(false);
+        } else {
+          saveFavoritosLocal(apiRows);
+          setFavoritos(apiRows);
+          setSyncing(false);
+        }
+      } else {
+        setSyncing(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const tiposPresentes = useMemo(() => {
     const set = new Set(favoritos.map((f) => f.tipo));
@@ -182,26 +240,31 @@ export default function Favoritos() {
     });
   }, [favoritos, search, filterTipo]);
 
-  const deleteFav = useCallback((id: string) => {
-    const updated = loadFavoritos().filter((f) => f.id !== id);
-    saveFavoritos(updated);
+  const deleteFav = useCallback(async (id: string) => {
+    const updated = loadFavoritosLocal().filter((f) => f.id !== id);
+    saveFavoritosLocal(updated);
     setFavoritos(updated);
     window.dispatchEvent(new Event("infinity-favoritos-updated"));
+    try {
+      await fetch(`${API_BASE}/me/favoritos/${id}`, { method: "DELETE", headers: authHeaders() });
+    } catch { }
   }, []);
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!confirm("Remover todos os favoritos? Esta ação é irreversível.")) return;
-    saveFavoritos([]);
+    saveFavoritosLocal([]);
     setFavoritos([]);
     window.dispatchEvent(new Event("infinity-favoritos-updated"));
+    try {
+      await fetch(`${API_BASE}/me/favoritos`, { method: "DELETE", headers: authHeaders() });
+    } catch { }
   };
 
-  // Listen for external adds (e.g. from ResultViewer)
-  useState(() => {
-    const handler = () => setFavoritos(loadFavoritos());
+  useEffect(() => {
+    const handler = () => setFavoritos(loadFavoritosLocal());
     window.addEventListener("infinity-favoritos-updated", handler);
     return () => window.removeEventListener("infinity-favoritos-updated", handler);
-  });
+  }, []);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -215,8 +278,9 @@ export default function Favoritos() {
           >
             Favoritos
           </motion.h1>
-          <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
+          <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2 flex items-center gap-2">
             Consultas salvas para acesso rápido · {favoritos.length} favorito{favoritos.length !== 1 ? "s" : ""}
+            {syncing && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
           </p>
         </div>
         {favoritos.length > 0 && (

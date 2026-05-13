@@ -104,10 +104,10 @@ function SaveToDossieButton({ tipo, query, data }: { tipo: string; query: string
 function FavoriteButton({ tipo, query, data }: { tipo: string; query: string; data: unknown }) {
   const [fav, setFav] = useState(() => isFavorito(tipo, query));
   const [added, setAdded] = useState(false);
-  const toggle = () => {
+  const toggle = async () => {
     if (fav) return;
     const parsed = (data as { fields?: unknown[]; sections?: unknown[]; raw?: string }) ?? {};
-    const ok = addFavorito({
+    const ok = await addFavorito({
       tipo, query, note: "",
       fields: (parsed.fields ?? []) as Array<{ key: string; value: string }>,
       sections: (parsed.sections ?? []) as Array<{ name: string; items: string[] }>,

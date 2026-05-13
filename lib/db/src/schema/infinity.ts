@@ -408,6 +408,28 @@ export const infinityChatImagesTable = pgTable(
 
 export type InfinityChatImageRow = typeof infinityChatImagesTable.$inferSelect;
 
+// ─── Favoritos ────────────────────────────────────────────────────────────────
+
+export const infinityFavoritosTable = pgTable(
+  "infinity_favoritos",
+  {
+    id:        text("id").primaryKey(),
+    username:  text("username").notNull(),
+    tipo:      text("tipo").notNull(),
+    query:     text("query").notNull(),
+    note:      text("note").notNull().default(""),
+    fields:    jsonb("fields").notNull().default([]),
+    sections:  jsonb("sections").notNull().default([]),
+    raw:       text("raw").notNull().default(""),
+    addedAt:   timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byUser: index("infinity_favoritos_user_idx").on(t.username),
+  }),
+);
+
+export type InfinityFavoritoRow = typeof infinityFavoritosTable.$inferSelect;
+
 // ─── Coupons ──────────────────────────────────────────────────────────────────
 
 export const infinityCouponsTable = pgTable("infinity_coupons", {

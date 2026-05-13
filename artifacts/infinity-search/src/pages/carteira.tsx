@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "wouter";
 import {
   Wallet, Plus, ArrowUpRight, ArrowDownLeft, Loader2, QrCode,
   Clock, Check, Copy, X, TrendingUp, History, RefreshCw,
@@ -65,6 +66,7 @@ function CopyBtn({ text }: { text: string }) {
 }
 
 const TOPUP_PRESETS = [50, 100, 200, 500];
+const TOPUP_BONUS: Record<number, string> = { 200: "+5% Bônus", 500: "+10% Bônus" };
 
 // ─── Topup Modal ───────────────────────────────────────────────────────────────
 function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
@@ -167,17 +169,29 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
                 <Check className="w-8 h-8 text-primary" />
               </div>
               <h4 className="font-bold text-lg mb-1">Saldo creditado!</h4>
-              <p className="text-sm text-muted-foreground">R$ {pixData?.amountBrl} adicionado à sua carteira</p>
+              <p className="text-sm text-muted-foreground mb-5">R$ {pixData?.amountBrl} adicionado à sua carteira</p>
+              <Link href="/consultas" onClick={onClose}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-black font-bold text-sm uppercase tracking-wide transition-all"
+                style={{ background: "var(--color-primary)", boxShadow: "0 0 24px color-mix(in srgb, var(--color-primary) 50%, transparent)" }}>
+                Ir para Consultas <ArrowUpRight className="w-4 h-4" />
+              </Link>
             </motion.div>
           ) : !pixData ? (
             <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {TOPUP_PRESETS.map(p => (
                   <button key={p} onClick={() => setAmount(String(p))}
-                    className={`py-2.5 rounded-xl text-sm font-semibold transition-all border ${
+                    className={`relative py-2.5 rounded-xl text-sm font-semibold transition-all border ${
                       Number(amount) === p ? "text-black border-primary/50" : "text-muted-foreground border-white/10 hover:border-white/20"
                     }`}
                     style={Number(amount) === p ? { background: "var(--color-primary)" } : {}}>
+                    {TOPUP_BONUS[p] && (
+                      <span className={`absolute -top-2.5 left-1/2 -translate-x-1/2 text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+                        Number(amount) === p ? "bg-black/30 text-white" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                      }`}>
+                        {TOPUP_BONUS[p]}
+                      </span>
+                    )}
                     R${p}
                   </button>
                 ))}
@@ -350,7 +364,12 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
                 <Check className="w-8 h-8 text-primary" />
               </div>
               <h4 className="font-bold text-lg mb-1">Recarga confirmada!</h4>
-              <p className="text-sm text-muted-foreground">{pack.consultas} consultas adicionadas ao seu saldo</p>
+              <p className="text-sm text-muted-foreground mb-5">{pack.consultas} consultas adicionadas ao seu saldo</p>
+              <Link href="/consultas" onClick={onClose}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-black font-bold text-sm uppercase tracking-wide transition-all"
+                style={{ background: "var(--color-primary)", boxShadow: "0 0 24px color-mix(in srgb, var(--color-primary) 50%, transparent)" }}>
+                Ir para Consultas <ArrowUpRight className="w-4 h-4" />
+              </Link>
             </motion.div>
           ) : !pixData ? (
             <motion.div key="confirm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

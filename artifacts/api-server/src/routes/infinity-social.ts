@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable, infinityAiSessionsTable, infinityDossiesTable, infinityChatImagesTable } from "@workspace/db";
+import { db, infinityUsersTable, infinityFriendshipsTable, infinityChatRoomsTable, infinityChatMessagesTable, infinityMessageReactionsTable, infinityUserNotificationsTable, infinityWalletTable, infinityWalletTxnsTable, infinityAiSessionsTable, infinityDossiesTable, infinityChatImagesTable, infinityFavoritosTable } from "@workspace/db";
 import { eq, or, and, desc, asc, ne, sql, inArray, lt, like } from "drizzle-orm";
 import { requireAuth } from "../lib/infinity-auth.js";
 import { logger } from "../lib/logger.js";
@@ -933,6 +933,84 @@ router.delete("/me/dossies/:id", requireAuth, async (req, res): Promise<void> =>
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, "Failed to delete dossier");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ─── Favoritos ─────────────────────────────────────────────────────────────────
+
+router.get("/me/favoritos", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    const rows = await db.select().from(infinityFavoritosTable)
+      .where(eq(infinityFavoritosTable.username, me))
+      .orderBy(desc(infinityFavoritosTable.addedAt));
+    res.json(rows);
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch favoritos");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.post("/me/favoritos", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id, tipo, query, note, fields, sections, raw } = req.body as {
+    id?: string; tipo?: string; query?: string; note?: string;
+    fields?: unknown[]; sections?: unknown[]; raw?: string;
+  };
+  if (!id || typeof id !== "string" || id.length > 80) { res.status(400).json({ error: "ID inválido" }); return; }
+  if (!tipo || typeof tipo !== "string") { res.status(400).json({ error: "Tipo obrigatório" }); return; }
+  if (!query || typeof query !== "string") { res.status(400).json({ error: "Query obrigatória" }); return; }
+  try {
+    const existing = await db.select({ id: infinityFavoritosTable.id })
+      .from(infinityFavoritosTable)
+      .where(and(
+        eq(infinityFavoritosTable.username, me),
+        eq(infinityFavoritosTable.tipo, tipo),
+        eq(infinityFavoritosTable.query, query),
+      ))
+      .limit(1);
+    if (existing.length > 0) { res.json({ ok: true, duplicate: true }); return; }
+    const count = await db.select({ c: sql<number>`count(*)` }).from(infinityFavoritosTable)
+      .where(eq(infinityFavoritosTable.username, me));
+    if (Number(count[0]?.c ?? 0) >= 500) { res.status(400).json({ error: "Limite de 500 favoritos atingido" }); return; }
+    await db.insert(infinityFavoritosTable).values({
+      id,
+      username: me,
+      tipo: tipo.slice(0, 60),
+      query: query.slice(0, 200),
+      note: typeof note === "string" ? note.slice(0, 500) : "",
+      fields: Array.isArray(fields) ? fields.slice(0, 200) : [],
+      sections: Array.isArray(sections) ? sections.slice(0, 50) : [],
+      raw: typeof raw === "string" ? raw.slice(0, 10000) : "",
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to add favorito");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.delete("/me/favoritos/:id", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  const { id } = req.params as { id: string };
+  try {
+    await db.delete(infinityFavoritosTable)
+      .where(and(eq(infinityFavoritosTable.id, id), eq(infinityFavoritosTable.username, me)));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to delete favorito");
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+router.delete("/me/favoritos", requireAuth, async (req, res): Promise<void> => {
+  const me = req.infinityUser!.username;
+  try {
+    await db.delete(infinityFavoritosTable).where(eq(infinityFavoritosTable.username, me));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error({ err }, "Failed to clear favoritos");
     res.status(500).json({ error: "Erro interno" });
   }
 });

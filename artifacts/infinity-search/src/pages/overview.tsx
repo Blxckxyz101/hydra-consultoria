@@ -550,6 +550,67 @@ export default function Overview() {
         ))}
       </div>
 
+      {/* Investigator Level Bar — client only */}
+      {!isAdmin && (() => {
+        const total = data.totalConsultas;
+        const LEVELS = [
+          { name: "Recruta",      min: 0,    max: 10,   color: "bg-zinc-400",   label: "text-zinc-400" },
+          { name: "Agente",       min: 10,   max: 50,   color: "bg-sky-400",    label: "text-sky-400" },
+          { name: "Investigador", min: 50,   max: 150,  color: "bg-primary",    label: "text-primary" },
+          { name: "Analista",     min: 150,  max: 400,  color: "bg-violet-400", label: "text-violet-400" },
+          { name: "Especialista", min: 400,  max: 1000, color: "bg-amber-400",  label: "text-amber-400" },
+          { name: "Mestre",       min: 1000, max: Infinity, color: "bg-rose-400", label: "text-rose-400" },
+        ];
+        const lvlIdx = LEVELS.findLastIndex(l => total >= l.min);
+        const lvl = LEVELS[Math.max(0, lvlIdx)];
+        const next = LEVELS[lvlIdx + 1] ?? null;
+        const pct = next
+          ? Math.min(100, ((total - lvl.min) / (next.min - lvl.min)) * 100)
+          : 100;
+        const remaining = next ? next.min - total : 0;
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.22 }}
+            className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-4 sm:p-5"
+          >
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-primary" />
+                <span className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Nível de Investigador</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-bold ${lvl.label}`}>{lvl.name}</span>
+                {next && (
+                  <span className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">→ {next.name}</span>
+                )}
+              </div>
+            </div>
+            <div className="h-2.5 rounded-full bg-white/5 overflow-hidden mb-2">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={{ duration: 1.2, ease: "easeOut" }}
+                className={`h-full rounded-full ${lvl.color}`}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">
+                {total.toLocaleString("pt-BR")} consulta{total !== 1 ? "s" : ""} realizadas
+              </p>
+              {next ? (
+                <p className="text-[10px] text-muted-foreground/60 uppercase tracking-widest">
+                  Faltam <span className="text-foreground font-semibold">{remaining}</span> para {next.name}
+                </p>
+              ) : (
+                <p className="text-[10px] text-primary/80 uppercase tracking-widest font-semibold">Nível máximo atingido!</p>
+              )}
+            </div>
+          </motion.div>
+        );
+      })()}
+
       {/* Rate limit bar — admin only */}
       {isAdmin && (
         <motion.div
