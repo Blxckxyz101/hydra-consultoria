@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2,
   QrCode, User, Lock, Gift, KeyRound, UserPlus,
+  BatteryLow, Battery, BatteryMedium, BatteryFull,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
 import logoUrl from "@/assets/hydra-icon.png";
@@ -13,8 +14,18 @@ interface Plan {
   amountBrl: string; amountCents: number; highlight?: boolean;
 }
 
+interface RechargePack {
+  id: string; label: string; credits: number; consultas: number;
+  amountBrl: string; amountCents: number; highlight?: boolean;
+}
+
 const PLAN_ICONS: Record<string, React.ElementType> = {
   "1d": Clock, "7d": Zap, "14d": Star, "30d": Shield,
+};
+
+const RECHARGE_ICONS: Record<string, React.ElementType> = {
+  rc_micro: BatteryLow, rc_basico: Battery,
+  rc_padrao: BatteryMedium, rc_avancado: BatteryFull, rc_pro: BatteryFull,
 };
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -25,11 +36,13 @@ const apiFetch = (path: string, opts?: RequestInit) =>
   });
 
 type Step = "plans" | "register" | "payment" | "success" | "gift" | "gift-success";
+type PurchaseMode = "plan" | "recharge";
 
 interface PaymentData {
   paymentId: string; txid: string; pixCopiaECola: string; qrcode_base64: string;
   amountBrl: string; taxa?: number;
-  plan: { id: string; label: string; days: number };
+  plan?: { id: string; label: string; days: number };
+  pack?: { id: string; label: string; credits: number; consultas: number };
   username: string;
 }
 
@@ -41,8 +54,7 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
         selected ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
         : plan.highlight ? "bg-amber-400/5 border-amber-400/30 hover:border-amber-400/50"
         : "bg-black/30 border-white/10 hover:border-white/25"
-      }`}
-    >
+      }`}>
       {plan.highlight && !selected && (
         <span className="absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-amber-400 px-2 py-0.5 rounded-full">Mais popular</span>
       )}
@@ -64,6 +76,45 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
         {["24 tipos de consulta OSINT", "Assistente IA incluso", "Dossiê e histórico completo"].map(f => (
           <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
             <CheckCircle2 className="w-3 h-3 text-emerald-400" /> {f}
+          </div>
+        ))}
+      </div>
+    </motion.button>
+  );
+}
+
+function RechargeCard({ pack, selected, onSelect }: { pack: RechargePack; selected: boolean; onSelect: () => void }) {
+  const Icon = RECHARGE_ICONS[pack.id] ?? BatteryMedium;
+  return (
+    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={onSelect}
+      className={`relative w-full text-left rounded-2xl border p-5 transition-all duration-200 ${
+        selected ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
+        : pack.highlight ? "bg-cyan-400/5 border-cyan-400/30 hover:border-cyan-400/50"
+        : "bg-black/30 border-white/10 hover:border-white/25"
+      }`}>
+      {pack.highlight && !selected && (
+        <span className="absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-cyan-400 px-2 py-0.5 rounded-full">Melhor custo</span>
+      )}
+      {selected && (
+        <span className="absolute -top-2.5 right-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full" style={{ background: "var(--color-primary)" }}>Selecionado</span>
+      )}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Icon className={`w-5 h-5 mb-2 ${selected ? "text-primary" : pack.highlight ? "text-cyan-400" : "text-muted-foreground"}`} />
+          <div className="font-bold text-base">{pack.label}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">{pack.consultas} consultas · sem prazo</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-2xl font-bold ${selected ? "text-primary" : pack.highlight ? "text-cyan-300" : "text-foreground"}`}>R$ {pack.amountBrl}</div>
+          <div className="text-[10px] text-muted-foreground">
+            R$ {(pack.amountCents / pack.consultas / 100).toFixed(2).replace(".", ",")} / cx
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
+        {[`${pack.credits} créditos inclusos`, "Não expira", "Acumula com planos"].map(f => (
+          <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="w-3 h-3 text-cyan-400" /> {f}
           </div>
         ))}
       </div>
@@ -121,7 +172,11 @@ export default function Registro() {
   const refCode = params.get("ref") ?? "";
 
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [rechargePacks, setRechargePacks] = useState<RechargePack[]>([]);
+  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>("plan");
+
   const [selectedPlanId, setSelectedPlanId] = useState<string>("14d");
+  const [selectedPackId, setSelectedPackId] = useState<string>("rc_padrao");
   const [step, setStep] = useState<Step>("plans");
 
   const [username, setUsername] = useState("");
@@ -148,11 +203,22 @@ export default function Registro() {
       setPlans(d);
       if (!d.find(p => p.id === "14d") && d.length > 0) setSelectedPlanId(d[0].id);
     }).catch(() => {});
+    apiFetch("/recharges").then(r => r.json()).then((d: RechargePack[]) => {
+      if (Array.isArray(d)) {
+        setRechargePacks(d.map(p => ({
+          ...p,
+          amountBrl: Number(p.amountBrl ?? p.amountCents / 100).toFixed(2).replace(".", ","),
+        })));
+        const highlight = d.find(p => p.highlight);
+        if (highlight) setSelectedPackId(highlight.id);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
+  const selectedPack = rechargePacks.find(p => p.id === selectedPackId);
 
   const startPolling = useCallback((paymentId: string) => {
     abortRef.current?.abort();
@@ -196,6 +262,9 @@ export default function Registro() {
     if (!username.trim() || !password.trim()) { setError("Preencha todos os campos"); return; }
     if (username.length < 3) { setError("Usuário deve ter ao menos 3 caracteres"); return; }
     if (password.length < 6) { setError("Senha deve ter ao menos 6 caracteres"); return; }
+
+    const planIdToSend = purchaseMode === "plan" ? selectedPlanId : selectedPackId;
+
     setRegLoading(true);
     try {
       const r = await apiFetch("/payments/create-guest", {
@@ -203,7 +272,7 @@ export default function Registro() {
         body: JSON.stringify({
           username: username.trim().toLowerCase(), password,
           email: email.trim() || undefined,
-          planId: selectedPlanId,
+          planId: planIdToSend,
           referralCode: refCode || undefined,
         }),
       });
@@ -240,6 +309,13 @@ export default function Registro() {
     finally { setGiftLoading(false); }
   };
 
+  // Label shown in register step
+  const selectedLabel = purchaseMode === "plan"
+    ? `${selectedPlan?.label ?? "—"} — R$ ${selectedPlan?.amountBrl ?? ""}`
+    : `${selectedPack?.label ?? "—"} — R$ ${selectedPack?.amountBrl ?? ""}`;
+
+  const canContinue = purchaseMode === "plan" ? !!selectedPlan : !!selectedPack;
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 relative">
       <AnimatedBackground />
@@ -257,7 +333,6 @@ export default function Registro() {
           </div>
         </div>
 
-        {/* Referral banner */}
         {refCode && step !== "success" && step !== "gift-success" && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
             className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-4 py-3 flex items-center gap-3">
@@ -272,26 +347,59 @@ export default function Registro() {
           <StepIndicator current={step} />
 
           <AnimatePresence mode="wait">
-            {/* PLANOS */}
+            {/* PLANOS / RECARGAS */}
             {step === "plans" && (
               <motion.div key="plans" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                <h2 className="text-xl font-bold mb-1">Escolha seu plano</h2>
-                <p className="text-sm text-muted-foreground mb-6">Todos os planos incluem acesso completo ao painel</p>
-                {plans.length === 0 ? (
-                  <div className="flex items-center justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                    {plans.map(p => (
-                      <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
-                    ))}
-                  </div>
-                )}
-                <button onClick={() => setStep("register")} disabled={!selectedPlan}
+                <h2 className="text-xl font-bold mb-1">Escolha como começar</h2>
+                <p className="text-sm text-muted-foreground mb-5">Plano com acesso por tempo ou pacote de consultas avulsas</p>
+
+                {/* Mode toggle */}
+                <div className="flex rounded-xl border border-white/10 overflow-hidden mb-6 p-1 bg-white/5 gap-1">
+                  {([["plan", "Assinar Plano"], ["recharge", "Comprar Recarga"]] as [PurchaseMode, string][]).map(([mode, label]) => (
+                    <button key={mode} onClick={() => setPurchaseMode(mode)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-[0.15em] transition-all ${purchaseMode === mode ? "text-black" : "text-muted-foreground hover:text-foreground"}`}
+                      style={purchaseMode === mode ? { background: "var(--color-primary)" } : {}}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <AnimatePresence mode="wait">
+                  {purchaseMode === "plan" ? (
+                    <motion.div key="plan-grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                      {plans.length === 0 ? (
+                        <div className="flex items-center justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                          {plans.map(p => (
+                            <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  ) : (
+                    <motion.div key="recharge-grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                      {rechargePacks.length === 0 ? (
+                        <div className="flex items-center justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                          {rechargePacks.map(p => (
+                            <RechargeCard key={p.id} pack={p} selected={selectedPackId === p.id} onSelect={() => setSelectedPackId(p.id)} />
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <button onClick={() => setStep("register")} disabled={!canContinue}
                   className="w-full py-3.5 rounded-xl font-bold text-sm uppercase tracking-widest text-black disabled:opacity-40 transition-all"
                   style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 75%, white))" }}>
-                  Continuar com {selectedPlan?.label ?? "—"} → R$ {selectedPlan?.amountBrl ?? ""}
+                  {purchaseMode === "plan"
+                    ? `Continuar com ${selectedPlan?.label ?? "—"} → R$ ${selectedPlan?.amountBrl ?? ""}`
+                    : `Continuar com ${selectedPack?.label ?? "—"} → R$ ${selectedPack?.amountBrl ?? ""}`}
                 </button>
-                {/* Gift card option */}
+
                 <button onClick={() => setStep("gift")}
                   className="w-full mt-3 py-3 rounded-xl font-medium text-sm text-muted-foreground hover:text-foreground border border-white/10 hover:border-primary/30 hover:bg-primary/5 transition-all flex items-center justify-center gap-2">
                   <Gift className="w-4 h-4 text-primary/70" /> Tenho um código Gift Card
@@ -310,7 +418,7 @@ export default function Registro() {
                 </button>
                 <h2 className="text-xl font-bold mb-1">Criar sua conta</h2>
                 <p className="text-sm text-muted-foreground mb-6">
-                  Plano: <span className="text-primary font-semibold">{selectedPlan?.label} — R$ {selectedPlan?.amountBrl}</span>
+                  {purchaseMode === "plan" ? "Plano:" : "Pacote:"} <span className="text-primary font-semibold">{selectedLabel}</span>
                 </p>
                 <form onSubmit={handleRegister} className="space-y-4">
                   <div className="relative">
@@ -367,9 +475,17 @@ export default function Registro() {
                       <QrCode className="w-12 h-12 text-muted-foreground/30" />
                     </div>
                   )}
-                  <div className="text-2xl font-bold"
-                    style={{ background: "linear-gradient(to right, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-                    R$ {payment.amountBrl}
+                  <div className="text-center">
+                    <div className="text-2xl font-bold"
+                      style={{ background: "linear-gradient(to right, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, white))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                      R$ {payment.amountBrl}
+                    </div>
+                    {payment.pack && (
+                      <div className="text-xs text-muted-foreground mt-1">{payment.pack.consultas} consultas · {payment.pack.label}</div>
+                    )}
+                    {payment.plan && (
+                      <div className="text-xs text-muted-foreground mt-1">{payment.plan.label} · acesso completo</div>
+                    )}
                   </div>
                 </div>
                 <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-4">
@@ -398,8 +514,18 @@ export default function Registro() {
                   <CheckCircle2 className="w-10 h-10 text-primary" />
                 </motion.div>
                 <h2 className="text-2xl font-bold mb-2">Pagamento confirmado!</h2>
-                <p className="text-sm text-muted-foreground mb-2">Sua conta <span className="text-primary font-semibold">{payment?.username}</span> está ativa.</p>
-                <p className="text-xs text-muted-foreground mb-6">Plano: <span className="font-semibold">{payment?.plan?.label}</span></p>
+                {payment?.pack ? (
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Conta <span className="text-primary font-semibold">{payment.username}</span> criada com <span className="font-semibold">{payment.pack.consultas} consultas</span>.
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Sua conta <span className="text-primary font-semibold">{payment?.username}</span> está ativa.
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground mb-6">
+                  {payment?.plan ? `Plano: ${payment.plan.label}` : payment?.pack ? `Recarga: ${payment.pack.label}` : ""}
+                </p>
                 <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 mb-6 text-left">
                   <p className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground/60 mb-2">Seus dados de acesso</p>
                   <p className="text-sm"><span className="text-muted-foreground">Usuário:</span> <span className="font-mono font-semibold">{payment?.username}</span></p>
@@ -434,51 +560,44 @@ export default function Registro() {
                     <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-primary/50" />
                     <input type="text" placeholder="Código (ex: INFY-XXXX-XXXX-XXXX)" value={giftCode}
                       onChange={e => setGiftCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-primary/5 border border-primary/20 text-sm font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors tracking-widest"
-                      maxLength={19} required />
+                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-mono placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors" required />
                   </div>
                   <div className="relative">
                     <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
-                    <input type="text" placeholder="Nome de usuário" value={giftUser}
+                    <input type="text" placeholder="Escolha um usuário" value={giftUser}
                       onChange={e => setGiftUser(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
-                      autoComplete="username" required />
+                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors" required />
                   </div>
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
-                    <input type="password" placeholder="Criar senha (mín. 6 caracteres)" value={giftPass}
+                    <input type="password" placeholder="Crie uma senha" value={giftPass}
                       onChange={e => setGiftPass(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors"
-                      autoComplete="new-password" required />
+                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/50 transition-colors" required />
                   </div>
                   {giftError && <p className="text-xs text-rose-400 bg-rose-400/8 border border-rose-400/20 rounded-lg px-3 py-2">{giftError}</p>}
                   <button type="submit" disabled={giftLoading}
                     className="w-full py-3.5 rounded-xl font-bold text-sm uppercase tracking-widest text-black disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
                     style={{ background: "linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 75%, white))" }}>
-                    {giftLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Verificando...</> : <><Gift className="w-4 h-4" /> Ativar Gift Card</>}
+                    {giftLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Resgatando...</> : "Resgatar Gift Card"}
                   </button>
                 </form>
-                <p className="text-center mt-4 text-[11px] text-muted-foreground/60">
-                  Não tem código? <button onClick={() => setStep("plans")} className="text-primary hover:underline">Ver planos com PIX</button>
-                </p>
               </motion.div>
             )}
 
-            {/* GIFT SUCESSO */}
+            {/* GIFT SUCCESS */}
             {step === "gift-success" && giftResult && (
               <motion.div key="gift-success" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-4">
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", delay: 0.1 }}
                   className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-5"
                   style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)", border: "2px solid var(--color-primary)" }}>
-                  <Gift className="w-10 h-10 text-primary" />
+                  <CheckCircle2 className="w-10 h-10 text-primary" />
                 </motion.div>
-                <h2 className="text-2xl font-bold mb-2">Gift Card ativado!</h2>
+                <h2 className="text-2xl font-bold mb-2">Gift Card resgatado!</h2>
                 <p className="text-sm text-muted-foreground mb-2">
-                  Conta <span className="text-primary font-semibold">@{giftResult.username}</span> criada com sucesso.
+                  Conta <span className="text-primary font-semibold">{giftResult.username}</span> criada com {giftResult.days} dias de acesso.
                 </p>
                 <p className="text-xs text-muted-foreground mb-6">
-                  Acesso válido por <span className="font-semibold text-emerald-400">{giftResult.days} dias</span> · expira em{" "}
-                  <span className="font-semibold">{new Date(giftResult.expiresAt).toLocaleDateString("pt-BR")}</span>
+                  Expira em {new Date(giftResult.expiresAt).toLocaleDateString("pt-BR")}
                 </p>
                 <button onClick={() => setLocation("/login")}
                   className="w-full py-3.5 rounded-xl font-bold text-sm uppercase tracking-widest text-black transition-all"
@@ -489,10 +608,6 @@ export default function Registro() {
             )}
           </AnimatePresence>
         </div>
-
-        <p className="text-center mt-5 text-[10px] uppercase tracking-[0.3em] text-muted-foreground/40">
-          by hydra consultoria · pagamento seguro via pix
-        </p>
       </motion.div>
     </div>
   );

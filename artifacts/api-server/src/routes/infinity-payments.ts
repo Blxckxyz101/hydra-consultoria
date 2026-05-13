@@ -351,15 +351,21 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
   }
 
   const plan = getPlan(String(planId));
-  if (!plan) { res.status(400).json({ error: "Plano inválido" }); return; }
+  const rechargePack = plan ? null : getRechargePack(String(planId));
+  if (!plan && !rechargePack) {
+    res.status(400).json({ error: "Plano ou pacote de recarga inválido" });
+    return;
+  }
 
-  // Apply coupon discount if provided
-  let finalAmountCents = plan.amountCents;
+  const baseAmountCents = plan ? plan.amountCents : rechargePack!.amountCents;
+
+  // Apply coupon discount if provided (plans only)
+  let finalAmountCents = baseAmountCents;
   let appliedCoupon: string | null = null;
-  if (couponCode && String(couponCode).trim()) {
+  if (plan && couponCode && String(couponCode).trim()) {
     const couponResult = await validateCoupon(String(couponCode));
     if (!couponResult.valid) { res.status(400).json({ error: couponResult.error }); return; }
-    finalAmountCents = Math.max(100, Math.round(plan.amountCents * (1 - couponResult.discountPercent / 100)));
+    finalAmountCents = Math.max(100, Math.round(baseAmountCents * (1 - couponResult.discountPercent / 100)));
     appliedCoupon = String(couponCode).trim().toUpperCase();
   }
 
@@ -411,12 +417,14 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
 
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
+  const effectivePlanId = plan ? plan.id : rechargePack!.id;
+
   await db.insert(infinityPaymentsTable).values({
     id: paymentId,
     username: usernameStr,
-    planId: plan.id,
+    planId: effectivePlanId,
     amountCents: finalAmountCents,
-    originalAmountCents: appliedCoupon ? plan.amountCents : null,
+    originalAmountCents: appliedCoupon ? baseAmountCents : null,
     couponCode: appliedCoupon,
     status: "pending",
     nedpayId: promstData.txid,
@@ -434,27 +442,42 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
     username: usernameStr,
     passwordHash,
     email: email ? String(email).trim() : null,
-    planId: plan.id,
+    planId: effectivePlanId,
     paymentId,
     status: "pending_payment",
     referredBy: refBy !== usernameStr ? refBy : null,
   });
 
-  res.json({
-    paymentId,
-    txid: promstData.txid,
-    pixCopiaECola: promstData.pixCopiaECola,
-    qrcode_base64: promstData.qrcode_base64,
-    amountBrl: (finalAmountCents / 100).toFixed(2),
-    originalAmountBrl: appliedCoupon ? (plan.amountCents / 100).toFixed(2) : undefined,
-    discountPercent: appliedCoupon
-      ? Math.round((1 - finalAmountCents / plan.amountCents) * 100)
-      : undefined,
-    taxa: promstData.taxa,
-    plan: { id: plan.id, label: plan.label, days: plan.days },
-    username: usernameStr,
-    expiresAt: expiresAt.toISOString(),
-  });
+  if (plan) {
+    res.json({
+      paymentId,
+      txid: promstData.txid,
+      pixCopiaECola: promstData.pixCopiaECola,
+      qrcode_base64: promstData.qrcode_base64,
+      amountBrl: (finalAmountCents / 100).toFixed(2),
+      originalAmountBrl: appliedCoupon ? (baseAmountCents / 100).toFixed(2) : undefined,
+      discountPercent: appliedCoupon
+        ? Math.round((1 - finalAmountCents / baseAmountCents) * 100)
+        : undefined,
+      taxa: promstData.taxa,
+      plan: { id: plan.id, label: plan.label, days: plan.days },
+      username: usernameStr,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } else {
+    const rp = rechargePack!;
+    res.json({
+      paymentId,
+      txid: promstData.txid,
+      pixCopiaECola: promstData.pixCopiaECola,
+      qrcode_base64: promstData.qrcode_base64,
+      amountBrl: (finalAmountCents / 100).toFixed(2),
+      taxa: promstData.taxa,
+      pack: { id: rp.id, label: rp.label, credits: rp.credits, consultas: rp.consultas },
+      username: usernameStr,
+      expiresAt: expiresAt.toISOString(),
+    });
+  }
 });
 
 // ─── GET /payments/:id/status ─────────────────────────────────────────────────
@@ -590,19 +613,48 @@ async function applyReferralBonus(referredUsername: string, referredBy: string) 
 async function handlePaymentConfirmed(paymentId: string, username: string | null, planId: string) {
   if (!username) return;
 
-  // ── Recharge pack: add credits to existing user ───────────────────────────
+  // ── Recharge pack ─────────────────────────────────────────────────────────
   if (planId.startsWith("rc_")) {
     const pack = getRechargePack(planId);
     if (!pack) return;
-    await db.update(infinityUsersTable)
-      .set({ creditBalance: sql`credit_balance + ${pack.credits}` })
-      .where(eq(infinityUsersTable.username, username));
+
+    // Check if there is a pending guest account (new user signup with recharge pack)
+    const pendingRc = await db.select().from(infinityPendingAccountsTable)
+      .where(and(
+        eq(infinityPendingAccountsTable.username, username),
+        eq(infinityPendingAccountsTable.paymentId, paymentId),
+      )).limit(1);
+
+    if (pendingRc.length > 0) {
+      const pending = pendingRc[0];
+      try {
+        await db.insert(infinityUsersTable).values({
+          username: pending.username,
+          passwordHash: pending.passwordHash,
+          role: "user",
+          accountExpiresAt: null,
+          planQueryQuota: 0,
+          planQueriesUsed: 0,
+          creditBalance: pack.credits,
+        });
+        if (pending.referredBy) void applyReferralBonus(pending.username, pending.referredBy);
+      } catch { /* race — user already exists */ }
+      await db.update(infinityPendingAccountsTable)
+        .set({ status: "approved", updatedAt: new Date() })
+        .where(eq(infinityPendingAccountsTable.id, pending.id));
+    } else {
+      // Existing user — add credits
+      await db.update(infinityUsersTable)
+        .set({ creditBalance: sql`credit_balance + ${pack.credits}` })
+        .where(eq(infinityUsersTable.username, username));
+    }
+
     void sendSaleNotification({
       username,
       planLabel: `Recarga ${pack.label} (${pack.consultas} consultas)`,
       amountCents: pack.amountCents,
       expiresAt: null,
-      isRenewal: true,
+      isRenewal: pendingRc.length === 0,
     });
     return;
   }

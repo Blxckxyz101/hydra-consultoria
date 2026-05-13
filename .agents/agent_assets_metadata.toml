@@ -83,3 +83,21 @@ id = "hYd5LJwAlMr4tboHpbP2n"
 uri = "file://attached_assets/hydra_novidades_post.png"
 type = "image"
 title = "Imagem de Novidades — Hydra Consultoria"
+
+[[outputs]]
+id = "NBgjf4hRylaPYnoOkWozr"
+uri = "file://screenshots/registro_full.jpg"
+type = "image"
+title = "Registro — Aba Assinar Plano"
+
+[[outputs]]
+id = "zJW2MqQVbUV_CvBmM4OzO"
+uri = "file://screenshots/planos_full.jpg"
+type = "image"
+title = "Registro — 4 Planos Disponíveis"
+
+[[outputs]]
+id = "tOrFQtoNenfb4z_UVe8xm"
+uri = "file://screenshots/login.jpg"
+type = "image"
+title = "Login — Hydra Consultoria"
