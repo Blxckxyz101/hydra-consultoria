@@ -5,7 +5,7 @@ import logoUrl from "@/assets/hydra-icon.jpg";
 import {
   Search, Shield, Car, Building2, Scale, Camera,
   ArrowRight, CheckCircle2, Zap, Lock, Users,
-  Clock, Crown, Flame, Star, ChevronRight,
+  Clock, Crown, Flame, Star, ChevronRight, Quote,
 } from "lucide-react";
 
 const STATS = [
@@ -86,6 +86,57 @@ const PLANS = [
     highlight: false,
     badge: "Ultra",
     icon: Flame,
+  },
+];
+
+const TESTIMONIALS = [
+  {
+    name: "Ricardo M.",
+    role: "Detetive Particular · SP",
+    avatar: "RM",
+    color: "#38bdf8",
+    text: "Uso a Hydra diariamente nas minhas investigações. O CPF Full e a árvore familiar economizaram horas de trabalho por semana. Nunca vi uma plataforma tão completa no Brasil.",
+    stars: 5,
+  },
+  {
+    name: "Fernanda O.",
+    role: "Advogada Trabalhista · RJ",
+    avatar: "FO",
+    color: "#a78bfa",
+    text: "Os módulos de processos judiciais e OAB são incríveis. Consigo verificar o histórico de uma parte em segundos, antes gastava horas no TJ. Vale muito o investimento.",
+    stars: 5,
+  },
+  {
+    name: "Carlos A.",
+    role: "Analista de Crédito · BH",
+    avatar: "CA",
+    color: "#34d399",
+    text: "Implementei a Hydra no fluxo de análise de crédito da nossa empresa. A combinação de Score, SPC e dados de renda num só lugar é diferencial competitivo real.",
+    stars: 5,
+  },
+  {
+    name: "Juliana P.",
+    role: "Gestora de RH · Curitiba",
+    avatar: "JP",
+    color: "#fbbf24",
+    text: "Antes de contratar qualquer pessoa fazemos consulta na Hydra. Já evitamos 3 contratações problemáticas só esse ano. O retorno foi imediato no primeiro mês.",
+    stars: 5,
+  },
+  {
+    name: "Marcos T.",
+    role: "Corretor de Imóveis · Recife",
+    avatar: "MT",
+    color: "#fb7185",
+    text: "Verificar inquilinos ficou muito mais seguro. Os dados de processos e certidões que a plataforma traz em segundos antes levavam dias para conseguir.",
+    stars: 5,
+  },
+  {
+    name: "Ana L.",
+    role: "Investigadora Corporativa · DF",
+    avatar: "AL",
+    color: "#38bdf8",
+    text: "Melhor custo-benefício que já encontrei. O plano de recargas é perfeito para o meu volume variável de consultas. Suporte rápido e plataforma sempre no ar.",
+    stars: 5,
   },
 ];
 
@@ -261,6 +312,47 @@ export default function Landing() {
               </div>
               <h3 className="font-bold mb-2">{step.title}</h3>
               <p className="text-xs text-muted-foreground leading-relaxed">{step.desc}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Testimonials ── */}
+      <section className="px-6 py-20 max-w-6xl mx-auto">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-black mb-3" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.08em" }}>
+            O QUE DIZEM OS USUÁRIOS
+          </h2>
+          <p className="text-muted-foreground text-sm">Profissionais que já usam a Hydra no dia a dia</p>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {TESTIMONIALS.map((t, i) => (
+            <motion.div
+              key={t.name}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.07 }}
+              className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm p-5 flex flex-col gap-4 hover:border-white/20 transition-all"
+            >
+              <Quote className="w-5 h-5 opacity-30 shrink-0" style={{ color: t.color }} />
+              <p className="text-sm text-muted-foreground leading-relaxed flex-1">{t.text}</p>
+              <div className="flex items-center gap-1 mt-1">
+                {Array.from({ length: t.stars }).map((_, s) => (
+                  <Star key={s} className="w-3 h-3 fill-current" style={{ color: "#fbbf24" }} />
+                ))}
+              </div>
+              <div className="flex items-center gap-3 pt-3 border-t border-white/5">
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black shrink-0"
+                  style={{ background: `${t.color}22`, border: `1px solid ${t.color}40`, color: t.color }}
+                >
+                  {t.avatar}
+                </div>
+                <div>
+                  <div className="text-sm font-bold">{t.name}</div>
+                  <div className="text-[10px] text-muted-foreground">{t.role}</div>
+                </div>
+              </div>
             </motion.div>
           ))}
         </div>
