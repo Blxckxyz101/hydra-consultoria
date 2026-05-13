@@ -183,3 +183,19 @@
               inset 0 0 10px color-mix(in srgb, var(--color-primary) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
 }
+
+/* ── PWA / Mobile safe-area helpers ─────────────────────────────────────── */
+@media (max-width: 1023px) {
+  .mobile-main {
+    padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Minimum 44px touch targets on mobile */
+@media (max-width: 1023px) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

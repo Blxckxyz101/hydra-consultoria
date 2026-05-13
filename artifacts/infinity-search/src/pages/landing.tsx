@@ -101,28 +101,35 @@ export default function Landing() {
       <AnimatedBackground />
 
       {/* ── Nav ── */}
-      <header className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-6 h-16 border-b border-white/[0.06] backdrop-blur-2xl" style={{ background: "rgba(6,9,26,0.85)" }}>
-        <Link href="/" className="flex items-center gap-3">
-          <img src={logoUrl} alt="Hydra" className="w-9 h-9 object-contain" />
-          <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "22px", letterSpacing: "0.2em", color: "#38bdf8" }}>HYDRA</span>
-        </Link>
-        <div className="flex items-center gap-3">
-          <Link href="/login">
-            <button className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground border border-white/10 hover:border-white/20 transition-all">
-              Entrar
-            </button>
+      <header
+        className="fixed top-0 inset-x-0 z-50 border-b border-white/[0.06] backdrop-blur-2xl"
+        style={{ background: "rgba(6,9,26,0.85)", paddingTop: "env(safe-area-inset-top, 0px)" }}
+      >
+        <div className="flex items-center justify-between px-6 h-16">
+          <Link href="/" className="flex items-center gap-3">
+            <img src={logoUrl} alt="Hydra" className="w-9 h-9 object-contain" />
+            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "22px", letterSpacing: "0.2em", color: "#38bdf8" }}>HYDRA</span>
           </Link>
-          <Link href="/registro">
-            <button className="px-5 py-2 rounded-xl text-sm font-bold text-black transition-all hover:opacity-90"
-              style={{ background: "linear-gradient(135deg, #38bdf8, #818cf8)" }}>
-              Criar Conta
-            </button>
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/login">
+              <button className="touch-target px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground border border-white/10 hover:border-white/20 transition-all flex items-center justify-center">
+                Entrar
+              </button>
+            </Link>
+            <Link href="/registro">
+              <button
+                className="touch-target px-5 py-2 rounded-xl text-sm font-bold text-black transition-all hover:opacity-90 flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg, #38bdf8, #818cf8)" }}
+              >
+                Criar Conta
+              </button>
+            </Link>
+          </div>
         </div>
       </header>
 
       {/* ── Hero ── */}
-      <section className="relative pt-36 pb-24 px-6 text-center">
+      <section className="relative pb-24 px-6 text-center" style={{ paddingTop: "calc(9rem + env(safe-area-inset-top, 0px))" }}>
         <motion.div initial={{ opacity: 0, y: 32 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 text-sky-300 text-xs font-semibold tracking-wider uppercase mb-6">
             <Zap className="w-3 h-3" />

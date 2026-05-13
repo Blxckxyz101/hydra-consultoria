@@ -533,47 +533,52 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Mobile top bar */}
-      <div className="lg:hidden fixed top-0 inset-x-0 z-30 flex items-center justify-between px-4 h-14 border-b border-white/5 bg-black/60 backdrop-blur-2xl">
-        <button
-          onClick={() => setMobileOpen(true)}
-          className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-foreground"
-          aria-label="Abrir menu"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
-        <div className="flex items-center gap-2">
-          <div className="relative w-7 h-7 shrink-0 flex items-center justify-center">
-            <img
-              src={logoUrl}
-              alt=""
-              className="w-7 h-7 object-contain"
-            />
+      <div
+        className="lg:hidden fixed top-0 inset-x-0 z-30 border-b border-white/5 bg-black/60 backdrop-blur-2xl"
+        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      >
+        <div className="flex items-center justify-between px-4 h-14">
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="w-11 h-11 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-foreground"
+            aria-label="Abrir menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative w-7 h-7 shrink-0 flex items-center justify-center">
+              <img
+                src={logoUrl}
+                alt=""
+                className="w-7 h-7 object-contain"
+              />
+            </div>
+            <span className="text-foreground" style={{ fontFamily: "'Bebas Neue', 'Exo 2', sans-serif", fontSize: "17px", letterSpacing: "0.18em" }}>HYDRA</span>
           </div>
-          <span className="text-foreground" style={{ fontFamily: "'Bebas Neue', 'Exo 2', sans-serif", fontSize: "17px", letterSpacing: "0.18em" }}>HYDRA</span>
-        </div>
-        {/* Personal notifications bell — mobile topbar */}
-        <div className="flex items-center gap-1">
-          <NotificationBell />
-          {/* System bell — mobile topbar */}
-          <div ref={bellMobileRef} className="relative">
-            <button
-              onClick={openBell}
-              className="relative w-10 h-10 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Novidades"
-            >
-              <Bell className="w-4 h-4" />
-              {unreadCount > 0 && (
-                <span
-                  className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
-                  style={{ background: "var(--color-primary)" }}
-                >
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
-            </button>
-            <AnimatePresence>
-              {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
-            </AnimatePresence>
+          {/* Personal notifications bell — mobile topbar */}
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            {/* System bell — mobile topbar */}
+            <div ref={bellMobileRef} className="relative">
+              <button
+                onClick={openBell}
+                className="relative w-11 h-11 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Novidades"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span
+                    className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-black px-1"
+                    style={{ background: "var(--color-primary)" }}
+                  >
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              <AnimatePresence>
+                {bellOpen && <NotifPanel onClose={() => setBellOpen(false)} />}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>
@@ -596,7 +601,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 280, damping: 32 }}
-              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(2,6,18,0.35)" }}
+              className="lg:hidden fixed inset-y-0 left-0 w-[80%] max-w-[300px] z-50 flex flex-col border-r border-white/[0.08] backdrop-blur-2xl"
+              style={{ background: "rgba(2,6,18,0.35)", paddingTop: "env(safe-area-inset-top, 0px)" }}
             >
               {renderSidebar(() => setMobileOpen(false))}
             </motion.aside>
@@ -605,45 +611,50 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </AnimatePresence>
 
       {/* Mobile bottom navigation bar */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 flex items-stretch border-t border-white/[0.08] backdrop-blur-2xl" style={{ background: "rgba(2,6,18,0.90)", height: "60px", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-        {([
-          { href: "/",          icon: Activity,        label: "Início"   },
-          { href: "/consultas", icon: Search,          label: "Busca"    },
-          { href: "/ia",        icon: Bot,             label: "IA"       },
-          { href: "/comunidade", icon: MessageCircle,   label: "Chat"     },
-        ] as const).map((item) => {
-          const Icon = item.icon;
-          const isActive = item.href === "/comunidade"
-            ? (location === "/comunidade" || location.startsWith("/dm/"))
-            : location === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors relative"
-              style={{ color: isActive ? "var(--color-primary)" : undefined }}
-            >
-              {isActive && (
-                <span
-                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] rounded-b-full"
-                  style={{ background: "var(--color-primary)" }}
-                />
-              )}
-              <Icon className="w-[18px] h-[18px]" style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : { color: "rgba(148,163,184,0.7)" }} />
-              <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: isActive ? "var(--color-primary)" : "rgba(100,116,139,0.8)" }}>{item.label}</span>
-            </Link>
-          );
-        })}
-        <button
-          onClick={() => setMobileOpen(true)}
-          className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors"
-        >
-          <Menu className="w-[18px] h-[18px]" style={{ color: "rgba(148,163,184,0.7)" }} />
-          <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: "rgba(100,116,139,0.8)" }}>Menu</span>
-        </button>
+      <nav
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-white/[0.08] backdrop-blur-2xl"
+        style={{ background: "rgba(2,6,18,0.90)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <div className="flex items-stretch" style={{ height: "60px" }}>
+          {([
+            { href: "/",           icon: Activity,       label: "Início" },
+            { href: "/consultas",  icon: Search,         label: "Busca"  },
+            { href: "/ia",         icon: Bot,            label: "IA"     },
+            { href: "/comunidade", icon: MessageCircle,  label: "Chat"   },
+          ] as const).map((item) => {
+            const Icon = item.icon;
+            const isActive = item.href === "/comunidade"
+              ? (location === "/comunidade" || location.startsWith("/dm/"))
+              : location === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors relative"
+                style={{ color: isActive ? "var(--color-primary)" : undefined }}
+              >
+                {isActive && (
+                  <span
+                    className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] rounded-b-full"
+                    style={{ background: "var(--color-primary)" }}
+                  />
+                )}
+                <Icon className="w-[18px] h-[18px]" style={isActive ? { filter: "drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 80%, transparent))" } : { color: "rgba(148,163,184,0.7)" }} />
+                <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: isActive ? "var(--color-primary)" : "rgba(100,116,139,0.8)" }}>{item.label}</span>
+              </Link>
+            );
+          })}
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-colors"
+          >
+            <Menu className="w-[18px] h-[18px]" style={{ color: "rgba(148,163,184,0.7)" }} />
+            <span className="text-[9px] uppercase tracking-[0.25em] font-bold" style={{ color: "rgba(100,116,139,0.8)" }}>Menu</span>
+          </button>
+        </div>
       </nav>
 
-      <main className={`flex-1 h-screen z-10 pt-14 lg:pt-0 pb-[76px] lg:pb-0 ${isChatPage ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
+      <main className={`flex-1 h-screen z-10 mobile-main lg:pt-0 lg:pb-0 ${isChatPage ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
         {/* Expiry warning banner */}
         <AnimatePresence>
           {expiryWarningDays !== null && !expiryDismissed && (
