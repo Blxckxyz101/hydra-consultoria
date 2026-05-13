@@ -596,15 +596,36 @@ export default function Landing() {
       </section>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-white/5 px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-muted-foreground/50">
-        <div className="flex items-center gap-2">
-          <img src={logoUrl} alt="Hydra" className="w-5 h-5 object-contain opacity-60" />
-          <span>© {new Date().getFullYear()} Hydra Consultoria. Todos os direitos reservados.</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <a href="https://t.me/hydraconsultoria" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Suporte</a>
-          <Link href="/login" className="hover:text-foreground transition-colors">Login</Link>
-          <Link href="/registro" className="hover:text-foreground transition-colors">Cadastro</Link>
+      <footer className="border-t border-white/10 px-6 py-10">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-2.5">
+            <img src={logoUrl} alt="Hydra" className="w-6 h-6 object-contain opacity-70" />
+            <div>
+              <div className="text-xs font-bold text-foreground/80 tracking-wider">Hydra Consultoria</div>
+              <div className="text-[10px] text-muted-foreground/50">© {new Date().getFullYear()} · Todos os direitos reservados.</div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs">
+            <a
+              href="https://t.me/hydraconsultoria"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-sky-400 transition-colors"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              Suporte via Telegram
+            </a>
+            <Link href="/comunidade" className="flex items-center gap-1.5 text-muted-foreground hover:text-sky-400 transition-colors">
+              <Users className="w-3.5 h-3.5" />
+              Comunidade
+            </Link>
+            <Link href="/login" className="text-muted-foreground hover:text-foreground transition-colors">
+              Login
+            </Link>
+            <Link href="/registro" className="text-muted-foreground hover:text-foreground transition-colors">
+              Cadastro
+            </Link>
+          </div>
         </div>
       </footer>
     </div>
