@@ -6,7 +6,7 @@ import logoUrl from "@/assets/hydra-icon.jpg";
 import {
   Search, Shield, Car, Building2, Scale, Camera,
   ArrowRight, CheckCircle2, Zap, Lock, Users,
-  Clock, Crown, Flame, Star, ChevronRight, Quote, ChevronDown,
+  MessageCircle, Crown, Flame, Star, ChevronRight, Quote, ChevronDown,
 } from "lucide-react";
 
 const STATS = [
@@ -300,6 +300,9 @@ export default function Landing() {
               </button>
             </Link>
           </div>
+          <a href="#planos" className="flex items-center gap-1.5 text-xs text-muted-foreground/60 hover:text-sky-400 transition-colors mt-2">
+            Ver todos os planos <ChevronRight className="w-3 h-3" />
+          </a>
         </motion.div>
 
         {/* Stats */}
@@ -444,7 +447,7 @@ export default function Landing() {
       </section>
 
       {/* ── Pricing ── */}
-      <section className="px-6 py-20 max-w-5xl mx-auto">
+      <section id="planos" className="px-6 py-20 max-w-5xl mx-auto">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-black mb-3" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.08em" }}>
             PLANOS
@@ -584,7 +587,7 @@ export default function Landing() {
             </Link>
             <a href="https://t.me/hydraconsultoria" target="_blank" rel="noopener noreferrer">
               <button className="flex items-center gap-2 px-6 py-4 rounded-2xl font-medium text-sm text-muted-foreground hover:text-foreground border border-white/10 hover:border-white/20 transition-all">
-                <Clock className="w-4 h-4" />
+                <MessageCircle className="w-4 h-4" />
                 Falar com suporte
               </button>
             </a>
