@@ -777,7 +777,8 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
   try {
     const { status, body: text } = await httpGet(url, signal);
     if (status < 200 || status >= 300) {
-      geassCircuit.recordFailure();
+      // Only trip circuit on server errors (5xx) or connection-level failures — NOT 4xx (client errors mean API is up)
+      if (status >= 500) geassCircuit.recordFailure();
       return { ok: false, http: status, error: `Provedor HTTP ${status}`, raw: text.slice(0, 1000) };
     }
     let json: { status?: string; resposta?: string; criador?: string };

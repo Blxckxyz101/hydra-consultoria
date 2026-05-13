@@ -506,21 +506,106 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
   const otherFields    = displayFields.filter(f => !headlineFields.includes(f));
 
   const exportText = useMemo(() => {
-    const lines = [`═══ HYDRA CONSULTORIA ═══`, `Tipo: ${tipo.toUpperCase()}`, `Data: ${new Date().toLocaleString("pt-BR")}`, ``];
+    const MODULE_LABELS_TXT: Record<string,string> = {
+      processo:"Processo Judicial",processos:"Processos Judiciais",mandado:"Mandado de Prisão",
+      cpf:"CPF Completo",cpfbasico:"CPF Básico",cpffull:"CPF Full",nome:"Busca por Nome",
+      telefone:"Telefone",email:"Email",placa:"Placa",cnpj:"CNPJ",foto:"Foto Biométrica",
+      biometria:"Biometria",score:"Score de Crédito",score2:"Score Bureau",irpf:"IRPF",
+      beneficios:"Benefícios Sociais",spc:"SPC / Negativação",parentes:"Parentes",
+      endereco:"Endereço",rg:"RG",cnh:"CNH",cnhfull:"CNH Completo",
+      advogadooab:"Advogado por OAB",oab:"Registro OAB",cheque:"Cheques sem Fundos",
+      certidoes:"Certidões",dividas:"Dívidas",bens:"Bens Registrados",
+    };
+    const moduleTitleTxt = MODULE_LABELS_TXT[tipo] || tipo.toUpperCase();
+    const SEP = "═".repeat(54);
+    const LEGAL_TIPOS_TXT = new Set(["processo","processos","mandado","advogadooab","advogadooabuf","advogadocpf","oab"]);
+    const PRO_PREFIXES = ["Dados Processo","Assuntos","Classes","Partes","Movimentos","Tramitacoes","Representantes"];
+    const PRO_LABELS: Record<string,string> = {
+      "Dados Processo":"DADOS DO PROCESSO","Assuntos":"ASSUNTOS","Classes":"CLASSES",
+      "Partes":"PARTES","Movimentos":"MOVIMENTOS","Tramitacoes":"TRAMITAÇÕES","Representantes":"REPRESENTANTES",
+    };
+    const getProPrefix = (k: string) => PRO_PREFIXES.find(p => k.startsWith(p)) ?? "Geral";
+
+    const formatProcessoItem = (item: string, idx: number, total: number): string[] => {
+      const pairs = item.split(" · ").map(p => {
+        const ci = p.indexOf(": ");
+        return ci === -1 ? { k: p.trim(), v: "" } : { k: p.slice(0, ci).trim(), v: p.slice(ci + 2).trim() };
+      }).filter(p => p.k);
+      const groups = new Map<string, Array<{sub: string; v: string}>>();
+      const order: string[] = [];
+      for (const { k, v } of pairs) {
+        const pre = getProPrefix(k);
+        if (!groups.has(pre)) { groups.set(pre, []); order.push(pre); }
+        groups.get(pre)!.push({ sub: k.replace(new RegExp(`^${pre}\\s*`), "").trim() || k, v });
+      }
+      const lines: string[] = [];
+      if (total > 1) lines.push(`  ┌── Registro ${idx + 1} de ${total} ${"─".repeat(28)}`);
+      for (const pre of order) {
+        const entries = groups.get(pre)!;
+        const label = PRO_LABELS[pre] || pre.toUpperCase();
+        const isRepeat = ["Partes","Movimentos","Representantes"].includes(pre);
+        if (isRepeat) {
+          const subRecs: Array<Array<{sub: string; v: string}>> = [[]];
+          const seen = new Set<string>();
+          for (const e of entries) {
+            if (seen.has(e.sub)) { subRecs.push([]); seen.clear(); }
+            seen.add(e.sub); subRecs[subRecs.length - 1].push(e);
+          }
+          lines.push(`  │  ─ ${label} (${subRecs.length})`);
+          subRecs.forEach((sr, ri) => {
+            if (subRecs.length > 1) lines.push(`  │    • ${pre.replace(/s$/, "")} ${ri + 1}:`);
+            sr.forEach(({ sub, v }) => lines.push(`  │      ${sub}: ${v}`));
+          });
+        } else {
+          lines.push(`  │  ─ ${label}`);
+          entries.forEach(({ sub, v }) => lines.push(`  │    ${sub}: ${v}`));
+        }
+        lines.push("  │");
+      }
+      if (total > 1) lines.push("  └" + "─".repeat(44));
+      return lines;
+    };
+
+    const lines = [SEP, `  HYDRA CONSULTORIA — ${moduleTitleTxt}`, `  Consulta: ${query || "—"}`, `  Data: ${new Date().toLocaleString("pt-BR")}`, SEP, ""];
     parsed.fields.forEach(f => {
-      if (f.key === "FOTO_URL" && f.value.startsWith("data:image")) lines.push(`${f.key}: [imagem base64]`);
-      else lines.push(`${f.key}: ${f.value}`);
+      if (f.key === "FOTO_URL" && f.value.startsWith("data:image")) lines.push(`  FOTO_URL: [imagem base64]`);
+      else lines.push(`  ${f.key}: ${f.value}`);
     });
-    parsed.sections.forEach(s => { lines.push(""); lines.push(`━ ${s.name} (${s.items.length}) ━`); s.items.forEach(it => lines.push(`  • ${it}`)); });
-    lines.push(""); lines.push("Hydra Consultoria");
+    if (parsed.fields.length > 0) lines.push("");
+    parsed.sections.forEach(s => {
+      const bar = "━".repeat(Math.max(0, 46 - s.name.length));
+      lines.push(`━━ ${s.name} (${s.items.length}) ${bar}`);
+      lines.push("");
+      const isLegalSec = LEGAL_TIPOS_TXT.has(tipo) && s.items.length > 0 && s.items[0].includes(" · ");
+      if (isLegalSec) {
+        s.items.forEach((it, i) => formatProcessoItem(it, i, s.items.length).forEach(l => lines.push(l)));
+      } else {
+        s.items.forEach(it => lines.push(`  • ${it}`));
+      }
+      lines.push("");
+    });
+    lines.push(SEP);
+    lines.push("  Hydra Consultoria — hydraconsultoria.com");
+    lines.push(SEP);
     return lines.join("\n");
-  }, [parsed, tipo]);
+  }, [parsed, tipo, query]);
 
   const downloadTxt = () => {
     const blob = new Blob([exportText], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `infinity-${tipo}-${Date.now()}.txt`; a.click();
+    const MODULE_LABELS_FILE: Record<string,string> = {
+      processo:"Processo_Judicial",processos:"Processos_Judiciais",mandado:"Mandado_de_Prisao",
+      cpf:"CPF_Completo",cpfbasico:"CPF_Basico",cpffull:"CPF_Full",nome:"Busca_Nome",
+      telefone:"Telefone",email:"Email",placa:"Placa",cnpj:"CNPJ",foto:"Foto_Biometrica",
+      biometria:"Biometria",score:"Score",rg:"RG",cnh:"CNH",cnhfull:"CNH_Completo",
+      advogadooab:"Advogado_OAB",oab:"OAB",cheque:"Cheques",certidoes:"Certidoes",
+      dividas:"Dividas",bens:"Bens",irpf:"IRPF",beneficios:"Beneficios",spc:"SPC",
+    };
+    const labelFile = MODULE_LABELS_FILE[tipo] || tipo.toUpperCase();
+    const cleanQ = (query || "consulta").replace(/[^a-zA-Z0-9\u00C0-\u024F]/g, "_").replace(/_+/g, "_").slice(0, 30);
+    const dateFile = new Date().toLocaleDateString("pt-BR").replace(/\//g, "-");
+    a.href = url; a.download = `Hydra_${labelFile}_${cleanQ}_${dateFile}.txt`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -539,7 +624,7 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     const isPhoto   = PHOTO_TIPOS.has(tipo);
 
     const theme = isLegal
-      ? { primary:"#b91c1c", light:"#fef2f2", mid:"#fca5a5", dark:"#7f1d1d", border:"#fecaca", accent:"#dc2626", tag:"Jurídico / Processos", icon:"⚖" }
+      ? { primary:"#1d4ed8", light:"#eff6ff", mid:"#93c5fd", dark:"#1e3a8a", border:"#bfdbfe", accent:"#3b82f6", tag:"Jurídico / Processos", icon:"" }
       : isVehicle
       ? { primary:"#c2410c", light:"#fff7ed", mid:"#fdba74", dark:"#7c2d12", border:"#fed7aa", accent:"#ea580c", tag:"Veicular", icon:"🚗" }
       : isCompany
@@ -580,6 +665,53 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
         </table>
       </section>`;
 
+    // ── Processo item structured parser for PDF ────────────────────────────────
+    const PRO_PREFIXES_PDF = ["Dados Processo","Assuntos","Classes","Partes","Movimentos","Tramitacoes","Representantes"];
+    const PRO_LABELS_PDF: Record<string,string> = {
+      "Dados Processo":"Dados do Processo","Assuntos":"Assuntos","Classes":"Classes",
+      "Partes":"Partes","Movimentos":"Movimentos","Tramitacoes":"Tramitações","Representantes":"Representantes",
+    };
+    const getProPrefixPdf = (k: string) => PRO_PREFIXES_PDF.find(p => k.startsWith(p)) ?? "Geral";
+
+    const renderProcessoItemHtml = (item: string, idx: number, total: number): string => {
+      const pairs = item.split(" · ").map(p => {
+        const ci = p.indexOf(": ");
+        return ci === -1 ? { k: p.trim(), v: "" } : { k: p.slice(0, ci).trim(), v: p.slice(ci + 2).trim() };
+      }).filter(p => p.k);
+      const groups = new Map<string, Array<{sub: string; v: string}>>();
+      const order: string[] = [];
+      for (const { k, v } of pairs) {
+        const pre = getProPrefixPdf(k);
+        if (!groups.has(pre)) { groups.set(pre, []); order.push(pre); }
+        groups.get(pre)!.push({ sub: k.replace(new RegExp(`^${pre}\\s*`), "").trim() || k, v });
+      }
+      let html = `<div class="processo-rec">`;
+      if (total > 1) html += `<div class="rec-num">Registro ${idx + 1} de ${total}</div>`;
+      for (const pre of order) {
+        const entries = groups.get(pre)!;
+        const label = PRO_LABELS_PDF[pre] || pre;
+        const isRepeat = ["Partes","Movimentos","Representantes"].includes(pre);
+        html += `<div class="pro-group"><div class="pro-group-hdr">${label}</div>`;
+        if (isRepeat) {
+          const subRecs: Array<Array<{sub: string; v: string}>> = [[]];
+          const seen = new Set<string>();
+          for (const e of entries) {
+            if (seen.has(e.sub)) { subRecs.push([]); seen.clear(); }
+            seen.add(e.sub); subRecs[subRecs.length - 1].push(e);
+          }
+          subRecs.forEach((sr, ri) => {
+            if (subRecs.length > 1) html += `<div class="sub-rec-sep">${pre.replace(/s$/, "")} ${ri + 1}</div>`;
+            html += `<table class="pro-tbl">${sr.map(({ sub, v }) => `<tr><td class="ptk">${sub}</td><td class="ptv">${v || "—"}</td></tr>`).join("")}</table>`;
+          });
+        } else {
+          html += `<table class="pro-tbl">${entries.map(({ sub, v }) => `<tr><td class="ptk">${sub}</td><td class="ptv">${v || "—"}</td></tr>`).join("")}</table>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+      return html;
+    };
+
     // Sections rendered with appropriate styling
     const sectionsHtml = parsed.sections.map(s => {
       const isLegalSec = /processo|mandado|crime|judicial|prisão|pena|delito/i.test(s.name);
@@ -587,16 +719,18 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
       const isDivida   = /dívida|debito|fgts|bacen/i.test(s.name);
       const isBem      = /\bbem\b|\bimóvel\b|\bimóv|terreno|veículo registr/i.test(s.name);
       const secClass = isLegalSec ? "sec-legal" : isCheque ? "sec-cheque" : isDivida ? "sec-divida" : isBem ? "sec-bem" : "sec-normal";
-      const secIcon  = isLegalSec ? "⚠" : isCheque ? "🏦" : isDivida ? "💳" : isBem ? "🏠" : "▸";
+      const isStructured = isLegalSec && s.items.length > 0 && s.items[0].includes(" · ");
+      const itemsHtml = isStructured
+        ? s.items.map((it, i) => renderProcessoItemHtml(it, i, s.items.length)).join("")
+        : s.items.map(it => `<div class="sec-item">${it}</div>`).join("");
       return `
         <section class="card sec-card ${secClass}">
           <div class="card-header">
-            <span class="card-icon">${secIcon}</span>
-            ${s.name}
+            <span class="sec-hdr-name">${s.name}</span>
             <span class="badge">${s.items.length}</span>
           </div>
-          <div class="sec-items">
-            ${s.items.map(it => `<div class="sec-item">${it}</div>`).join("")}
+          <div class="sec-items${isStructured ? " sec-structured" : ""}">
+            ${itemsHtml}
           </div>
         </section>`;
     }).join("");
@@ -613,7 +747,9 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 /* Cover band */
 .cover{background:linear-gradient(135deg,${theme.dark} 0%,${theme.primary} 100%);color:#fff;padding:28px 36px 24px;display:flex;justify-content:space-between;align-items:flex-start}
 .cover-left{}
-.cover-logo{font-size:10px;font-weight:700;letter-spacing:.5em;text-transform:uppercase;opacity:.7;margin-bottom:6px}
+.cover-logo-wrap{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.cover-logo-img{width:34px;height:34px;object-fit:contain;filter:brightness(10) saturate(0);opacity:.85}
+.cover-logo-text{font-size:10px;font-weight:700;letter-spacing:.45em;text-transform:uppercase;opacity:.75}
 .cover-title{font-size:22px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
 .cover-subtitle{font-size:11px;opacity:.65;letter-spacing:1px}
 .cover-right{text-align:right;font-size:11px;line-height:2;opacity:.85}
@@ -649,8 +785,9 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 
 /* Section cards */
 .sec-card .card-header{background:${theme.light}}
-.sec-legal .card-header{background:#fef2f2;color:#991b1b;border-color:#fecaca}
-.sec-legal .badge{background:#b91c1c}
+.sec-hdr-name{flex:1}
+.sec-legal .card-header{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
+.sec-legal .badge{background:#1d4ed8}
 .sec-cheque .card-header{background:#fffbeb;color:#92400e;border-color:#fde68a}
 .sec-cheque .badge{background:#d97706}
 .sec-divida .card-header{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
@@ -658,11 +795,25 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 .sec-bem .card-header{background:#f0fdf4;color:#166534;border-color:#bbf7d0}
 .sec-bem .badge{background:#16a34a}
 .sec-items{padding:10px 14px;display:flex;flex-direction:column;gap:6px}
-.sec-item{font-size:12px;font-family:"Courier New",monospace;background:#f8fafc;border-left:3px solid ${theme.border};padding:6px 10px;border-radius:3px;word-break:break-all;line-height:1.5}
-.sec-legal .sec-item{background:#fff5f5;border-left-color:#fca5a5}
+.sec-items.sec-structured{padding:0}
+.sec-item{font-size:12px;font-family:"Courier New",monospace;background:#f8fafc;border-left:3px solid ${theme.border};padding:6px 10px;border-radius:3px;word-break:break-word;line-height:1.5}
+.sec-legal .sec-item{background:#eff6ff;border-left-color:#93c5fd}
 .sec-cheque .sec-item{background:#fffbeb;border-left-color:#fcd34d}
 .sec-divida .sec-item{background:#fff7ed;border-left-color:#fdba74}
 .sec-bem .sec-item{background:#f0fdf4;border-left-color:#86efac}
+
+/* Processo structured records */
+.processo-rec{border-bottom:2px solid #e2e8f0}
+.processo-rec:last-child{border-bottom:none}
+.rec-num{background:#1d4ed8;color:#fff;padding:6px 14px;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase}
+.pro-group{border-top:1px solid #e2e8f0}
+.pro-group-hdr{background:#eff6ff;color:#1e40af;padding:5px 14px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #bfdbfe}
+.pro-tbl{width:100%;border-collapse:collapse}
+.pro-tbl tr{border-bottom:1px solid #f1f5f9}
+.pro-tbl tr:last-child{border-bottom:none}
+.ptk{padding:5px 10px 5px 14px;font-weight:600;color:#1e40af;font-size:10.5px;width:36%;white-space:normal;vertical-align:top}
+.ptv{padding:5px 14px 5px 8px;color:#0f172a;font-size:11.5px;word-break:break-word;vertical-align:top}
+.sub-rec-sep{background:#dbeafe;color:#1e3a8a;padding:4px 14px;font-size:10px;font-weight:600;border-top:1px solid #bfdbfe}
 
 /* Footer */
 .footer{margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px}
@@ -680,12 +831,15 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 
 <div class="cover">
   <div class="cover-left">
-    <div class="cover-logo">⚔ Hydra Consultoria — Sistema OSINT</div>
+    <div class="cover-logo-wrap">
+      <img src="/hydra-icon.png" class="cover-logo-img" onerror="this.style.display='none'" />
+      <span class="cover-logo-text">Hydra Consultoria — Sistema OSINT</span>
+    </div>
     <div class="cover-title">${moduleTitle}</div>
     <div class="cover-subtitle">Relatório de Inteligência Digital · Confidencial</div>
   </div>
   <div class="cover-right">
-    <div class="cover-type">${theme.icon} ${theme.tag}</div><br>
+    <div class="cover-type">${theme.tag}</div><br>
     <div><strong>Consulta:</strong> ${query || "—"}</div>
     <div><strong>Data:</strong> ${date}</div>
     <div><strong>Protocolo:</strong> ${protocol}</div>
@@ -818,7 +972,7 @@ ${sectionsHtml}
             <button onClick={downloadTxt} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors shrink-0">
               <Download className="w-3 h-3" /> TXT
             </button>
-            <button onClick={downloadPdf} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-rose-400 transition-colors shrink-0">
+            <button onClick={downloadPdf} className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-blue-400 transition-colors shrink-0">
               <FileText className="w-3 h-3" /> PDF
             </button>
             <CopyButton text={exportText} label="Copiar" />

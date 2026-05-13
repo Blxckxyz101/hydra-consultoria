@@ -1723,18 +1723,20 @@ export function CpfFullPanel({ cpf }: Props) {
   const hasObito     = mResults["obito"]?.status === "done" && ((mResults["obito"]?.data?.fields.length ?? 0) > 0 || /falecido|obito|óbito/i.test(mResults["obito"]?.data?.raw ?? ""));
   const hasLegal     = ["processos","mandado"].some(k => mResults[k]?.status === "done" && ((mResults[k]?.data?.sections?.length ?? 0) > 0 || (mResults[k]?.data?.fields.length ?? 0) > 0));
   const hasParentes  = relatives.length > 0 || !!(identityFull.mae) || !!(identityFull.pai);
-  const extras       = (["irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
+  const extras       = (["cpf","cpfbasico","irpf","beneficios","dividas","bens","titulo","spc"] as const).filter(k =>
     mResults[k]?.status === "done" && mResults[k]?.data &&
     ((mResults[k]!.data!.fields.length > 0) || (mResults[k]!.data!.sections.length > 0) || mResults[k]!.data!.raw.length > 20)
   );
 
   const extraLabels: Record<string, { label: string; icon: IconProp }> = {
-    irpf:      { label: "IRPF / Imposto de Renda", icon: Receipt },
-    beneficios:{ label: "Benefícios Sociais",       icon: Gift },
-    dividas:   { label: "Dívidas",                  icon: Wallet },
-    bens:      { label: "Bens Registrados",         icon: Building2 },
-    titulo:    { label: "Título de Eleitor",         icon: Award },
-    spc:       { label: "SPC / Negativação",         icon: AlertTriangle },
+    cpf:       { label: "CPF Completo (Dados Cadastrais)", icon: IdCard },
+    cpfbasico: { label: "CPF Básico (Receita Federal)",    icon: IdCard },
+    irpf:      { label: "IRPF / Imposto de Renda",        icon: Receipt },
+    beneficios:{ label: "Benefícios Sociais",              icon: Gift },
+    dividas:   { label: "Dívidas",                         icon: Wallet },
+    bens:      { label: "Bens Registrados",                icon: Building2 },
+    titulo:    { label: "Título de Eleitor",               icon: Award },
+    spc:       { label: "SPC / Negativação",               icon: AlertTriangle },
   };
 
   const noData = done && !hasIdentity && !phones.length && !addresses.length && !relatives.length;
