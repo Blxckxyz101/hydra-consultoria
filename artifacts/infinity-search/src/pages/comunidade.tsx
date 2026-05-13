@@ -874,7 +874,7 @@ export default function Comunidade() {
     wsRef.current = ws;
     ws.onopen = () => {
       setWsReady(true);
-      wsDelayRef.current = 1_500;
+      wsDelayRef.current = 500;
     };
     ws.onclose = () => {
       setWsReady(false);

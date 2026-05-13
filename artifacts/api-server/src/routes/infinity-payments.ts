@@ -29,8 +29,30 @@ export const PLANS: Plan[] = [
   { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, queryQuota: 500 },
 ];
 
+// ─── Runtime price overrides (admin-editable, persisted in DB) ───────────────
+const priceOverrides = new Map<string, number>();
+
+void (async () => {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS infinity_price_overrides (
+        id TEXT PRIMARY KEY,
+        amount_cents INTEGER NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    const result = await db.execute(sql`SELECT id, amount_cents FROM infinity_price_overrides`);
+    for (const row of (result as any).rows ?? []) {
+      priceOverrides.set(String(row.id), Number(row.amount_cents));
+    }
+  } catch { /* DB may not be ready on first boot; overrides will be empty */ }
+})();
+
 function getPlan(id: string): Plan | undefined {
-  return PLANS.find(p => p.id === id);
+  const base = PLANS.find(p => p.id === id);
+  if (!base) return undefined;
+  const ov = priceOverrides.get(id);
+  return ov !== undefined ? { ...base, amountCents: ov } : base;
 }
 
 // ─── Recharge Packs ───────────────────────────────────────────────────────────
@@ -52,7 +74,10 @@ export const RECHARGE_PACKS: RechargePack[] = [
 ];
 
 function getRechargePack(id: string): RechargePack | undefined {
-  return RECHARGE_PACKS.find(p => p.id === id);
+  const base = RECHARGE_PACKS.find(p => p.id === id);
+  if (!base) return undefined;
+  const ov = priceOverrides.get(id);
+  return ov !== undefined ? { ...base, amountCents: ov } : base;
 }
 
 // ─── Promst Pagamentos API ─────────────────────────────────────────────────────
@@ -94,28 +119,34 @@ function generateUserId(seed: string): number {
 
 // ─── GET /plans ───────────────────────────────────────────────────────────────
 router.get("/plans", (_req, res) => {
-  res.json(PLANS.map(p => ({
-    id: p.id,
-    label: p.label,
-    days: p.days,
-    amountCents: p.amountCents,
-    amountBrl: (p.amountCents / 100).toFixed(2),
-    queryQuota: p.queryQuota,
-    highlight: p.highlight ?? false,
-  })));
+  res.json(PLANS.map(p => {
+    const eff = getPlan(p.id)!;
+    return {
+      id: p.id,
+      label: p.label,
+      days: p.days,
+      amountCents: eff.amountCents,
+      amountBrl: (eff.amountCents / 100).toFixed(2),
+      queryQuota: p.queryQuota,
+      highlight: p.highlight ?? false,
+    };
+  }));
 });
 
 // ─── GET /recharges ───────────────────────────────────────────────────────────
 router.get("/recharges", (_req, res) => {
-  res.json(RECHARGE_PACKS.map(p => ({
-    id: p.id,
-    label: p.label,
-    credits: p.credits,
-    consultas: p.consultas,
-    amountCents: p.amountCents,
-    amountBrl: (p.amountCents / 100).toFixed(2),
-    highlight: p.highlight ?? false,
-  })));
+  res.json(RECHARGE_PACKS.map(p => {
+    const eff = getRechargePack(p.id)!;
+    return {
+      id: p.id,
+      label: p.label,
+      credits: p.credits,
+      consultas: p.consultas,
+      amountCents: eff.amountCents,
+      amountBrl: (eff.amountCents / 100).toFixed(2),
+      highlight: p.highlight ?? false,
+    };
+  }));
 });
 
 // ─── POST /recharges/create — buy credits (logged-in only) ───────────────────
@@ -199,6 +230,61 @@ router.post("/coupons/validate", requireAuth, async (req, res) => {
   if (!code) { res.status(400).json({ valid: false, error: "Código obrigatório." }); return; }
   const result = await validateCoupon(code);
   res.json(result);
+});
+
+// ─── Admin: coupon CRUD ────────────────────────────────────────────────────────
+
+// ─── Admin: price overrides ────────────────────────────────────────────────────
+
+router.get("/admin/prices", requireAdmin, (_req, res) => {
+  const plans = PLANS.map(p => ({
+    id: p.id,
+    label: p.label,
+    days: p.days,
+    defaultAmountCents: p.amountCents,
+    amountCents: priceOverrides.get(p.id) ?? p.amountCents,
+    queryQuota: p.queryQuota,
+    highlight: p.highlight ?? false,
+  }));
+  const recharges = RECHARGE_PACKS.map(p => ({
+    id: p.id,
+    label: p.label,
+    credits: p.credits,
+    consultas: p.consultas,
+    defaultAmountCents: p.amountCents,
+    amountCents: priceOverrides.get(p.id) ?? p.amountCents,
+    highlight: p.highlight ?? false,
+  }));
+  res.json({ plans, recharges });
+});
+
+router.patch("/admin/prices/:id", requireAdmin, async (req, res): Promise<void> => {
+  const id = (req.params as { id: string }).id;
+  const amountCents = Number((req.body as { amountCents?: unknown }).amountCents);
+  if (!Number.isInteger(amountCents) || amountCents < 1) {
+    res.status(400).json({ error: "amountCents deve ser um inteiro positivo" });
+    return;
+  }
+  const allIds = [...PLANS.map(p => p.id), ...RECHARGE_PACKS.map(p => p.id)];
+  if (!allIds.includes(id)) { res.status(404).json({ error: "ID inválido" }); return; }
+  priceOverrides.set(id, amountCents);
+  try {
+    await db.execute(sql`
+      INSERT INTO infinity_price_overrides (id, amount_cents, updated_at)
+      VALUES (${id}, ${amountCents}, now())
+      ON CONFLICT (id) DO UPDATE SET amount_cents = ${amountCents}, updated_at = now()
+    `);
+  } catch { /* if table doesn't exist yet, in-memory override still works */ }
+  res.json({ ok: true, id, amountCents });
+});
+
+router.delete("/admin/prices/:id", requireAdmin, async (req, res): Promise<void> => {
+  const id = (req.params as { id: string }).id;
+  priceOverrides.delete(id);
+  try {
+    await db.execute(sql`DELETE FROM infinity_price_overrides WHERE id = ${id}`);
+  } catch { /* ignore */ }
+  res.json({ ok: true });
 });
 
 // ─── Admin: coupon CRUD ────────────────────────────────────────────────────────

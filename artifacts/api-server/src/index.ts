@@ -193,6 +193,19 @@ const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
       ws.send(JSON.stringify({ type: "ready", username: user.username }));
     });
 
+    // Server-side heartbeat: ping all clients every 30s and drop dead sockets
+    const heartbeatInterval = setInterval(() => {
+      for (const [ws] of chatClients) {
+        if (ws.readyState !== 1) {
+          chatClients.delete(ws);
+          ws.terminate();
+        } else {
+          ws.ping();
+        }
+      }
+    }, 30_000);
+    wss.on("close", () => clearInterval(heartbeatInterval));
+
     // Prevent "other side closed" errors when clients (Discord bot, panel) reuse
     // HTTP keep-alive connections. Node.js defaults to 5s — too short for callers
     // that poll every 5-10s. Set to 65s (must be > any client-side idle timeout).

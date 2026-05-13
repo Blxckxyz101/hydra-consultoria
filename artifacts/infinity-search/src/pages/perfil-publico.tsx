@@ -246,7 +246,7 @@ export default function PerfilPublico() {
     fetch("/api/infinity/friends", { headers: authHeaders() })
       .then(r => r.json())
       .then((list: { id: number; username: string; status: string; direction: string }[]) => {
-        const f = list.find(x => x.username === username.toLowerCase());
+        const f = list.find(x => x.username.toLowerCase() === username.toLowerCase());
         if (!f) { setFriendStatus("none"); return; }
         setFriendId(f.id);
         if (f.status === "accepted") setFriendStatus("accepted");

@@ -184,8 +184,9 @@ export default function DM() {
   const [searchLoading, setSearchLoading] = useState(false);
 
   const [wsKey, setWsKey] = useState(0);
-  const wsDelayRef = useRef(1_500);
+  const wsDelayRef = useRef(500);
   const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadConvosTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -273,7 +274,8 @@ export default function DM() {
             const t = typingUserTimers.current.get(from);
             if (t) { clearTimeout(t); typingUserTimers.current.delete(from); }
           }
-          loadConvos();
+          if (loadConvosTimerRef.current) clearTimeout(loadConvosTimerRef.current);
+          loadConvosTimerRef.current = setTimeout(loadConvos, 800);
         }
         if (data.type === "reaction_update") {
           const { messageId, reactions } = data as { messageId: number; reactions: Reaction[] };
@@ -295,10 +297,11 @@ export default function DM() {
         }
       } catch {}
     };
-    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 25_000);
+    const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "ping" })); }, 20_000);
     return () => {
       clearInterval(ping);
       if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      if (loadConvosTimerRef.current) clearTimeout(loadConvosTimerRef.current);
       ws.onclose = null;
       ws.close();
       wsRef.current = null;

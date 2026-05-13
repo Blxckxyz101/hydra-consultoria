@@ -842,6 +842,66 @@ export default function Configuracoes() {
   const [couponFormOk, setCouponFormOk] = useState(false);
   const [couponFormLoading, setCouponFormLoading] = useState(false);
 
+  // ── Price override state ────────────────────────────────────────────────────
+  interface PriceItem { id: string; label: string; amountCents: number; defaultAmountCents: number; days?: number; queryQuota?: number; consultas?: number; credits?: number; highlight?: boolean }
+  const [priceData, setPriceData] = useState<{ plans: PriceItem[]; recharges: PriceItem[] } | null>(null);
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceEditing, setPriceEditing] = useState<Record<string, string>>({});
+  const [priceSaving, setPriceSaving] = useState<Record<string, boolean>>({});
+  const [priceMsgs, setPriceMsgs] = useState<Record<string, { ok: boolean; text: string }>>({});
+
+  const loadPrices = useCallback(async () => {
+    if (!isAdmin) return;
+    setPriceLoading(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch("/api/infinity/admin/prices", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) setPriceData(await r.json());
+    } catch {} finally { setPriceLoading(false); }
+  }, [isAdmin]);
+
+  useEffect(() => { void loadPrices(); }, [loadPrices]);
+
+  const handleSavePrice = async (id: string) => {
+    const rawVal = priceEditing[id] ?? "";
+    const cents = Math.round(parseFloat(rawVal.replace(",", ".")) * 100);
+    if (!Number.isFinite(cents) || cents < 1) {
+      setPriceMsgs(m => ({ ...m, [id]: { ok: false, text: "Valor inválido" } }));
+      return;
+    }
+    setPriceSaving(s => ({ ...s, [id]: true }));
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch(`/api/infinity/admin/prices/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ amountCents: cents }),
+      });
+      if (r.ok) {
+        setPriceMsgs(m => ({ ...m, [id]: { ok: true, text: "Salvo!" } }));
+        setPriceEditing(e => { const next = { ...e }; delete next[id]; return next; });
+        await loadPrices();
+        setTimeout(() => setPriceMsgs(m => { const next = { ...m }; delete next[id]; return next; }), 2500);
+      } else {
+        const j = await r.json() as { error?: string };
+        setPriceMsgs(m => ({ ...m, [id]: { ok: false, text: j.error ?? "Erro" } }));
+      }
+    } catch { setPriceMsgs(m => ({ ...m, [id]: { ok: false, text: "Erro de conexão" } })); }
+    finally { setPriceSaving(s => ({ ...s, [id]: false })); }
+  };
+
+  const handleResetPrice = async (id: string) => {
+    setPriceSaving(s => ({ ...s, [id]: true }));
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/admin/prices/${id}`, { method: "DELETE", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      setPriceMsgs(m => ({ ...m, [id]: { ok: true, text: "Restaurado!" } }));
+      setPriceEditing(e => { const next = { ...e }; delete next[id]; return next; });
+      await loadPrices();
+      setTimeout(() => setPriceMsgs(m => { const next = { ...m }; delete next[id]; return next; }), 2500);
+    } catch {} finally { setPriceSaving(s => ({ ...s, [id]: false })); }
+  };
+
   const loadCoupons = useCallback(async () => {
     if (!isAdmin) return;
     setCouponsLoading(true);
@@ -1296,6 +1356,153 @@ export default function Configuracoes() {
                 </div>
               )}
             </div>
+          </motion.div>
+
+          {/* ── Preços de Planos e Recargas ─────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.045 }}
+            className="rounded-2xl border border-cyan-500/20 bg-black/30 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center justify-between gap-2 mb-5 flex-wrap">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-cyan-400" />
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Preços de Planos &amp; Recargas</h2>
+              </div>
+              <button
+                onClick={() => void loadPrices()}
+                disabled={priceLoading}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-white hover:bg-white/5 transition-colors border border-transparent hover:border-white/10"
+                title="Atualizar"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${priceLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {priceLoading && !priceData ? (
+              <div className="text-xs text-muted-foreground text-center py-6">Carregando preços...</div>
+            ) : priceData ? (
+              <div className="space-y-5">
+                {/* Plans */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground mb-3 flex items-center gap-1.5">
+                    <Calendar className="w-3 h-3" /> Planos de Acesso
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {priceData.plans.map(plan => {
+                      const isModified = plan.amountCents !== plan.defaultAmountCents;
+                      const editVal = priceEditing[plan.id];
+                      const msg = priceMsgs[plan.id];
+                      return (
+                        <div key={plan.id} className={`rounded-xl border p-3 transition-colors ${isModified ? "border-cyan-500/30 bg-cyan-500/5" : "border-white/8 bg-black/20"}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <span className="text-xs font-bold text-white">{plan.label}</span>
+                              <span className="ml-2 text-[10px] text-muted-foreground">{plan.queryQuota} consultas</span>
+                              {isModified && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 uppercase tracking-wider">editado</span>}
+                            </div>
+                            <span className="text-xs font-bold text-emerald-400">R$ {(plan.amountCents / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={editVal ?? ""}
+                              placeholder={(plan.amountCents / 100).toFixed(2)}
+                              onChange={e => setPriceEditing(v => ({ ...v, [plan.id]: e.target.value }))}
+                              className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-cyan-400/50 transition-all"
+                            />
+                            <button
+                              onClick={() => void handleSavePrice(plan.id)}
+                              disabled={priceSaving[plan.id] || !editVal?.trim()}
+                              className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-500/25 transition-all disabled:opacity-40"
+                            >
+                              {priceSaving[plan.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            </button>
+                            {isModified && (
+                              <button
+                                onClick={() => void handleResetPrice(plan.id)}
+                                disabled={priceSaving[plan.id]}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-muted-foreground text-xs hover:text-white hover:border-white/20 transition-all disabled:opacity-40"
+                                title={`Restaurar padrão (R$ ${(plan.defaultAmountCents / 100).toFixed(2)})`}
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          {msg && (
+                            <p className={`text-[10px] mt-1.5 ${msg.ok ? "text-emerald-400" : "text-destructive"}`}>{msg.text}</p>
+                          )}
+                          {isModified && (
+                            <p className="text-[10px] text-muted-foreground/50 mt-1">Padrão: R$ {(plan.defaultAmountCents / 100).toFixed(2)}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Recharges */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.35em] text-muted-foreground mb-3 flex items-center gap-1.5">
+                    <Zap className="w-3 h-3" /> Pacotes de Recarga
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {priceData.recharges.map(pack => {
+                      const isModified = pack.amountCents !== pack.defaultAmountCents;
+                      const editVal = priceEditing[pack.id];
+                      const msg = priceMsgs[pack.id];
+                      return (
+                        <div key={pack.id} className={`rounded-xl border p-3 transition-colors ${isModified ? "border-cyan-500/30 bg-cyan-500/5" : "border-white/8 bg-black/20"}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <span className="text-xs font-bold text-white">{pack.label}</span>
+                              <span className="ml-2 text-[10px] text-muted-foreground">{pack.consultas} consultas</span>
+                              {isModified && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 uppercase tracking-wider">editado</span>}
+                            </div>
+                            <span className="text-xs font-bold text-emerald-400">R$ {(pack.amountCents / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={editVal ?? ""}
+                              placeholder={(pack.amountCents / 100).toFixed(2)}
+                              onChange={e => setPriceEditing(v => ({ ...v, [pack.id]: e.target.value }))}
+                              className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-cyan-400/50 transition-all"
+                            />
+                            <button
+                              onClick={() => void handleSavePrice(pack.id)}
+                              disabled={priceSaving[pack.id] || !editVal?.trim()}
+                              className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-500/25 transition-all disabled:opacity-40"
+                            >
+                              {priceSaving[pack.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            </button>
+                            {isModified && (
+                              <button
+                                onClick={() => void handleResetPrice(pack.id)}
+                                disabled={priceSaving[pack.id]}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-muted-foreground text-xs hover:text-white hover:border-white/20 transition-all disabled:opacity-40"
+                                title={`Restaurar padrão (R$ ${(pack.defaultAmountCents / 100).toFixed(2)})`}
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          {msg && (
+                            <p className={`text-[10px] mt-1.5 ${msg.ok ? "text-emerald-400" : "text-destructive"}`}>{msg.text}</p>
+                          )}
+                          {isModified && (
+                            <p className="text-[10px] text-muted-foreground/50 mt-1">Padrão: R$ {(pack.defaultAmountCents / 100).toFixed(2)}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </motion.div>
 
           {/* ── Novidades / Notifications ──────────────────────────────────── */}
