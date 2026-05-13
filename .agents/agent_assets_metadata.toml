@@ -30,6 +30,12 @@ uri = "file://attached_assets/hydra_novidades_post.png"
 type = "image"
 title = "hydra novidades post"
 
+[[generated]]
+id = "PTSbVscTfB2ORzIMwC0gC"
+uri = "file://attached_assets/hydra-novidades-banner.png"
+type = "image"
+title = "hydra consultoria novidades banner"
+
 [[outputs]]
 id = "a85vI9pYbZAWXxCRhEj7S"
 uri = "file://attached_assets/promo_hacker.png"
@@ -101,3 +107,9 @@ id = "tOrFQtoNenfb4z_UVe8xm"
 uri = "file://screenshots/login.jpg"
 type = "image"
 title = "Login — Hydra Consultoria"
+
+[[outputs]]
+id = "NimV8JoM1FLG8TXaYKrBt"
+uri = "file://attached_assets/hydra-novidades-banner.png"
+type = "image"
+title = "Banner — Hydra Consultoria Novidades"
