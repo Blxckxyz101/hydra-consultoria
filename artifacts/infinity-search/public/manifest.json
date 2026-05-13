@@ -4,26 +4,26 @@
   "description": "Plataforma brasileira de inteligência OSINT. Consultas de CPF, veículos, empresas, processos e muito mais.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#000000",
+  "background_color": "#06091a",
   "theme_color": "#06091a",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/hydra-icon.jpg",
+      "src": "/hydra-icon.png",
       "sizes": "192x192",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/hydra-icon.jpg",
+      "src": "/hydra-icon.png",
       "sizes": "512x512",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/hydra-icon.jpg",
+      "src": "/hydra-icon.png",
       "sizes": "512x512",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "maskable"
     }
   ],
