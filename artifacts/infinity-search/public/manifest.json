@@ -9,18 +9,25 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/hydra-icon.png",
+      "src": "/hydra-icon.jpg",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/jpeg",
+      "purpose": "any"
     },
     {
-      "src": "/hydra-icon.png",
+      "src": "/hydra-icon.jpg",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/hydra-logo.jpg",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ],
+  "screenshots": [],
   "categories": ["productivity", "utilities"],
   "lang": "pt-BR"
 }

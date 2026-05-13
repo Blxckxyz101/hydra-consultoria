@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
-import { MessageCircle, ExternalLink, Bell, Sparkles, Image as ImageIcon, RefreshCw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { MessageCircle, ExternalLink, Bell, Sparkles, Image as ImageIcon, RefreshCw, Smartphone, Apple, ChevronDown } from "lucide-react";
 
 
 interface InfinityNotif {
@@ -113,6 +113,133 @@ function UpdateCard({ notif, idx }: { notif: InfinityNotif; idx: number }) {
           </span>
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+const IOS_STEPS = [
+  { icon: "⬆️", title: 'Toque em "Compartilhar"', desc: 'Na barra inferior do Safari, toque no ícone de compartilhar (quadrado com seta para cima).' },
+  { icon: "📋", title: '"Adicionar à Tela de Início"', desc: 'Role para baixo no menu e toque em "Adicionar à Tela de Início".' },
+  { icon: "✅", title: "Confirme o nome", desc: 'O nome "Hydra" já vem preenchido. Toque em "Adicionar" no canto superior direito.' },
+  { icon: "🚀", title: "Pronto!", desc: "O ícone da Hydra aparece na sua tela de início. Abra como um app nativo!" },
+];
+
+const ANDROID_STEPS = [
+  { icon: "⋮", title: "Abra o menu do Chrome", desc: 'Toque nos três pontinhos (⋮) no canto superior direito do Chrome.' },
+  { icon: "📲", title: '"Adicionar à tela inicial"', desc: 'Toque em "Adicionar à tela inicial" ou "Instalar app".' },
+  { icon: "✅", title: "Confirme a instalação", desc: 'Toque em "Adicionar" ou "Instalar" na caixa de diálogo.' },
+  { icon: "🚀", title: "Pronto!", desc: "A Hydra aparece na sua tela inicial e funciona offline como um app completo!" },
+];
+
+function PwaInstallGuide() {
+  const [tab, setTab] = useState<"ios" | "android">("android");
+  const [open, setOpen] = useState(false);
+
+  const steps = tab === "ios" ? IOS_STEPS : ANDROID_STEPS;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.18 }}
+      className="rounded-2xl border border-white/8 bg-black/20 backdrop-blur-xl overflow-hidden"
+      style={{ borderColor: "rgba(56,189,248,0.18)", background: "rgba(56,189,248,0.03)" }}
+    >
+      <button
+        className="w-full flex items-center gap-4 p-5 text-left"
+        onClick={() => setOpen(v => !v)}
+      >
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.25)" }}>
+          <Smartphone className="w-5 h-5" style={{ color: "#38bdf8" }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-sm text-foreground">Instalar o App no Celular</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Adicione a Hydra à tela inicial — funciona como um app nativo</p>
+        </div>
+        <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }}>
+          <ChevronDown className="w-4 h-4 text-muted-foreground/60" />
+        </motion.div>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 pb-5">
+              <div className="border-t border-white/8 mb-4" />
+
+              {/* OS selector */}
+              <div className="flex gap-2 mb-5">
+                <button
+                  onClick={() => setTab("android")}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all"
+                  style={tab === "android"
+                    ? { background: "rgba(56,189,248,0.15)", border: "1px solid rgba(56,189,248,0.40)", color: "#38bdf8" }
+                    : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#888" }
+                  }
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.523 15.341c-.31 0-.563-.252-.563-.563V9.832c0-.311.252-.563.563-.563s.563.252.563.563v4.946c0 .311-.252.563-.563.563zm-11.046 0c-.311 0-.563-.252-.563-.563V9.832c0-.311.252-.563.563-.563s.563.252.563.563v4.946c0 .311-.252.563-.563.563zM8.443 5.247l-.892-1.595a.187.187 0 0 0-.256-.068.187.187 0 0 0-.068.256l.903 1.614A5.515 5.515 0 0 0 5.887 8.58h12.226a5.515 5.515 0 0 0-2.243-3.126l.903-1.614a.187.187 0 0 0-.068-.256.187.187 0 0 0-.256.068l-.892 1.595A5.483 5.483 0 0 0 12 4.772a5.483 5.483 0 0 0-3.557 1.475zM9.75 7.313a.563.563 0 1 1 0-1.126.563.563 0 0 1 0 1.126zm4.5 0a.563.563 0 1 1 0-1.126.563.563 0 0 1 0 1.126zM5.887 9.143v7.313c0 .623.508 1.125 1.131 1.125h.844v2.532c0 .623.508 1.125 1.125 1.125s1.125-.502 1.125-1.125v-2.532h3.776v2.532c0 .623.508 1.125 1.125 1.125s1.125-.502 1.125-1.125v-2.532h.844c.623 0 1.131-.502 1.131-1.125V9.143H5.887z"/>
+                  </svg>
+                  Android (Chrome)
+                </button>
+                <button
+                  onClick={() => setTab("ios")}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all"
+                  style={tab === "ios"
+                    ? { background: "rgba(56,189,248,0.15)", border: "1px solid rgba(56,189,248,0.40)", color: "#38bdf8" }
+                    : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "#888" }
+                  }
+                >
+                  <Apple className="w-4 h-4" />
+                  iPhone (Safari)
+                </button>
+              </div>
+
+              {/* Steps */}
+              <div className="space-y-3">
+                {steps.map((step, i) => (
+                  <motion.div
+                    key={`${tab}-${i}`}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.06 * i, duration: 0.2 }}
+                    className="flex items-start gap-3"
+                  >
+                    <div className="flex flex-col items-center shrink-0">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg"
+                        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        {step.icon}
+                      </div>
+                      {i < steps.length - 1 && (
+                        <div className="w-px h-3 mt-1" style={{ background: "rgba(255,255,255,0.08)" }} />
+                      )}
+                    </div>
+                    <div className="pb-1">
+                      <p className="text-sm font-semibold text-foreground leading-tight">{step.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{step.desc}</p>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-white/8">
+                <p className="text-[11px] text-muted-foreground/50 text-center">
+                  {tab === "ios"
+                    ? "⚠️ Apenas Safari suporta instalação no iPhone. Não funciona via Chrome no iOS."
+                    : "💡 Também funciona via Firefox e Samsung Internet no Android."}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -292,6 +419,9 @@ export default function Suporte() {
           </p>
         </div>
       </motion.div>
+
+      {/* PWA Install Guide */}
+      <PwaInstallGuide />
 
       {/* Updates section */}
       <div id="updates">

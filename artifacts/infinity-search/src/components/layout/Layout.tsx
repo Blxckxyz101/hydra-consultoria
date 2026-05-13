@@ -3,7 +3,7 @@ import { Activity, Search, Bot, LogOut, ChevronRight, Menu, X, FolderOpen, Messa
 import { useInfinityMe, useInfinityLogout, getInfinityMeQueryKey } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 
-import logoUrl from "@/assets/hydra-icon.png";
+import logoUrl from "@/assets/hydra-icon.jpg";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState, useRef, useCallback } from "react";

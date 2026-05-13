@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
-import logoUrl from "@/assets/hydra-icon.png";
+import logoUrl from "@/assets/hydra-icon.jpg";
 import {
   Search, Shield, Car, Building2, Scale, Camera,
   ArrowRight, CheckCircle2, Zap, Lock, Users,
