@@ -15,10 +15,10 @@ kind = "web"
   localPort = 22153
 
   [services.development]
-  run = "pnpm --filter @workspace/infinity-search run dev"
+  run = "pnpm --filter @workspace/hydra-consultoria run dev"
 
   [services.production]
-  build = [ "pnpm", "--filter", "@workspace/infinity-search", "run", "build" ]
+  build = [ "pnpm", "--filter", "@workspace/hydra-consultoria", "run", "build" ]
   publicDir = "artifacts/infinity-search/dist/public"
   serve = "static"
 

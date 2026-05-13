@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo in TypeScript. The main product is **Hydra Consultoria** (`artifacts/infinity-search`) — a Brazilian OSINT platform with sky/cyan branding, pt-BR UI, and a glass-card design. Supporting artifacts include an API server, Telegram bot, and Discord bot.
+pnpm workspace monorepo in TypeScript. The main product is **Hydra Consultoria** (`artifacts/infinity-search`, package `@workspace/hydra-consultoria`) — a Brazilian OSINT platform with sky/cyan branding, pt-BR UI, and a glass-card design. Supporting artifacts include an API server, Telegram bot, and Discord bot.
 
 ## User Preferences
 
@@ -10,7 +10,7 @@ Prefer iterative development with detailed explanations of changes. Functional p
 
 ## Artifacts
 
-### Hydra Consultoria — `artifacts/infinity-search`
+### Hydra Consultoria — `artifacts/infinity-search` (`@workspace/hydra-consultoria`)
 - React + Vite frontend, sky/cyan branding, pt-BR, glass card design
 - Auth: `localStorage("infinity_token")` / `Authorization: Bearer <token>`
 - **Pages**: Login, Registro, Overview, Consultas (24 OSINT tipos), Dossiê, Histórico, Favoritos, Skylers, Bases, Comunidade, DM, Perfil, Perfil Público, Carteira, Planos, Configurações, Personalizar, Afiliados, Suporte, IA
