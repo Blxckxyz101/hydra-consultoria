@@ -27,6 +27,8 @@ const ALLOWED_ORIGINS = [
   /^http:\/\/localhost(:\d+)?$/,
   /^https:\/\/hydraconsultoria\.pro$/,
   /^https:\/\/www\.hydraconsultoria\.pro$/,
+  /^https:\/\/infinitysearch\.pro$/,
+  /^https:\/\/www\.infinitysearch\.pro$/,
 ];
 
 function isOriginAllowed(origin: string | undefined): boolean {
