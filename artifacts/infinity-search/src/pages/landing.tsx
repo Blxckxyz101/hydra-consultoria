@@ -486,7 +486,7 @@ export default function Landing() {
                 <div className="text-[10px] text-muted-foreground mb-1">
                   <span className="font-semibold text-foreground">{plan.consultas}</span> consultas incluídas
                 </div>
-                <div className="text-[10px] text-muted-foreground/60 mb-4">
+                <div className="text-[11px] font-semibold mb-4" style={{ color: `${accentColor}99` }}>
                   ≈ R$ {pricePerQuery} / consulta
                 </div>
                 <div className="space-y-1.5 flex-1 mb-5">
