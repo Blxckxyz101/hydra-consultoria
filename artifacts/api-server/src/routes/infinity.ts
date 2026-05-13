@@ -338,6 +338,8 @@ function getModuleLimits(user: import("../lib/infinity-auth.js").InfinityAuthUse
   normal: number; foto: number; canProcessos: boolean;
 } {
   if (user.role === "admin") return { normal: 9999, foto: 9999, canProcessos: true };
+  // Role "vip" always grants VIP limits regardless of planTier sync state
+  if (user.role === "vip") return { normal: 60, foto: 25, canProcessos: true };
   switch (user.planTier) {
     case "ultra": return { normal: 200, foto: 200, canProcessos: true };
     case "vip":   return { normal: 60,  foto: 25,  canProcessos: true };
@@ -411,7 +413,7 @@ async function checkAndDebitQuery(
 
   // VIP/Ultra: per-module daily limit is the only gate — allow directly without debiting planQueryQuota
   // This prevents the shared quota from being exhausted across modules, causing "apenas 3 processos/dia"
-  const isVipOrUltra = user.planTier === "vip" || user.planTier === "ultra";
+  const isVipOrUltra = user.role === "vip" || user.planTier === "vip" || user.planTier === "ultra";
   if (isVipOrUltra && planActive) {
     return { allowed: true, tier: "plan" };
   }
@@ -2038,6 +2040,7 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
     accountExpiresAt: Date | null;
     queryDailyLimit: number | null;
     role: string;
+    planTier: string;
     passwordHash: string;
     displayName: string | null;
   }> = {};
@@ -2062,6 +2065,10 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
 
   if (role && ["admin", "vip", "user"].includes(String(role))) {
     updateData.role = String(role);
+    // Sync planTier with role so access gates work immediately
+    updateData.planTier = String(role) === "admin" ? "ultra"
+      : String(role) === "vip" ? "vip"
+      : "free";
   }
 
   if (password && String(password).length >= 6) {
@@ -3265,6 +3272,7 @@ router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
     accountExpiresAt: Date | null;
     queryDailyLimit: number | null;
     role: string;
+    planTier: string;
     passwordHash: string;
   }> = {};
 
@@ -3286,6 +3294,10 @@ router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
 
   if (role && ["admin", "vip", "user"].includes(String(role))) {
     updateData.role = String(role);
+    // Sync planTier with role so access gates work immediately
+    updateData.planTier = String(role) === "admin" ? "ultra"
+      : String(role) === "vip" ? "vip"
+      : "free";
   }
 
   if (password && String(password).length >= 6) {

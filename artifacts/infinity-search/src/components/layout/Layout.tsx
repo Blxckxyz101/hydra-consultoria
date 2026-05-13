@@ -674,7 +674,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Low credit balance banner */}
         <AnimatePresence>
-          {!lowBalanceDismissed && !expiryWarningDays && (user as any)?.planTier === "free" && (user as any)?.creditBalance !== undefined && (user as any).creditBalance < 50 && (
+          {!lowBalanceDismissed && !expiryWarningDays && (user as any)?.role !== "admin" && (user as any)?.planTier === "free" && (user as any)?.creditBalance !== undefined && (user as any).creditBalance < 50 && (
             <motion.div
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}

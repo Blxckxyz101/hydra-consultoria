@@ -3,7 +3,7 @@ import { db, infinitySessionsTable, infinityUsersTable } from "@workspace/db";
 import { eq, and, gt } from "drizzle-orm";
 import crypto from "node:crypto";
 
-export type InfinityRole = "admin" | "user";
+export type InfinityRole = "admin" | "vip" | "user";
 
 export interface InfinityAuthUser {
   username: string;
@@ -74,7 +74,7 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
   // the query tier enforcement in the route handlers handles access control.
   return {
     username:       row.username,
-    role:           (row.role === "admin" ? "admin" : "user"),
+    role:           (row.role === "admin" ? "admin" : row.role === "vip" ? "vip" : "user"),
     queryDailyLimit: row.queryDailyLimit ?? null,
     creditBalance:   row.creditBalance ?? 0,
     planQueryQuota:  row.planQueryQuota ?? null,
