@@ -144,8 +144,12 @@ function calcDuration(start: string, end: string): string {
 
 // ─── Relative categorizer ─────────────────────────────────────────────────────
 function categorizeRel(rel: Relative): RelCat {
-  // Include all available fields — APIs often put the relation type in `origem` or section name
-  const r = [rel.relacao, rel.origem, rel.nome].join(" ").toLowerCase()
+  // Use ONLY relacao + origem — never rel.nome. Including nome causes false positives:
+  // names like "ROSIMAE", "ESPAIDAR", "MAELTON" would match "mae"/"pai" patterns.
+  // The addRel() function already extracts any relation prefix from the name (e.g.
+  // "MÃE — NADINE SANTOS" → relacao = "MAE", nome = "NADINE SANTOS"), so nome is
+  // redundant here and harmful.
+  const r = [rel.relacao, rel.origem].join(" ").toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/gi, " ");
   // Pai / genitores masculinos
   if (/\bpai\b|father|\bgenitor\b|genitorm|genitores?/.test(r) && !/\bfilh/.test(r)) return "pai";
@@ -241,7 +245,10 @@ function buildIdentity(results: Record<string, ModuleResult>): Identity {
   // Resolve nome early for validation (use fields directly to avoid circular call)
   const nomeForVal = (gfExact(f,"NOME","NOME COMPLETO","NOMECOMPLETO") || "").toUpperCase();
   const mae = isValidParent(rawMae, nomeForVal) ? rawMae : "";
-  const pai = isValidParent(rawPai, nomeForVal) ? rawPai : "";
+  // Reject pai if it is identical to mae (data quality issue: some databases repeat the
+  // mother's name in the father field, or the extraction picked up the wrong filiation).
+  const paiSameAsMae = rawPai.trim().toUpperCase() === rawMae.trim().toUpperCase() && rawMae.trim().length > 0;
+  const pai = !paiSameAsMae && isValidParent(rawPai, nomeForVal) ? rawPai : "";
 
   // ── NATURALIDADE: exact match FIRST to avoid "MUNICIPIONASCIMENTO" matching "NASCIMENTO" date field
   const naturalidade =
@@ -1210,10 +1217,34 @@ function FamilyTree({ relatives, photos, loadingPhotos, identity, mainPhoto }: {
 
   type ParentEntry = { nome: string; cpf: string; nasc: string; label: string; rel?: Relative };
   const parents: ParentEntry[] = [];
-  if (cats.mae.length > 0) cats.mae.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Mãe", rel: r }));
-  else if (identity.mae) parents.push({ nome: identity.mae, cpf: "", nasc: "", label: "Mãe" });
-  if (cats.pai.length > 0) cats.pai.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Pai", rel: r }));
-  else if (identity.pai) parents.push({ nome: identity.pai, cpf: "", nasc: "", label: "Pai" });
+
+  // Collect MAE names (normalized) to prevent same person appearing as both MÃE and PAI.
+  // This handles data quality issues where APIs return the mother with tipoRelacao="PAI",
+  // or where the filiation fields in the database are duplicated.
+  const maeNamesNorm = new Set<string>();
+  const normName = (n: string) => n.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  if (cats.mae.length > 0) {
+    cats.mae.forEach(r => {
+      parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Mãe", rel: r });
+      maeNamesNorm.add(normName(r.nome));
+    });
+  } else if (identity.mae) {
+    parents.push({ nome: identity.mae, cpf: "", nasc: "", label: "Mãe" });
+    maeNamesNorm.add(normName(identity.mae));
+  }
+
+  // Add PAI entries — skip any whose name matches a MAE entry (same person, wrong label in DB)
+  if (cats.pai.length > 0) {
+    const validPais = cats.pai.filter(r => !maeNamesNorm.has(normName(r.nome)));
+    validPais.forEach(r => parents.push({ nome: r.nome, cpf: r.cpf, nasc: r.nasc, label: "Pai", rel: r }));
+    // If all cats.pai entries were filtered out, fall back to identity.pai
+    if (validPais.length === 0 && identity.pai && !maeNamesNorm.has(normName(identity.pai))) {
+      parents.push({ nome: identity.pai, cpf: "", nasc: "", label: "Pai" });
+    }
+  } else if (identity.pai && !maeNamesNorm.has(normName(identity.pai))) {
+    parents.push({ nome: identity.pai, cpf: "", nasc: "", label: "Pai" });
+  }
 
   const siblings = [...cats.irmao, ...cats.irma];
   const children = [...cats.filho, ...cats.filha];
