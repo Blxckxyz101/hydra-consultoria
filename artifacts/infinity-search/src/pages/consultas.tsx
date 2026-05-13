@@ -249,6 +249,10 @@ export default function Consultas() {
   const [skylersLimit, setSkylersLimit] = useState<number>(30);
   const [isAdmin, setIsAdmin] = useState(false);
   const [planTier, setPlanTier] = useState<string>("free");
+
+  // True when the active category is Processos and user lacks VIP/admin access
+  const isCurrentCategoryLocked = activeCategory === "Processos" && !isAdmin && planTier !== "vip" && planTier !== "ultra";
+
   const [blockedState, setBlockedState] = useState<{ upgradeNeeded?: boolean; moduleLimited?: boolean; message?: string; limitInfo?: { used?: number; limit?: number } } | null>(null);
 
   type ProviderStatus = { online: boolean; ms: number; circuitOpen: boolean } | null;
@@ -672,12 +676,12 @@ export default function Consultas() {
         )}
       </div>
 
-      {/* Tab grid */}
+      {/* Tab grid — hidden when current category is locked */}
       <motion.div
         key={isSearching ? `search-${searchTrim}` : activeCategory}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2"
+        className={`grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 ${isCurrentCategoryLocked ? "hidden" : ""}`}
       >
         {tabsInCategory.length === 0 && (
           <div className="col-span-full py-10 flex flex-col items-center gap-3 text-muted-foreground/40">
