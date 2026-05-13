@@ -216,6 +216,9 @@ function TopupModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
                   {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
                 </div>
               </div>
+              <p className="text-center text-[10px] text-muted-foreground/50 mt-2">
+                ✓ Saldo creditado em média em 15 segundos após confirmação do PIX
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -384,6 +387,9 @@ function RechargeModal({ pack, onClose, onSuccess }: { pack: RechargePack; onClo
                   {polling && <span className="text-muted-foreground ml-2">· {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
                 </div>
               </div>
+              <p className="text-center text-[10px] text-muted-foreground/50 mt-2">
+                ✓ Consultas creditadas em média em 15 segundos após confirmação do PIX
+              </p>
             </motion.div>
           )}
         </AnimatePresence>

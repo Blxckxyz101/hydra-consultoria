@@ -3,6 +3,7 @@ import SkylersPromo from "./pages/skylers-promo";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { Layout } from "@/components/layout/Layout";
 import { TermsGuard } from "@/components/ui/TermsGuard";
+import Landing from "@/pages/landing";
 
 import Login from "@/pages/login";
 import Overview from "@/pages/overview";
@@ -46,6 +47,7 @@ function Router() {
   return (
     <Switch>
       {/* ── Rotas públicas (sem login) ── */}
+      <Route path="/landing" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/registro"><Registro /></Route>
       <Route path="/planos"><Registro /></Route>

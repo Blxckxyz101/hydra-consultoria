@@ -20,10 +20,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!token) {
-      setLocation("/login");
+      setLocation("/landing");
     } else if (error) {
       localStorage.removeItem("infinity_token");
-      setLocation("/login");
+      setLocation("/landing");
     }
   }, [token, error, setLocation]);
 

@@ -147,6 +147,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [suporteNovo, setSuporteNovo] = useState(false);
   const [expiryDismissed, setExpiryDismissed] = useState(false);
+  const [lowBalanceDismissed, setLowBalanceDismissed] = useState(() => sessionStorage.getItem("hc_low_bal_dismissed") === "1");
   const bellDesktopRef = useRef<HTMLDivElement>(null);
   const bellMobileRef = useRef<HTMLDivElement>(null);
 
@@ -663,6 +664,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <button
                 onClick={() => setExpiryDismissed(true)}
                 className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-amber-400/60 hover:text-amber-400 transition-colors shrink-0"
+                aria-label="Fechar"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Low credit balance banner */}
+        <AnimatePresence>
+          {!lowBalanceDismissed && !expiryWarningDays && (user as any)?.planTier === "free" && (user as any)?.creditBalance !== undefined && (user as any).creditBalance < 50 && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mx-4 mt-3 lg:mx-6 lg:mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-rose-400/30 bg-rose-400/8 backdrop-blur-xl shrink-0"
+            >
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <p className="text-xs text-rose-200 flex-1">
+                <span className="font-bold">Saldo baixo —</span>{" "}
+                {(user as any).creditBalance <= 0
+                  ? "seus créditos acabaram. "
+                  : `restam apenas ${(user as any).creditBalance} créditos (~${Math.floor((user as any).creditBalance / 5)} consultas). `}
+                <Link href="/carteira" className="underline underline-offset-2 hover:text-rose-100 transition-colors">
+                  Recarregar agora →
+                </Link>
+              </p>
+              <button
+                onClick={() => { setLowBalanceDismissed(true); sessionStorage.setItem("hc_low_bal_dismissed", "1"); }}
+                className="w-6 h-6 rounded-lg flex items-center justify-center hover:bg-white/10 text-rose-400/60 hover:text-rose-400 transition-colors shrink-0"
                 aria-label="Fechar"
               >
                 <X className="w-3.5 h-3.5" />

@@ -129,6 +129,9 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
             R$ {plan.amountBrl}
           </div>
           <div className="text-[10px] text-muted-foreground">pagamento único</div>
+          <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+            ≈ R$ {(plan.amountCents / plan.queryQuota / 100).toFixed(2).replace(".", ",")} / consulta
+          </div>
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
