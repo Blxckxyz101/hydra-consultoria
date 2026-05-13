@@ -61,7 +61,7 @@ const PLANS = [
     price: "70,00",
     consultas: 420,
     tier: null as null,
-    features: ["30 consultas/dia por módulo", "10 fotos/dia", "Dossiê e histórico", "Assistente IA"],
+    features: ["30 consultas/dia por módulo", "10 fotos/dia", "Dossiê e histórico completo", "Assistente IA incluso"],
     highlight: false,
     badge: null as null,
     icon: Star,
@@ -72,7 +72,7 @@ const PLANS = [
     price: "150,00",
     consultas: 840,
     tier: "vip" as const,
-    features: ["60 consultas/dia por módulo", "25 fotos/dia", "Processos jurídicos", "Temas exclusivos"],
+    features: ["60 consultas/dia por módulo", "25 fotos/dia", "Processos jurídicos incluso", "5 temas exclusivos + créditos bônus"],
     highlight: true,
     badge: "Mais Popular",
     icon: Crown,
@@ -83,9 +83,9 @@ const PLANS = [
     price: "500,00",
     consultas: 2800,
     tier: "ultra" as const,
-    features: ["200 consultas/dia por módulo", "200 fotos/dia", "Acesso máximo", "Todos os temas"],
+    features: ["200 consultas/dia por módulo", "200 fotos/dia", "Todos os temas desbloqueados", "500 créditos de bônus"],
     highlight: false,
-    badge: "Ultra",
+    badge: null as null,
     icon: Flame,
   },
 ];
@@ -469,7 +469,8 @@ export default function Landing() {
                 }}
               >
                 {plan.highlight && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-sky-400 px-3 py-1 rounded-full whitespace-nowrap">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-3 py-1 rounded-full whitespace-nowrap"
+                    style={{ background: accentColor }}>
                     Mais Popular
                   </span>
                 )}
