@@ -24,6 +24,12 @@ uri = "file://attached_assets/infinity_update_banner.png"
 type = "image"
 title = "infinity search update banner"
 
+[[generated]]
+id = "u4GCd997LGoN3TCmTqNEa"
+uri = "file://attached_assets/hydra_novidades_post.png"
+type = "image"
+title = "hydra novidades post"
+
 [[outputs]]
 id = "a85vI9pYbZAWXxCRhEj7S"
 uri = "file://attached_assets/promo_hacker.png"
@@ -71,3 +77,9 @@ id = "IY2GwzgqPEoPVlVZng1nN"
 uri = "file://screenshots/infinity-suporte-telegram.jpg"
 type = "image"
 title = "Infinity Search — Imagem Suporte Telegram (1080×1080)"
+
+[[outputs]]
+id = "hYd5LJwAlMr4tboHpbP2n"
+uri = "file://attached_assets/hydra_novidades_post.png"
+type = "image"
+title = "Imagem de Novidades — Hydra Consultoria"
