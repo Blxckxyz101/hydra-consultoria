@@ -36,6 +36,18 @@ uri = "file://attached_assets/hydra-novidades-banner.png"
 type = "image"
 title = "hydra consultoria novidades banner"
 
+[[generated]]
+id = "acbk56bV3t471qEdDtg4p"
+uri = "file://attached_assets/hydra-professional-banner.png"
+type = "image"
+title = "hydra professional saas banner"
+
+[[generated]]
+id = "5n8GtEsNMqx--b5Ei2rFO"
+uri = "file://attached_assets/hydra-pro-banner-v2.png"
+type = "image"
+title = "hydra pro clean device mockup"
+
 [[outputs]]
 id = "a85vI9pYbZAWXxCRhEj7S"
 uri = "file://attached_assets/promo_hacker.png"
@@ -113,3 +125,9 @@ id = "NimV8JoM1FLG8TXaYKrBt"
 uri = "file://attached_assets/hydra-novidades-banner.png"
 type = "image"
 title = "Banner — Hydra Consultoria Novidades"
+
+[[outputs]]
+id = "hesUGQ1-LN8bxPxgfKElI"
+uri = "file://attached_assets/hydra-pro-banner-v2.png"
+type = "image"
+title = "Banner Profissional — Hydra Consultoria"
