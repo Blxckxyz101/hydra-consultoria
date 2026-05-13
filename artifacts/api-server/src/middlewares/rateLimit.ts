@@ -55,10 +55,14 @@ export const panelAuthLimiter = rateLimit({
 
 export const consultaLimiter = rateLimit({
   windowMs:        60_000,
-  max:             30,
+  max:             120,
   standardHeaders: true,
   legacyHeaders:   false,
   keyGenerator:    ip,
+  // Skip rate-limit for CPF Full sub-requests (X-Skip-Log: 1) — already accounted
+  // via the single /log-cpffull debit. Without this, CPF Full's 17 parallel
+  // module requests all hit the limit simultaneously → 0/17 modules returned.
+  skip: (req) => req.headers["x-skip-log"] === "1",
   message:         { error: "Muitas consultas por minuto. Aguarde um momento." },
 });
 

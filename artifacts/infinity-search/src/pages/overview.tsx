@@ -91,6 +91,11 @@ type MeData = {
   accountExpiresAt?: string | null;
   skylersTotal?: number;
   skylersLimit?: number;
+  freeUsedToday?: number;
+  freeDailyLimit?: number;
+  creditBalance?: number;
+  planQueryQuota?: number;
+  planQueriesUsed?: number;
 };
 
 function buildHeatmap(recentes: RecentItem[], days: number) {

@@ -1106,6 +1106,13 @@ export default function Configuracoes() {
                         ? p.username.slice(0, 3) + "****" + p.username.slice(-3)
                         : p.username.slice(0, 5) + "****" + p.username.slice(-4);
                     const paidDate = p.paidAt ? new Date(p.paidAt).toLocaleString("pt-BR") : new Date(p.createdAt).toLocaleString("pt-BR");
+                    const PLAN_LABELS: Record<string, string> = {
+                      "1d": "1 Dia", "7d": "7 Dias", "14d": "14 Dias", "30d": "30 Dias",
+                      "rc_micro": "Micro 20cx", "rc_basico": "Básico 60cx",
+                      "rc_padrao": "Padrão 120cx", "rc_avancado": "Avançado 300cx", "rc_pro": "Pro 600cx",
+                    };
+                    const isRecharge = p.planId.startsWith("rc_");
+                    const planLabel = PLAN_LABELS[p.planId] ?? p.planId;
                     return (
                       <div key={p.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/20 px-4 py-3 text-xs">
                         <div className="flex items-center gap-2 min-w-0">
@@ -1113,7 +1120,9 @@ export default function Configuracoes() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-white font-mono">{maskedUser}</span>
-                              <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-full uppercase tracking-wider">{p.planId}</span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wider border ${isRecharge ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-300" : "bg-amber-500/10 border-amber-500/30 text-amber-300"}`}>
+                                {planLabel}
+                              </span>
                             </div>
                             <div className="text-[10px] text-muted-foreground mt-0.5">{paidDate}</div>
                           </div>
