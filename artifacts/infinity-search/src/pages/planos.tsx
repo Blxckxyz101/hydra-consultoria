@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock, Tag, X, Battery, BatteryFull, BatteryMedium, BatteryLow, Wallet } from "lucide-react";
+import { CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2, QrCode, User, Lock, Tag, X, Battery, BatteryFull, BatteryMedium, BatteryLow, Wallet, Crown, Flame, Sparkles } from "lucide-react";
 
 interface Plan {
   id: string;
@@ -9,6 +9,10 @@ interface Plan {
   amountBrl: string;
   amountCents: number;
   queryQuota: number;
+  tier?: "padrao" | "vip" | "ultra";
+  dailyModuleLimit?: number;
+  photoDailyLimit?: number;
+  freeCredits?: number;
   highlight?: boolean;
 }
 
@@ -23,10 +27,15 @@ interface RechargePack {
 }
 
 const PLAN_ICONS: Record<string, React.ElementType> = {
-  "1d":  Clock,
-  "7d":  Zap,
-  "14d": Star,
-  "30d": Shield,
+  "1d":        Clock,
+  "7d":        Zap,
+  "14d":       Star,
+  "30d":       Shield,
+  "1d_vip":    Crown,
+  "7d_vip":    Crown,
+  "14d_vip":   Crown,
+  "30d_vip":   Crown,
+  "ultra_14d": Flame,
 };
 
 const RECHARGE_ICONS: RechargePack["id"][] = ["rc_micro", "rc_basico", "rc_padrao", "rc_avancado", "rc_pro"];
@@ -63,22 +72,39 @@ interface PaymentData {
 
 function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean; onSelect: () => void }) {
   const Icon = PLAN_ICONS[plan.id] ?? Zap;
+  const isVip = plan.tier === "vip";
+  const isUltra = plan.tier === "ultra";
+  const accentColor = isUltra ? "rose" : isVip ? "amber" : null;
+
+  const borderClass = selected
+    ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
+    : isUltra
+    ? "bg-rose-500/8 border-rose-500/30 hover:border-rose-500/50"
+    : isVip
+    ? "bg-amber-400/8 border-amber-400/30 hover:border-amber-400/50"
+    : plan.highlight
+    ? "bg-sky-400/5 border-sky-400/30 hover:border-sky-400/50"
+    : "bg-black/30 border-white/10 hover:border-white/25";
+
+  const iconColor = selected ? "text-primary" : isUltra ? "text-rose-400" : isVip ? "text-amber-400" : plan.highlight ? "text-sky-400" : "text-muted-foreground";
+  const priceColor = selected ? "text-primary" : isUltra ? "text-rose-300" : isVip ? "text-amber-300" : plan.highlight ? "text-sky-300" : "text-foreground";
+
+  const features = isUltra
+    ? [`${plan.dailyModuleLimit ?? 200} consultas/dia por módulo`, `${plan.photoDailyLimit ?? 200} fotos/dia`, `${plan.freeCredits ?? 500} créditos de bônus`, "Processos jurídicos incluso", "Todos os temas desbloqueados"]
+    : isVip
+    ? [`${plan.dailyModuleLimit ?? 60} consultas/dia por módulo`, `${plan.photoDailyLimit ?? 25} fotos/dia`, ...(plan.freeCredits ? [`${plan.freeCredits} créditos de bônus`] : []), "Processos jurídicos incluso", "5 temas selecionáveis"]
+    : [`${plan.dailyModuleLimit ?? 30} consultas/dia por módulo`, `${plan.photoDailyLimit ?? 10} fotos/dia`, "Dossiê e histórico completo", "Assistente IA incluso"];
+
   return (
     <motion.button
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onSelect}
-      className={`relative w-full text-left rounded-2xl border p-5 transition-all duration-200 ${
-        selected
-          ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
-          : plan.highlight
-          ? "bg-amber-400/5 border-amber-400/30 hover:border-amber-400/50"
-          : "bg-black/30 border-white/10 hover:border-white/25"
-      }`}
+      className={`relative w-full text-left rounded-2xl border p-5 transition-all duration-200 ${borderClass}`}
     >
       {plan.highlight && !selected && (
-        <span className="absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-amber-400 px-2 py-0.5 rounded-full">
-          Mais popular
+        <span className={`absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full ${isUltra ? "bg-rose-400" : isVip ? "bg-amber-400" : "bg-sky-400"}`}>
+          {isUltra ? "Máximo poder" : isVip ? "Mais popular VIP" : "Mais popular"}
         </span>
       )}
       {selected && (
@@ -88,12 +114,18 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
       )}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <Icon className={`w-5 h-5 mb-2 ${selected ? "text-primary" : plan.highlight ? "text-amber-400" : "text-muted-foreground"}`} />
+          <div className="flex items-center gap-2 mb-2">
+            <Icon className={`w-5 h-5 ${iconColor}`} />
+            {isUltra && <span className="text-[8px] font-black uppercase tracking-widest bg-rose-500/20 border border-rose-500/40 text-rose-300 px-2 py-0.5 rounded-full">ULTRA</span>}
+            {isVip && <span className="text-[8px] font-black uppercase tracking-widest bg-amber-400/15 border border-amber-400/35 text-amber-300 px-2 py-0.5 rounded-full">VIP</span>}
+          </div>
           <div className="font-bold text-base">{plan.label}</div>
-          <div className="text-[11px] text-muted-foreground mt-0.5 uppercase tracking-[0.2em]">acesso completo</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5 uppercase tracking-[0.2em]">
+            {isUltra ? "acesso máximo" : isVip ? "acesso premium" : "acesso completo"}
+          </div>
         </div>
         <div className="text-right">
-          <div className={`text-2xl font-bold ${selected ? "text-primary" : plan.highlight ? "text-amber-300" : "text-foreground"}`}>
+          <div className={`text-2xl font-bold ${priceColor}`}>
             R$ {plan.amountBrl}
           </div>
           <div className="text-[10px] text-muted-foreground">pagamento único</div>
@@ -101,13 +133,13 @@ function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean;
       </div>
       <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
         <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          <CheckCircle2 className={`w-3 h-3 ${accentColor ? `text-${accentColor}-400` : "text-emerald-400"}`} />
           <span className="text-foreground font-semibold">{plan.queryQuota} consultas</span>
           <span>incluídas no período</span>
         </div>
-        {["24 tipos de consulta OSINT", "Assistente IA incluso", "Dossiê e histórico completo"].map(f => (
+        {features.map(f => (
           <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <CheckCircle2 className="w-3 h-3 text-emerald-400" /> {f}
+            <CheckCircle2 className={`w-3 h-3 ${accentColor ? `text-${accentColor}-400` : "text-emerald-400"}`} /> {f}
           </div>
         ))}
       </div>
@@ -225,10 +257,15 @@ export default function Planos() {
       }
     }).catch(() => {
       setPlans([
-        { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  amountBrl: "15,00", queryQuota: 40 },
-        { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  amountBrl: "40,00", queryQuota: 130 },
-        { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  amountBrl: "70,00", queryQuota: 280, highlight: true },
-        { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, amountBrl: "100,00", queryQuota: 500 },
+        { id: "1d",  label: "1 Dia Padrão",   days: 1,  amountCents: 1500,  amountBrl: "15,00", queryQuota: 30,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+        { id: "7d",  label: "7 Dias Padrão",  days: 7,  amountCents: 4000,  amountBrl: "40,00", queryQuota: 210, tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+        { id: "14d", label: "14 Dias Padrão", days: 14, amountCents: 7000,  amountBrl: "70,00", queryQuota: 420, tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0, highlight: true },
+        { id: "30d", label: "30 Dias Padrão", days: 30, amountCents: 10000, amountBrl: "100,00", queryQuota: 900, tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+        { id: "1d_vip",  label: "1 Dia VIP",   days: 1,  amountCents: 3000,  amountBrl: "30,00",  queryQuota: 60,   tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 50 },
+        { id: "7d_vip",  label: "7 Dias VIP",  days: 7,  amountCents: 8000,  amountBrl: "80,00",  queryQuota: 420,  tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 100 },
+        { id: "14d_vip", label: "14 Dias VIP", days: 14, amountCents: 15000, amountBrl: "150,00", queryQuota: 840,  tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 200, highlight: true },
+        { id: "30d_vip", label: "30 Dias VIP", days: 30, amountCents: 22000, amountBrl: "220,00", queryQuota: 1800, tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 300 },
+        { id: "ultra_14d", label: "ULTRA 14 Dias", days: 14, amountCents: 50000, amountBrl: "500,00", queryQuota: 2800, tier: "ultra", dailyModuleLimit: 200, photoDailyLimit: 200, freeCredits: 500 },
       ]);
     });
 
@@ -241,11 +278,11 @@ export default function Planos() {
       }
     }).catch(() => {
       setRechargePacks([
-        { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  790, amountBrl: "7,90" },
-        { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents: 1990, amountBrl: "19,90" },
-        { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents: 3490, amountBrl: "34,90", highlight: true },
-        { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 7990, amountBrl: "79,90" },
-        { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 13990, amountBrl: "139,90" },
+        { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  1990, amountBrl: "19,90" },
+        { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents:  4990, amountBrl: "49,90" },
+        { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents:  8990, amountBrl: "89,90", highlight: true },
+        { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 19990, amountBrl: "199,90" },
+        { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 39990, amountBrl: "399,90" },
       ]);
     });
   }, []);
@@ -426,15 +463,65 @@ export default function Planos() {
         {/* ── Step 1: Plan/Recharge selection ── */}
         {step === "plans" && (
           <motion.div key={`plans-${pageMode}`} initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} className="space-y-4">
-            <div className="grid gap-3">
-              {pageMode === "plans"
-                ? plans.map(p => (
-                    <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
-                  ))
-                : rechargePacks.map((p, i) => (
+            <div className="space-y-4">
+              {pageMode === "plans" ? (() => {
+                const padraoPlans = plans.filter(p => !p.tier || p.tier === "padrao");
+                const vipPlans    = plans.filter(p => p.tier === "vip");
+                const ultraPlans  = plans.filter(p => p.tier === "ultra");
+                return (
+                  <>
+                    {padraoPlans.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-3.5 h-3.5 text-sky-400" />
+                          <span className="text-[10px] uppercase tracking-[0.35em] font-bold text-sky-400">Padrão</span>
+                          <div className="flex-1 h-px bg-sky-400/20 ml-1" />
+                        </div>
+                        <div className="grid gap-2">
+                          {padraoPlans.map(p => (
+                            <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {vipPlans.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Crown className="w-3.5 h-3.5 text-amber-400" />
+                          <span className="text-[10px] uppercase tracking-[0.35em] font-bold text-amber-400">VIP</span>
+                          <div className="flex-1 h-px bg-amber-400/20 ml-1" />
+                        </div>
+                        <div className="grid gap-2">
+                          {vipPlans.map(p => (
+                            <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ultraPlans.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Flame className="w-3.5 h-3.5 text-rose-400" />
+                          <span className="text-[10px] uppercase tracking-[0.35em] font-bold text-rose-400">Ultra</span>
+                          <div className="flex-1 h-px bg-rose-400/20 ml-1" />
+                        </div>
+                        <div className="grid gap-2">
+                          {ultraPlans.map(p => (
+                            <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+              : (
+                <div className="grid gap-2">
+                  {rechargePacks.map((p) => (
                     <RechargeCard key={p.id} pack={p} idx={RECHARGE_ICONS.indexOf(p.id)} selected={selectedPackId === p.id} onSelect={() => setSelectedPackId(p.id)} />
-                  ))
-              }
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* ── Coupon (plans only) ── */}

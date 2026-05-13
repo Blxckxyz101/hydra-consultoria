@@ -13,6 +13,7 @@ export interface InfinityAuthUser {
   planQueryQuota: number | null;
   planQueriesUsed: number;
   accountExpiresAt: Date | null;
+  planTier: string; // "free" | "padrao" | "vip" | "ultra"
 }
 
 declare global {
@@ -60,6 +61,7 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
       creditBalance:    infinityUsersTable.creditBalance,
       planQueryQuota:   infinityUsersTable.planQueryQuota,
       planQueriesUsed:  infinityUsersTable.planQueriesUsed,
+      planTier:         infinityUsersTable.planTier,
     })
     .from(infinitySessionsTable)
     .innerJoin(infinityUsersTable, eq(infinityUsersTable.username, infinitySessionsTable.username))
@@ -78,6 +80,7 @@ export async function lookupUser(token: string): Promise<InfinityAuthUser | null
     planQueryQuota:  row.planQueryQuota ?? null,
     planQueriesUsed: row.planQueriesUsed ?? 0,
     accountExpiresAt: row.accountExpiresAt ?? null,
+    planTier:        row.planTier ?? "free",
   };
 }
 

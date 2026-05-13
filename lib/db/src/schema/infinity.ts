@@ -31,6 +31,7 @@ export const infinityUsersTable = pgTable("infinity_users", {
   profileUpdatedAt:   timestamp("profile_updated_at", { withTimezone: true }),
   // Plan & card theme
   planType:           text("plan_type").default("free"),        // "free" | "pro"
+  planTier:           text("plan_tier").notNull().default("free"), // "free" | "padrao" | "vip" | "ultra"
   planExpiresAt:      timestamp("plan_expires_at", { withTimezone: true }),
   cardTheme:          text("card_theme").default("default"),    // theme slug
   // 2FA TOTP

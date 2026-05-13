@@ -38,7 +38,7 @@ export default function Afiliados() {
             <ArrowRight className="w-4 h-4" />
           </a>
           <a
-            href="https://wa.me/5511999999999"
+            href="https://wa.me/5581999377369"
             target="_blank"
             rel="noopener noreferrer"
             className="flex-1 flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-semibold text-sm transition-all active:scale-95"

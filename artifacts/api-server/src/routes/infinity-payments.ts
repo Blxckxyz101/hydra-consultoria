@@ -19,14 +19,26 @@ export interface Plan {
   days: number;
   amountCents: number;
   queryQuota: number;
+  tier: "padrao" | "vip" | "ultra";
+  dailyModuleLimit: number;   // per-module daily limit (non-foto)
+  photoDailyLimit: number;    // per-module daily limit for foto modules
+  freeCredits: number;        // credits given on purchase
   highlight?: boolean;
 }
 
 export const PLANS: Plan[] = [
-  { id: "1d",  label: "1 Dia",   days: 1,  amountCents: 1500,  queryQuota: 40 },
-  { id: "7d",  label: "7 Dias",  days: 7,  amountCents: 4000,  queryQuota: 130 },
-  { id: "14d", label: "14 Dias", days: 14, amountCents: 7000,  queryQuota: 280, highlight: true },
-  { id: "30d", label: "30 Dias", days: 30, amountCents: 10000, queryQuota: 500 },
+  // ── Padrão ────────────────────────────────────────────────────────────────
+  { id: "1d",  label: "1 Dia Padrão",   days: 1,  amountCents: 1500,  queryQuota: 30,   tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+  { id: "7d",  label: "7 Dias Padrão",  days: 7,  amountCents: 4000,  queryQuota: 210,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+  { id: "14d", label: "14 Dias Padrão", days: 14, amountCents: 7000,  queryQuota: 420,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0, highlight: true },
+  { id: "30d", label: "30 Dias Padrão", days: 30, amountCents: 10000, queryQuota: 900,  tier: "padrao", dailyModuleLimit: 30, photoDailyLimit: 10, freeCredits: 0 },
+  // ── VIP ───────────────────────────────────────────────────────────────────
+  { id: "1d_vip",  label: "1 Dia VIP",   days: 1,  amountCents: 3000,  queryQuota: 60,   tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 50 },
+  { id: "7d_vip",  label: "7 Dias VIP",  days: 7,  amountCents: 8000,  queryQuota: 420,  tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 100 },
+  { id: "14d_vip", label: "14 Dias VIP", days: 14, amountCents: 15000, queryQuota: 840,  tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 200, highlight: true },
+  { id: "30d_vip", label: "30 Dias VIP", days: 30, amountCents: 22000, queryQuota: 1800, tier: "vip", dailyModuleLimit: 60, photoDailyLimit: 25, freeCredits: 300 },
+  // ── Ultra ─────────────────────────────────────────────────────────────────
+  { id: "ultra_14d", label: "ULTRA 14 Dias", days: 14, amountCents: 50000, queryQuota: 2800, tier: "ultra", dailyModuleLimit: 200, photoDailyLimit: 200, freeCredits: 500 },
 ];
 
 // ─── Runtime price overrides (admin-editable, persisted in DB) ───────────────
@@ -45,7 +57,9 @@ void (async () => {
     for (const row of (result as any).rows ?? []) {
       priceOverrides.set(String(row.id), Number(row.amount_cents));
     }
-  } catch { /* DB may not be ready on first boot; overrides will be empty */ }
+    // Add plan_tier column if not present (migration for existing DBs)
+    await db.execute(sql`ALTER TABLE infinity_users ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free'`);
+  } catch { /* DB may not be ready on first boot */ }
 })();
 
 function getPlan(id: string): Plan | undefined {
@@ -66,11 +80,11 @@ export interface RechargePack {
 }
 
 export const RECHARGE_PACKS: RechargePack[] = [
-  { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  790 },
-  { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents: 1990 },
-  { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents: 3490, highlight: true },
-  { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 7990 },
-  { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 13990 },
+  { id: "rc_micro",    label: "Micro",    credits: 100,  consultas: 20,  amountCents:  1990 },
+  { id: "rc_basico",   label: "Básico",   credits: 300,  consultas: 60,  amountCents:  4990 },
+  { id: "rc_padrao",   label: "Padrão",   credits: 600,  consultas: 120, amountCents:  8990, highlight: true },
+  { id: "rc_avancado", label: "Avançado", credits: 1500, consultas: 300, amountCents: 19990 },
+  { id: "rc_pro",      label: "Pro",      credits: 3000, consultas: 600, amountCents: 39990 },
 ];
 
 function getRechargePack(id: string): RechargePack | undefined {
@@ -128,6 +142,10 @@ router.get("/plans", (_req, res) => {
       amountCents: eff.amountCents,
       amountBrl: (eff.amountCents / 100).toFixed(2),
       queryQuota: p.queryQuota,
+      tier: p.tier,
+      dailyModuleLimit: p.dailyModuleLimit,
+      photoDailyLimit: p.photoDailyLimit,
+      freeCredits: p.freeCredits,
       highlight: p.highlight ?? false,
     };
   }));
@@ -765,8 +783,14 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
         accountExpiresAt: newExpiry,
         planQueryQuota: plan.queryQuota,
         planQueriesUsed: 0,
+        planTier: plan.tier,
       })
       .where(eq(infinityUsersTable.username, username));
+    if (plan.freeCredits > 0) {
+      await db.update(infinityUsersTable)
+        .set({ creditBalance: sql`credit_balance + ${plan.freeCredits}` })
+        .where(eq(infinityUsersTable.username, username));
+    }
     void sendSaleNotification({
       username,
       planLabel: plan.label,
@@ -795,6 +819,8 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
       accountExpiresAt,
       planQueryQuota: plan.queryQuota,
       planQueriesUsed: 0,
+      planTier: plan.tier,
+      creditBalance: plan.freeCredits,
     });
     await db.update(infinityPendingAccountsTable)
       .set({ status: "approved", updatedAt: new Date() })

@@ -345,7 +345,7 @@ export default function Login() {
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.08 14.07l-2.95-.924c-.642-.2-.657-.642.136-.953l11.57-4.461c.537-.194 1.006.131.726.516z"/></svg>
                 Suporte no Telegram
               </a>
-              <a href="https://wa.me/5511999999999" target="_blank" rel="noopener noreferrer"
+              <a href="https://wa.me/5581999377369" target="_blank" rel="noopener noreferrer"
                 className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl transition-all text-[11px] font-medium"
                 style={{ background: "rgba(37,211,102,0.12)", border: "1px solid rgba(37,211,102,0.3)", color: "#25D366" }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(37,211,102,0.22)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(37,211,102,0.55)"; }}

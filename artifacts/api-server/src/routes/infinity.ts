@@ -316,9 +316,32 @@ async function getUserSkylersDailyByTipo(username: string, tipoKey: string): Pro
   return count;
 }
 
-const PER_MODULE_DAILY_LIMIT = 45;
 const FREE_DAILY_LIMIT = 2;
 const CREDITS_PER_CONSULTA = 5;
+
+// ─── Tipos que consomem da cota de fotos (limite separado por tier) ───────────
+const FOTO_TIPOS = new Set([
+  "foto", "biometria", "fotodetran", "fotoma", "fotoce", "fotonc", "fotoes",
+  "fototo", "fotoro", "fotomapresos", "fotopi", "fotopr", "fotodf", "fotoal",
+  "fotogo", "fotopb", "fotope", "fotorn", "fotoba", "fotomg", "crlvtofoto", "crlvmtfoto",
+]);
+
+// ─── Tipos de processos jurídicos (bloqueado para planos free/padrão) ─────────
+const PROCESSOS_TIPOS = new Set([
+  "processo", "processos", "advogadooab", "advogadooabuf", "advogadocpf", "oab",
+  "mandado", "bens", "dividas", "cheque", "certidoes",
+]);
+
+function getModuleLimits(user: import("../lib/infinity-auth.js").InfinityAuthUser): {
+  normal: number; foto: number; canProcessos: boolean;
+} {
+  if (user.role === "admin") return { normal: 9999, foto: 9999, canProcessos: true };
+  switch (user.planTier) {
+    case "ultra": return { normal: 200, foto: 200, canProcessos: true };
+    case "vip":   return { normal: 60,  foto: 25,  canProcessos: true };
+    default:      return { normal: 30,  foto: 10,  canProcessos: false };
+  }
+}
 
 // ─── Free-tier daily cache (only bumped when free tier is actually used) ─────
 const _freeDailyCache = new Map<string, { date: string; count: number }>();
@@ -357,14 +380,26 @@ async function checkAndDebitQuery(
 ): Promise<QueryCheckResult> {
   if (user.role === "admin") return { allowed: true, tier: "admin" };
 
-  // 1. Per-module limit (45/day — universal anti-abuse, applies to everyone)
+  const limits = getModuleLimits(user);
+
+  // 1. Processos check — bloqueado para planos free/padrão
+  if (PROCESSOS_TIPOS.has(tipoKey) && !limits.canProcessos) {
+    return {
+      allowed: false,
+      reason: "Consultas de processos jurídicos são exclusivas do plano VIP. Faça upgrade para ter acesso.",
+      upgradeNeeded: true,
+    };
+  }
+
+  // 2. Per-module daily limit (varies by plan tier)
   const moduleCount = await getUserSkylersDailyByTipo(username, tipoKey);
-  if (moduleCount >= PER_MODULE_DAILY_LIMIT) {
+  const moduleLimit = FOTO_TIPOS.has(tipoKey) ? limits.foto : limits.normal;
+  if (moduleCount >= moduleLimit) {
     return {
       allowed: false,
       moduleLimited: true,
-      reason: `Limite de ${PER_MODULE_DAILY_LIMIT} consultas do módulo '${tipoKey}' atingido hoje.`,
-      limitInfo: { used: moduleCount, limit: PER_MODULE_DAILY_LIMIT },
+      reason: `Limite de ${moduleLimit} consultas do módulo '${tipoKey}' atingido hoje.`,
+      limitInfo: { used: moduleCount, limit: moduleLimit },
     };
   }
 
@@ -1713,7 +1748,8 @@ router.get("/me", requireAuth, async (req, res) => {
   }
   const skylersTotal = await getUserSkylersDaily(username);
   const freeUsedToday = getFreeUsedToday(username);
-  res.json({ ...serializeUser(u), skylersTotal, skylersLimit: PER_MODULE_DAILY_LIMIT, freeUsedToday, freeDailyLimit: FREE_DAILY_LIMIT });
+  const limits = getModuleLimits(req.infinityUser!);
+  res.json({ ...serializeUser(u), skylersTotal, skylersLimit: limits.normal, freeUsedToday, freeDailyLimit: FREE_DAILY_LIMIT, planTier: u.planTier ?? "free" });
 });
 
 router.patch("/me/display-name", requireAuth, async (req, res) => {

@@ -246,8 +246,9 @@ export default function Consultas() {
   const queryClient = useQueryClient();
 
   const [skylersTotal, setSkylersTotal] = useState<number | null>(null);
-  const [skylersLimit, setSkylersLimit] = useState<number>(45);
+  const [skylersLimit, setSkylersLimit] = useState<number>(30);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [planTier, setPlanTier] = useState<string>("free");
   const [blockedState, setBlockedState] = useState<{ upgradeNeeded?: boolean; moduleLimited?: boolean; message?: string; limitInfo?: { used?: number; limit?: number } } | null>(null);
 
   type ProviderStatus = { online: boolean; ms: number; circuitOpen: boolean } | null;
@@ -258,10 +259,11 @@ export default function Consultas() {
     const token = localStorage.getItem("infinity_token");
     fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
-      .then((d: { skylersTotal?: number; skylersLimit?: number; role?: string }) => {
+      .then((d: { skylersTotal?: number; skylersLimit?: number; role?: string; planTier?: string }) => {
         setSkylersTotal(d.skylersTotal ?? 0);
-        setSkylersLimit(d.skylersLimit ?? 25);
+        setSkylersLimit(d.skylersLimit ?? 30);
         setIsAdmin(d.role === "admin");
+        setPlanTier(d.planTier ?? "free");
       })
       .catch(() => {});
   }, []);
@@ -622,21 +624,41 @@ export default function Consultas() {
             {CATEGORIES.map((cat) => {
               const isActive = activeCategory === cat;
               const count = TABS.filter((t) => t.category === cat && !t.hidden).length;
+              const isProcessosLocked = cat === "Processos" && !isAdmin && planTier !== "vip" && planTier !== "ultra";
               return (
                 <button
                   key={cat}
                   onClick={() => setActiveCategory(cat)}
-                  className={`shrink-0 px-4 py-2 rounded-full text-[10px] uppercase tracking-[0.3em] font-bold transition-all border ${
+                  className={`shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-[10px] uppercase tracking-[0.3em] font-bold transition-all border ${
                     isActive
                       ? `bg-gradient-to-r ${CATEGORY_GRADIENT[cat]} text-black border-transparent shadow-[0_0_24px_-4px_rgba(56,189,248,0.5)]`
+                      : isProcessosLocked
+                      ? "bg-white/3 border-white/8 text-muted-foreground/50"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20"
                   }`}
                 >
+                  {isProcessosLocked && <svg className="w-2.5 h-2.5 shrink-0 opacity-60" viewBox="0 0 24 24" fill="currentColor"><path d="M17 8V7A5 5 0 0 0 7 7v1H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2zM9 7a3 3 0 0 1 6 0v1H9V7zm3 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>}
                   {cat} <span className="opacity-60">· {count}</span>
                 </button>
               );
             })}
           </div>
+        )}
+        {/* Processos locked banner */}
+        {!isSearching && activeCategory === "Processos" && !isAdmin && planTier !== "vip" && planTier !== "ultra" && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/8 backdrop-blur-xl px-4 py-3"
+          >
+            <svg className="w-4 h-4 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M17 8V7A5 5 0 0 0 7 7v1H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2zM9 7a3 3 0 0 1 6 0v1H9V7zm3 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/></svg>
+            <p className="text-xs text-amber-300/90 leading-relaxed flex-1">
+              <span className="font-bold">Processos Jurídicos</span> é exclusivo do plano <span className="font-bold text-amber-200">VIP</span>. Faça upgrade para acessar mandados, dívidas, certidões, OAB e mais.
+            </p>
+            <a href="/planos" className="shrink-0 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 rounded-lg bg-amber-400/20 border border-amber-400/40 text-amber-300 hover:bg-amber-400/30 transition-colors">
+              Ver Planos
+            </a>
+          </motion.div>
         )}
 
         {/* Search results label */}

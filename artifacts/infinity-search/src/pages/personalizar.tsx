@@ -138,16 +138,54 @@ export function initSavedFont() {
   applyFont(key);
 }
 
+const VIP_THEME_KEYS = new Set(["amoled", "sky", "violeta", "esmeralda", "ambar"]);
+
+function getPadraoThemeKeys(username: string): Set<string> {
+  let h = 0;
+  for (const c of username) h = (h * 31 + c.charCodeAt(0)) | 0;
+  const n = THEMES.length;
+  const indices = new Set<number>([1]); // sky (index 1) always available
+  let seed = Math.abs(h);
+  while (indices.size < 3) {
+    indices.add(Math.abs(seed) % n);
+    seed = Math.imul(seed, 1664525) + 1013904223;
+  }
+  return new Set([...indices].map(i => THEMES[i]?.key ?? "sky"));
+}
+
+function getAvailableThemeKeys(planTier: string, username: string, isAdmin: boolean): Set<string> {
+  if (isAdmin || planTier === "ultra") return new Set(THEMES.map(t => t.key));
+  if (planTier === "vip") return VIP_THEME_KEYS;
+  return getPadraoThemeKeys(username);
+}
+
 export default function Personalizar() {
   const [currentKey, setCurrentKey] = useState(loadThemeKey);
   const [currentFont, setCurrentFont] = useState(() => localStorage.getItem("infinity_font") ?? "inter");
+  const [planTier, setPlanTier] = useState<string>("free");
+  const [username, setUsername] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const t = THEMES.find(x => x.key === currentKey) ?? THEMES[0]!;
     applyTheme(t);
+    const token = localStorage.getItem("infinity_token");
+    if (token) {
+      fetch("/api/infinity/me", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json())
+        .then((d: { planTier?: string; username?: string; role?: string }) => {
+          setPlanTier(d.planTier ?? "free");
+          setUsername(d.username ?? "");
+          setIsAdmin(d.role === "admin");
+        })
+        .catch(() => {});
+    }
   }, []);
 
+  const availableKeys = getAvailableThemeKeys(planTier, username, isAdmin);
+
   const handleSelect = (t: ThemeDef) => {
+    if (!availableKeys.has(t.key)) return;
     setCurrentKey(t.key);
     localStorage.setItem(LS_KEY, t.key);
     applyTheme(t);
@@ -163,6 +201,8 @@ export default function Personalizar() {
 
   const current = THEMES.find(t => t.key === currentKey) ?? THEMES[0]!;
   const CurrentIcon = current.icon;
+
+  const tierLabel = isAdmin || planTier === "ultra" ? null : planTier === "vip" ? "VIP" : "VIP";
 
   return (
     <div className="space-y-8">
@@ -202,9 +242,21 @@ export default function Personalizar() {
           </span>
         </div>
 
+        {/* Tier info pill */}
+        {!isAdmin && planTier !== "ultra" && username && (
+          <div className="flex items-center gap-2 mb-4 text-[10px] text-muted-foreground">
+            <Crown className="w-3 h-3 text-amber-400" />
+            {planTier === "vip"
+              ? <span>Plano <span className="text-amber-300 font-bold">VIP</span> — 5 temas desbloqueados (amoled, sky, violeta, esmeralda, âmbar)</span>
+              : <span>Plano <span className="text-sky-300 font-bold">Padrão</span> — 3 temas disponíveis baseados em seu usuário · Faça <a href="/planos" className="text-amber-300 hover:underline">upgrade para VIP</a> para mais</span>
+            }
+          </div>
+        )}
+
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3">
           {THEMES.map((t, i) => {
             const isActive = t.key === currentKey;
+            const isLocked = !availableKeys.has(t.key);
             const hslPrimary = `hsl(${t.primary})`;
             const hslAccent = `hsl(${t.accent})`;
             const Icon = t.icon;
@@ -214,10 +266,10 @@ export default function Personalizar() {
                 initial={{ opacity: 0, scale: 0.93 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: i * 0.035, type: "spring", stiffness: 260, damping: 20 }}
-                whileHover={{ y: -3, transition: { duration: 0.15 } }}
-                whileTap={{ scale: 0.97 }}
+                whileHover={isLocked ? undefined : { y: -3, transition: { duration: 0.15 } }}
+                whileTap={isLocked ? undefined : { scale: 0.97 }}
                 onClick={() => handleSelect(t)}
-                className="relative flex flex-col items-start gap-4 p-4 rounded-2xl border text-left transition-colors overflow-hidden"
+                className={`relative flex flex-col items-start gap-4 p-4 rounded-2xl border text-left transition-colors overflow-hidden ${isLocked ? "cursor-not-allowed opacity-50" : ""}`}
                 style={{
                   borderColor: isActive ? hslPrimary : "rgba(255,255,255,0.07)",
                   background: isActive
@@ -226,6 +278,14 @@ export default function Personalizar() {
                   boxShadow: isActive ? `0 0 28px -6px ${hslPrimary}50` : "none",
                 }}
               >
+                {/* Lock overlay for restricted themes */}
+                {isLocked && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-black/60 rounded-2xl backdrop-blur-[1px]">
+                    <Crown className="w-4 h-4 text-amber-400" />
+                    <span className="text-[8px] font-black uppercase tracking-widest text-amber-300 bg-amber-400/20 border border-amber-400/40 px-2 py-0.5 rounded-full">VIP</span>
+                  </div>
+                )}
+
                 {/* Radial glow on active */}
                 <AnimatePresence>
                   {isActive && (
@@ -242,7 +302,7 @@ export default function Personalizar() {
                 </AnimatePresence>
 
                 {/* AMOLED "NOVO" pill — shown when not active */}
-                {t.key === "amoled" && !isActive && (
+                {t.key === "amoled" && !isActive && !isLocked && (
                   <div
                     className="absolute top-3 right-3 text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full z-10"
                     style={{
