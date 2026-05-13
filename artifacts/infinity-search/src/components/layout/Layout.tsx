@@ -341,7 +341,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
       </div>
 
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      <nav className="flex-1 px-3 py-4 overflow-y-auto" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}>
         {navGroups.map((group, gi) => (
           <div key={group.label} className={gi > 0 ? "mt-4 pt-4 border-t border-white/[0.06]" : ""}>
             <div className="px-3 mb-2">

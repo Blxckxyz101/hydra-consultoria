@@ -1527,21 +1527,25 @@ async function callSkylers(
       "iseek-dados---nomeabreviadofiltros",
     ]);
     if (!endpoint && !IDENTITY_MODULES.has(modulo) && parsed.sections.length === 0 && parsed.fields.length > 0) {
-      const IDENTITY_KEYS = new Set([
+      // Normalize: replace middle-dot (·), underscore, and collapse whitespace so
+      // "Filiacao · Nome Mae" and "filiacao · nome mae" both become "filiacao nome mae".
+      const normIK = (k: string) => k.toLowerCase().replace(/[·_]/g, " ").replace(/\s+/g, " ").trim();
+      const IDENTITY_KEY_LIST = [
         "cpf", "nome", "nome completo", "data nascimento", "data de nascimento",
         "data nasc", "dt nascimento", "nasc", "nascimento",
-        "nome mae", "nome mãe", "nome da mae", "nome da mãe",
-        "filiacao nome mae", "filiacao · nome mae", "mae", "mãe",
-        "nome pai", "nome do pai", "filiacao nome pai", "filiacao · nome pai", "pai",
-        "sexo", "genero", "gênero", "situacao cadastral", "situação cadastral",
-        "rg", "registro geral", "municipio nascimento", "município nascimento",
-        "municipio de nascimento", "município de nascimento", "estado civil",
+        "nome mae", "nome mae", "nome da mae", "nome da mae",
+        "filiacao nome mae", "filiacao nome mae", "mae", "mae",
+        "nome pai", "nome do pai", "filiacao nome pai", "filiacao nome pai", "pai",
+        "sexo", "genero", "genero", "situacao cadastral", "situacao cadastral",
+        "rg", "registro geral", "municipio nascimento", "municipio nascimento",
+        "municipio de nascimento", "municipio de nascimento", "estado civil",
         "titulo eleitoral", "titulo eleitor", "naturalidade", "idade",
-      ]);
+        "quantidade mandados", "quantidade de mandados", "total mandados",
+      ];
+      const IDENTITY_KEYS = new Set(IDENTITY_KEY_LIST.map(normIK));
       const hasFotoUrl = parsed.fields.some(f => f.key === "FOTO_URL");
       const nonIdentityFields = parsed.fields.filter(
-        f => f.key !== "FOTO_URL" &&
-          !IDENTITY_KEYS.has(f.key.toLowerCase().replace(/[·_]/g, " ").trim()),
+        f => f.key !== "FOTO_URL" && !IDENTITY_KEYS.has(normIK(f.key)),
       );
       if (!hasFotoUrl && nonIdentityFields.length === 0) {
         return {

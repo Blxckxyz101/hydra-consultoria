@@ -2063,8 +2063,19 @@ export function CpfFullPanel({ cpf }: Props) {
                     {["processos","mandado"].flatMap(tipo => {
                       const res = mResults[tipo];
                       if (!res?.data) return [];
-                      const secs = res.data.sections.length > 0 ? res.data.sections
-                        : (res.data.fields.length > 0 ? [{ name: tipo.toUpperCase(), items: res.data.fields.map(([k,v]) => `${k}: ${v}`) }] : []);
+                      const { fields, sections } = res.data;
+
+                      // Echo detection: if no real sections and all fields are personal-identity
+                      // keys (CPF, nome, filiação, nasc…), the API echoed back the subject's
+                      // own data instead of actual warrant/process records — suppress the card.
+                      if (sections.length === 0 && fields.length > 0) {
+                        const LEGAL_FIELD_RE = /MANDADO|PROCESSO|NUMERO|TIPO|VARA|COMARCA|CRIME|PENA|DELITO|DELEGACIA|BOLETIM|CRIME|AUTUA|INQUÉRITO|INQUERITO|STATUS.*MAND|SITUAÇÃO.*PROC|SITUACAO.*PROC/i;
+                        const hasLegalField = fields.some(([k, v]) => LEGAL_FIELD_RE.test(k) || LEGAL_FIELD_RE.test(v));
+                        if (!hasLegalField) return []; // pure identity echo — skip
+                      }
+
+                      const secs = sections.length > 0 ? sections
+                        : (fields.length > 0 ? [{ name: tipo.toUpperCase(), items: fields.map(([k,v]) => `${k}: ${v}`) }] : []);
                       return secs.map((sec, si) => (
                         <div key={`${tipo}-${si}`} className="rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(244,63,94,0.2)", background: "rgba(244,63,94,0.04)" }}>
                           <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(244,63,94,0.1)" }}>
