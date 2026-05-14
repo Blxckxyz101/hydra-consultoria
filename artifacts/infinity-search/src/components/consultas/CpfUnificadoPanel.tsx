@@ -16,7 +16,7 @@ import {
   User, MapPin, Phone, Mail, ChevronDown,
   Copy, Check, RefreshCw, Users, Briefcase,
   CheckCircle2, XCircle, IdCard, Home, Download,
-  LayoutList, StretchHorizontal,
+  LayoutList, StretchHorizontal, Share2, Lock, Clock,
 } from "lucide-react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -817,6 +817,231 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }, [identity, addresses, allFields, allSections, cpf]);
 
+  // ── Copy all (TXT → clipboard) ─────────────────────────────────────────────
+  const [copyDone, setCopyDone] = useState(false);
+  const copyAll = useCallback(async () => {
+    const lines: string[] = [];
+    const sep = "═".repeat(50);
+    lines.push(sep); lines.push("  HYDRA CONSULTORIA — REGISTRO CPF");
+    lines.push(`  Gerado em: ${new Date().toLocaleString("pt-BR")}`); lines.push(sep); lines.push("");
+    const id = identity;
+    if (id.nome)              lines.push(`NOME            : ${id.nome}`);
+    if (id.cpf)               lines.push(`CPF             : ${fmtCPF(id.cpf)}`);
+    if (id.rg)                lines.push(`RG              : ${id.rg}`);
+    if (id.dataNascimento)    lines.push(`NASCIMENTO      : ${id.dataNascimento}`);
+    if (id.sexo)              lines.push(`SEXO            : ${id.sexo}`);
+    if (id.estadoCivil)       lines.push(`ESTADO CIVIL    : ${id.estadoCivil}`);
+    if (id.naturalidade)      lines.push(`NATURALIDADE    : ${id.naturalidade}`);
+    if (id.mae)               lines.push(`MÃE             : ${id.mae}`);
+    if (id.pai)               lines.push(`PAI             : ${id.pai}`);
+    if (id.orgaoEmissor)      lines.push(`ÓRGÃO EMISSOR   : ${id.orgaoEmissor}`);
+    if (id.dataEmissao)       lines.push(`DATA EMISSÃO    : ${id.dataEmissao}`);
+    if (id.situacaoCadastral) lines.push(`SITUAÇÃO RECEITA: ${id.situacaoCadastral}`);
+    if (id.pis)               lines.push(`PIS / NIS       : ${id.pis || id.nis}`);
+    if (id.tipoSanguineo)     lines.push(`TIPO SANGUÍNEO  : ${id.tipoSanguineo}`);
+    if (id.email)             lines.push(`E-MAIL          : ${id.email}`);
+    lines.push("");
+    if (addresses.length > 0) {
+      lines.push("─── ENDEREÇOS " + "─".repeat(36));
+      addresses.forEach((a, i) => {
+        const full = [a.logradouro, a.numero, a.complemento, a.bairro, a.cidade, a.uf].filter(Boolean).join(", ");
+        lines.push(`[${i+1}] ${full}${a.cep ? ` — CEP ${a.cep}` : ""}`);
+      });
+      lines.push("");
+    }
+    const skipKeys = new Set(["FOTOURL","FOTO","NOME","CPF","RG","DATANASCIMENTO","SEXO","ESTADOCIVIL","NATURALIDADE","NOMEMAE","MAE","NOMEPAI","PAI","ORGAOEMISSOR","DATAEMISSAO","SITUACAOCADASTRAL","PIS","NIS","EMAIL"]);
+    const rawFieldLines: string[] = [];
+    for (const [k, v] of allFields) {
+      if (!v?.trim()) continue;
+      if (skipKeys.has(normKey(k))) continue;
+      rawFieldLines.push(`${k.padEnd(28)}: ${v}`);
+    }
+    if (rawFieldLines.length > 0) {
+      lines.push("─── CAMPOS ADICIONAIS " + "─".repeat(28)); lines.push(...rawFieldLines); lines.push("");
+    }
+    for (const sec of allSections) {
+      if (sec.items.length === 0) continue;
+      lines.push(`─── ${sec.name.toUpperCase()} ${"─".repeat(Math.max(0, 46 - sec.name.length))}`);
+      sec.items.forEach(item => lines.push(`  ${item}`)); lines.push("");
+    }
+    lines.push(sep); lines.push("  Plataforma: Hydra Consultoria"); lines.push(sep);
+    await navigator.clipboard.writeText(lines.join("\n")).catch(() => {});
+    setCopyDone(true); setTimeout(() => setCopyDone(false), 1500);
+  }, [identity, addresses, allFields, allSections, cpf]);
+
+  // ── Download PDF ──────────────────────────────────────────────────────────
+  const downloadPdf = useCallback(() => {
+    const date = new Date().toLocaleString("pt-BR");
+    const protocol = `CPF-${Date.now().toString(36).toUpperCase().slice(-8)}`;
+    const id = identity;
+    const idRows: Array<{k:string;v:string}> = [];
+    if (id.nome)              idRows.push({k:"Nome",              v:id.nome});
+    if (id.cpf)               idRows.push({k:"CPF",               v:fmtCPF(id.cpf)});
+    if (id.rg)                idRows.push({k:"RG",                v:`${id.rg}${id.orgaoEmissor ? ` / ${id.orgaoEmissor}` : ""}`});
+    if (id.dataNascimento)    idRows.push({k:"Nascimento",         v:id.dataNascimento});
+    if (id.sexo)              idRows.push({k:"Sexo",              v:id.sexo});
+    if (id.estadoCivil)       idRows.push({k:"Estado Civil",      v:id.estadoCivil});
+    if (id.naturalidade)      idRows.push({k:"Naturalidade",      v:id.naturalidade});
+    if (id.mae)               idRows.push({k:"Nome da Mãe",       v:id.mae});
+    if (id.pai)               idRows.push({k:"Nome do Pai",       v:id.pai});
+    if (id.situacaoCadastral) idRows.push({k:"Situação Receita",  v:id.situacaoCadastral});
+    if (id.pis)               idRows.push({k:"PIS / NIS",         v:id.pis});
+    if (id.tipoSanguineo)     idRows.push({k:"Tipo Sanguíneo",    v:id.tipoSanguineo});
+    if (id.email)             idRows.push({k:"E-mail",            v:id.email});
+
+    const skipNorm = new Set(["FOTOURL","FOTO","NOME","CPF","RG","DATANASCIMENTO","SEXO","ESTADOCIVIL","NATURALIDADE","NOMEMAE","MAE","NOMEPAI","PAI","ORGAOEMISSOR","DATAEMISSAO","SITUACAOCADASTRAL","PIS","NIS","EMAIL"]);
+    const extraRows: Array<{k:string;v:string}> = [];
+    for (const [k, v] of allFields) {
+      if (!v?.trim()) continue;
+      if (skipNorm.has(normKey(k))) continue;
+      extraRows.push({k, v});
+    }
+
+    const fieldsHtml = idRows.length === 0 ? "" : `
+      <section class="card">
+        <div class="card-header"><span class="card-icon">🪪</span>Identificação Civil<span class="badge">${idRows.length}</span></div>
+        <table class="fields-table">
+          ${idRows.map((r,i)=>`<tr class="${i%2===0?"row-a":"row-b"}"><td class="fkey">${r.k}</td><td class="fval">${r.v||"—"}</td></tr>`).join("")}
+        </table>
+      </section>`;
+
+    const addrHtml = addresses.length === 0 ? "" : `
+      <section class="card">
+        <div class="card-header"><span class="card-icon">📍</span>Endereços<span class="badge">${addresses.length}</span></div>
+        <div class="sec-items">
+          ${addresses.map((a,i)=>{
+            const full=[a.logradouro,a.numero,a.complemento,a.bairro,a.cidade,a.uf].filter(Boolean).join(", ");
+            return `<div class="sec-item"><strong>[${i+1}]</strong> ${full}${a.cep?` — CEP ${a.cep}`:""}</div>`;
+          }).join("")}
+        </div>
+      </section>`;
+
+    const extraHtml = extraRows.length === 0 ? "" : `
+      <section class="card">
+        <div class="card-header"><span class="card-icon">📋</span>Campos Adicionais<span class="badge">${extraRows.length}</span></div>
+        <table class="fields-table">
+          ${extraRows.map((r,i)=>`<tr class="${i%2===0?"row-a":"row-b"}"><td class="fkey">${r.k}</td><td class="fval">${r.v||"—"}</td></tr>`).join("")}
+        </table>
+      </section>`;
+
+    const sectionsHtml = allSections.filter(s=>s.items.length>0).map(s=>`
+      <section class="card sec-card">
+        <div class="card-header"><span class="sec-hdr-name">${s.name}</span><span class="badge">${s.items.length}</span></div>
+        <div class="sec-items">${s.items.map(it=>`<div class="sec-item">${it}</div>`).join("")}</div>
+      </section>`).join("");
+
+    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Hydra · CPF · ${fmtCPF(cpf)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.cover{background:linear-gradient(135deg,#312e81 0%,#4f46e5 100%);color:#fff;padding:28px 36px 24px;display:flex;justify-content:space-between;align-items:flex-start}
+.cover-left{}
+.cover-logo-wrap{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.cover-logo-img{width:34px;height:34px;object-fit:contain;filter:brightness(10) saturate(0);opacity:.85}
+.cover-logo-text{font-size:10px;font-weight:700;letter-spacing:.45em;text-transform:uppercase;opacity:.75}
+.cover-title{font-size:22px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px}
+.cover-subtitle{font-size:11px;opacity:.65;letter-spacing:1px}
+.cover-right{text-align:right;font-size:11px;line-height:2;opacity:.85}
+.cover-right strong{opacity:1;font-weight:700}
+.cover-type{display:inline-block;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:20px;padding:2px 12px;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.stripe{height:4px;background:linear-gradient(to right,#818cf8,#a5b4fc,transparent)}
+.body{padding:24px 36px;max-width:100%}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.card-header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#f5f3ff;border-bottom:1px solid #ddd6fe;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#4f46e5}
+.card-icon{font-size:13px}
+.badge{margin-left:auto;background:#4f46e5;color:#fff;border-radius:20px;padding:1px 9px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.fields-table{width:100%;border-collapse:collapse}
+.fields-table td{padding:7px 14px;vertical-align:top;border-bottom:1px solid #f1f5f9;font-size:12.5px}
+.fkey{font-weight:700;color:#4f46e5;text-transform:uppercase;font-size:10.5px;letter-spacing:.8px;width:35%;white-space:normal;padding-right:8px}
+.fval{color:#0f172a;word-break:break-word}
+.row-a{background:#fff}.row-b{background:#f8fafc}
+.sec-card .card-header{background:#f5f3ff}
+.sec-hdr-name{flex:1}
+.sec-items{padding:10px 14px;display:flex;flex-direction:column;gap:6px}
+.sec-item{font-size:12px;font-family:"Courier New",monospace;background:#f8fafc;border-left:3px solid #ddd6fe;padding:6px 10px;border-radius:3px;word-break:break-word;line-height:1.5}
+.footer{margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px}
+.footer strong{color:#64748b}
+@media print{body{background:#fff}.cover,.stripe,.card-header{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="cover">
+  <div class="cover-left">
+    <div class="cover-logo-wrap">
+      <img src="/hydra-icon.png" class="cover-logo-img" onerror="this.style.display='none'" />
+      <span class="cover-logo-text">Hydra Consultoria — Sistema OSINT</span>
+    </div>
+    <div class="cover-title">CPF Unificado</div>
+    <div class="cover-subtitle">Relatório de Inteligência Digital · Confidencial</div>
+  </div>
+  <div class="cover-right">
+    <div class="cover-type">Pessoa Física</div><br>
+    <div><strong>CPF:</strong> ${fmtCPF(cpf)}</div>
+    <div><strong>Data:</strong> ${date}</div>
+    <div><strong>Protocolo:</strong> ${protocol}</div>
+    <div><strong>Campos:</strong> ${idRows.length + extraRows.length} &nbsp;·&nbsp; <strong>Listas:</strong> ${allSections.filter(s=>s.items.length>0).length}</div>
+  </div>
+</div>
+<div class="stripe"></div>
+<div class="body">
+${fieldsHtml}${addrHtml}${extraHtml}${sectionsHtml}
+<div class="footer">
+  <span><strong>Hydra Consultoria</strong> — hydraconsultoria.com</span>
+  <span>Protocolo ${protocol}</span>
+</div>
+</div>
+<script>window.onload=()=>{setTimeout(()=>{window.print();setTimeout(()=>window.close(),600)},400)}</script>
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
+  }, [identity, addresses, allFields, allSections, cpf]);
+
+  // ── Share (link público · 10 min) ─────────────────────────────────────────
+  const [sharing, setSharing] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareInfo, setShareInfo] = useState<{ url: string; expiresAt: Date } | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareSeconds, setShareSeconds] = useState(0);
+  const shareTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!shareInfo) return;
+    const tick = () => {
+      const left = Math.max(0, Math.floor((shareInfo.expiresAt.getTime() - Date.now()) / 1000));
+      setShareSeconds(left);
+      if (left === 0) clearInterval(shareTimerRef.current);
+    };
+    tick();
+    shareTimerRef.current = setInterval(tick, 1000);
+    return () => clearInterval(shareTimerRef.current);
+  }, [shareInfo]);
+
+  const handleShare = useCallback(async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const shareFields = allFields.map(([key, value]) => ({ key, value }));
+      const shareData = { fields: shareFields, sections: allSections, raw: "" };
+      const r = await fetch("/api/infinity/consultas/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ tipo: "cpfunificado", query: cpf, data: shareData }),
+      });
+      if (!r.ok) { import("sonner").then(m => m.toast.error("Erro ao criar link")); return; }
+      const d = await r.json() as { id: string; expiresAt: string };
+      const url = `${window.location.origin}/shared/${d.id}`;
+      setShareInfo({ url, expiresAt: new Date(d.expiresAt) });
+      setShareOpen(true);
+      await navigator.clipboard.writeText(url).catch(() => undefined);
+      import("sonner").then(m => m.toast.success("Link copiado!"));
+    } catch { import("sonner").then(m => m.toast.error("Erro ao compartilhar")); }
+    finally { setSharing(false); }
+  }, [sharing, allFields, allSections, cpf]);
+
+  const fmtShareTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const shareExpired = shareInfo !== null && shareSeconds === 0;
+
   return (
     <ViewModeCtx.Provider value={viewMode}>
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
@@ -830,13 +1055,84 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {done && hasIdentity && (
-              <button onClick={downloadRegistro}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95"
-                style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)", background: "color-mix(in srgb, var(--color-primary) 10%, transparent)", color: "var(--color-primary)" }}
-                title="Baixar registro completo (.txt)">
-                <Download className="w-3 h-3" /> Baixar Registro
-              </button>
+              <>
+                {/* TXT */}
+                <button onClick={downloadRegistro}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95"
+                  style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)", background: "color-mix(in srgb, var(--color-primary) 10%, transparent)", color: "var(--color-primary)" }}
+                  title="Baixar registro completo (.txt)">
+                  <Download className="w-3 h-3" /> TXT
+                </button>
+
+                {/* PDF */}
+                <button onClick={downloadPdf}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95"
+                  style={{ border: "1px solid rgba(59,130,246,0.3)", background: "rgba(59,130,246,0.08)", color: "#60a5fa" }}
+                  title="Gerar relatório PDF">
+                  <FileText className="w-3 h-3" /> PDF
+                </button>
+
+                {/* Copy All */}
+                <button onClick={() => void copyAll()}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95"
+                  style={{ border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.06)", color: copyDone ? "#34d399" : "rgba(255,255,255,0.55)" }}
+                  title="Copiar consulta completa">
+                  {copyDone ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copyDone ? "Copiado" : "Copiar"}
+                </button>
+
+                {/* Share */}
+                <div className="relative">
+                  <button onClick={shareOpen ? () => setShareOpen(false) : () => void handleShare()}
+                    disabled={sharing}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95 disabled:opacity-50"
+                    style={{ border: "1px solid rgba(139,92,246,0.3)", background: "rgba(139,92,246,0.08)", color: "#a78bfa" }}
+                    title="Compartilhar consulta (link público · 10 min)">
+                    {sharing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Share2 className="w-3 h-3" />}
+                    {sharing ? "..." : "Compartilhar"}
+                  </button>
+
+                  {shareOpen && shareInfo && (
+                    <div className="absolute right-0 top-8 z-50 w-72 rounded-xl border border-white/10 bg-[#06091a]/96 backdrop-blur-2xl shadow-2xl overflow-hidden">
+                      <div className="px-3 pt-3 pb-2.5 border-b border-white/5 flex items-center justify-between">
+                        <p className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground">Link compartilhado</p>
+                        {shareExpired ? (
+                          <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
+                            <Lock className="w-3 h-3" /> Expirado
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-400">
+                            <Clock className="w-3 h-3" /> {fmtShareTime(shareSeconds)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="px-3 py-2.5 space-y-2.5">
+                        <div className="flex items-center gap-2 rounded-lg bg-white/5 border border-white/[0.08] px-2.5 py-1.5">
+                          <span className="flex-1 text-[10px] text-muted-foreground/80 truncate">{shareInfo.url}</span>
+                          <button
+                            onClick={async () => {
+                              await navigator.clipboard.writeText(shareInfo.url).catch(() => undefined);
+                              setShareCopied(true); setTimeout(() => setShareCopied(false), 1500);
+                            }}
+                            className="shrink-0 p-1 rounded hover:bg-white/10 transition-colors"
+                          >
+                            {shareCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                          </button>
+                        </div>
+                        <p className="text-[9px] text-muted-foreground/40 leading-relaxed">
+                          Qualquer pessoa com este link pode ver esta consulta sem cadastro.
+                        </p>
+                      </div>
+                      <button onClick={() => setShareOpen(false)}
+                        className="w-full py-2 text-[9px] uppercase tracking-widest text-muted-foreground/40 hover:text-muted-foreground transition-colors border-t border-white/5">
+                        Fechar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
+
             {done && (
               <button onClick={() => setViewMode(v => v === "expanded" ? "compact" : "expanded")}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all"

@@ -27,6 +27,7 @@ import Afiliados from "@/pages/afiliados";
 import Carteira from "@/pages/carteira";
 import Comunidade from "@/pages/comunidade";
 import PerfilPublico from "@/pages/perfil-publico";
+import ConsultaPublica from "@/pages/consulta-publica";
 import DM from "@/pages/dm";
 
 // Apply saved color theme + font immediately on load
@@ -57,6 +58,9 @@ function Router() {
 
       {/* ── Perfil público — acessível sem conta ── */}
       <Route path="/u/:username" component={PerfilPublico} />
+
+      {/* ── Consulta compartilhada — pública, expira em 10 min ── */}
+      <Route path="/shared/:id" component={ConsultaPublica} />
 
       {/* ── Rotas protegidas ── */}
       <Route>

@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle, Copy, Check, Download, FileJson, Eye, EyeOff,
@@ -8,7 +8,7 @@ import {
   Wallet, Scale, Calendar, CreditCard, Fingerprint, Heart,
   ShieldAlert, Hash, List, Briefcase, Database, ChevronDown,
   ChevronUp, ExternalLink, Zap, type LucideIcon, Info, LayoutGrid, Rows3,
-  Search, X,
+  Search, X, Share2, Lock, Clock, Loader2,
 } from "lucide-react";
 import { addFavorito, isFavorito } from "@/pages/favoritos";
 
@@ -121,6 +121,105 @@ function FavoriteButton({ tipo, query, data }: { tipo: string; query: string; da
       <Star className={`w-3 h-3 ${fav ? "fill-amber-400" : ""}`} />
       {added ? "Salvo" : fav ? "Favorito" : "Favoritar"}
     </button>
+  );
+}
+
+function ShareButton({ tipo, query, data }: { tipo: string; query: string; data: unknown }) {
+  const [sharing, setSharing] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [shareInfo, setShareInfo] = useState<{ url: string; expiresAt: Date } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!shareInfo) return;
+    const tick = () => {
+      const left = Math.max(0, Math.floor((shareInfo.expiresAt.getTime() - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left === 0) clearInterval(timerRef.current);
+    };
+    tick();
+    timerRef.current = setInterval(tick, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [shareInfo]);
+
+  const handleShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      const r = await fetch(`${API_BASE}/consultas/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ tipo, query, data }),
+      });
+      if (!r.ok) { toast.error("Erro ao criar link"); return; }
+      const d = await r.json() as { id: string; expiresAt: string };
+      const url = `${window.location.origin}/shared/${d.id}`;
+      setShareInfo({ url, expiresAt: new Date(d.expiresAt) });
+      setOpen(true);
+      await navigator.clipboard.writeText(url).catch(() => undefined);
+      toast.success("Link copiado para a área de transferência!");
+    } catch { toast.error("Erro ao compartilhar"); }
+    finally { setSharing(false); }
+  };
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const isExpired = shareInfo !== null && secondsLeft === 0;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={open ? () => setOpen(false) : handleShare}
+        disabled={sharing}
+        className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-violet-400 transition-colors shrink-0 disabled:opacity-50"
+        title="Compartilhar consulta (link público · 10 min)"
+      >
+        {sharing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Share2 className="w-3 h-3" />}
+        {sharing ? "..." : "Compartilhar"}
+      </button>
+
+      {open && shareInfo && (
+        <div className="absolute right-0 top-6 z-50 w-72 rounded-xl border border-white/10 bg-[#06091a]/96 backdrop-blur-2xl shadow-2xl overflow-hidden">
+          <div className="px-3 pt-3 pb-2.5 border-b border-white/5 flex items-center justify-between">
+            <p className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground">Link compartilhado</p>
+            {isExpired ? (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
+                <Lock className="w-3 h-3" /> Expirado
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-400">
+                <Clock className="w-3 h-3" /> {fmtTime(secondsLeft)}
+              </span>
+            )}
+          </div>
+          <div className="px-3 py-2.5 space-y-2.5">
+            <div className="flex items-center gap-2 rounded-lg bg-white/5 border border-white/[0.08] px-2.5 py-1.5">
+              <span className="flex-1 text-[10px] text-muted-foreground/80 truncate">{shareInfo.url}</span>
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(shareInfo.url).catch(() => undefined);
+                  setCopied(true); toast.success("Copiado!"); setTimeout(() => setCopied(false), 1500);
+                }}
+                className="shrink-0 p-1 rounded hover:bg-white/10 transition-colors"
+              >
+                {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+              </button>
+            </div>
+            <p className="text-[9px] text-muted-foreground/40 leading-relaxed">
+              Qualquer pessoa com este link pode ver esta consulta sem precisar de cadastro.
+            </p>
+          </div>
+          <button
+            onClick={() => setOpen(false)}
+            className="w-full py-2 text-[9px] uppercase tracking-widest text-muted-foreground/40 hover:text-muted-foreground transition-colors border-t border-white/5"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -976,6 +1075,7 @@ ${sectionsHtml}
               <FileText className="w-3 h-3" /> PDF
             </button>
             <CopyButton text={exportText} label="Copiar" />
+            <ShareButton tipo={tipo} query={query} data={result.data} />
             <div className="w-px h-3 bg-white/10 shrink-0" />
             <button onClick={() => setCompact(v => !v)}
               className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest transition-colors shrink-0 ${compact ? "text-primary" : "text-muted-foreground/50 hover:text-muted-foreground"}`}

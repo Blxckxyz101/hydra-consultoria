@@ -3695,5 +3695,33 @@ router.post("/totp/status", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Shared Consultas (in-memory, 10-min TTL) ────────────────────────────────
+interface _SharedEntry { tipo: string; query: string; data: unknown; expiresAt: Date; }
+const _sharedStore = new Map<string, _SharedEntry>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _sharedStore) if (v.expiresAt.getTime() < now) _sharedStore.delete(k);
+}, 5 * 60_000).unref();
+
+router.post("/consultas/share", requireAuth, (req, res) => {
+  const { tipo, query, data } = req.body as { tipo?: string; query?: string; data?: unknown };
+  if (!tipo || !query) { res.status(400).json({ error: "tipo e query obrigatórios" }); return; }
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const expiresAt = new Date(Date.now() + 10 * 60_000);
+  _sharedStore.set(id, { tipo, query, data: data ?? {}, expiresAt });
+  res.json({ id, expiresAt: expiresAt.toISOString() });
+});
+
+router.get("/shared/:id", (req, res) => {
+  const entry = _sharedStore.get(req.params.id);
+  if (!entry) { res.status(404).json({ error: "not_found" }); return; }
+  if (entry.expiresAt.getTime() < Date.now()) {
+    _sharedStore.delete(req.params.id);
+    res.status(410).json({ expired: true });
+    return;
+  }
+  res.json({ tipo: entry.tipo, query: entry.query, data: entry.data, expiresAt: entry.expiresAt.toISOString() });
+});
+
 export default router;
 
