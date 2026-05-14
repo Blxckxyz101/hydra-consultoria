@@ -131,3 +131,9 @@ id = "hesUGQ1-LN8bxPxgfKElI"
 uri = "file://attached_assets/hydra-pro-banner-v2.png"
 type = "image"
 title = "Banner Profissional — Hydra Consultoria"
+
+[[outputs]]
+id = "eJXP5n5UlbaixixeIZ8Tb"
+uri = "file://artifacts/api-server/src/scrapers/sisreg-standalone.txt"
+type = "text"
+title = "sisreg-standalone.ts"
