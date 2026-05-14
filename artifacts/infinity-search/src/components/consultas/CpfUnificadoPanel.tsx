@@ -1,141 +1,100 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IdCard, Camera, FileText, Loader2, AlertTriangle, CheckCircle2, XCircle,
   User, MapPin, Phone, Mail, Briefcase, ChevronDown, ChevronUp, Copy, Check,
-  RefreshCw, Fingerprint, Scan,
+  RefreshCw, Fingerprint, Users, Car, Heart, CreditCard, Shield,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Status = "idle" | "loading" | "done" | "error";
-type Field  = [string, string];
-
-interface ModuleResult {
-  status: Status;
-  fields: Field[];
-  sections: { name: string; items: string[] }[];
-  imageUrl?: string | null;
-  raw: string;
+interface SkyField   { key: string; value: string }
+interface SkySection { name: string; items: string[] }
+interface SkyResult  {
+  status:   Status;
+  fields:   SkyField[];
+  sections: SkySection[];
+  imageUrl: string | null;
+  raw:      string;
 }
 
 // ─── Foto rotation order ──────────────────────────────────────────────────────
 const FOTO_ROTATION = [
-  { tipo: "fotonc",  label: "Nacional" },
-  { tipo: "fotosp",  label: "SP"       },
-  { tipo: "fotomg",  label: "MG"       },
-  { tipo: "fotoba",  label: "BA"       },
-  { tipo: "fotope",  label: "PE"       },
-  { tipo: "fotorn",  label: "RN"       },
-  { tipo: "fotopr",  label: "PR"       },
-  { tipo: "fotodf",  label: "DF"       },
-  { tipo: "fotorj",  label: "RJ"       },
-  { tipo: "fotoce",  label: "CE"       },
-  { tipo: "fotoma",  label: "MA"       },
-  { tipo: "fotopb",  label: "PB"       },
-  { tipo: "fotogo",  label: "GO"       },
-  { tipo: "fotopi",  label: "PI"       },
-  { tipo: "fotoal",  label: "AL"       },
-  { tipo: "fototo",  label: "TO"       },
-  { tipo: "fotoes",  label: "ES"       },
-  { tipo: "fotoro",  label: "RO"       },
-  { tipo: "fotoms",  label: "MS"       },
+  { tipo: "fotonc", label: "Nacional" },
+  { tipo: "fotosp", label: "SP"       },
+  { tipo: "fotomg", label: "MG"       },
+  { tipo: "fotoba", label: "BA"       },
+  { tipo: "fotope", label: "PE"       },
+  { tipo: "fotorn", label: "RN"       },
+  { tipo: "fotopr", label: "PR"       },
+  { tipo: "fotodf", label: "DF"       },
+  { tipo: "fotorj", label: "RJ"       },
+  { tipo: "fotoce", label: "CE"       },
+  { tipo: "fotoma", label: "MA"       },
+  { tipo: "fotopb", label: "PB"       },
+  { tipo: "fotogo", label: "GO"       },
+  { tipo: "fotopi", label: "PI"       },
+  { tipo: "fotoal", label: "AL"       },
+  { tipo: "fototo", label: "TO"       },
+  { tipo: "fotoes", label: "ES"       },
+  { tipo: "fotoro", label: "RO"       },
+  { tipo: "fotoms", label: "MS"       },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function normKey(k: string): string {
-  return k.toUpperCase()
-    .normalize("NFD").replace(/\p{Mn}/gu, "")
-    .replace(/[\s_\-·]+/g, "");
-}
-
-function extractImage(raw: string): string | null {
-  const imageKeys = ["FOTO", "URLBASE64", "IMAGEMBASE64", "BASE64", "IMAGEM", "URLFOTO", "IMAGE"];
+// ─── API helper ───────────────────────────────────────────────────────────────
+// The /external/skylers route returns:
+//   { success: bool, data: { fields: [{key,value}], sections: [{name,items}], raw } }
+// Image is stored in fields as { key: "FOTO_URL", value: "data:image/jpeg;base64,..." }
+async function callSkylers(
+  tipo: string,
+  dados: string,
+  token: string,
+  opts: { noHistory?: boolean; skipLog?: boolean } = {},
+): Promise<{ ok: boolean; fields: SkyField[]; sections: SkySection[]; imageUrl: string | null; raw: string }> {
   try {
-    const parsed = JSON.parse(raw);
-    const search = (obj: unknown, depth = 0): string | null => {
-      if (depth > 6 || !obj || typeof obj !== "object") return null;
-      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-        const nk = normKey(k);
-        if (imageKeys.some(ik => nk.includes(ik)) && typeof v === "string" && v.length > 100) {
-          if (v.startsWith("http")) return v;
-          return `data:image/jpeg;base64,${v}`;
-        }
-        const nested = search(v, depth + 1);
-        if (nested) return nested;
-      }
-      return null;
+    const r = await fetch("/api/infinity/external/skylers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ tipo, dados, noHistory: opts.noHistory ?? false, skipLog: opts.skipLog ?? false }),
+    });
+    const json = await r.json() as {
+      success: boolean;
+      data?: { fields?: SkyField[]; sections?: SkySection[]; raw?: string };
+      error?: string;
     };
-    return search(parsed);
+    const fields   = json.data?.fields   ?? [];
+    const sections = json.data?.sections ?? [];
+    const raw      = json.data?.raw      ?? "";
+    // Image is stored by the backend as a FOTO_URL field (data URI)
+    const fotoField = fields.find(f => f.key === "FOTO_URL" || f.key.toLowerCase().includes("foto_url"));
+    const imageUrl  = fotoField?.value ?? null;
+    return { ok: json.success, fields: fields.filter(f => f.key !== "FOTO_URL"), sections, imageUrl, raw };
   } catch {
-    const b64 = raw.match(/"(?:foto|imagem|base64|image)":\s*"([A-Za-z0-9+/=]{200,})"/i);
-    if (b64) return `data:image/jpeg;base64,${b64[1]}`;
-    const url = raw.match(/"(?:url|foto|imagem)":\s*"(https?:\/\/[^"]+\.(jpg|jpeg|png|webp)[^"]*)"/i);
-    if (url) return url[1];
-    return null;
+    return { ok: false, fields: [], sections: [], imageUrl: null, raw: "" };
   }
 }
 
-function parseResponse(raw: string): { fields: Field[]; sections: { name: string; items: string[] }[] } {
-  const SEP = "\u23AF";
-  const fields: Field[] = [];
-  const sections: { name: string; items: string[] }[] = [];
+// Extract CPF from a parentes item string like "NOME: João · CPF: 123.456.789-01 · PARENTESCO: PAI"
+function extractCpf(item: string): string | null {
+  const m = item.match(/CPF:\s*([\d.\-\/]+)/i);
+  if (!m) return null;
+  const digits = m[1].replace(/\D/g, "");
+  return digits.length === 11 ? digits : null;
+}
 
-  if (raw.includes(SEP)) {
-    let currentSection: { name: string; items: string[] } | null = null;
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      if (t.startsWith("⠀") || t.startsWith("▸") || /^[A-ZÁÉÍÓÚ][A-ZÁÉÍÓÚ\s]+:?\s*$/.test(t)) {
-        currentSection = { name: t.replace(/^[▸⠀]+/, "").trim(), items: [] };
-        sections.push(currentSection);
-        continue;
-      }
-      const idx = t.indexOf(SEP);
-      if (idx !== -1) {
-        const key = t.slice(0, idx).trim();
-        const val = t.slice(idx + 1).trim();
-        if (key && val) fields.push([key, val]);
-      } else if (currentSection && t) {
-        currentSection.items.push(t);
-      }
-    }
-    return { fields, sections };
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    const flatten = (obj: unknown, prefix = ""): void => {
-      if (!obj || typeof obj !== "object") return;
-      if (Array.isArray(obj)) { obj.forEach((item, i) => flatten(item, `${prefix}[${i}]`)); return; }
-      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-        const key = prefix ? `${prefix}.${k}` : k;
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-          const strV = String(v);
-          if (strV.length < 300 && !strV.startsWith("data:image") && strV.length > 0)
-            fields.push([k.replace(/_/g, " ").toUpperCase(), strV]);
-        } else if (v && typeof v === "object") {
-          flatten(v, key);
-        }
-      }
-    };
-    flatten(parsed);
-  } catch {
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (t) fields.push(["INFO", t]);
+// Parse key:value pairs from a section item string like "NOME: João · PARENTESCO: PAI"
+function parseItemFields(item: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const SEP = /\s*[·•]\s*/;
+  for (const part of item.split(SEP)) {
+    const idx = part.indexOf(":");
+    if (idx > 0) {
+      const k = part.slice(0, idx).trim().toUpperCase();
+      const v = part.slice(idx + 1).trim();
+      if (k && v) out[k] = v;
     }
   }
-
-  return { fields, sections };
-}
-
-async function fetchSkylers(tipo: string, cpf: string, token: string): Promise<{ ok: boolean; raw: string }> {
-  const r = await fetch("/api/infinity/external/skylers", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ tipo, dados: cpf }),
-  });
-  return { ok: r.ok, raw: await r.text() };
+  return out;
 }
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
@@ -155,11 +114,12 @@ function FieldRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionCard({ title, icon: Icon, children, defaultOpen = true }: {
+function SectionCard({ title, icon: Icon, children, defaultOpen = true, badge }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  badge?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -171,6 +131,7 @@ function SectionCard({ title, icon: Icon, children, defaultOpen = true }: {
         <div className="flex items-center gap-2.5">
           <Icon className="w-4 h-4 text-primary" />
           <span className="text-[11px] uppercase tracking-[0.35em] font-bold text-muted-foreground">{title}</span>
+          {badge && <span className="text-[8px] uppercase tracking-widest text-muted-foreground/40 border border-white/10 rounded-full px-1.5 py-0.5">{badge}</span>}
         </div>
         {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/40" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/40" />}
       </button>
@@ -197,7 +158,7 @@ function StatusBadge({ status, label }: { status: Status; label: string }) {
       status === "loading" ? "bg-sky-400/10 border-sky-400/30 text-sky-300" :
       status === "done"    ? "bg-emerald-400/10 border-emerald-400/30 text-emerald-300" :
       status === "error"   ? "bg-rose-400/10 border-rose-400/30 text-rose-300" :
-      "bg-white/5 border-white/10 text-muted-foreground"
+                             "bg-white/5 border-white/10 text-muted-foreground"
     }`}>
       {status === "loading" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
       {status === "done"    && <CheckCircle2 className="w-2.5 h-2.5" />}
@@ -208,115 +169,190 @@ function StatusBadge({ status, label }: { status: Status; label: string }) {
   );
 }
 
-// ─── Field grouping ───────────────────────────────────────────────────────────
-const IDENTITY_KEYS = new Set(["NOME","CPF","RG","SEXO","DATANASCIMENTO","NASC","NASCIMENTO","MAE","NOMEMAE","PAI","NOMEPAI","NATURALIDADE","NACIONALIDADE","ESTADOCIVIL","SITUACAOCADASTRAL","ORGAOEMISSOR","DATAEMISSAO","TITULOELEITOR","PIS","NIS","CNS","TIPOSANGUINEO"]);
-const ADDRESS_KEYS  = new Set(["LOGRADOURO","NUMERO","COMPLEMENTO","BAIRRO","CIDADE","MUNICIPIO","UF","CEP","ESTADO","ENDERECO"]);
-const CONTACT_KEYS  = new Set(["TELEFONE","CELULAR","DDD","EMAIL","WHATSAPP","CONTATO"]);
-const WORK_KEYS     = new Set(["EMPRESA","CNPJ","CARGO","ADMISSAO","DEMISSAO","SALARIO","EMPREGO","RAIS","VINCULO"]);
-
-function groupFields(fields: Field[]) {
-  const identity: Field[] = [], address: Field[] = [], contact: Field[] = [], work: Field[] = [], other: Field[] = [];
-  for (const f of fields) {
-    const nk = normKey(f[0]);
-    if (IDENTITY_KEYS.has(nk) || [...IDENTITY_KEYS].some(ik => nk.includes(ik))) identity.push(f);
-    else if (ADDRESS_KEYS.has(nk) || [...ADDRESS_KEYS].some(ak => nk.includes(ak))) address.push(f);
-    else if (CONTACT_KEYS.has(nk) || [...CONTACT_KEYS].some(ck => nk.includes(ck))) contact.push(f);
-    else if (WORK_KEYS.has(nk) || [...WORK_KEYS].some(wk => nk.includes(wk))) work.push(f);
-    else other.push(f);
-  }
-  return { identity, address, contact, work, other };
-}
-
-// ─── Skeleton row ─────────────────────────────────────────────────────────────
 function SkeletonRows({ n = 4 }: { n?: number }) {
   return (
     <div className="space-y-3 pt-3">
       {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className="flex gap-3 py-1.5">
-          <div className="w-28 h-3 rounded bg-white/6 animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
-          <div className="flex-1 h-3 rounded bg-white/4 animate-pulse" style={{ animationDelay: `${i * 80 + 40}ms` }} />
+        <div key={i} className="flex gap-3 py-1">
+          <div className="w-28 h-2.5 rounded bg-white/6 animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+          <div className="flex-1 h-2.5 rounded bg-white/4 animate-pulse" style={{ animationDelay: `${i * 80 + 40}ms` }} />
         </div>
       ))}
     </div>
   );
 }
 
+// ─── Section icon mapping ─────────────────────────────────────────────────────
+function sectionIcon(name: string): React.ComponentType<{ className?: string }> {
+  const n = name.toUpperCase();
+  if (n.includes("ENDE") || n.includes("CEP"))             return MapPin;
+  if (n.includes("TEL") || n.includes("FONE") || n.includes("CELULAR")) return Phone;
+  if (n.includes("EMAIL") || n.includes("E-MAIL"))         return Mail;
+  if (n.includes("EMPREGO") || n.includes("RAIS") || n.includes("VINCULO") || n.includes("TRABALHO")) return Briefcase;
+  if (n.includes("PARENTE") || n.includes("FAMILIAR") || n.includes("RELAC")) return Users;
+  if (n.includes("VEICULO") || n.includes("CARRO") || n.includes("AUTO"))    return Car;
+  if (n.includes("BENEFICIO") || n.includes("SAUDE") || n.includes("PLANO")) return Heart;
+  if (n.includes("BANCO") || n.includes("CREDIT") || n.includes("FINANC"))   return CreditCard;
+  if (n.includes("PENA") || n.includes("PROCES") || n.includes("CRIME"))     return Shield;
+  return FileText;
+}
+
+// ─── Parente card ─────────────────────────────────────────────────────────────
+function ParenteCard({ item, token }: { item: string; token: string }) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [fotoStatus, setFotoStatus] = useState<"idle" | "loading" | "done" | "none">("idle");
+  const fields = parseItemFields(item);
+  const cpf    = extractCpf(item);
+
+  useEffect(() => {
+    if (!cpf) return;
+    setFotoStatus("loading");
+    let found = false;
+    const run = async () => {
+      for (const { tipo } of FOTO_ROTATION) {
+        if (found) break;
+        try {
+          const { ok, imageUrl: url } = await callSkylers(tipo, cpf, token, { noHistory: true });
+          if (ok && url) {
+            setImageUrl(url);
+            setFotoStatus("done");
+            found = true;
+            break;
+          }
+        } catch { continue; }
+      }
+      if (!found) setFotoStatus("none");
+    };
+    void run();
+  }, [cpf]);
+
+  const nome        = fields["NOME"] ?? fields["NAME"] ?? "–";
+  const parentesco  = fields["PARENTESCO"] ?? fields["GRAU"] ?? fields["RELACAO"] ?? "";
+  const cpfDisplay  = fields["CPF"] ?? cpf ?? "";
+  const nascimento  = fields["NASCIMENTO"] ?? fields["DT NASCIMENTO"] ?? fields["DATA NASCIMENTO"] ?? "";
+  const sexo        = fields["SEXO"] ?? fields["GENERO"] ?? "";
+
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-xl border border-white/8 bg-white/3 hover:bg-white/5 transition-colors">
+      {/* mini foto */}
+      <div className="w-12 h-12 rounded-lg overflow-hidden border border-white/10 bg-black/30 flex items-center justify-center shrink-0">
+        {fotoStatus === "loading" && <Fingerprint className="w-5 h-5 text-muted-foreground/20 animate-pulse" />}
+        {fotoStatus === "done" && imageUrl && (
+          <img src={imageUrl} alt={nome} className="w-full h-full object-cover object-top" />
+        )}
+        {(fotoStatus === "none" || fotoStatus === "idle") && !cpf && (
+          <User className="w-5 h-5 text-muted-foreground/20" />
+        )}
+        {fotoStatus === "none" && cpf && <User className="w-5 h-5 text-muted-foreground/20" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+          <span className="text-sm font-semibold text-foreground truncate">{nome}</span>
+          {parentesco && (
+            <span className="text-[8px] uppercase tracking-widest text-primary/70 border border-primary/20 rounded-full px-1.5 py-0.5">{parentesco}</span>
+          )}
+        </div>
+        <div className="text-[10px] text-muted-foreground/50 font-mono space-y-0.5">
+          {cpfDisplay && <div>CPF: {cpfDisplay}</div>}
+          {nascimento && <div>Nasc: {nascimento}</div>}
+          {sexo && <div>Sexo: {sexo}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Identity priority fields ─────────────────────────────────────────────────
+const HEADLINE_KEYS = [
+  "NOME", "DATA NASCIMENTO", "DATA DE NASCIMENTO", "NASCIMENTO", "NASC",
+  "SEXO", "GENERO", "MAE", "NOME MAE", "NOME DA MAE", "PAI", "NOME PAI", "NOME DO PAI",
+  "MUNICIPIO DE NASCIMENTO", "NATURALIDADE", "ESTADO CIVIL", "SITUACAO CADASTRAL",
+  "SITUACAO", "TITULO ELEITOR", "PIS", "NIS", "RG", "ORGAO EMISSOR",
+  "RENDA", "FAIXA SALARIAL",
+];
+
+function normKey(k: string) {
+  return k.toUpperCase().normalize("NFD").replace(/\p{Mn}/gu, "").replace(/[\s_\-·]+/g, " ").trim();
+}
+
+function splitFields(fields: SkyField[]) {
+  const headlineNorm = new Set(HEADLINE_KEYS.map(normKey));
+  const headline: SkyField[] = [];
+  const rest:     SkyField[] = [];
+  for (const f of fields) {
+    if (headlineNorm.has(normKey(f.key))) headline.push(f);
+    else rest.push(f);
+  }
+  return { headline, rest };
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
   const token = localStorage.getItem("infinity_token") ?? "";
 
-  const [mods, setMods] = useState<Record<string, ModuleResult>>({
-    cpf:       { status: "idle", fields: [], sections: [], raw: "" },
-    cpfbasico: { status: "idle", fields: [], sections: [], raw: "" },
-    foto:      { status: "idle", fields: [], sections: [], imageUrl: null, raw: "" },
-  });
-  const [fotoLabel, setFotoLabel] = useState("–");
-  const [running, setRunning] = useState(false);
+  const [cpfResult,  setCpfResult]  = useState<SkyResult>({ status: "idle", fields: [], sections: [], imageUrl: null, raw: "" });
+  const [fotoResult, setFotoResult] = useState<SkyResult>({ status: "idle", fields: [], sections: [], imageUrl: null, raw: "" });
+  const [fotoLabel,  setFotoLabel]  = useState("–");
+  const [running,    setRunning]    = useState(false);
 
-  // Use a ref to abort in-flight foto loop when cpf changes or component unmounts
   const abortRef = useRef(false);
 
-  const setMod = (key: string, update: Partial<ModuleResult>) =>
-    setMods(prev => ({ ...prev, [key]: { ...prev[key]!, ...update } }));
-
-  const fetchAll = async () => {
+  const run = useCallback(async () => {
     abortRef.current = false;
     setRunning(true);
     setFotoLabel("–");
-    setMods({
-      cpf:       { status: "loading", fields: [], sections: [], raw: "" },
-      cpfbasico: { status: "loading", fields: [], sections: [], raw: "" },
-      foto:      { status: "loading", fields: [], sections: [], imageUrl: null, raw: "" },
+    setCpfResult({ status: "loading", fields: [], sections: [], imageUrl: null, raw: "" });
+    setFotoResult({ status: "loading", fields: [], sections: [], imageUrl: null, raw: "" });
+
+    // ── CPF main query (logs to history — this is the intended single history entry) ──
+    void callSkylers("cpf", cpf, token).then(r => {
+      setCpfResult({
+        status:   r.ok ? "done" : "error",
+        fields:   r.fields,
+        sections: r.sections,
+        imageUrl: null,
+        raw:      r.raw,
+      });
+    }).catch(() => {
+      setCpfResult({ status: "error", fields: [], sections: [], imageUrl: null, raw: "" });
     });
 
-    // CPF padrão + CPF básico — fire in parallel, each updates state as soon as it arrives
-    void fetchSkylers("cpf", cpf, token).then(({ ok, raw }) => {
-      const { fields, sections } = parseResponse(raw);
-      setMod("cpf", { status: ok ? "done" : "error", fields, sections, raw });
-    }).catch(() => setMod("cpf", { status: "error", fields: [], sections: [], raw: "" }));
-
-    void fetchSkylers("cpfbasico", cpf, token).then(({ ok, raw }) => {
-      const { fields, sections } = parseResponse(raw);
-      setMod("cpfbasico", { status: ok ? "done" : "error", fields, sections, raw });
-    }).catch(() => setMod("cpfbasico", { status: "error", fields: [], sections: [], raw: "" }));
-
-    // Foto rotation — sequential, stops immediately on first hit
+    // ── Foto rotation — sequential, stops immediately on first hit, noHistory on ALL ──
     let found = false;
     for (const { tipo, label } of FOTO_ROTATION) {
       if (abortRef.current) break;
       setFotoLabel(label);
       try {
-        const { ok, raw } = await fetchSkylers(tipo, cpf, token);
+        const r = await callSkylers(tipo, cpf, token, { noHistory: true });
         if (abortRef.current) break;
-        if (!ok) continue;
-        const img = extractImage(raw);
-        if (img) {
-          setMod("foto", { status: "done", fields: [], sections: [], imageUrl: img, raw });
+        if (r.ok && r.imageUrl) {
+          setFotoResult({ status: "done", fields: [], sections: [], imageUrl: r.imageUrl, raw: "" });
+          setFotoLabel(label);
           found = true;
-          break; // stop immediately — do not continue to next state
+          break; // hard stop — do not continue
         }
-      } catch {
-        continue;
-      }
+      } catch { continue; }
     }
 
     if (!found && !abortRef.current) {
-      setMod("foto", { status: "error", fields: [], sections: [], imageUrl: null, raw: "" });
+      setFotoResult({ status: "error", fields: [], sections: [], imageUrl: null, raw: "" });
     }
+
     setRunning(false);
-  };
+  }, [cpf, token]);
 
   useEffect(() => {
-    void fetchAll();
+    void run();
     return () => { abortRef.current = true; };
-  }, [cpf]);
+  }, [run]);
 
-  const cpfResult       = mods["cpf"]!;
-  const cpfbasicoResult = mods["cpfbasico"]!;
-  const fotoResult      = mods["foto"]!;
+  const { headline, rest } = splitFields(cpfResult.fields);
 
-  const cpfGroups   = groupFields(cpfResult.fields);
-  const basicGroups = groupFields(cpfbasicoResult.fields);
+  // Find parentes section
+  const parentesSection = cpfResult.sections.find(s =>
+    s.name.toUpperCase().includes("PARENTE") || s.name.toUpperCase().includes("FAMILIAR")
+  );
+  const otherSections = cpfResult.sections.filter(s => s !== parentesSection);
 
   return (
     <motion.div
@@ -324,7 +360,7 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
-      {/* Header */}
+      {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -334,11 +370,10 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
           <div className="font-mono text-lg font-bold tracking-[0.25em] text-foreground">{cpf}</div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <StatusBadge status={cpfResult.status}       label="CPF" />
-          <StatusBadge status={cpfbasicoResult.status} label="Básico" />
-          <StatusBadge status={fotoResult.status}      label={`Foto · ${fotoLabel}`} />
+          <StatusBadge status={cpfResult.status}  label="CPF" />
+          <StatusBadge status={fotoResult.status} label={`Foto · ${fotoLabel}`} />
           <button
-            onClick={() => void fetchAll()}
+            onClick={() => void run()}
             disabled={running}
             className="p-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-foreground transition-all disabled:opacity-40"
             title="Atualizar"
@@ -348,197 +383,178 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
         </div>
       </div>
 
-      {/* Two-column layout — always visible, streams content as it arrives */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
+      {/* ── Photo + Identity headline ──────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4">
 
-        {/* ── Photo column ─────────────────────────────────────────────────── */}
-        <div className="space-y-3">
-          <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
-            <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+        {/* Photo column */}
+        <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
+          <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
               <Camera className="w-3.5 h-3.5 text-primary" />
               <span className="text-[9px] uppercase tracking-[0.35em] text-muted-foreground/60 font-bold">
-                Biometria
-                {fotoResult.status === "done" && ` · ${fotoLabel}`}
+                Biometria{fotoResult.status === "done" ? ` · ${fotoLabel}` : ""}
               </span>
-              {fotoResult.status === "loading" && (
-                <span className="ml-auto text-[8px] text-sky-400/70 flex items-center gap-1">
-                  <Scan className="w-2.5 h-2.5 animate-pulse" />
-                  {fotoLabel}…
-                </span>
+            </div>
+            {fotoResult.status === "loading" && (
+              <span className="text-[8px] text-sky-400/60 flex items-center gap-1 font-mono">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                {fotoLabel}
+              </span>
+            )}
+          </div>
+          <div className="px-4 pb-4">
+            <AnimatePresence mode="wait">
+              {fotoResult.status === "done" && fotoResult.imageUrl ? (
+                <motion.div key="photo" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="relative overflow-hidden rounded-xl border border-white/10">
+                  <img
+                    src={fotoResult.imageUrl}
+                    alt="Foto biométrica"
+                    className="w-full object-cover"
+                    style={{ maxHeight: 300, minHeight: 160, objectPosition: "top" }}
+                    onError={e => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                  <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                  <span className="absolute bottom-2 left-2 text-[8px] uppercase tracking-widest text-white/50 bg-black/40 backdrop-blur-sm rounded px-2 py-0.5 border border-white/10">
+                    {fotoLabel}
+                  </span>
+                </motion.div>
+              ) : fotoResult.status === "error" ? (
+                <motion.div key="no-photo" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="h-44 rounded-xl border border-white/5 bg-white/3 flex flex-col items-center justify-center gap-2">
+                  <Camera className="w-7 h-7 text-muted-foreground/20" />
+                  <span className="text-[10px] text-muted-foreground/40">Foto não encontrada</span>
+                </motion.div>
+              ) : (
+                <motion.div key="loading-photo" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="h-44 rounded-xl border border-white/5 bg-white/3 flex flex-col items-center justify-center gap-3">
+                  <Fingerprint className="w-8 h-8 text-muted-foreground/20 animate-pulse" />
+                  <span className="text-[9px] text-sky-400/50 uppercase tracking-[0.3em]">
+                    buscando {fotoLabel}…
+                  </span>
+                </motion.div>
               )}
-            </div>
-
-            <div className="px-4 pb-4">
-              <AnimatePresence mode="wait">
-                {fotoResult.status === "done" && fotoResult.imageUrl ? (
-                  <motion.div
-                    key="photo"
-                    initial={{ opacity: 0, scale: 0.97 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="relative overflow-hidden rounded-xl border border-white/10"
-                  >
-                    <img
-                      src={fotoResult.imageUrl}
-                      alt="Foto biométrica"
-                      className="w-full object-cover"
-                      style={{ maxHeight: 320, minHeight: 180, objectPosition: "top" }}
-                      onError={e => { (e.currentTarget as HTMLImageElement).src = ""; }}
-                    />
-                    <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
-                    <span className="absolute bottom-2 left-2 text-[8px] uppercase tracking-widest text-white/50 bg-black/40 backdrop-blur-sm rounded px-2 py-0.5 border border-white/10">
-                      {fotoLabel}
-                    </span>
-                  </motion.div>
-                ) : fotoResult.status === "error" ? (
-                  <motion.div
-                    key="no-photo"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="h-48 rounded-xl border border-white/5 bg-white/3 flex flex-col items-center justify-center gap-2"
-                  >
-                    <Camera className="w-7 h-7 text-muted-foreground/20" />
-                    <span className="text-[10px] text-muted-foreground/40">Foto não encontrada</span>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="loading-photo"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="h-48 rounded-xl border border-white/5 bg-white/3 flex flex-col items-center justify-center gap-3"
-                  >
-                    <Fingerprint className="w-8 h-8 text-muted-foreground/20 animate-pulse" />
-                    <span className="text-[9px] text-sky-400/50 uppercase tracking-[0.3em]">
-                      buscando {fotoLabel}…
-                    </span>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+            </AnimatePresence>
           </div>
         </div>
 
-        {/* ── Data column ──────────────────────────────────────────────────── */}
-        <div className="space-y-3">
-
-          {/* Registro Geral */}
-          <SectionCard title="Registro Geral" icon={User}>
+        {/* Identity headline */}
+        <div className="rounded-2xl border border-white/10 bg-black/30 overflow-hidden">
+          <div className="px-5 pt-4 pb-3 flex items-center gap-2 border-b border-white/5">
+            <User className="w-4 h-4 text-primary" />
+            <span className="text-[11px] uppercase tracking-[0.35em] font-bold text-muted-foreground">Registro Geral</span>
+          </div>
+          <div className="px-5 py-2">
             {cpfResult.status === "loading" ? (
-              <SkeletonRows n={5} />
-            ) : cpfResult.status === "done" && cpfGroups.identity.length > 0 ? (
-              <div className="pt-3">
-                {cpfGroups.identity.map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-              </div>
+              <SkeletonRows n={7} />
+            ) : cpfResult.status === "done" && headline.length > 0 ? (
+              headline.map(f => <FieldRow key={f.key} label={f.key} value={f.value} />)
             ) : cpfResult.status === "error" ? (
-              <div className="flex items-center gap-2 py-3 text-rose-400/70 text-xs">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Sem resultado ou acesso bloqueado
+              <div className="flex items-center gap-2 py-4 text-rose-400/70 text-xs">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                CPF não encontrado ou acesso bloqueado
               </div>
             ) : null}
-          </SectionCard>
-
-          {/* Endereço — show as soon as either source has data */}
-          {(cpfResult.status === "loading" || cpfbasicoResult.status === "loading" ||
-            cpfGroups.address.length > 0 || basicGroups.address.length > 0) && (
-            <SectionCard title="Endereço" icon={MapPin} defaultOpen={false}>
-              {cpfResult.status === "loading" && cpfbasicoResult.status === "loading" ? (
-                <SkeletonRows n={3} />
-              ) : (
-                <div className="pt-3">
-                  {[...cpfGroups.address, ...basicGroups.address.filter(f =>
-                    !cpfGroups.address.some(cf => normKey(cf[0]) === normKey(f[0]))
-                  )].map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-                </div>
-              )}
-            </SectionCard>
-          )}
-
-          {/* Contato */}
-          {(cpfResult.status === "loading" || cpfbasicoResult.status === "loading" ||
-            cpfGroups.contact.length > 0 || basicGroups.contact.length > 0) && (
-            <SectionCard title="Contato" icon={Phone} defaultOpen={false}>
-              {cpfResult.status === "loading" && cpfbasicoResult.status === "loading" ? (
-                <SkeletonRows n={2} />
-              ) : (
-                <div className="pt-3">
-                  {[...cpfGroups.contact, ...basicGroups.contact.filter(f =>
-                    !cpfGroups.contact.some(cf => normKey(cf[0]) === normKey(f[0]))
-                  )].map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-                </div>
-              )}
-            </SectionCard>
-          )}
-
-          {/* CPF Básico */}
-          <SectionCard title="CPF Básico · Skylers" icon={FileText} defaultOpen={false}>
-            {cpfbasicoResult.status === "loading" ? (
-              <SkeletonRows n={4} />
-            ) : cpfbasicoResult.status === "done" && basicGroups.identity.length > 0 ? (
-              <div className="pt-3">
-                {basicGroups.identity.filter(f =>
-                  !cpfGroups.identity.some(cf => normKey(cf[0]) === normKey(f[0]))
-                ).map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-                {basicGroups.other.map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-              </div>
-            ) : cpfbasicoResult.status === "error" ? (
-              <div className="flex items-center gap-2 py-3 text-rose-400/70 text-xs">
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> CPF Básico não disponível
-              </div>
-            ) : null}
-          </SectionCard>
-
-          {/* Vínculos */}
-          {(cpfResult.status === "loading" || cpfbasicoResult.status === "loading" ||
-            cpfGroups.work.length > 0 || basicGroups.work.length > 0) && (
-            <SectionCard title="Vínculos Empregatícios" icon={Briefcase} defaultOpen={false}>
-              {cpfResult.status === "loading" && cpfbasicoResult.status === "loading" ? (
-                <SkeletonRows n={2} />
-              ) : (
-                <div className="pt-3">
-                  {[...cpfGroups.work, ...basicGroups.work].map(([k, v], i) =>
-                    <FieldRow key={`${k}-${i}`} label={k} value={v} />
-                  )}
-                </div>
-              )}
-            </SectionCard>
-          )}
-
-          {/* Email */}
-          {(cpfResult.status === "loading" ||
-            cpfGroups.other.filter(f => normKey(f[0]).includes("EMAIL")).length > 0) && (
-            <SectionCard title="Email" icon={Mail} defaultOpen={false}>
-              {cpfResult.status === "loading" ? (
-                <SkeletonRows n={1} />
-              ) : (
-                <div className="pt-3">
-                  {cpfGroups.other
-                    .filter(f => normKey(f[0]).includes("EMAIL"))
-                    .map(([k, v]) => <FieldRow key={k} label={k} value={v} />)}
-                </div>
-              )}
-            </SectionCard>
-          )}
-
-          {/* Sections from provider text */}
-          <AnimatePresence>
-            {cpfResult.sections.map((sec, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-              >
-                <SectionCard title={sec.name} icon={FileText} defaultOpen={false}>
-                  <div className="pt-3 space-y-1.5">
-                    {sec.items.map((item, j) => (
-                      <div key={j} className="text-sm text-foreground/80 font-mono leading-relaxed">{item}</div>
-                    ))}
-                  </div>
-                </SectionCard>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
+          </div>
         </div>
       </div>
+
+      {/* ── Remaining fields (dados adicionais) ───────────────────────────── */}
+      <AnimatePresence>
+        {cpfResult.status === "done" && rest.length > 0 && (
+          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+            <SectionCard
+              title="Dados Adicionais"
+              icon={FileText}
+              defaultOpen={false}
+              badge={`${rest.length} campos`}
+            >
+              <div className="pt-2">
+                {rest.map(f => <FieldRow key={f.key} label={f.key} value={f.value} />)}
+              </div>
+            </SectionCard>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Dynamic sections (streaming in as CPF result arrives) ─────────── */}
+      <AnimatePresence>
+        {cpfResult.status === "loading" && (
+          <motion.div key="skel-sections" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="space-y-3">
+            {[1, 2].map(i => (
+              <div key={i} className="rounded-2xl border border-white/10 bg-black/30 p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-4 h-4 rounded bg-white/8 animate-pulse" />
+                  <div className="w-32 h-2.5 rounded bg-white/6 animate-pulse" />
+                </div>
+                <SkeletonRows n={3} />
+              </div>
+            ))}
+          </motion.div>
+        )}
+
+        {cpfResult.status === "done" && otherSections.map((sec, i) => (
+          <motion.div
+            key={sec.name}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+          >
+            <SectionCard
+              title={sec.name}
+              icon={sectionIcon(sec.name)}
+              defaultOpen={i < 2}
+              badge={`${sec.items.length}`}
+            >
+              <div className="pt-3 space-y-2">
+                {sec.items.map((item, j) => {
+                  // Try to parse as key:value pairs for nicer display
+                  const kv = parseItemFields(item);
+                  const entries = Object.entries(kv);
+                  if (entries.length > 1) {
+                    return (
+                      <div key={j} className="rounded-lg border border-white/8 bg-white/3 px-3 py-2.5 space-y-1.5">
+                        {entries.map(([k, v]) => (
+                          <div key={k} className="flex items-start gap-2">
+                            <span className="text-[9px] uppercase tracking-[0.25em] text-muted-foreground/40 w-28 shrink-0 pt-0.5">{k}</span>
+                            <span className="text-xs font-mono text-foreground/80 break-all flex-1">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={j} className="text-sm text-foreground/75 font-mono leading-relaxed px-1 py-1 border-b border-white/5 last:border-0">
+                      {item}
+                    </div>
+                  );
+                })}
+              </div>
+            </SectionCard>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      {/* ── Parentes (with photos) ─────────────────────────────────────────── */}
+      <AnimatePresence>
+        {cpfResult.status === "done" && parentesSection && parentesSection.items.length > 0 && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <SectionCard
+              title="Parentes"
+              icon={Users}
+              defaultOpen={true}
+              badge={`${parentesSection.items.length}`}
+            >
+              <div className="pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {parentesSection.items.map((item, i) => (
+                  <ParenteCard key={i} item={item} token={token} />
+                ))}
+              </div>
+            </SectionCard>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

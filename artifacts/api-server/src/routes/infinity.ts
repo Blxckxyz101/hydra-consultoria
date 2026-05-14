@@ -3109,7 +3109,10 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
   const tipo  = String(req.body?.tipo  ?? "").trim();
   const dados = String(req.body?.dados ?? "").trim();
   // Strict boolean check — belt-and-suspenders with header fallback for CpfFullPanel batch calls
-  const skipLog = req.body?.skipLog === true || req.headers["x-skip-log"] === "1";
+  const skipLog    = req.body?.skipLog    === true || req.headers["x-skip-log"]    === "1";
+  // noHistory: skips ONLY the logConsulta DB write (rate limiting still applies).
+  // Use for secondary/rotation calls that should not pollute the user's history.
+  const noHistory  = req.body?.noHistory  === true || req.headers["x-no-history"]  === "1";
   if (!tipo || !dados) {
     res.status(400).json({ success: false, error: "Parâmetros 'tipo' e 'dados' são obrigatórios." });
     return;
@@ -3181,14 +3184,16 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       const _extUser = req.infinityUser;
       bumpCaches(_extUser.username);
       bumpSkylersTipoCache(_extUser.username, extTipoKey);
-      void logConsulta({
-        tipo,
-        query: dadosStr,
-        username: _extUser.username,
-        success,
-        result: provider.parsed ?? {},
-        skylers: true,
-      }).catch(() => {});
+      if (!noHistory) {
+        void logConsulta({
+          tipo,
+          query: dadosStr,
+          username: _extUser.username,
+          success,
+          result: provider.parsed ?? {},
+          skylers: true,
+        }).catch(() => {});
+      }
     }
     return;
   }
