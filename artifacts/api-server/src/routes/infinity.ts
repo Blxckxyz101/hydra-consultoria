@@ -2380,6 +2380,100 @@ router.get("/bases/status", requireAdmin, async (_req, res) => {
   res.json(results);
 });
 
+// ─── Admin: module registry ─────────────────────────────────────────────────
+router.get("/bases/modules", requireAdmin, (_req, res) => {
+  const modules = [
+    // ── Pessoa ──────────────────────────────────────────────────────────────
+    { tipo: "cpf",         label: "CPF Completo",         category: "Pessoa",     modulo: "iseek-cpf",                          provider: "skylers", special: false },
+    { tipo: "cpfbasico",   label: "CPF Básico (Receita)", category: "Pessoa",     modulo: "iseek-cpfbasico",                    provider: "skylers", special: false },
+    { tipo: "nome",        label: "Busca por Nome",        category: "Pessoa",     modulo: "iseek-dados---nomeabreviadofiltros", provider: "skylers", special: false },
+    { tipo: "rg",          label: "RG",                    category: "Pessoa",     modulo: "iseek-dados---rg",                   provider: "skylers", special: false },
+    { tipo: "mae",         label: "Nome da Mãe",           category: "Pessoa",     modulo: "iseek-dados---mae",                  provider: "skylers", special: false },
+    { tipo: "pai",         label: "Nome do Pai",           category: "Pessoa",     modulo: "iseek-dados---pai",                  provider: "skylers", special: false },
+    { tipo: "nasc",        label: "Data de Nascimento",    category: "Pessoa",     modulo: "iseek-dados---nasc",                 provider: "skylers", special: false },
+    { tipo: "parentes",    label: "Parentes",              category: "Pessoa",     modulo: "iseek-dados---parentes",             provider: "skylers", special: false },
+    { tipo: "obito",       label: "Óbito",                 category: "Pessoa",     modulo: "iseek-dados---obito",                provider: "skylers", special: false },
+    { tipo: "nis",         label: "NIS / PIS",             category: "Pessoa",     modulo: "iseek-dados---nis",                  provider: "skylers", special: false },
+    { tipo: "telefone",    label: "Telefone",              category: "Pessoa",     modulo: "iseek-dados---telefone",             provider: "skylers", special: false },
+    { tipo: "email",       label: "E-mail",                category: "Pessoa",     modulo: "iseek-dados---email",                provider: "skylers", special: false },
+    { tipo: "pix",         label: "Chave PIX",             category: "Pessoa",     modulo: "iseek-dados---pix",                  provider: "skylers", special: false },
+    { tipo: "titulo",      label: "Título de Eleitor",     category: "Pessoa",     modulo: "iseek-dados---titulo",               provider: "skylers", special: false },
+    { tipo: "score",       label: "Score Serasa",          category: "Pessoa",     modulo: "iseek-dados---score",                provider: "skylers", special: false },
+    { tipo: "score2",      label: "Score Bureau 2",        category: "Pessoa",     modulo: "iseek-dados---score2",               provider: "skylers", special: false },
+    { tipo: "irpf",        label: "IRPF",                  category: "Pessoa",     modulo: "iseek-dados---irpf",                 provider: "skylers", special: false },
+    { tipo: "beneficios",  label: "Benefícios Gov",        category: "Pessoa",     modulo: "iseek-dados---beneficios",           provider: "skylers", special: false },
+    { tipo: "mandado",     label: "Mandado de Prisão",     category: "Pessoa",     modulo: "iseek-dados---mandado",              provider: "skylers", special: false },
+    { tipo: "dividas",     label: "Dívidas",               category: "Pessoa",     modulo: "iseek-dados---dividas",              provider: "skylers", special: false },
+    { tipo: "bens",        label: "Bens Registrados",      category: "Pessoa",     modulo: "iseek-dados---bens",                 provider: "skylers", special: false },
+    { tipo: "processo",    label: "Processo Judicial",     category: "Pessoa",     modulo: "iseek-dados---processo",             provider: "skylers", special: false },
+    { tipo: "processos",   label: "Processos (lista)",     category: "Pessoa",     modulo: "iseek-dados---processos",            provider: "skylers", special: false },
+    { tipo: "oab",         label: "OAB",                   category: "Pessoa",     modulo: "iseek-dados---oab",                  provider: "skylers", special: false },
+    { tipo: "spc",         label: "SPC",                   category: "Pessoa",     modulo: "cpf-spc",                            provider: "skylers", special: false },
+    { tipo: "iptu",        label: "IPTU",                  category: "Pessoa",     modulo: "iseek-dados---iptu",                 provider: "skylers", special: false },
+    { tipo: "certidoes",   label: "Certidões",             category: "Pessoa",     modulo: "iseek-dados---certidoes",            provider: "skylers", special: false },
+    { tipo: "faculdades",  label: "Faculdades",            category: "Pessoa",     modulo: "iseek-dados---faculdades",           provider: "skylers", special: false },
+    { tipo: "empregos",    label: "Empregos / RAIS",       category: "Pessoa",     modulo: "iseek-dados---rais",                 provider: "skylers", special: false },
+    { tipo: "catcpf",      label: "CAT por CPF",           category: "Pessoa",     modulo: "iseek-dados---catcpf",               provider: "skylers", special: false },
+    { tipo: "catnumero",   label: "CAT por Número",        category: "Pessoa",     modulo: "iseek-dados---catnumero",            provider: "skylers", special: false },
+    { tipo: "matricula",   label: "Matrícula",             category: "Pessoa",     modulo: "iseek-dados---matricula",            provider: "skylers", special: false },
+    { tipo: "cheque",      label: "Cheque",                category: "Pessoa",     modulo: "iseek-dados---cheque",               provider: "skylers", special: false },
+    { tipo: "registro",    label: "Registro",              category: "Pessoa",     modulo: "iseek-dados---registro",             provider: "skylers", special: false },
+    // ── Financeiro / Especial ────────────────────────────────────────────────
+    { tipo: "credilink",   label: "CrediLink",             category: "Financeiro", modulo: "credilink",                          provider: "skylers", special: true  },
+    // ── Veículo ──────────────────────────────────────────────────────────────
+    { tipo: "placa",       label: "Placa",                 category: "Veículo",    modulo: "iseek-dados---placa",                provider: "skylers", special: false },
+    { tipo: "placafipe",   label: "Placa FIPE",            category: "Veículo",    modulo: "placa-fipe",                         provider: "skylers", special: true  },
+    { tipo: "placaserpro", label: "Placa SERPRO",          category: "Veículo",    modulo: "placa-serpro",                       provider: "skylers", special: true  },
+    { tipo: "chassi",      label: "Chassi",                category: "Veículo",    modulo: "iseek-dados---chassi",               provider: "skylers", special: false },
+    { tipo: "renavam",     label: "RENAVAM",               category: "Veículo",    modulo: "iseek-dados---renavam",              provider: "skylers", special: false },
+    { tipo: "motor",       label: "Motor",                 category: "Veículo",    modulo: "iseek-dados---motor",                provider: "skylers", special: false },
+    { tipo: "cnh",         label: "CNH",                   category: "Veículo",    modulo: "iseek-dados---cnh",                  provider: "skylers", special: false },
+    { tipo: "cnhfull",     label: "CNH Full",              category: "Veículo",    modulo: "cnh-full",                           provider: "skylers", special: true  },
+    { tipo: "cnham",       label: "CNH AM",                category: "Veículo",    modulo: "iseek-dados---cnham",                provider: "skylers", special: false },
+    { tipo: "cnhnc",       label: "CNH NC",                category: "Veículo",    modulo: "iseek-dados---cnhnc",                provider: "skylers", special: false },
+    { tipo: "cnhrs",       label: "CNH RS",                category: "Veículo",    modulo: "iseek-dados---cnhrs",                provider: "skylers", special: false },
+    { tipo: "cnhrr",       label: "CNH RR",                category: "Veículo",    modulo: "iseek-dados---cnhrr",                provider: "skylers", special: false },
+    { tipo: "frota",       label: "Frota",                 category: "Veículo",    modulo: "iseek-dados---veiculos",             provider: "skylers", special: false },
+    { tipo: "crlvto",      label: "CRLV TO",               category: "Veículo",    modulo: "iseek-dados---crlvto",               provider: "skylers", special: false },
+    { tipo: "crlvmt",      label: "CRLV MT",               category: "Veículo",    modulo: "iseek-dados---crlvmt",               provider: "skylers", special: false },
+    { tipo: "vistoria",    label: "Vistoria",              category: "Veículo",    modulo: "vistoria",                           provider: "skylers", special: true  },
+    { tipo: "fotodetran",  label: "Foto DETRAN",           category: "Veículo",    modulo: "iseek-dados---fotodetran",           provider: "skylers", special: false },
+    // ── Empresa ──────────────────────────────────────────────────────────────
+    { tipo: "cnpj",        label: "CNPJ",                  category: "Empresa",    modulo: "iseek-dados---cnpj",                 provider: "skylers", special: false },
+    { tipo: "funcionarios",label: "Funcionários",          category: "Empresa",    modulo: "iseek-dados---func",                 provider: "skylers", special: false },
+    { tipo: "socios",      label: "Sócios",                category: "Empresa",    modulo: "iseek-dados---cnpj",                 provider: "skylers", special: false },
+    // ── Saúde ────────────────────────────────────────────────────────────────
+    { tipo: "vacinas",     label: "Vacinas",               category: "Saúde",      modulo: "iseek-dados---vacinas",              provider: "skylers", special: false },
+    // ── Endereço ─────────────────────────────────────────────────────────────
+    { tipo: "cep",         label: "CEP / Endereço",        category: "Endereço",   modulo: "iseek-dados---cep",                  provider: "skylers", special: false },
+    // ── Fotos por estado ─────────────────────────────────────────────────────
+    { tipo: "foto",        label: "Foto CNH",              category: "Foto",       modulo: "iseek-fotos---fotocnh",              provider: "skylers", special: false },
+    { tipo: "fotonc",      label: "Foto NC",               category: "Foto",       modulo: "iseek-fotos---fotonc",               provider: "skylers", special: false },
+    { tipo: "fotosp",      label: "Foto SP",               category: "Foto",       modulo: "iseek-fotos---fotosp",               provider: "skylers", special: false },
+    { tipo: "fotorj",      label: "Foto RJ",               category: "Foto",       modulo: "iseek-fotos---fotorj",               provider: "skylers", special: false },
+    { tipo: "fotomg",      label: "Foto MG",               category: "Foto",       modulo: "iseek-fotos---fotomg",               provider: "skylers", special: false },
+    { tipo: "fotoba",      label: "Foto BA",               category: "Foto",       modulo: "iseek-fotos---fotoba",               provider: "skylers", special: false },
+    { tipo: "fotope",      label: "Foto PE",               category: "Foto",       modulo: "iseek-fotos---fotope",               provider: "skylers", special: false },
+    { tipo: "fotorn",      label: "Foto RN",               category: "Foto",       modulo: "iseek-fotos---fotorn",               provider: "skylers", special: false },
+    { tipo: "fotopr",      label: "Foto PR",               category: "Foto",       modulo: "iseek-fotos---fotopr",               provider: "skylers", special: false },
+    { tipo: "fotodf",      label: "Foto DF",               category: "Foto",       modulo: "iseek-fotos---fotodf",               provider: "skylers", special: false },
+    { tipo: "fotoce",      label: "Foto CE",               category: "Foto",       modulo: "iseek-fotos---fotoce",               provider: "skylers", special: false },
+    { tipo: "fotoma",      label: "Foto MA",               category: "Foto",       modulo: "iseek-fotos---fotoma",               provider: "skylers", special: false },
+    { tipo: "fotopb",      label: "Foto PB",               category: "Foto",       modulo: "iseek-fotos---fotopb",               provider: "skylers", special: false },
+    { tipo: "fotogo",      label: "Foto GO",               category: "Foto",       modulo: "iseek-fotos---fotogo",               provider: "skylers", special: false },
+    { tipo: "fotopi",      label: "Foto PI",               category: "Foto",       modulo: "iseek-fotos---fotopi",               provider: "skylers", special: false },
+    { tipo: "fotoal",      label: "Foto AL",               category: "Foto",       modulo: "iseek-fotos---fotoal",               provider: "skylers", special: false },
+    { tipo: "fototo",      label: "Foto TO",               category: "Foto",       modulo: "iseek-fotos---fototo",               provider: "skylers", special: false },
+    { tipo: "fotoes",      label: "Foto ES",               category: "Foto",       modulo: "iseek-fotos---fotoes",               provider: "skylers", special: false },
+    { tipo: "fotoro",      label: "Foto RO",               category: "Foto",       modulo: "iseek-fotos---fotoro",               provider: "skylers", special: false },
+    { tipo: "fotoms",      label: "Foto MS",               category: "Foto",       modulo: "iseek-fotos---fotoms",               provider: "skylers", special: false },
+    { tipo: "fotomapresos",label: "Foto MA (Presos)",      category: "Foto",       modulo: "iseek-fotos---fotomapresos",         provider: "skylers", special: false },
+    { tipo: "crlvtofoto",  label: "CRLV TO Foto",         category: "Foto",       modulo: "iseek-fotos---crlvto",               provider: "skylers", special: false },
+    { tipo: "crlvmtfoto",  label: "CRLV MT Foto",         category: "Foto",       modulo: "iseek-fotos---crlvmt",               provider: "skylers", special: false },
+  ];
+  res.json(modules);
+});
+
 // ─── Skylers route ─────────────────────────────────────────────────────────
 router.post("/skylers", requireAuth, consultaLimiter, async (req, res) => {
   const { modulo, valor, endpoint } = req.body ?? {};
@@ -3167,9 +3261,15 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     const rawText = provider.parsed?.raw ?? "";
     // Translate raw Skylers auth errors into user-friendly messages
     const isAuthError = (provider.error ?? "").match(/token|inválido|expirado|401|403/i);
+    // Modules that require special/premium Skylers access — auth failures here mean
+    // "this token doesn't cover this module", not a global auth problem.
+    const PREMIUM_MODULES = new Set(["placa-serpro", "credilink", "placa-fipe", "vistoria", "cnh-full"]);
+    const isPremiumModule = PREMIUM_MODULES.has(modulo ?? "");
     const errorMsg = !success && isAuthError
       ? tipoLower === "credilink"
         ? "CrediLink temporariamente indisponível. O módulo requer acesso especial — contate o suporte."
+        : isPremiumModule
+        ? `Módulo ${modulo} requer acesso especial na Skylers API. Tente uma consulta alternativa (ex.: Placa, Placa FIPE) ou aguarde a renovação do token.`
         : "Autenticação com a Skylers API falhou. Tente novamente em instantes ou acesse pela base Hydra."
       : provider.error ?? "Sem resultado";
     // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
