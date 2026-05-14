@@ -43,7 +43,7 @@ class CircuitBreaker {
   private failures = 0;
   private lastFailure = 0;
   private readonly threshold = 3;
-  private readonly resetMs = 90_000; // 90s cooldown after 3 consecutive failures
+  private readonly resetMs = 30_000; // 30s cooldown after 3 consecutive failures (faster recovery)
 
   isOpen(): boolean {
     if (this.failures < this.threshold) return false;
@@ -87,6 +87,39 @@ function httpGet(url: string, signal: AbortSignal, timeoutMs = 8_000): Promise<{
     signal.addEventListener("abort", onAbort, { once: true });
     req.end();
   });
+}
+
+// ─── withRetry: one automatic retry on transient network failures ────────────
+async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal, delayMs = 1_500): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (signal.aborted) throw e;
+    await new Promise(r => setTimeout(r, delayMs));
+    if (signal.aborted) throw e;
+    return fn(); // second attempt — let errors propagate naturally
+  }
+}
+
+// ─── Query result cache (10-min TTL, max 5 000 entries) ──────────────────────
+const queryResultCache = new Map<string, { data: unknown; ts: number }>();
+const QUERY_CACHE_TTL = 10 * 60_000;
+const QUERY_CACHE_MAX = 5_000;
+
+function getCachedResult(tipo: string, dados: string): unknown | null {
+  const key = `${tipo}:${dados}`;
+  const entry = queryResultCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > QUERY_CACHE_TTL) { queryResultCache.delete(key); return null; }
+  return entry.data;
+}
+function setCachedResult(tipo: string, dados: string, data: unknown): void {
+  if (queryResultCache.size >= QUERY_CACHE_MAX) {
+    let oldestKey = ""; let oldestTs = Infinity;
+    for (const [k, v] of queryResultCache) if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+    if (oldestKey) queryResultCache.delete(oldestKey);
+  }
+  queryResultCache.set(`${tipo}:${dados}`, { data, ts: Date.now() });
 }
 
 // ─── Temp foto store (base64 → URL) ─────────────────────────────────────────
@@ -777,7 +810,7 @@ async function callProvider(tipo: string, dados: string, signal: AbortSignal): P
   }
   const url = `${PROVIDER_BASE}/${tipo}?dados=${encodeURIComponent(dados)}&apikey=${encodeURIComponent(PROVIDER_KEY)}`;
   try {
-    const { status, body: text } = await httpGet(url, signal);
+    const { status, body: text } = await withRetry(() => httpGet(url, signal), signal);
     if (status < 200 || status >= 300) {
       // Only trip circuit on server errors (5xx) or connection-level failures — NOT 4xx (client errors mean API is up)
       if (status >= 500) geassCircuit.recordFailure();
@@ -1443,7 +1476,7 @@ async function callSkylers(
       url = `${SKYLERS_BASE}/consulta?token=${SKYLERS_TOKEN}&modulo=${encodeURIComponent(modulo)}&valor=${encodeURIComponent(valor)}`;
     }
 
-    const { status, body: text } = await httpGet(url, signal, 15_000);
+    const { status, body: text } = await withRetry(() => httpGet(url, signal, 15_000), signal);
 
     if (status < 200 || status >= 300) {
       const friendly = status === 400
@@ -2659,6 +2692,14 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
     dados = dadosRaw.slice(0, 200);
   }
 
+  // Serve from in-memory cache if available (10-min TTL) — instant response, zero provider cost
+  const cacheHit = getCachedResult(tipo, dados);
+  if (cacheHit) {
+    res.json({ success: true, tipo, query: dados, data: cacheHit, cached: true, error: null });
+    if (!skipLog) void logConsulta({ tipo, query: dados, username, success: true, result: cacheHit as Parsed }).catch(() => {});
+    return;
+  }
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30_000);
 
@@ -2711,6 +2752,9 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
 
   const success = provider.ok && !!provider.parsed;
   const data = provider.parsed ?? { fields: [], sections: [], raw: provider.raw ? String(provider.raw) : "" };
+
+  // Populate cache on success so future identical queries are instant
+  if (success) setCachedResult(tipo, dados, data);
 
   // Send response BEFORE logging — prevents 10s global timeout from firing during DB write
   res.json({
