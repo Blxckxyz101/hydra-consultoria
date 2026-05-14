@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import { lookupUser } from "./lib/infinity-auth.js";
+import { prewarmSisregSession } from "./scrapers/sisreg.js";
 
 // Global type for broadcast/notify functions used by REST fallback and social routes
 declare global {
@@ -94,6 +95,7 @@ globalThis.__notifyUser = notifyUser;
 const startServer = (attempt = 1, maxAttempts = 10, delayMs = 2000) => {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
+    prewarmSisregSession();
 
     // ── WebSocket server for real-time chat ─────────────────────────────────
     const wss = new WebSocketServer({ server, path: "/api/ws/chat" });
