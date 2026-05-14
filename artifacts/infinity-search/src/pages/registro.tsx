@@ -322,6 +322,7 @@ export default function Registro() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [regLoading, setRegLoading] = useState(false);
+  const [sseError, setSseError] = useState<"timeout" | "expired" | null>(null);
 
   const [couponInput, setCouponInput] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
@@ -388,6 +389,7 @@ export default function Registro() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setPolling(true);
+    setSseError(null);
     setCountdown(180);
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
 
@@ -411,7 +413,9 @@ export default function Registro() {
             try {
               const d = JSON.parse(line.slice(6)) as { status: string };
               if (d.status === "paid") { clearInterval(cdInt); setPolling(false); setStep("success"); return; }
-              if (d.status === "expired" || d.status === "failed") { clearInterval(cdInt); setPolling(false); return; }
+              if (d.status === "expired" || d.status === "failed") {
+                clearInterval(cdInt); setPolling(false); setSseError("expired"); return;
+              }
             } catch {}
           }
         }
@@ -425,6 +429,8 @@ export default function Registro() {
           await new Promise(r => setTimeout(r, delay));
           return watchSSE(attempt + 1);
         }
+        // All retries exhausted — show connection error
+        setSseError("timeout");
       }
       clearInterval(cdInt);
       setPolling(false);
@@ -782,13 +788,40 @@ export default function Registro() {
                   </div>
                   <p className="font-mono text-xs text-muted-foreground break-all line-clamp-2">{payment.pixCopiaECola}</p>
                 </div>
-                <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
-                  {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
-                  <div className="text-xs">
-                    <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
-                    {polling && <span className="text-muted-foreground ml-2">· expira em {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+                {sseError === "expired" ? (
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/8 px-4 py-3">
+                    <p className="text-xs text-rose-400 font-semibold mb-1">PIX expirado ou cancelado</p>
+                    <p className="text-[11px] text-muted-foreground mb-3">O tempo de pagamento encerrou. Gere um novo PIX para continuar.</p>
+                    <button onClick={() => { setSseError(null); setStep("register"); }}
+                      className="text-[11px] font-semibold text-primary hover:underline">
+                      ← Tentar novamente
+                    </button>
                   </div>
-                </div>
+                ) : sseError === "timeout" ? (
+                  <div className="rounded-xl border border-orange-500/30 bg-orange-500/8 px-4 py-3">
+                    <p className="text-xs text-orange-400 font-semibold mb-1">Conexão interrompida</p>
+                    <p className="text-[11px] text-muted-foreground mb-3">Não conseguimos confirmar o pagamento automaticamente. Se você já pagou, aguarde alguns minutos e entre em contato pelo suporte.</p>
+                    <div className="flex gap-3">
+                      <button onClick={() => { if (payment) { setSseError(null); startPolling(payment.paymentId); } }}
+                        className="text-[11px] font-semibold text-primary hover:underline">
+                        Verificar novamente
+                      </button>
+                      <span className="text-muted-foreground/40">·</span>
+                      <a href="https://t.me/hydraconsultoria" target="_blank" rel="noreferrer"
+                        className="text-[11px] font-semibold text-muted-foreground hover:text-foreground hover:underline">
+                        Suporte
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-center gap-3">
+                    {polling ? <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" /> : <Clock className="w-4 h-4 text-amber-400 shrink-0" />}
+                    <div className="text-xs">
+                      <span className="text-amber-300 font-semibold">Aguardando pagamento</span>
+                      {polling && <span className="text-muted-foreground ml-2">· expira em {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}</span>}
+                    </div>
+                  </div>
+                )}
               </motion.div>
             )}
 

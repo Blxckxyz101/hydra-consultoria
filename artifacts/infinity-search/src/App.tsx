@@ -51,7 +51,9 @@ function Router() {
       <Route path="/landing" component={Landing} />
       <Route path="/login" component={Login} />
       <Route path="/registro"><Registro /></Route>
-      <Route path="/planos"><Registro /></Route>
+      <Route path="/planos">
+        {localStorage.getItem("infinity_token") ? <Planos /> : <Registro />}
+      </Route>
 
       {/* ── Perfil público — acessível sem conta ── */}
       <Route path="/u/:username" component={PerfilPublico} />
