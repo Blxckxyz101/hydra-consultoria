@@ -164,7 +164,7 @@ const TABS: TabDef[] = [
   { id: "likes",    label: "Likes",           category: "Social", placeholder: "ID numérico",  hint: "ID da conta · região BR · Skylers",         inputMode: "numeric", icon: ThumbsUp, sanitize: (s) => s.replace(/\D/g, "") },
 
   // ── OUTROS ────────────────────────────────────────────────────────────────
-  { id: "cns",       label: "CNS / SUS",     category: "Outros", placeholder: "Cartão SUS",   hint: "15 dígitos",                   inputMode: "numeric", icon: Heart,    sanitize: (s) => s.replace(/\D/g, "").slice(0, 15) },
+  { id: "cns",       label: "CNS / SUS",     category: "Outros", placeholder: "Cartão SUS",   hint: "15 dígitos",                   inputMode: "numeric", icon: Heart,    sanitize: (s) => s.replace(/\D/g, "").slice(0, 15), hidden: true },
   { id: "catcpf",    label: "Catálogo CPF",  category: "Outros", placeholder: "CPF",          hint: "11 dígitos · Skylers",         inputMode: "numeric", icon: Database, sanitize: cpf11 },
   { id: "catnumero", label: "Catálogo Nº",   category: "Outros", placeholder: "11999999999",  hint: "número de telefone · Skylers", inputMode: "numeric", icon: Phone,    sanitize: (s) => s.replace(/\D/g, "").slice(0, 13) },
 ];

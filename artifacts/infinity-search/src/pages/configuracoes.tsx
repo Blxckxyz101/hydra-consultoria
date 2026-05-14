@@ -207,13 +207,20 @@ function TotpSection() {
 }
 
 const ROLE_CONFIG = {
-  admin: { label: "Admin",  color: "text-sky-300",      bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
-  vip:   { label: "VIP",   color: "text-amber-300",    bg: "bg-amber-400/10 border-amber-400/30",  icon: Crown    },
-  user:  { label: "Membro", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/30", icon: UserIcon },
+  admin:  { label: "Admin",  color: "text-sky-300",     bg: "bg-sky-400/10 border-sky-400/30",      icon: Shield   },
+  vip:    { label: "VIP",    color: "text-amber-300",   bg: "bg-amber-400/10 border-amber-400/30",  icon: Crown    },
+  ultra:  { label: "Ultra",  color: "text-violet-300",  bg: "bg-violet-400/10 border-violet-400/30", icon: Zap     },
+  padrao: { label: "Padrão", color: "text-cyan-300",    bg: "bg-cyan-400/10 border-cyan-400/30",    icon: UserIcon },
+  user:   { label: "Membro", color: "text-emerald-300", bg: "bg-emerald-400/10 border-emerald-400/30", icon: UserIcon },
 };
 
-function getRoleConf(role: string) {
-  return ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.vip;
+function getRoleConf(role: string, planTier?: string) {
+  if (role === "admin") return ROLE_CONFIG.admin;
+  if (role === "vip")   return ROLE_CONFIG.vip;
+  if (planTier === "ultra")  return ROLE_CONFIG.ultra;
+  if (planTier === "vip")    return ROLE_CONFIG.vip;
+  if (planTier === "padrao") return ROLE_CONFIG.padrao;
+  return ROLE_CONFIG.user;
 }
 
 function ExpiryEditor({ username, currentExpiry, onSaved }: { username: string; currentExpiry: string | null; onSaved: () => void }) {
@@ -600,6 +607,68 @@ function RoleEditor({ username, currentRole, isMe, onSaved }: { username: string
   );
 }
 
+// ─── PlanTierEditor ───────────────────────────────────────────────────────────
+function PlanTierEditor({ username, currentTier, isMe, onSaved }: { username: string; currentTier: string; isMe: boolean; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  if (isMe) return null;
+
+  const changeTier = async (tier: string) => {
+    if (tier === currentTier || saving) return;
+    setSaving(true);
+    try {
+      const token = localStorage.getItem("infinity_token");
+      await fetch(`/api/infinity/users/${encodeURIComponent(username)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ planTier: tier }),
+      });
+      setSaved(true);
+      setTimeout(() => { setSaved(false); onSaved(); }, 1200);
+    } catch {
+      // silent
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tiers: Array<{ key: string; label: string; color: string; activeBg: string }> = [
+    { key: "free",   label: "Livre",  color: "text-muted-foreground", activeBg: "bg-white/10 border-white/25"              },
+    { key: "padrao", label: "Padrão", color: "text-cyan-300",         activeBg: "bg-cyan-400/15 border-cyan-400/45"        },
+    { key: "vip",    label: "VIP",    color: "text-amber-300",        activeBg: "bg-amber-400/15 border-amber-400/45"      },
+    { key: "ultra",  label: "Ultra",  color: "text-violet-300",       activeBg: "bg-violet-400/15 border-violet-400/45"    },
+  ];
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {saved && (
+        <span className="flex items-center gap-0.5 text-[9px] text-emerald-400 font-semibold">
+          <Check className="w-2.5 h-2.5" /> Salvo
+        </span>
+      )}
+      {!saved && tiers.map((t) => {
+        const isActive = currentTier === t.key;
+        return (
+          <button
+            key={t.key}
+            onClick={() => changeTier(t.key)}
+            disabled={saving || isActive}
+            title={`Mudar plano para ${t.label}`}
+            className={`flex items-center gap-1 text-[9px] px-2 py-0.5 rounded border uppercase tracking-wider font-bold transition-all ${
+              isActive
+                ? `${t.activeBg} ${t.color} cursor-default`
+                : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/25 hover:text-foreground disabled:opacity-50"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── DisplayNameEditor ────────────────────────────────────────────────────────
 function DisplayNameEditor({ username, currentName, onSaved }: { username: string; currentName: string | null; onSaved: () => void }) {
   const [editing, setEditing] = useState(false);
@@ -732,10 +801,18 @@ export default function Configuracoes() {
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "vip" | "user">("vip");
+  const [newAccType, setNewAccType] = useState<"membro" | "padrao" | "ultra" | "vip" | "admin">("vip");
   const [expiresAt, setExpiresAt] = useState("");
   const [newPin, setNewPin] = useState("");
   const [formError, setFormError] = useState("");
+
+  const ACC_TYPE_MAP = {
+    membro: { role: "user",  planTier: "free"   },
+    padrao: { role: "user",  planTier: "padrao" },
+    ultra:  { role: "user",  planTier: "ultra"  },
+    vip:    { role: "vip",   planTier: "vip"    },
+    admin:  { role: "admin", planTier: "ultra"  },
+  } as const;
 
   // Test-login state
   const [testLoginLoading, setTestLoginLoading] = useState(false);
@@ -1110,18 +1187,20 @@ export default function Configuracoes() {
       return;
     }
     try {
+      const mapped = ACC_TYPE_MAP[newAccType];
       await createUser.mutateAsync({
         data: {
           username: newUsername.trim(),
           password: newPassword,
-          role: newRole,
+          role: mapped.role,
+          planTier: mapped.planTier,
           pin: newPin,
           ...(expiresAt ? { expiresAt } : {}),
         } as any,
       });
       setNewUsername("");
       setNewPassword("");
-      setNewRole("vip");
+      setNewAccType("vip");
       setExpiresAt("");
       setNewPin("");
       queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
@@ -1929,40 +2008,62 @@ export default function Configuracoes() {
                 />
               </div>
 
-              {/* Role selector */}
-              <div className="flex gap-2">
+              {/* Account type selector */}
+              <div className="grid grid-cols-5 gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setNewRole("user")}
-                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
-                    newRole === "user"
-                      ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300 shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)]"
+                  onClick={() => setNewAccType("membro")}
+                  className={`flex flex-col items-center gap-1 justify-center px-2 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                    newAccType === "membro"
+                      ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300 shadow-[0_0_16px_-4px_rgba(52,211,153,0.4)]"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
                   }`}
                 >
-                  <UserIcon className="w-4 h-4" /> Padrão
+                  <UserIcon className="w-3.5 h-3.5" /> Membro
                 </button>
                 <button
                   type="button"
-                  onClick={() => setNewRole("vip")}
-                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
-                    newRole === "vip"
-                      ? "bg-amber-400/15 border-amber-400/50 text-amber-300 shadow-[0_0_20px_-4px_rgba(251,191,36,0.4)]"
+                  onClick={() => setNewAccType("padrao")}
+                  className={`flex flex-col items-center gap-1 justify-center px-2 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                    newAccType === "padrao"
+                      ? "bg-cyan-400/15 border-cyan-400/50 text-cyan-300 shadow-[0_0_16px_-4px_rgba(34,211,238,0.4)]"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
                   }`}
                 >
-                  <Crown className="w-4 h-4" /> VIP
+                  <UserIcon className="w-3.5 h-3.5" /> Padrão
                 </button>
                 <button
                   type="button"
-                  onClick={() => setNewRole("admin")}
-                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
-                    newRole === "admin"
-                      ? "bg-sky-400/15 border-sky-400/50 text-sky-300 shadow-[0_0_20px_-4px_rgba(56,189,248,0.4)]"
+                  onClick={() => setNewAccType("ultra")}
+                  className={`flex flex-col items-center gap-1 justify-center px-2 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                    newAccType === "ultra"
+                      ? "bg-violet-400/15 border-violet-400/50 text-violet-300 shadow-[0_0_16px_-4px_rgba(167,139,250,0.4)]"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
                   }`}
                 >
-                  <Shield className="w-4 h-4" /> Admin
+                  <Zap className="w-3.5 h-3.5" /> Ultra
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewAccType("vip")}
+                  className={`flex flex-col items-center gap-1 justify-center px-2 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                    newAccType === "vip"
+                      ? "bg-amber-400/15 border-amber-400/50 text-amber-300 shadow-[0_0_16px_-4px_rgba(251,191,36,0.4)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <Crown className="w-3.5 h-3.5" /> VIP
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewAccType("admin")}
+                  className={`flex flex-col items-center gap-1 justify-center px-2 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                    newAccType === "admin"
+                      ? "bg-sky-400/15 border-sky-400/50 text-sky-300 shadow-[0_0_16px_-4px_rgba(56,189,248,0.4)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" /> Admin
                 </button>
               </div>
 
@@ -2138,7 +2239,7 @@ export default function Configuracoes() {
             <div className="space-y-2">
               <AnimatePresence>
                 {users?.map((u, i) => {
-                  const rConf = getRoleConf(u.role);
+                  const rConf = getRoleConf(u.role, (u as any).planTier);
                   const RIcon = rConf.icon;
                   const isExpired = (u as any).accountExpiresAt && new Date((u as any).accountExpiresAt) < new Date();
                   return (
@@ -2212,6 +2313,18 @@ export default function Configuracoes() {
                                 <RoleEditor
                                   username={u.username}
                                   currentRole={u.role}
+                                  isMe={u.username === me?.username}
+                                  onSaved={() => {
+                                    queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });
+                                    refetchUsers();
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground mb-1">Plano</p>
+                                <PlanTierEditor
+                                  username={u.username}
+                                  currentTier={(u as any).planTier ?? "free"}
                                   isMe={u.username === me?.username}
                                   onSaved={() => {
                                     queryClient.invalidateQueries({ queryKey: getInfinityListUsersQueryKey() });

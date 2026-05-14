@@ -501,11 +501,12 @@ const SUPPORTED_TIPOS = new Set([
 
 const onlyDigits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-function serializeUser(row: { username: string; role: string; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null; profilePhoto?: string | null; profileBanner?: string | null; profileBio?: string | null; profileStatus?: string | null; profileStatusMsg?: string | null; hideUsername?: boolean | null; creditBalance?: number | null; planQueryQuota?: number | null; planQueriesUsed?: number | null }) {
+function serializeUser(row: { username: string; role: string; planTier?: string | null; createdAt: Date; lastLoginAt: Date | null; accountExpiresAt?: Date | null; queryDailyLimit?: number | null; displayName?: string | null; accountPin?: string | null; profilePhoto?: string | null; profileBanner?: string | null; profileBio?: string | null; profileStatus?: string | null; profileStatusMsg?: string | null; hideUsername?: boolean | null; creditBalance?: number | null; planQueryQuota?: number | null; planQueriesUsed?: number | null }) {
   return {
     username: row.username,
     displayName: row.displayName ?? null,
     role: row.role,
+    planTier: row.planTier ?? "free",
     pinSet: !!row.accountPin,
     createdAt: row.createdAt.toISOString(),
     lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
@@ -1905,7 +1906,7 @@ router.get("/users", requireAdmin, async (_req, res) => {
 });
 
 router.post("/users", requireAdmin, async (req, res) => {
-  const { username, password, role, expiresInDays, expiresAt, queryDailyLimit, pin } = req.body ?? {};
+  const { username, password, role, planTier, expiresInDays, expiresAt, queryDailyLimit, pin } = req.body ?? {};
   if (!username || !password || !role) {
     res.status(400).json({ error: "username, password e role obrigatórios" });
     return;
@@ -1929,6 +1930,15 @@ router.post("/users", requireAdmin, async (req, res) => {
 
   const validRoles = ["admin", "vip", "user"];
   const finalRole = validRoles.includes(role) ? role : "vip";
+
+  // planTier can be set explicitly; otherwise derive from role
+  const validTiers = ["free", "padrao", "vip", "ultra"];
+  const finalPlanTier = validTiers.includes(String(planTier ?? ""))
+    ? String(planTier)
+    : finalRole === "admin" ? "ultra"
+    : finalRole === "vip" ? "vip"
+    : "free";
+
   const passwordHash = await bcrypt.hash(String(password), 10);
 
   let accountExpiresAt: Date | null = null;
@@ -1945,7 +1955,7 @@ router.post("/users", requireAdmin, async (req, res) => {
   try {
     const [created] = await db
       .insert(infinityUsersTable)
-      .values({ username: String(username), passwordHash, role: finalRole, accountExpiresAt, queryDailyLimit: queryDailyLimitVal })
+      .values({ username: String(username), passwordHash, role: finalRole, planTier: finalPlanTier, accountExpiresAt, queryDailyLimit: queryDailyLimitVal })
       .returning();
 
     // Mark PIN as used
@@ -2071,7 +2081,7 @@ router.post("/users/:username/reset-pin", requireAdmin, async (req, res) => {
 
 router.patch("/users/:username", requireAdmin, async (req, res) => {
   const target = String(req.params.username);
-  const { action, expiresInDays, expiresAt, queryDailyLimit, role, password, displayName, creditBalance, addCredits } = req.body ?? {};
+  const { action, expiresInDays, expiresAt, queryDailyLimit, role, planTier, password, displayName, creditBalance, addCredits } = req.body ?? {};
 
   const updateData: Partial<{
     accountExpiresAt: Date | null;
@@ -2082,7 +2092,6 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
     displayName: string | null;
     creditBalance: number;
   }> = {};
-
   if (action === "revoke") {
     updateData.accountExpiresAt = new Date(Date.now() - 1000);
   } else if (action === "restore") {
@@ -2103,10 +2112,15 @@ router.patch("/users/:username", requireAdmin, async (req, res) => {
 
   if (role && ["admin", "vip", "user"].includes(String(role))) {
     updateData.role = String(role);
-    // Sync planTier with role so access gates work immediately
-    updateData.planTier = String(role) === "admin" ? "ultra"
-      : String(role) === "vip" ? "vip"
-      : "free";
+    // Sync planTier for admin/vip; for role=user keep existing (preserve purchased plan)
+    if (String(role) === "admin") updateData.planTier = "ultra";
+    else if (String(role) === "vip") updateData.planTier = "vip";
+  }
+
+  // Allow explicit planTier override independent of role
+  const _validTiersAdmin = ["free", "padrao", "vip", "ultra"];
+  if (planTier && _validTiersAdmin.includes(String(planTier))) {
+    updateData.planTier = String(planTier);
   }
 
   if (password && String(password).length >= 6) {
@@ -3199,20 +3213,9 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     return;
   }
 
-  // ── SISREG-III (Consultas Gerais: CPF / Nome / CNS) ───────────────────────
+  // ── SISREG-III — temporariamente desativado ───────────────────────────────
   if (source === "sisreg") {
-    const tipo  = String(req.body?.tipo  ?? "").trim().toLowerCase();
-    const dados = String(req.body?.dados ?? "").trim();
-    if (!dados) {
-      res.status(400).json({ success: false, error: "Campo 'dados' é obrigatório para SISREG." });
-      return;
-    }
-    if (!["cpf", "nome", "cns"].includes(tipo)) {
-      res.status(400).json({ success: false, error: "Tipo inválido para SISREG. Use: cpf | nome | cns." });
-      return;
-    }
-    const sisResult = await sisregSearch(tipo as "cpf" | "nome" | "cns", dados);
-    if (!res.headersSent) res.json(sisResult);
+    res.json({ success: false, error: "O módulo SISREG-III está temporariamente indisponível." });
     return;
   }
 
@@ -3464,7 +3467,7 @@ router.delete("/panel/users/:username", requirePanelToken, async (req, res) => {
 });
 
 router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
-  const { action, expiresInDays, queryDailyLimit, role, password } = req.body ?? {};
+  const { action, expiresInDays, queryDailyLimit, role, planTier: panelPlanTier, password } = req.body ?? {};
 
   const updateData: Partial<{
     accountExpiresAt: Date | null;
@@ -3492,10 +3495,15 @@ router.patch("/panel/users/:username", requirePanelToken, async (req, res) => {
 
   if (role && ["admin", "vip", "user"].includes(String(role))) {
     updateData.role = String(role);
-    // Sync planTier with role so access gates work immediately
-    updateData.planTier = String(role) === "admin" ? "ultra"
-      : String(role) === "vip" ? "vip"
-      : "free";
+    // Sync planTier for admin/vip; for role=user keep existing (preserve purchased plan)
+    if (String(role) === "admin") updateData.planTier = "ultra";
+    else if (String(role) === "vip") updateData.planTier = "vip";
+  }
+
+  // Allow explicit planTier override
+  const _validTiersPanel = ["free", "padrao", "vip", "ultra"];
+  if (panelPlanTier && _validTiersPanel.includes(String(panelPlanTier))) {
+    updateData.planTier = String(panelPlanTier);
   }
 
   if (password && String(password).length >= 6) {
