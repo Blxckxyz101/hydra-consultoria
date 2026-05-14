@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import http from "node:http";
 import https from "node:https";
+import { sisregSearch } from "../scrapers/sisreg.js";
 
 const router: IRouter = Router();
 
@@ -3192,10 +3193,26 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
     res.status(400).json({ success: false, error: "Fonte inválida." });
     return;
   }
-  // sisreg and sipni are not yet connected — return a clear error
-  if (source === "sisreg" || source === "sipni") {
-    const label = source === "sisreg" ? "SISREG-III" : "SI-PNI";
-    res.json({ success: false, error: `O módulo ${label} está temporariamente indisponível. Tente pela base Hydra.` });
+  // sipni not yet connected
+  if (source === "sipni") {
+    res.json({ success: false, error: "O módulo SI-PNI está temporariamente indisponível. Tente pela base Hydra." });
+    return;
+  }
+
+  // ── SISREG-III (Consultas Gerais: CPF / Nome / CNS) ───────────────────────
+  if (source === "sisreg") {
+    const tipo  = String(req.body?.tipo  ?? "").trim().toLowerCase();
+    const dados = String(req.body?.dados ?? "").trim();
+    if (!dados) {
+      res.status(400).json({ success: false, error: "Campo 'dados' é obrigatório para SISREG." });
+      return;
+    }
+    if (!["cpf", "nome", "cns"].includes(tipo)) {
+      res.status(400).json({ success: false, error: "Tipo inválido para SISREG. Use: cpf | nome | cns." });
+      return;
+    }
+    const sisResult = await sisregSearch(tipo as "cpf" | "nome" | "cns", dados);
+    res.json(sisResult);
     return;
   }
 

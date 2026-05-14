@@ -930,6 +930,30 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
         <div class="sec-items">${s.items.map(it=>`<div class="sec-item">${it}</div>`).join("")}</div>
       </section>`).join("");
 
+    // Photo: convert data URI → blob URL for reliable PDF rendering
+    let _photoBlobUrl: string | null = null;
+    let photoSrc: string | null = null;
+    if (fotoUrl) {
+      if (fotoUrl.startsWith("data:")) {
+        try {
+          const [hdr, b64] = fotoUrl.split(",");
+          const mime = hdr.match(/:(.*?);/)?.[1] ?? "image/jpeg";
+          const bin = atob(b64);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          _photoBlobUrl = URL.createObjectURL(new Blob([arr], { type: mime }));
+          photoSrc = _photoBlobUrl;
+        } catch { photoSrc = fotoUrl; }
+      } else if (fotoUrl.startsWith("http")) {
+        photoSrc = fotoUrl;
+      }
+    }
+    const photoCardHtml = photoSrc ? `
+      <section class="card photo-card">
+        <div class="card-header"><span class="card-icon">📷</span>Foto Biométrica<span class="badge">1</span></div>
+        <div class="photo-section"><img src="${photoSrc}" alt="Foto" /></div>
+      </section>` : "";
+
     const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">
 <title>Hydra · CPF · ${fmtCPF(cpf)}</title>
 <style>
@@ -962,7 +986,9 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 .sec-item{font-size:12px;font-family:"Courier New",monospace;background:#f8fafc;border-left:3px solid #ddd6fe;padding:6px 10px;border-radius:3px;word-break:break-word;line-height:1.5}
 .footer{margin-top:20px;padding-top:12px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px}
 .footer strong{color:#64748b}
-@media print{body{background:#fff}.cover,.stripe,.card-header{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+.photo-section{padding:14px;display:flex;justify-content:center}
+.photo-section img{max-width:180px;max-height:220px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+@media print{body{background:#fff}.cover,.stripe,.card-header,.photo-section img{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>
 <div class="cover">
   <div class="cover-left">
@@ -983,7 +1009,7 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 </div>
 <div class="stripe"></div>
 <div class="body">
-${fieldsHtml}${addrHtml}${extraHtml}${sectionsHtml}
+${photoCardHtml}${fieldsHtml}${addrHtml}${extraHtml}${sectionsHtml}
 <div class="footer">
   <span><strong>Hydra Consultoria</strong> — hydraconsultoria.com</span>
   <span>Protocolo ${protocol}</span>
@@ -993,8 +1019,12 @@ ${fieldsHtml}${addrHtml}${extraHtml}${sectionsHtml}
 </body></html>`;
 
     const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); }
-  }, [identity, addresses, allFields, allSections, cpf]);
+    if (w) {
+      w.document.write(html);
+      w.document.close();
+      if (_photoBlobUrl) setTimeout(() => URL.revokeObjectURL(_photoBlobUrl!), 120_000);
+    }
+  }, [identity, addresses, allFields, allSections, cpf, fotoUrl]);
 
   // ── Share (link público · 10 min) ─────────────────────────────────────────
   const [sharing, setSharing] = useState(false);
@@ -1021,7 +1051,15 @@ ${fieldsHtml}${addrHtml}${extraHtml}${sectionsHtml}
     setSharing(true);
     try {
       const token = localStorage.getItem("infinity_token");
-      const shareFields = allFields.map(([key, value]) => ({ key, value }));
+      const shareFields = allFields
+        .filter(([, v]) => {
+          if (!v) return true;
+          if (v.startsWith("data:")) return false;
+          const cv = v.replace(/\s/g, "");
+          if (cv.length > 500 && /^[A-Za-z0-9+/]{500,}={0,2}$/.test(cv.slice(0, 600))) return false;
+          return true;
+        })
+        .map(([key, value]) => ({ key, value }));
       const shareData = { fields: shareFields, sections: allSections, raw: "" };
       const r = await fetch("/api/infinity/consultas/share", {
         method: "POST",

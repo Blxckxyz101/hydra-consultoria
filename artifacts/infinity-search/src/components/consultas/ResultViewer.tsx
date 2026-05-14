@@ -583,6 +583,9 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
           if (isUselessValue(f.value)) return false;
           if (fotoValue && normalizePhotoUrl(f.value) === fotoValue) return false;
           if (PHOTO_KEY_RE.test(f.key) && normalizePhotoUrl(f.value)) return false;
+          // Suppress any field whose value is a large base64-like blob (catch-all)
+          const cv = f.value.replace(/\s/g, "");
+          if (cv.length > 300 && /^[A-Za-z0-9+/]{300,}={0,2}$/.test(cv.slice(0, 400))) return false;
           return true;
         })
         .map(f => ({ key: humanizeKey(f.key), value: f.value }));
@@ -749,6 +752,26 @@ export function ResultViewer({ tipo, query = "", result }: Props) {
     // ── Build HTML parts ────────────────────────────────────────────────────
     const fotoField = parsed.fields.find(f => f.key === "FOTO_URL");
     const bodyFields = parsed.fields.filter(f => f.key !== "FOTO_URL");
+
+    // Convert photo data URI → blob URL so it renders reliably in the popup window
+    let _photoBlobUrl: string | null = null;
+    let photoSrc: string | null = null;
+    if (fotoField) {
+      const fv = fotoField.value;
+      if (fv.startsWith("data:")) {
+        try {
+          const [hdr, b64] = fv.split(",");
+          const mime = hdr.match(/:(.*?);/)?.[1] ?? "image/jpeg";
+          const bin = atob(b64);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          _photoBlobUrl = URL.createObjectURL(new Blob([arr], { type: mime }));
+          photoSrc = _photoBlobUrl;
+        } catch { photoSrc = fv; }
+      } else {
+        photoSrc = fv;
+      }
+    }
 
     // Fields rendered as 2-column pairs
     const fieldsHtml = bodyFields.length === 0 ? "" : `
@@ -949,9 +972,9 @@ body{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;color:#0f172a;fo
 
 <div class="body">
 
-${fotoField ? `
+${photoSrc ? `
 <div class="photo-block">
-  <img src="${fotoField.value}" alt="Foto" onerror="this.style.display='none'" />
+  <img src="${photoSrc}" alt="Foto" />
   <div class="photo-meta">
     <div class="label">Foto Biométrica Encontrada</div>
     <div class="query-val">${query || "—"}</div>
@@ -974,7 +997,11 @@ ${sectionsHtml}
 </html>`;
 
     const win = window.open("", "_blank", "width=960,height=780");
-    if (win) { win.document.write(html); win.document.close(); }
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      if (_photoBlobUrl) setTimeout(() => URL.revokeObjectURL(_photoBlobUrl!), 120_000);
+    }
   };
 
   // ── No result ──────────────────────────────────────────────────────────────
