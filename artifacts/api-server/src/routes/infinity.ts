@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
-import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable, infinityProfilePresetsTable } from "@workspace/db";
+import { db, infinityUsersTable, infinityConsultasTable, infinityPinsTable, infinityNotificationsTable, infinityProfilePresetsTable, infinitySuggestionsTable, infinitySupportTicketsTable, infinityWebAuthnTable } from "@workspace/db";
 import { eq, desc, sql, gte, and, isNull } from "drizzle-orm";
 import { sendFakeSaleNotification } from "../lib/telegram-notif.js";
 import {
@@ -3789,6 +3789,296 @@ router.get("/shared/:id", (req, res) => {
     return;
   }
   res.json({ tipo: entry.tipo, query: entry.query, data: entry.data, expiresAt: entry.expiresAt.toISOString() });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUGGESTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post("/suggestions", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  const { title, body, category = "geral" } = req.body as { title?: string; body?: string; category?: string };
+  if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e descrição são obrigatórios" }); return; }
+  await db.insert(infinitySuggestionsTable).values({
+    username,
+    title: title.trim().slice(0, 200),
+    body: body.trim().slice(0, 2000),
+    category: (category ?? "geral").slice(0, 50),
+  });
+  res.json({ ok: true });
+});
+
+router.get("/admin/suggestions", requireAdmin, async (req, res) => {
+  const rows = await db.select().from(infinitySuggestionsTable).orderBy(desc(infinitySuggestionsTable.createdAt));
+  res.json(rows);
+});
+
+router.patch("/admin/suggestions/:id", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { status, adminNote } = req.body as { status?: string; adminNote?: string };
+  await db.update(infinitySuggestionsTable)
+    .set({ ...(status ? { status } : {}), ...(adminNote !== undefined ? { adminNote } : {}) })
+    .where(eq(infinitySuggestionsTable.id, id));
+  res.json({ ok: true });
+});
+
+router.delete("/admin/suggestions/:id", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  await db.delete(infinitySuggestionsTable).where(eq(infinitySuggestionsTable.id, id));
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPPORT TICKETS
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post("/support/tickets", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  const { title, body } = req.body as { title?: string; body?: string };
+  if (!title?.trim() || !body?.trim()) { res.status(400).json({ error: "Título e descrição são obrigatórios" }); return; }
+  await db.insert(infinitySupportTicketsTable).values({
+    username,
+    title: title.trim().slice(0, 200),
+    body: body.trim().slice(0, 2000),
+  });
+  res.json({ ok: true });
+});
+
+router.get("/support/tickets", requireAuth, async (req, res) => {
+  const { username, role } = req.user!;
+  if (role === "admin") {
+    const rows = await db.select().from(infinitySupportTicketsTable).orderBy(desc(infinitySupportTicketsTable.createdAt));
+    res.json(rows);
+  } else {
+    const rows = await db.select().from(infinitySupportTicketsTable)
+      .where(eq(infinitySupportTicketsTable.username, username))
+      .orderBy(desc(infinitySupportTicketsTable.createdAt));
+    res.json(rows);
+  }
+});
+
+router.patch("/support/tickets/:id", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { status, adminNote } = req.body as { status?: string; adminNote?: string };
+  await db.update(infinitySupportTicketsTable)
+    .set({
+      ...(status ? { status, ...(status === "resolvido" ? { resolvedAt: new Date() } : {}) } : {}),
+      ...(adminNote !== undefined ? { adminNote } : {}),
+    })
+    .where(eq(infinitySupportTicketsTable.id, id));
+  res.json({ ok: true });
+});
+
+router.delete("/support/tickets/:id", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  await db.delete(infinitySupportTicketsTable).where(eq(infinitySupportTicketsTable.id, id));
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEBAUTHN (Biometric / Face ID / Passkeys)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Lazy-load to avoid startup failure if package has issues
+async function getSimpleWebAuthn() {
+  return import("@simplewebauthn/server");
+}
+
+// In-memory challenge store (key → { challenge, expires })
+const webAuthnChallenges = new Map<string, { challenge: string; expires: number }>();
+
+function getWebAuthnConfig(req: import("express").Request) {
+  const domains = process.env.REPLIT_DOMAINS ?? "";
+  if (domains) {
+    const rpID = domains.split(",")[0].trim();
+    return { rpID, origin: `https://${rpID}` };
+  }
+  const originHeader = (req.headers.origin as string | undefined) ?? "";
+  if (originHeader.startsWith("http")) {
+    try {
+      const url = new URL(originHeader);
+      return { rpID: url.hostname, origin: originHeader };
+    } catch {}
+  }
+  return { rpID: "localhost", origin: "http://localhost:5173" };
+}
+
+// POST /api/infinity/webauthn/register-options
+router.post("/webauthn/register-options", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  const { rpID } = getWebAuthnConfig(req);
+  const { generateRegistrationOptions } = await getSimpleWebAuthn();
+
+  const existing = await db.select({ id: infinityWebAuthnTable.id })
+    .from(infinityWebAuthnTable).where(eq(infinityWebAuthnTable.username, username));
+
+  const options = await generateRegistrationOptions({
+    rpName: "Hydra Consultoria",
+    rpID,
+    userID: new TextEncoder().encode(username),
+    userName: username,
+    userDisplayName: username,
+    attestationType: "none",
+    excludeCredentials: existing.map(e => ({ id: e.id })),
+    authenticatorSelection: {
+      authenticatorAttachment: "platform",
+      userVerification: "required",
+      residentKey: "preferred",
+    },
+  });
+
+  webAuthnChallenges.set(`reg:${username}`, { challenge: options.challenge, expires: Date.now() + 5 * 60_000 });
+  res.json(options);
+});
+
+// POST /api/infinity/webauthn/register-verify
+router.post("/webauthn/register-verify", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  const { rpID, origin } = getWebAuthnConfig(req);
+  const { verifyRegistrationResponse } = await getSimpleWebAuthn();
+
+  const stored = webAuthnChallenges.get(`reg:${username}`);
+  if (!stored || stored.expires < Date.now()) { res.status(400).json({ error: "Challenge expirado, tente novamente" }); return; }
+
+  try {
+    const verification = await verifyRegistrationResponse({
+      response: req.body,
+      expectedChallenge: stored.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      requireUserVerification: true,
+    });
+
+    if (!verification.verified || !verification.registrationInfo) {
+      res.status(400).json({ error: "Verificação biométrica falhou" }); return;
+    }
+
+    const { credential } = verification.registrationInfo;
+    webAuthnChallenges.delete(`reg:${username}`);
+    const deviceName = ((req.body as any).deviceName as string | undefined) || "Dispositivo";
+    const transports = ((req.body as any).response?.transports ?? []) as string[];
+
+    await db.insert(infinityWebAuthnTable).values({
+      id: credential.id,
+      username,
+      publicKey: Buffer.from(credential.publicKey).toString("base64"),
+      counter: credential.counter,
+      transports: JSON.stringify(transports),
+      deviceName,
+    }).onConflictDoNothing();
+
+    res.json({ ok: true });
+  } catch {
+    res.status(400).json({ error: "Erro na verificação biométrica" });
+  }
+});
+
+// GET /api/infinity/webauthn/credentials
+router.get("/webauthn/credentials", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  const creds = await db.select({
+    id: infinityWebAuthnTable.id,
+    deviceName: infinityWebAuthnTable.deviceName,
+    createdAt: infinityWebAuthnTable.createdAt,
+    lastUsedAt: infinityWebAuthnTable.lastUsedAt,
+  }).from(infinityWebAuthnTable).where(eq(infinityWebAuthnTable.username, username));
+  res.json(creds);
+});
+
+// DELETE /api/infinity/webauthn/credentials/:id
+router.delete("/webauthn/credentials/:id", requireAuth, async (req, res) => {
+  const { username } = req.user!;
+  await db.delete(infinityWebAuthnTable)
+    .where(and(eq(infinityWebAuthnTable.id, req.params.id), eq(infinityWebAuthnTable.username, username)));
+  res.json({ ok: true });
+});
+
+// POST /api/infinity/webauthn/auth-options (no auth required — used by login page)
+router.post("/webauthn/auth-options", async (req, res) => {
+  const { username } = (req.body ?? {}) as { username?: string };
+  const { rpID } = getWebAuthnConfig(req);
+  const { generateAuthenticationOptions } = await getSimpleWebAuthn();
+
+  let allowCredentials: { id: string; transports?: string[] }[] = [];
+  if (username) {
+    const creds = await db.select({ id: infinityWebAuthnTable.id, transports: infinityWebAuthnTable.transports })
+      .from(infinityWebAuthnTable).where(eq(infinityWebAuthnTable.username, username));
+    allowCredentials = creds.map(c => ({
+      id: c.id,
+      transports: c.transports ? (JSON.parse(c.transports) as string[]) : undefined,
+    }));
+  }
+
+  const options = await generateAuthenticationOptions({
+    rpID,
+    userVerification: "required",
+    allowCredentials: allowCredentials as any,
+  });
+
+  const key = username ? `auth:${username}` : `auth:anon:${options.challenge.slice(0, 12)}`;
+  webAuthnChallenges.set(key, { challenge: options.challenge, expires: Date.now() + 5 * 60_000 });
+  res.json({ ...options, _challengeKey: key });
+});
+
+// POST /api/infinity/webauthn/auth-verify (no auth required — returns session token)
+router.post("/webauthn/auth-verify", async (req, res) => {
+  const { response, challengeKey } = (req.body ?? {}) as { response: any; challengeKey?: string };
+  const { rpID, origin } = getWebAuthnConfig(req);
+  const { verifyAuthenticationResponse } = await getSimpleWebAuthn();
+
+  const key = challengeKey ?? `auth:${(response?.username as string | undefined) ?? "anon"}`;
+  const stored = webAuthnChallenges.get(key);
+  if (!stored || stored.expires < Date.now()) { res.status(400).json({ error: "Challenge expirado, tente novamente" }); return; }
+
+  try {
+    const credId = response?.id as string | undefined;
+    if (!credId) { res.status(400).json({ error: "Credencial inválida" }); return; }
+
+    const [credRow] = await db.select().from(infinityWebAuthnTable)
+      .where(eq(infinityWebAuthnTable.id, credId)).limit(1);
+
+    if (!credRow) { res.status(400).json({ error: "Credencial não encontrada. Registre sua biometria primeiro." }); return; }
+
+    const publicKeyBytes = Buffer.from(credRow.publicKey, "base64");
+
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: stored.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      requireUserVerification: true,
+      credential: {
+        id: credRow.id,
+        publicKey: publicKeyBytes,
+        counter: credRow.counter,
+        transports: credRow.transports ? (JSON.parse(credRow.transports) as any) : undefined,
+      },
+    });
+
+    if (!verification.verified) { res.status(400).json({ error: "Verificação biométrica falhou" }); return; }
+
+    webAuthnChallenges.delete(key);
+
+    await db.update(infinityWebAuthnTable)
+      .set({ counter: verification.authenticationInfo.newCounter, lastUsedAt: new Date() })
+      .where(eq(infinityWebAuthnTable.id, credRow.id));
+
+    const [user] = await db.select().from(infinityUsersTable)
+      .where(eq(infinityUsersTable.username, credRow.username)).limit(1);
+
+    if (!user) { res.status(400).json({ error: "Usuário não encontrado" }); return; }
+    if (user.accountExpiresAt && new Date(user.accountExpiresAt) < new Date()) {
+      res.status(403).json({ error: "Conta expirada. Renove seu plano." }); return;
+    }
+
+    const { token } = await createSession(credRow.username, "30d");
+    await db.update(infinityUsersTable).set({ lastLoginAt: new Date() }).where(eq(infinityUsersTable.username, credRow.username));
+
+    res.json({ token, username: credRow.username });
+  } catch (err) {
+    logger.error({ err }, "WebAuthn auth-verify error");
+    res.status(400).json({ error: "Falha na autenticação biométrica" });
+  }
 });
 
 export default router;

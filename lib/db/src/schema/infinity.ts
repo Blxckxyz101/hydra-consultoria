@@ -446,6 +446,51 @@ export const infinityCouponsTable = pgTable("infinity_coupons", {
 
 export type InfinityCouponRow = typeof infinityCouponsTable.$inferSelect;
 
+// ─── Suggestions ──────────────────────────────────────────────────────────────
+
+export const infinitySuggestionsTable = pgTable("infinity_suggestions", {
+  id:        serial("id").primaryKey(),
+  username:  text("username").notNull(),
+  title:     text("title").notNull(),
+  body:      text("body").notNull(),
+  category:  text("category").notNull().default("geral"),
+  status:    text("status").notNull().default("pendente"),
+  adminNote: text("admin_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type InfinitySuggestionRow = typeof infinitySuggestionsTable.$inferSelect;
+
+// ─── Support Tickets ──────────────────────────────────────────────────────────
+
+export const infinitySupportTicketsTable = pgTable("infinity_support_tickets", {
+  id:         serial("id").primaryKey(),
+  username:   text("username").notNull(),
+  title:      text("title").notNull(),
+  body:       text("body").notNull(),
+  status:     text("status").notNull().default("aberto"),
+  adminNote:  text("admin_note"),
+  createdAt:  timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+export type InfinitySupportTicketRow = typeof infinitySupportTicketsTable.$inferSelect;
+
+// ─── WebAuthn Credentials ─────────────────────────────────────────────────────
+
+export const infinityWebAuthnTable = pgTable("infinity_webauthn", {
+  id:         text("id").primaryKey(),
+  username:   text("username").notNull(),
+  publicKey:  text("public_key").notNull(),
+  counter:    integer("counter").notNull().default(0),
+  transports: text("transports"),
+  deviceName: text("device_name"),
+  createdAt:  timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+});
+
+export type InfinityWebAuthnRow = typeof infinityWebAuthnTable.$inferSelect;
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 export const insertInfinityUserSchema = createInsertSchema(infinityUsersTable);

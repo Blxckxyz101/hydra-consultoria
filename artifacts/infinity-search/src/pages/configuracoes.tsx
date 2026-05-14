@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus, FlaskConical, Copy } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus, FlaskConical, Copy, Lightbulb, Ticket, Settings2, MessageSquare, CheckCircle2, AlertCircle, Fingerprint, LayoutDashboard } from "lucide-react";
 import QRCode from "qrcode";
 
 
@@ -781,12 +781,362 @@ interface InfinityNotif {
   authorName: string;
 }
 
+// ─── Suggestions Admin Panel ──────────────────────────────────────────────────
+interface SuggestionRow { id: number; username: string; title: string; body: string; category: string; status: string; adminNote: string | null; createdAt: string; }
+const SUGG_STATUS: Record<string, { label: string; color: string; bg: string }> = {
+  pendente:      { label: "Pendente",      color: "text-amber-400",  bg: "bg-amber-400/10 border-amber-400/25" },
+  em_analise:    { label: "Em Análise",    color: "text-sky-400",    bg: "bg-sky-400/10 border-sky-400/25" },
+  implementado:  { label: "Implementado",  color: "text-emerald-400", bg: "bg-emerald-400/10 border-emerald-400/25" },
+  rejeitado:     { label: "Rejeitado",     color: "text-red-400",    bg: "bg-red-400/10 border-red-400/25" },
+};
+const SUGG_CATEGORIES: Record<string, string> = {
+  geral: "Geral", funcionalidade: "Funcionalidade", bug: "Bug", outro: "Outro",
+};
+function SuggestoesAdminPanel() {
+  const [suggestions, setSuggestions] = useState<SuggestionRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+  const [msgs, setMsgs] = useState<Record<number, string>>({});
+  const token = localStorage.getItem("infinity_token") ?? "";
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await fetch("/api/infinity/admin/suggestions", { headers: { Authorization: `Bearer ${token}` } }); if (r.ok) setSuggestions(await r.json()); }
+    catch {} finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { void load(); }, [load]);
+
+  const handleUpdate = async (id: number, status: string) => {
+    setSaving(s => ({ ...s, [id]: true }));
+    try {
+      await fetch(`/api/infinity/admin/suggestions/${id}`, { method: "PATCH", headers, body: JSON.stringify({ status, adminNote: notes[id] ?? undefined }) });
+      setMsgs(m => ({ ...m, [id]: "Salvo!" }));
+      setTimeout(() => setMsgs(m => { const n = { ...m }; delete n[id]; return n; }), 2000);
+      await load();
+    } catch { setMsgs(m => ({ ...m, [id]: "Erro" })); }
+    finally { setSaving(s => ({ ...s, [id]: false })); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Excluir esta sugestão?")) return;
+    await fetch(`/api/infinity/admin/suggestions/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="w-4 h-4 text-amber-400" />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Sugestões dos Usuários ({suggestions.length})</h2>
+        </div>
+        <button onClick={() => void load()} disabled={loading} className="p-1.5 rounded-lg border border-white/10 bg-white/5 text-muted-foreground hover:text-white transition-colors disabled:opacity-40" title="Atualizar">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-24 rounded-2xl bg-white/5 animate-pulse" />)}</div>
+      ) : suggestions.length === 0 ? (
+        <div className="rounded-2xl border border-white/8 bg-black/20 p-12 flex flex-col items-center text-center gap-3">
+          <Lightbulb className="w-10 h-10 text-muted-foreground/30" />
+          <p className="text-sm font-semibold">Nenhuma sugestão ainda</p>
+          <p className="text-xs text-muted-foreground">As sugestões enviadas pelos usuários aparecerão aqui.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <AnimatePresence>
+            {suggestions.map(s => {
+              const sc = SUGG_STATUS[s.status] ?? SUGG_STATUS.pendente;
+              return (
+                <motion.div key={s.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  className="rounded-2xl border border-white/8 bg-black/30 backdrop-blur-xl p-5 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm truncate">{s.title}</span>
+                          <span className={`inline-flex items-center text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${sc.bg} ${sc.color}`}>{sc.label}</span>
+                          <span className="inline-flex items-center text-[9px] px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-muted-foreground">{SUGG_CATEGORIES[s.category] ?? s.category}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground/60">por <strong className="text-muted-foreground">{s.username}</strong></span>
+                          <span className="text-[10px] text-muted-foreground/40">{new Date(s.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={() => void handleDelete(s.id)} className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/25" title="Excluir">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground leading-relaxed bg-black/20 rounded-xl px-4 py-3 border border-white/5">{s.body}</p>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input value={notes[s.id] ?? s.adminNote ?? ""} onChange={e => setNotes(n => ({ ...n, [s.id]: e.target.value }))}
+                      placeholder="Adicionar nota interna..." maxLength={500}
+                      className="flex-1 min-w-[180px] bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 transition-all" />
+                    <select value={s.status} onChange={e => void handleUpdate(s.id, e.target.value)} disabled={saving[s.id]}
+                      className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 transition-all cursor-pointer">
+                      {Object.entries(SUGG_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                    <button onClick={() => void handleUpdate(s.id, s.status)} disabled={saving[s.id]}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs text-black transition-all disabled:opacity-50"
+                      style={{ background: "var(--color-primary)" }}>
+                      {saving[s.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                      Salvar
+                    </button>
+                    {msgs[s.id] && <span className="text-xs text-emerald-400">{msgs[s.id]}</span>}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── Tickets Admin Panel ──────────────────────────────────────────────────────
+interface TicketRow { id: number; username: string; title: string; body: string; status: string; adminNote: string | null; createdAt: string; resolvedAt: string | null; }
+const TICKET_STATUS: Record<string, { label: string; color: string; bg: string; icon: typeof Clock }> = {
+  aberto:       { label: "Aberto",       color: "text-amber-400",  bg: "bg-amber-400/10 border-amber-400/25", icon: Clock },
+  em_andamento: { label: "Em Andamento", color: "text-sky-400",    bg: "bg-sky-400/10 border-sky-400/25",     icon: AlertCircle },
+  resolvido:    { label: "Resolvido",    color: "text-emerald-400", bg: "bg-emerald-400/10 border-emerald-400/25", icon: CheckCircle2 },
+};
+function TicketsAdminPanel() {
+  const [tickets, setTickets] = useState<TicketRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+  const [msgs, setMsgs] = useState<Record<number, string>>({});
+  const token = localStorage.getItem("infinity_token") ?? "";
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const r = await fetch("/api/infinity/support/tickets", { headers: { Authorization: `Bearer ${token}` } }); if (r.ok) setTickets(await r.json()); }
+    catch {} finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { void load(); }, [load]);
+
+  const handleUpdate = async (id: number, status: string) => {
+    setSaving(s => ({ ...s, [id]: true }));
+    try {
+      await fetch(`/api/infinity/support/tickets/${id}`, { method: "PATCH", headers, body: JSON.stringify({ status, adminNote: notes[id] ?? undefined }) });
+      setMsgs(m => ({ ...m, [id]: "Atualizado!" }));
+      setTimeout(() => setMsgs(m => { const n = { ...m }; delete n[id]; return n; }), 2000);
+      await load();
+    } catch { setMsgs(m => ({ ...m, [id]: "Erro" })); }
+    finally { setSaving(s => ({ ...s, [id]: false })); }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Excluir este ticket? Esta ação é irreversível.")) return;
+    await fetch(`/api/infinity/support/tickets/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await load();
+  };
+
+  const openCount = tickets.filter(t => t.status !== "resolvido").length;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Ticket className="w-4 h-4 text-sky-400" />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Tickets de Suporte ({tickets.length})</h2>
+          {openCount > 0 && (
+            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-400/15 border border-amber-400/30 text-amber-400">{openCount} aberto{openCount > 1 ? "s" : ""}</span>
+          )}
+        </div>
+        <button onClick={() => void load()} disabled={loading} className="p-1.5 rounded-lg border border-white/10 bg-white/5 text-muted-foreground hover:text-white transition-colors disabled:opacity-40">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-white/5 animate-pulse" />)}</div>
+      ) : tickets.length === 0 ? (
+        <div className="rounded-2xl border border-white/8 bg-black/20 p-12 flex flex-col items-center text-center gap-3">
+          <Ticket className="w-10 h-10 text-muted-foreground/30" />
+          <p className="text-sm font-semibold">Nenhum ticket aberto</p>
+          <p className="text-xs text-muted-foreground">Os chamados dos usuários aparecerão aqui.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <AnimatePresence>
+            {tickets.map(t => {
+              const sc = TICKET_STATUS[t.status] ?? TICKET_STATUS.aberto;
+              const ScIcon = sc.icon;
+              return (
+                <motion.div key={t.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  className="rounded-2xl border border-white/8 bg-black/30 backdrop-blur-xl p-5 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-sm">{t.title}</span>
+                        <span className={`inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${sc.bg} ${sc.color}`}>
+                          <ScIcon className="w-2.5 h-2.5" />{sc.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-muted-foreground/60">por <strong className="text-muted-foreground">{t.username}</strong></span>
+                        <span className="text-[10px] text-muted-foreground/40">{new Date(t.createdAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      </div>
+                    </div>
+                    <button onClick={() => void handleDelete(t.id)} className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors border border-transparent hover:border-destructive/25" title="Excluir ticket">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground leading-relaxed bg-black/20 rounded-xl px-4 py-3 border border-white/5">{t.body}</p>
+
+                  {t.adminNote && (
+                    <div className="rounded-xl border border-sky-400/20 bg-sky-400/5 px-4 py-3">
+                      <p className="text-[10px] uppercase tracking-wider text-sky-400 mb-1 font-semibold">Resposta atual</p>
+                      <p className="text-xs text-sky-300">{t.adminNote}</p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input value={notes[t.id] ?? t.adminNote ?? ""} onChange={e => setNotes(n => ({ ...n, [t.id]: e.target.value }))}
+                      placeholder="Resposta / nota para o usuário..." maxLength={500}
+                      className="flex-1 min-w-[180px] bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 transition-all" />
+                    <select value={t.status} onChange={e => void handleUpdate(t.id, e.target.value)} disabled={saving[t.id]}
+                      className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 transition-all cursor-pointer">
+                      {Object.entries(TICKET_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                    <button onClick={() => void handleUpdate(t.id, t.status)} disabled={saving[t.id]}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs text-black transition-all disabled:opacity-50"
+                      style={{ background: "var(--color-primary)" }}>
+                      {saving[t.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                      Responder
+                    </button>
+                    {msgs[t.id] && <span className="text-xs text-emerald-400">{msgs[t.id]}</span>}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ─── WebAuthn Biometria Panel ─────────────────────────────────────────────────
+interface WebAuthnCred { id: string; deviceName: string | null; createdAt: string; lastUsedAt: string | null; }
+function BiometriaPanel() {
+  const [creds, setCreds] = useState<WebAuthnCred[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [registering, setRegistering] = useState(false);
+  const [registerMsg, setRegisterMsg] = useState("");
+  const [deviceName, setDeviceName] = useState("");
+  const token = localStorage.getItem("infinity_token") ?? "";
+  const available = typeof window !== "undefined" && !!window.PublicKeyCredential;
+
+  const loadCreds = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/infinity/webauthn/credentials", { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) setCreds(await r.json());
+    } catch {} finally { setLoading(false); }
+  }, [token]);
+  useEffect(() => { void loadCreds(); }, [loadCreds]);
+
+  const handleRegister = async () => {
+    setRegistering(true); setRegisterMsg("");
+    try {
+      const { startRegistration } = await import("@simplewebauthn/browser");
+      const optRes = await fetch("/api/infinity/webauthn/register-options", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: "{}" });
+      if (!optRes.ok) throw new Error("Falha ao obter opções");
+      const options = await optRes.json();
+      const regResponse = await startRegistration({ optionsJSON: options });
+      const verRes = await fetch("/api/infinity/webauthn/register-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...regResponse, deviceName: deviceName.trim() || "Meu Dispositivo" }),
+      });
+      if (!verRes.ok) { const j = await verRes.json() as { error?: string }; throw new Error(j.error ?? "Falha na verificação"); }
+      setRegisterMsg("✅ Biometria cadastrada com sucesso!");
+      setDeviceName("");
+      await loadCreds();
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      if (e?.name === "NotAllowedError") setRegisterMsg("❌ Operação cancelada");
+      else setRegisterMsg(`❌ ${e?.message ?? "Erro no cadastro"}`);
+    } finally { setRegistering(false); }
+  };
+
+  const handleRemove = async (id: string) => {
+    if (!confirm("Remover credencial biométrica? Você não poderá mais usar este dispositivo para login.")) return;
+    await fetch(`/api/infinity/webauthn/credentials/${encodeURIComponent(id)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    await loadCreds();
+  };
+
+  if (!available) {
+    return (
+      <div className="rounded-2xl border border-white/8 bg-black/20 p-6 text-center">
+        <Fingerprint className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+        <p className="text-sm text-muted-foreground">Biometria não disponível neste navegador.</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">Use Chrome, Safari ou Edge com suporte a WebAuthn.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-3">
+        <label className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Nome do dispositivo (opcional)</label>
+        <div className="flex gap-2">
+          <input value={deviceName} onChange={e => setDeviceName(e.target.value)} placeholder="Ex: iPhone 15, MacBook..." maxLength={60}
+            className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-primary/50 transition-all" />
+          <button onClick={() => void handleRegister()} disabled={registering}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest text-black disabled:opacity-50 transition-all"
+            style={{ background: "var(--color-primary)" }}>
+            {registering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Fingerprint className="w-4 h-4" />}
+            {registering ? "Aguardando..." : "Cadastrar"}
+          </button>
+        </div>
+        {registerMsg && (
+          <p className={`text-xs ${registerMsg.startsWith("✅") ? "text-emerald-400" : "text-destructive"}`}>{registerMsg}</p>
+        )}
+      </div>
+
+      {loading ? <div className="h-16 rounded-xl bg-white/5 animate-pulse" /> : creds.length === 0 ? (
+        <div className="rounded-xl border border-white/8 bg-black/20 px-4 py-6 text-center text-xs text-muted-foreground">Nenhuma credencial biométrica cadastrada.</div>
+      ) : (
+        <div className="space-y-2">
+          {creds.map(c => (
+            <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-4 py-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <Fingerprint className="w-4 h-4 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{c.deviceName ?? "Dispositivo"}</p>
+                  <p className="text-[10px] text-muted-foreground/50">Cadastrado em {new Date(c.createdAt).toLocaleDateString("pt-BR")}{c.lastUsedAt ? ` · Usado em ${new Date(c.lastUsedAt).toLocaleDateString("pt-BR")}` : ""}</p>
+                </div>
+              </div>
+              <button onClick={() => void handleRemove(c.id)} className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors" title="Remover">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Configuracoes() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { data: me } = useInfinityMe({ query: { queryKey: getInfinityMeQueryKey() } });
 
   const isAdmin = me?.role === "admin";
+  const [adminTab, setAdminTab] = useState<"painel" | "sugestoes" | "tickets" | "biometria">("painel");
 
   const { data: users, refetch: refetchUsers } = useInfinityListUsers({
     query: {
@@ -1239,10 +1589,10 @@ export default function Configuracoes() {
           animate={{ opacity: 1, y: 0 }}
           className="text-2xl sm:text-3xl font-bold tracking-[0.25em] uppercase bg-gradient-to-r from-sky-300 to-cyan-200 bg-clip-text text-transparent"
         >
-          Configurações
+          Painel Administrativo
         </motion.h1>
         <p className="text-[10px] uppercase tracking-[0.4em] text-muted-foreground mt-2">
-          Gerência de operadores e sessão
+          Central de gerência · sistema Hydra
         </p>
       </div>
 
@@ -1300,6 +1650,32 @@ export default function Configuracoes() {
         </motion.div>
       ) : (
         <>
+          {/* ── Admin Tab Navigation ──────────────────────────────────────── */}
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+            className="flex gap-1 p-1 rounded-2xl border border-white/8 bg-black/20 backdrop-blur-xl">
+            {([
+              { id: "painel",    label: "Painel",     icon: LayoutDashboard },
+              { id: "biometria", label: "Biometria",  icon: Fingerprint },
+              { id: "sugestoes", label: "Sugestões",  icon: Lightbulb },
+              { id: "tickets",   label: "Tickets",    icon: Ticket },
+            ] as const).map(t => {
+              const Icon = t.icon;
+              const active = adminTab === t.id;
+              return (
+                <button key={t.id} onClick={() => setAdminTab(t.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                  style={active
+                    ? { background: "color-mix(in srgb, var(--color-primary) 15%, rgba(0,0,0,0.4))", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)" }
+                    : { color: "rgba(255,255,255,0.35)", border: "1px solid transparent" }
+                  }>
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">{t.label}</span>
+                </button>
+              );
+            })}
+          </motion.div>
+
+          {adminTab === "painel" && (<>
           {/* ── Canal de Vendas ────────────────────────────────────────────── */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -2350,6 +2726,37 @@ export default function Configuracoes() {
               </AnimatePresence>
             </div>
           </motion.div>
+          </>)} {/* ── end adminTab === "painel" ── */}
+
+          {adminTab === "biometria" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6 space-y-5">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Fingerprint className="w-4 h-4 text-primary" />
+                  <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Login Biométrico / Face ID</h2>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Registre sua biometria neste dispositivo para fazer login sem precisar de senha. Funciona com Face ID, impressão digital ou Windows Hello.
+                </p>
+              </div>
+              <BiometriaPanel />
+            </motion.div>
+          )}
+
+          {adminTab === "sugestoes" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6">
+              <SuggestoesAdminPanel />
+            </motion.div>
+          )}
+
+          {adminTab === "tickets" && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-6">
+              <TicketsAdminPanel />
+            </motion.div>
+          )}
         </>
       )}
     </div>

@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import logoUrl from "@/assets/hydra-icon.png";
 import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import { motion, AnimatePresence } from "framer-motion";
-import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock, Smartphone } from "lucide-react";
+import { LogIn, KeyRound, UserRound, ShieldAlert, ShieldCheck, Lock, Smartphone, Fingerprint, Loader2 } from "lucide-react";
 
 type Step = "credentials" | "setup-pin" | "verify-pin" | "totp-verify";
 
@@ -19,6 +19,45 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+  const [biometricError, setBiometricError] = useState("");
+  const [biometricAvailable] = useState(() => typeof window !== "undefined" && !!window.PublicKeyCredential);
+
+  const handleBiometricLogin = async () => {
+    setBiometricError("");
+    setBiometricLoading(true);
+    try {
+      const optRes = await fetch("/api/infinity/webauthn/auth-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!optRes.ok) throw new Error("Falha ao iniciar autenticação biométrica");
+      const options = await optRes.json() as { _challengeKey?: string; [k: string]: unknown };
+      const challengeKey = options._challengeKey;
+
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const authResponse = await startAuthentication({ optionsJSON: options as any });
+
+      const verifyRes = await fetch("/api/infinity/webauthn/auth-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: authResponse, challengeKey }),
+      });
+      const data = await verifyRes.json() as { token?: string; error?: string };
+      if (!verifyRes.ok) throw new Error(data.error ?? "Falha na verificação");
+
+      localStorage.setItem("infinity_token", data.token ?? "");
+      setLocation("/");
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      if (e?.name === "NotAllowedError") setBiometricError("Autenticação cancelada pelo usuário");
+      else if (e?.name === "InvalidStateError") setBiometricError("Nenhuma credencial biométrica cadastrada para este dispositivo");
+      else setBiometricError(e?.message ?? "Erro na autenticação biométrica");
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
 
   const handleCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,6 +235,38 @@ export default function Login() {
                     <LogIn className="w-4 h-4" />
                     {pending ? "Verificando..." : "Entrar"}
                   </button>
+
+                  {biometricAvailable && (
+                    <>
+                      <div className="flex items-center gap-3 my-1">
+                        <div className="flex-1 h-px bg-white/8" />
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground/50">ou</span>
+                        <div className="flex-1 h-px bg-white/8" />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => { void handleBiometricLogin(); }}
+                        disabled={biometricLoading}
+                        className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-xl border border-white/15 bg-white/5 font-bold text-xs uppercase tracking-[0.25em] text-muted-foreground hover:text-foreground hover:border-white/30 hover:bg-white/8 transition-all disabled:opacity-50"
+                      >
+                        {biometricLoading
+                          ? <><Loader2 className="w-4 h-4 animate-spin" /> Aguardando biometria...</>
+                          : <><Fingerprint className="w-4 h-4" /> Entrar com Face ID / Biometria</>
+                        }
+                      </button>
+
+                      {biometricError && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+                          className="px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs flex items-center gap-2"
+                        >
+                          <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                          {biometricError}
+                        </motion.div>
+                      )}
+                    </>
+                  )}
                 </motion.form>
               )}
 
