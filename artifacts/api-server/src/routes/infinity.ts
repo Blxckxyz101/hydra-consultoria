@@ -1961,8 +1961,7 @@ router.post("/users", requireAdmin, async (req, res) => {
 
 // ─── test-login (admin) — gera credenciais temporárias sem PIN ──────────────
 router.post("/users/test-login", requireAdmin, async (req, res) => {
-  const { expiresMinutes } = req.body ?? {};
-  const mins = Math.max(1, Math.min(1440, Number(expiresMinutes) || 30));
+  const mins = 15;
 
   const alpha  = "abcdefghijklmnopqrstuvwxyz";
   const alnum  = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -1977,14 +1976,14 @@ router.post("/users/test-login", requireAdmin, async (req, res) => {
   try {
     await db
       .insert(infinityUsersTable)
-      .values({ username, passwordHash, role: "user", accountExpiresAt, queryDailyLimit: 5 });
+      .values({ username, passwordHash, role: "user", accountExpiresAt, queryDailyLimit: 3 });
 
     res.status(201).json({
       username,
       password,
       expiresAt: accountExpiresAt.toISOString(),
       expiresMinutes: mins,
-      queryDailyLimit: 5,
+      queryDailyLimit: 3,
     });
   } catch {
     res.status(400).json({ error: "Erro ao criar login de teste" });

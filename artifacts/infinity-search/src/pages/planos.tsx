@@ -679,38 +679,41 @@ export default function Planos() {
                     </div>
                   </div>
 
-                  {/* Tier cards — horizontal scroll on mobile, 3-col on sm+ */}
-                  <div className="relative mt-2">
-                    {/* Mobile: snap scroll */}
-                    <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-3 -mx-4 px-4 sm:hidden no-scrollbar">
+                  {/* Tier selector — tab on mobile, 3-col on desktop */}
+                  {/* Mobile: tier tab + single expanded card */}
+                  <div className="sm:hidden mt-2">
+                    <div className="flex rounded-xl border border-white/10 overflow-hidden mb-3 p-1 bg-white/3 gap-1">
                       {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
                         const tierPlan = planForTier(t, selectedDays);
-                        const altDays = !tierPlan ? availDays.find(d => !!planForTier(t, d)) : undefined;
+                        const isActive = selectedTier === t && !!tierPlan;
+                        const label = t === "ultra" ? "Ultra" : t === "vip" ? "VIP" : "Padrão";
+                        const Icon = t === "ultra" ? Flame : t === "vip" ? Crown : Shield;
+                        const accentStyle = t === "ultra"
+                          ? { background: "#f43f5e" }
+                          : t === "vip"
+                          ? { background: "#f59e0b" }
+                          : { background: "var(--color-primary)" };
                         return (
-                          <div key={t} className="snap-center shrink-0 w-[72vw] max-w-[260px] pt-4">
-                            <TierCard
-                              tier={t}
-                              plan={tierPlan}
-                              selected={selectedTier === t && !!tierPlan}
-                              disabled={!tierPlan}
-                              onSelect={() => handleSelectTier(t, selectedDays)}
-                              onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
-                            />
-                          </div>
+                          <button key={t} type="button"
+                            onClick={() => tierPlan ? handleSelectTier(t, selectedDays) : undefined}
+                            disabled={!tierPlan}
+                            className={`flex-1 py-2.5 rounded-lg flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wide transition-all ${
+                              isActive ? "text-black" : tierPlan ? "text-muted-foreground hover:text-foreground" : "text-muted-foreground/30 cursor-not-allowed"
+                            }`}
+                            style={isActive ? accentStyle : {}}>
+                            <Icon className="w-3 h-3 shrink-0" />{label}
+                          </button>
                         );
                       })}
                     </div>
-                    {/* Desktop: 3-col grid */}
-                    <div className="hidden sm:grid sm:grid-cols-3 sm:gap-3 sm:mt-1 sm:pt-4">
+                    <div className="pt-1">
                       {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                        if (selectedTier !== t) return null;
                         const tierPlan = planForTier(t, selectedDays);
                         const altDays = !tierPlan ? availDays.find(d => !!planForTier(t, d)) : undefined;
                         return (
-                          <TierCard
-                            key={t}
-                            tier={t}
-                            plan={tierPlan}
-                            selected={selectedTier === t && !!tierPlan}
+                          <TierCard key={t} tier={t} plan={tierPlan}
+                            selected={!!tierPlan}
                             disabled={!tierPlan}
                             onSelect={() => handleSelectTier(t, selectedDays)}
                             onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
@@ -718,6 +721,21 @@ export default function Planos() {
                         );
                       })}
                     </div>
+                  </div>
+                  {/* Desktop: 3-col grid */}
+                  <div className="hidden sm:grid sm:grid-cols-3 sm:gap-3 sm:mt-1 sm:pt-4">
+                    {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                      const tierPlan = planForTier(t, selectedDays);
+                      const altDays = !tierPlan ? availDays.find(d => !!planForTier(t, d)) : undefined;
+                      return (
+                        <TierCard key={t} tier={t} plan={tierPlan}
+                          selected={selectedTier === t && !!tierPlan}
+                          disabled={!tierPlan}
+                          onSelect={() => handleSelectTier(t, selectedDays)}
+                          onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
+                        />
+                      );
+                    })}
                   </div>
 
                   {/* Selected plan summary bar */}

@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus, FlaskConical, Copy, Timer } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus, FlaskConical, Copy } from "lucide-react";
 import QRCode from "qrcode";
 
 
@@ -738,7 +738,6 @@ export default function Configuracoes() {
   const [formError, setFormError] = useState("");
 
   // Test-login state
-  const [testLoginMinutes, setTestLoginMinutes] = useState(30);
   const [testLoginLoading, setTestLoginLoading] = useState(false);
   const [testLoginResult, setTestLoginResult] = useState<{ username: string; password: string; expiresAt: string; expiresMinutes: number; queryDailyLimit: number } | null>(null);
 
@@ -1093,7 +1092,7 @@ export default function Configuracoes() {
       const r = await fetch("/api/infinity/users/test-login", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ expiresMinutes: testLoginMinutes }),
+        body: JSON.stringify({}),
       });
       const d = await r.json() as { username?: string; password?: string; expiresAt?: string; expiresMinutes?: number; queryDailyLimit?: number; error?: string };
       if (!r.ok) { setFormError(d.error ?? "Erro ao gerar login de teste"); return; }
@@ -1813,42 +1812,12 @@ export default function Configuracoes() {
             <div className="flex items-center gap-2 mb-5">
               <FlaskConical className="w-4 h-4 text-amber-300" />
               <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-300/80">Login de Teste</h2>
-              <span className="ml-auto text-[9px] uppercase tracking-[0.25em] text-amber-400/50 border border-amber-400/20 px-2 py-0.5 rounded-full">5 consultas · temporário</span>
+              <span className="ml-auto text-[9px] uppercase tracking-[0.25em] text-amber-400/50 border border-amber-400/20 px-2 py-0.5 rounded-full">3 consultas · 15 min</span>
             </div>
 
             <p className="text-[11px] text-muted-foreground/60 leading-relaxed mb-4">
-              Gera credenciais temporárias de demonstração com limite de <strong className="text-amber-300/80">5 consultas</strong> e expiração automática. Ideal para mostrar a plataforma sem comprometer contas reais.
+              Gera credenciais temporárias com limite de <strong className="text-amber-300/80">3 consultas</strong> e expiração automática em <strong className="text-amber-300/80">15 minutos</strong>. Ideal para demonstrações rápidas sem comprometer contas reais.
             </p>
-
-            <div className="flex items-center gap-3 mb-4 flex-wrap">
-              <Timer className="w-3.5 h-3.5 text-amber-400/60 shrink-0" />
-              <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground/50 shrink-0">Expirar em:</span>
-              {([15, 30, 60, 120, 240]).map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setTestLoginMinutes(m)}
-                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all ${
-                    testLoginMinutes === m
-                      ? "bg-amber-400/20 border-amber-400/50 text-amber-300 shadow-[0_0_12px_-2px_rgba(251,191,36,0.3)]"
-                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-amber-400/30 hover:text-amber-300/80"
-                  }`}
-                >
-                  {m < 60 ? `${m}min` : `${m / 60}h`}
-                </button>
-              ))}
-              <div className="flex items-center gap-1.5 ml-1">
-                <input
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={testLoginMinutes}
-                  onChange={e => setTestLoginMinutes(Math.max(1, Math.min(1440, Number(e.target.value) || 30)))}
-                  className="w-16 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-center focus:outline-none focus:border-amber-400/40 transition-all"
-                />
-                <span className="text-[9px] text-muted-foreground/40">min</span>
-              </div>
-            </div>
 
             <button
               onClick={() => void handleTestLogin()}

@@ -599,13 +599,53 @@ export default function Registro() {
                             </div>
                           </div>
 
-                          {/* 3-column tier cards */}
-                          <div className="grid grid-cols-3 gap-2">
+                          {/* Tier selector — tabs on mobile, 3-col on desktop */}
+                          {/* Mobile: tier tab + single card */}
+                          <div className="sm:hidden">
+                            <div className="flex rounded-xl border border-white/10 overflow-hidden mb-3 p-1 bg-white/3 gap-1">
+                              {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                                const tp = planForTier(t, selectedDays);
+                                const isActive = selectedTier === t && !!tp;
+                                const label = t === "ultra" ? "Ultra" : t === "vip" ? "VIP" : "Padrão";
+                                const Icon = t === "ultra" ? Flame : t === "vip" ? Crown : Shield;
+                                const accentStyle = t === "ultra"
+                                  ? { background: "#f43f5e" }
+                                  : t === "vip"
+                                  ? { background: "#f59e0b" }
+                                  : { background: "var(--color-primary)" };
+                                return (
+                                  <button key={t} type="button"
+                                    onClick={() => tp ? handleSelectTier(t) : undefined}
+                                    disabled={!tp}
+                                    className={`flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px] font-bold uppercase tracking-wide transition-all ${
+                                      isActive ? "text-black" : tp ? "text-muted-foreground hover:text-foreground" : "text-muted-foreground/30 cursor-not-allowed"
+                                    }`}
+                                    style={isActive ? accentStyle : {}}>
+                                    <Icon className="w-3 h-3 shrink-0" />{label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="pt-1">
+                              {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                                if (selectedTier !== t) return null;
+                                const tp = planForTier(t, selectedDays);
+                                const altDays = !tp ? availDays.find(d => !!planForTier(t, d)) : undefined;
+                                return (
+                                  <TierCard key={t} tier={t} plan={tp}
+                                    selected={!!tp}
+                                    disabled={!tp}
+                                    onSelect={() => handleSelectTier(t)}
+                                    onSwitchDays={altDays !== undefined ? () => setSelectedDays(altDays) : undefined} />
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {/* Desktop: 3-col grid */}
+                          <div className="hidden sm:grid sm:grid-cols-3 sm:gap-2">
                             {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
                               const tp = planForTier(t, selectedDays);
-                              const altDays = !tp
-                                ? availDays.find(d => !!planForTier(t, d))
-                                : undefined;
+                              const altDays = !tp ? availDays.find(d => !!planForTier(t, d)) : undefined;
                               return (
                                 <TierCard key={t} tier={t} plan={tp}
                                   selected={selectedTier === t && !!tp}
