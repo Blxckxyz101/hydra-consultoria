@@ -234,7 +234,6 @@ const CREDILINK_BASES = new Set<Tipo>(["cpf"]);
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
-  const [cpfVariant, setCpfVariant] = useState<"cpf" | "cpfunificado" | "cpfbasico">("cpf");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ success: boolean; error?: string | null; data?: unknown } | null>(null);
   const [pending, setPending] = useState(false);
@@ -410,21 +409,20 @@ export default function Consultas() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim() || pending) return;
-    const effectiveTab: Tipo = tab === "cpf" ? cpfVariant : tab;
-    if (effectiveTab === "cpfunificado") {
+    if (tab === "cpf") {
       setCpfUnificadoQuery(query.trim());
       return;
     }
-    if (SKYLERS_ONLY_TIPOS.has(effectiveTab)) {
-      await executeQuery(effectiveTab, query.trim(), "skylers");
+    if (SKYLERS_ONLY_TIPOS.has(tab)) {
+      await executeQuery(tab, query.trim(), "skylers");
       return;
     }
-    if (PANEL_EXTERNAL_TIPOS.has(effectiveTab)) {
-      setPendingQuery({ tipo: effectiveTab, dados: query.trim() });
+    if (PANEL_EXTERNAL_TIPOS.has(tab)) {
+      setPendingQuery({ tipo: tab, dados: query.trim() });
       setShowBaseSelector(true);
       return;
     }
-    await executeQuery(effectiveTab, query.trim(), null);
+    await executeQuery(tab, query.trim(), null);
   };
 
   const repeatQuery = (tipo: string, dados: string) => {
@@ -435,15 +433,9 @@ export default function Consultas() {
     setResult(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
     // Remap hidden CPF variants back to the unified CPF tile
-    if (tabDef.id === "cpffull" || tabDef.id === "cpfbasico") {
+    if (tabDef.id === "cpffull" || tabDef.id === "cpfbasico" || tabDef.id === "cpfunificado") {
       setTab("cpf");
-      if (tabDef.id === "cpffull") {
-        setCpfVariant("cpfunificado");
-        setCpfUnificadoQuery(dados);
-      } else {
-        setCpfVariant("cpfbasico");
-        executeQuery("cpfbasico", dados, "skylers");
-      }
+      setCpfUnificadoQuery(dados);
       return;
     }
     setTab(tabDef.id);
@@ -806,31 +798,6 @@ export default function Consultas() {
             {activeTab.label} · {activeTab.hint}
           </motion.div>
 
-          {/* CPF sub-type selector */}
-          {tab === "cpf" && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40">Tipo:</span>
-              {([
-                { id: "cpf"          as const, label: "Padrão",    hint: "Hydra"             },
-                { id: "cpfunificado" as const, label: "Unificado",  hint: "CPF + Foto + Básico" },
-                { id: "cpfbasico"    as const, label: "Básico",     hint: "Skylers"           },
-              ]).map(v => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => { setCpfVariant(v.id); setCpfUnificadoQuery(null); setResult(null); }}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] uppercase tracking-widest font-bold transition-all ${
-                    cpfVariant === v.id
-                      ? "bg-primary/20 border-primary/50 text-primary shadow-[0_0_12px_-2px_color-mix(in_srgb,var(--color-primary)_50%,transparent)]"
-                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20 hover:text-foreground"
-                  }`}
-                >
-                  {v.label}
-                  <span className="opacity-40 font-normal text-[8px]">· {v.hint}</span>
-                </button>
-              ))}
-            </div>
-          )}
 
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex-1 relative">
@@ -1031,7 +998,7 @@ export default function Consultas() {
       </div>
 
       {/* CPF Unificado panel — rendered below the form block */}
-      {tab === "cpf" && cpfVariant === "cpfunificado" && cpfUnificadoQuery && (
+      {tab === "cpf" && cpfUnificadoQuery && (
         <CpfUnificadoPanel cpf={cpfUnificadoQuery} />
       )}
 

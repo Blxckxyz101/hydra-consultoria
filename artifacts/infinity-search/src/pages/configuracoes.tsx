@@ -741,7 +741,6 @@ export default function Configuracoes() {
   const [testLoginMinutes, setTestLoginMinutes] = useState(30);
   const [testLoginLoading, setTestLoginLoading] = useState(false);
   const [testLoginResult, setTestLoginResult] = useState<{ username: string; password: string; expiresAt: string; expiresMinutes: number; queryDailyLimit: number } | null>(null);
-  const [testLoginCopied, setTestLoginCopied] = useState(false);
 
   // ── PINs state ─────────────────────────────────────────────────────────────
   interface PinRow { pin: string; createdAt: string; createdBy: string; usedAt: string | null; usedBy: string | null; }
@@ -1081,6 +1080,10 @@ export default function Configuracoes() {
     });
     await loadCoupons();
   };
+
+  const [testLoginCopiedUser, setTestLoginCopiedUser] = useState(false);
+  const [testLoginCopiedPass, setTestLoginCopiedPass] = useState(false);
+  const [testLoginCopiedAll, setTestLoginCopiedAll] = useState(false);
 
   const handleTestLogin = async () => {
     setTestLoginLoading(true);
@@ -1876,38 +1879,52 @@ export default function Configuracoes() {
                       </span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {[
-                        { label: "Usuário", value: testLoginResult.username },
-                        { label: "Senha", value: testLoginResult.password },
-                      ].map(({ label, value }) => (
-                        <div key={label} className="flex items-center gap-2 bg-black/40 border border-white/8 rounded-lg px-3 py-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground/40 mb-0.5">{label}</div>
-                            <div className="font-mono text-sm text-foreground font-bold tracking-wider">{value}</div>
-                          </div>
-                          <button
-                            onClick={() => {
-                              void navigator.clipboard.writeText(value);
-                              setTestLoginCopied(true);
-                              setTimeout(() => setTestLoginCopied(false), 1500);
-                            }}
-                            className="p-1.5 rounded text-muted-foreground/40 hover:text-emerald-400 transition-colors shrink-0"
-                          >
-                            {testLoginCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          </button>
+                      <div className="flex items-center gap-2 bg-black/40 border border-white/8 rounded-lg px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground/40 mb-0.5">Usuário</div>
+                          <div className="font-mono text-sm text-foreground font-bold tracking-wider">{testLoginResult.username}</div>
                         </div>
-                      ))}
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(testLoginResult.username);
+                            setTestLoginCopiedUser(true);
+                            setTimeout(() => setTestLoginCopiedUser(false), 1500);
+                          }}
+                          title="Copiar usuário"
+                          className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-emerald-400/15 hover:border-emerald-400/40 text-muted-foreground/50 hover:text-emerald-400 transition-all shrink-0"
+                        >
+                          {testLoginCopiedUser ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2 bg-black/40 border border-white/8 rounded-lg px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground/40 mb-0.5">Senha</div>
+                          <div className="font-mono text-sm text-foreground font-bold tracking-wider">{testLoginResult.password}</div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            void navigator.clipboard.writeText(testLoginResult.password);
+                            setTestLoginCopiedPass(true);
+                            setTimeout(() => setTestLoginCopiedPass(false), 1500);
+                          }}
+                          title="Copiar senha"
+                          className="p-2 rounded-lg border border-white/10 bg-white/5 hover:bg-emerald-400/15 hover:border-emerald-400/40 text-muted-foreground/50 hover:text-emerald-400 transition-all shrink-0"
+                        >
+                          {testLoginCopiedPass ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </div>
                     <button
                       onClick={() => {
-                        const text = `Hydra Consultoria - Login de Teste\nUsuário: ${testLoginResult.username}\nSenha: ${testLoginResult.password}\nExpira em: ${new Date(testLoginResult.expiresAt).toLocaleString("pt-BR")}\nLimite: ${testLoginResult.queryDailyLimit} consultas`;
+                        const text = `Usuário: ${testLoginResult.username}\nSenha: ${testLoginResult.password}`;
                         void navigator.clipboard.writeText(text);
-                        setTestLoginCopied(true);
-                        setTimeout(() => setTestLoginCopied(false), 1500);
+                        setTestLoginCopiedAll(true);
+                        setTimeout(() => setTestLoginCopiedAll(false), 2000);
                       }}
-                      className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-emerald-400/20 bg-emerald-400/5 text-emerald-400/70 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-400/10 transition-all"
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border font-bold text-xs uppercase tracking-[0.25em] transition-all bg-emerald-400/10 border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/20 hover:shadow-[0_0_16px_rgba(52,211,153,0.2)]"
                     >
-                      <Copy className="w-3 h-3" /> Copiar tudo
+                      {testLoginCopiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {testLoginCopiedAll ? "Copiado!" : "Copiar credenciais"}
                     </button>
                   </div>
                 </motion.div>
