@@ -26,8 +26,8 @@ function getIp(req: Request): string {
 // ── 1. Request timeout — anti-slowloris ──────────────────────────────────────
 // Forces a response timeout for requests that take too long to send headers.
 // Slowloris attacks hold connections open with slow partial requests.
-// 35s: must be > longest provider timeout (Geass 30s) + headroom for DB ops
-const REQUEST_TIMEOUT_MS = 35_000;
+// 90s: covers SISREG sequential proxy attempts (slow external scraper) + Geass/Skylers + DB ops
+const REQUEST_TIMEOUT_MS = 90_000;
 
 export function requestTimeoutMiddleware(req: Request, res: Response, next: NextFunction): void {
   const timer = setTimeout(() => {

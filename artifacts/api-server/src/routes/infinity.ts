@@ -3212,7 +3212,7 @@ router.post("/external/:source", requireAuthOrInternal, async (req, res) => {
       return;
     }
     const sisResult = await sisregSearch(tipo as "cpf" | "nome" | "cns", dados);
-    res.json(sisResult);
+    if (!res.headersSent) res.json(sisResult);
     return;
   }
 
