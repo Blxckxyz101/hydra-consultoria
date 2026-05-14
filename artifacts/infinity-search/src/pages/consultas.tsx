@@ -63,7 +63,7 @@ const placa8 = (s: string) => s.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0
 
 const TABS: TabDef[] = [
   // ── PESSOA ────────────────────────────────────────────────────────────────
-  { id: "cpf",        label: "CPF",          category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · Padrão / Full / Básico",      inputMode: "numeric", icon: IdCard,        sanitize: cpf11 },
+  { id: "cpf",        label: "CPF",          category: "Pessoa", placeholder: "00000000000",         hint: "11 dígitos · consulta unificada",          inputMode: "numeric", icon: IdCard,        sanitize: cpf11 },
   { id: "nome",       label: "Nome",         category: "Pessoa", placeholder: "Nome completo",       hint: "texto livre",                              icon: User,            sanitize: (s) => s.slice(0, 80) },
   { id: "telefone",   label: "Telefone",     category: "Pessoa", placeholder: "11999999999",         hint: "DDD + número sem DDI 55 · ex: 11999999999",inputMode: "numeric", icon: Phone,         sanitize: (s) => { const d = s.replace(/\D/g, ""); return d.startsWith("55") && d.length > 11 ? d.slice(2, 13) : d.slice(0, 13); } },
   { id: "email",      label: "Email",        category: "Pessoa", placeholder: "exemplo@dominio.com", hint: "texto livre",                              icon: Mail },
@@ -209,7 +209,7 @@ function friendlyTipo(rawTipo: string): string {
 }
 
 const PANEL_EXTERNAL_TIPOS = new Set<Tipo>([
-  "cpf", "nome", "rg", "mae", "pai", "parentes", "obito", "nis", "cns", "vacinas",
+  "nome", "rg", "mae", "pai", "parentes", "obito", "nis", "cns", "vacinas",
   "telefone", "email", "pix", "cep", "placa", "chassi", "renavam", "motor", "cnh",
   "frota", "cnpj", "socios", "empregos",
 ]);
@@ -230,7 +230,7 @@ const SKYLERS_ONLY_TIPOS = new Set<Tipo>([
 ]);
 
 type ExternalBase = "skylers" | "credilink";
-const CREDILINK_BASES = new Set<Tipo>(["cpf"]);
+const CREDILINK_BASES = new Set<Tipo>([]);
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
