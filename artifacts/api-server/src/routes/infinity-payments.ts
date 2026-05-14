@@ -112,8 +112,10 @@ interface PromstVerifyResponse {
   valor_liquido: number;
 }
 
-async function createPromstPayment(userId: number, valor: number): Promise<PromstCreateResponse> {
-  const url = `${PROMST_BASE}/create_payment?user_id=${userId}&valor=${valor.toFixed(2)}`;
+const PROMST_MERCHANT_ID = 7365425982;
+
+async function createPromstPayment(valor: number): Promise<PromstCreateResponse> {
+  const url = `${PROMST_BASE}/create_payment?user_id=${PROMST_MERCHANT_ID}&valor=${valor.toFixed(2)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Promst API error: ${res.status}`);
   return res.json() as Promise<PromstCreateResponse>;
@@ -124,11 +126,6 @@ async function verifyPromstPayment(txid: string): Promise<PromstVerifyResponse> 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Promst verify error: ${res.status}`);
   return res.json() as Promise<PromstVerifyResponse>;
-}
-
-function generateUserId(seed: string): number {
-  const hash = crypto.createHash("sha256").update(seed).digest("hex");
-  return parseInt(hash.slice(0, 9), 16) % 2000000000 + 1000000000;
 }
 
 // ─── GET /plans ───────────────────────────────────────────────────────────────
@@ -175,11 +172,10 @@ router.post("/recharges/create", requireAuth, async (req, res) => {
 
   const username = req.infinityUser!.username;
   const paymentId = crypto.randomBytes(16).toString("hex");
-  const userId = generateUserId(username + paymentId);
 
   let promstData: PromstCreateResponse;
   try {
-    promstData = await createPromstPayment(userId, pack.amountCents / 100);
+    promstData = await createPromstPayment(pack.amountCents / 100);
   } catch {
     res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
@@ -390,11 +386,10 @@ router.post("/payments/create", requireAuth, async (req, res) => {
 
   const username = req.infinityUser!.username;
   const paymentId = crypto.randomBytes(16).toString("hex");
-  const userId = generateUserId(username + paymentId);
 
   let promstData: PromstCreateResponse;
   try {
-    promstData = await createPromstPayment(userId, finalAmountCents / 100);
+    promstData = await createPromstPayment(finalAmountCents / 100);
   } catch (err) {
     res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;
@@ -509,11 +504,10 @@ router.post("/payments/create-guest", loginLimiter, async (req, res) => {
 
   const paymentId = crypto.randomBytes(16).toString("hex");
   const passwordHash = await bcrypt.hash(passwordStr, 10);
-  const userId = generateUserId(usernameStr + paymentId);
 
   let promstData: PromstCreateResponse;
   try {
-    promstData = await createPromstPayment(userId, finalAmountCents / 100);
+    promstData = await createPromstPayment(finalAmountCents / 100);
   } catch {
     res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." });
     return;

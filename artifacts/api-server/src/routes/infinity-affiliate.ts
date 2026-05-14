@@ -168,13 +168,12 @@ router.post("/affiliate/packs/buy", requireAuth, loginLimiter, async (req, res) 
   }
 
   // ── PIX payment ─────────────────────────────────────────────────────────────
+  const PROMST_MERCHANT_ID = 7365425982;
   const paymentId = crypto.randomBytes(16).toString("hex");
-  const hashHex = crypto.createHash("sha256").update(username + paymentId + "gift").digest("hex");
-  const userId = parseInt(hashHex.slice(0, 9), 16) % 2000000000 + 1000000000;
 
   let promst: { txid: string; pixCopiaECola: string; qrcode_base64: string };
   try {
-    const r = await fetch(`${PROMST_BASE}/create_payment?user_id=${userId}&valor=${(pack.amountCents / 100).toFixed(2)}`);
+    const r = await fetch(`${PROMST_BASE}/create_payment?user_id=${PROMST_MERCHANT_ID}&valor=${(pack.amountCents / 100).toFixed(2)}`);
     if (!r.ok) throw new Error(`${r.status}`);
     promst = await r.json() as typeof promst;
   } catch { res.status(502).json({ error: "Falha ao gerar PIX. Tente novamente." }); return; }
