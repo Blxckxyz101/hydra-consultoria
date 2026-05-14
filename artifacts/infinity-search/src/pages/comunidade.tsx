@@ -777,18 +777,20 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+      className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)", paddingBottom: "calc(60px + env(safe-area-inset-bottom, 0px))" }}
+      onClick={onClose}>
       <motion.div
         initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
         transition={{ type: "spring", stiffness: 380, damping: 28 }}
-        className="w-full sm:max-w-xs rounded-t-3xl sm:rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
-        style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
+        className="w-full sm:max-w-xs rounded-t-3xl sm:rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+        style={{ background: "hsl(220 35% 8%)", maxHeight: "calc(100dvh - 80px - env(safe-area-inset-bottom, 0px))" }}
+        onClick={e => e.stopPropagation()}>
         {/* Drag indicator (mobile) */}
         <div className="flex justify-center pt-2.5 pb-0 sm:hidden">
           <div className="w-8 h-1 rounded-full bg-white/15" />
         </div>
-        <div className="h-20 relative" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 35%, transparent), hsl(220 35% 8%))` }}>
+        <div className="h-20 relative shrink-0" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 35%, transparent), hsl(220 35% 8%))` }}>
           <button onClick={onClose} className="absolute top-2 right-2 w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/30 text-white/60 transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -802,7 +804,7 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
             </div>
           </div>
         </div>
-        <div className="pt-11 px-4 pb-5">
+        <div className="pt-11 px-4 pb-6 overflow-y-auto">
           <div className="flex items-center gap-1.5 mb-0.5">
             <span className="font-bold text-base" style={{ color: accent }}>{user.displayName ?? user.username}</span>
             <RoleBadge role={user.role} />
