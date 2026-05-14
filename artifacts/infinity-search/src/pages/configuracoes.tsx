@@ -732,7 +732,7 @@ export default function Configuracoes() {
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "vip">("vip");
+  const [newRole, setNewRole] = useState<"admin" | "vip" | "user">("vip");
   const [expiresAt, setExpiresAt] = useState("");
   const [newPin, setNewPin] = useState("");
   const [formError, setFormError] = useState("");
@@ -1806,11 +1806,22 @@ export default function Configuracoes() {
               </div>
 
               {/* Role selector */}
-              <div className="flex gap-3">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewRole("user")}
+                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
+                    newRole === "user"
+                      ? "bg-emerald-400/15 border-emerald-400/50 text-emerald-300 shadow-[0_0_20px_-4px_rgba(52,211,153,0.4)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
+                  }`}
+                >
+                  <UserIcon className="w-4 h-4" /> Padrão
+                </button>
                 <button
                   type="button"
                   onClick={() => setNewRole("vip")}
-                  className={`flex-1 flex items-center gap-2 justify-center px-4 py-3 rounded-xl border text-sm font-semibold transition-all ${
+                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
                     newRole === "vip"
                       ? "bg-amber-400/15 border-amber-400/50 text-amber-300 shadow-[0_0_20px_-4px_rgba(251,191,36,0.4)]"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
@@ -1821,7 +1832,7 @@ export default function Configuracoes() {
                 <button
                   type="button"
                   onClick={() => setNewRole("admin")}
-                  className={`flex-1 flex items-center gap-2 justify-center px-4 py-3 rounded-xl border text-sm font-semibold transition-all ${
+                  className={`flex-1 flex items-center gap-1.5 justify-center px-3 py-3 rounded-xl border text-sm font-semibold transition-all ${
                     newRole === "admin"
                       ? "bg-sky-400/15 border-sky-400/50 text-sky-300 shadow-[0_0_20px_-4px_rgba(56,189,248,0.4)]"
                       : "bg-white/5 border-white/10 text-muted-foreground hover:border-white/20"
