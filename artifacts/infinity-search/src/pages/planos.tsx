@@ -122,63 +122,62 @@ function TierCard({
       whileHover={{ scale: disabled && !onSwitchDays ? 1 : 1.015 }}
       whileTap={{ scale: disabled && !onSwitchDays ? 1 : 0.985 }}
       onClick={handleClick}
-      className={`relative flex flex-col rounded-2xl border p-3 sm:p-4 transition-all duration-200 text-left w-full ${accentBorder}`}
+      className={`relative flex flex-col rounded-2xl border p-4 sm:p-4 transition-all duration-200 text-left w-full ${accentBorder}`}
     >
       {isVip && plan?.highlight && !selected && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[8px] uppercase tracking-[0.25em] font-black text-black bg-amber-400 px-2.5 py-0.5 rounded-full whitespace-nowrap">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.25em] font-black text-black bg-amber-400 px-3 py-1 rounded-full whitespace-nowrap shadow-lg">
           Mais popular
         </span>
       )}
       {selected && (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[8px] uppercase tracking-[0.25em] font-black text-black px-2.5 py-0.5 rounded-full whitespace-nowrap" style={{ background: "var(--color-primary)" }}>
-          Selecionado
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.25em] font-black text-black px-3 py-1 rounded-full whitespace-nowrap shadow-lg" style={{ background: "var(--color-primary)" }}>
+          ✓ Selecionado
         </span>
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <Icon className={`w-4 h-4 ${accentText}`} />
-        {isUltra && <span className="text-[7px] font-black uppercase tracking-wider bg-rose-500/20 border border-rose-500/40 text-rose-300 px-1.5 py-0.5 rounded-full">ULTRA</span>}
-        {isVip   && <span className="text-[7px] font-black uppercase tracking-wider bg-amber-400/15 border border-amber-400/35 text-amber-300 px-1.5 py-0.5 rounded-full">VIP</span>}
+      <div className="flex items-center justify-between mb-3">
+        <Icon className={`w-5 h-5 ${accentText}`} />
+        {isUltra && <span className="text-[8px] font-black uppercase tracking-wider bg-rose-500/20 border border-rose-500/40 text-rose-300 px-2 py-0.5 rounded-full">ULTRA</span>}
+        {isVip   && <span className="text-[8px] font-black uppercase tracking-wider bg-amber-400/15 border border-amber-400/35 text-amber-300 px-2 py-0.5 rounded-full">VIP</span>}
       </div>
-      <div className={`font-black text-sm tracking-wide ${accentText}`}>{tierLabel}</div>
-      <div className="text-[9px] text-muted-foreground uppercase tracking-[0.2em] mb-3">{tierSub}</div>
+      <div className={`font-black text-base tracking-wide ${accentText}`}>{tierLabel}</div>
+      <div className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] mb-3">{tierSub}</div>
 
       {/* Price */}
       {plan ? (
         <div className="mb-3">
-          <div className={`text-xl sm:text-2xl font-black leading-none ${accentText}`}>
+          <div className={`text-2xl font-black leading-none ${accentText}`}>
             R$&nbsp;{plan.amountBrl}
           </div>
-          <div className="text-[9px] text-muted-foreground mt-0.5">
-            {plan.queryQuota} consultas · R$ {(plan.amountCents / plan.queryQuota / 100).toFixed(2).replace(".", ",")} cada
+          <div className="text-[10px] text-muted-foreground mt-1 leading-snug">
+            {plan.queryQuota} consultas
           </div>
         </div>
       ) : (
         <div className="mb-3">
           {(isUltra || isVip) && onSwitchDays ? (
-            <div className={`text-[9px] font-semibold ${isUltra ? "text-rose-300/70" : "text-amber-300/70"}`}>
-              ↩ Clique para ver em outro período
+            <div className={`text-[10px] font-semibold leading-snug ${isUltra ? "text-rose-300/70" : "text-amber-300/70"}`}>
+              ↩ Ver em outro<br/>período
             </div>
           ) : (
-            <div className="text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+            <div className="text-[10px] text-muted-foreground/60 italic leading-snug">Indisponível<br/>neste período</div>
           )}
         </div>
       )}
 
       {/* Features */}
-      <div className="space-y-1.5 pt-3 border-t border-white/5 flex-1">
+      <div className="space-y-2 pt-3 border-t border-white/5 flex-1">
         {featureValues.map((val, i) => {
           const Ico = TIER_FEATURES[i].icon;
           return (
-            <div key={i} className="flex items-center gap-1.5">
+            <div key={i} className="flex items-start gap-2">
               {val ? (
-                <CheckCircle2 className={`w-2.5 h-2.5 shrink-0 ${accentCheck}`} />
+                <CheckCircle2 className={`w-3 h-3 shrink-0 mt-0.5 ${accentCheck}`} />
               ) : (
-                <Minus className="w-2.5 h-2.5 shrink-0 text-muted-foreground/25" />
+                <Minus className="w-3 h-3 shrink-0 mt-0.5 text-muted-foreground/25" />
               )}
-              <Ico className="w-2.5 h-2.5 shrink-0 text-muted-foreground/40" />
-              <span className={`text-[9px] leading-tight ${val ? "text-foreground/80" : "text-muted-foreground/35 line-through"}`}>
+              <span className={`text-[11px] leading-snug ${val ? "text-foreground/85" : "text-muted-foreground/35 line-through"}`}>
                 {val ?? TIER_FEATURES[i].label}
               </span>
             </div>
@@ -187,15 +186,17 @@ function TierCard({
       </div>
 
       {/* Select button */}
-      <div className={`mt-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-center transition-all ${
+      <div className={`mt-4 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider text-center transition-all ${
         selected
-          ? "bg-primary text-black"
+          ? "text-black"
           : disabled
           ? "bg-white/5 text-muted-foreground/40"
           : isUltra ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
           : isVip   ? "bg-amber-400/15 text-amber-300 border border-amber-400/30"
           :           "bg-sky-500/15 text-sky-300 border border-sky-500/30"
-      }`}>
+      }`}
+      style={selected ? { background: "var(--color-primary)" } : {}}
+      >
         {selected ? "✓ Selecionado" : disabled ? "Indisponível" : "Selecionar"}
       </div>
     </motion.button>
@@ -678,25 +679,45 @@ export default function Planos() {
                     </div>
                   </div>
 
-                  {/* 3-column tier cards */}
-                  <div className="grid grid-cols-3 gap-2 mt-1">
-                    {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
-                      const tierPlan = planForTier(t, selectedDays);
-                      const altDays = !tierPlan
-                        ? availDays.find(d => !!planForTier(t, d))
-                        : undefined;
-                      return (
-                        <TierCard
-                          key={t}
-                          tier={t}
-                          plan={tierPlan}
-                          selected={selectedTier === t && !!tierPlan}
-                          disabled={!tierPlan}
-                          onSelect={() => handleSelectTier(t, selectedDays)}
-                          onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
-                        />
-                      );
-                    })}
+                  {/* Tier cards — horizontal scroll on mobile, 3-col on sm+ */}
+                  <div className="relative mt-2">
+                    {/* Mobile: snap scroll */}
+                    <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-3 -mx-4 px-4 sm:hidden no-scrollbar">
+                      {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                        const tierPlan = planForTier(t, selectedDays);
+                        const altDays = !tierPlan ? availDays.find(d => !!planForTier(t, d)) : undefined;
+                        return (
+                          <div key={t} className="snap-center shrink-0 w-[72vw] max-w-[260px] pt-4">
+                            <TierCard
+                              tier={t}
+                              plan={tierPlan}
+                              selected={selectedTier === t && !!tierPlan}
+                              disabled={!tierPlan}
+                              onSelect={() => handleSelectTier(t, selectedDays)}
+                              onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Desktop: 3-col grid */}
+                    <div className="hidden sm:grid sm:grid-cols-3 sm:gap-3 sm:mt-1 sm:pt-4">
+                      {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                        const tierPlan = planForTier(t, selectedDays);
+                        const altDays = !tierPlan ? availDays.find(d => !!planForTier(t, d)) : undefined;
+                        return (
+                          <TierCard
+                            key={t}
+                            tier={t}
+                            plan={tierPlan}
+                            selected={selectedTier === t && !!tierPlan}
+                            disabled={!tierPlan}
+                            onSelect={() => handleSelectTier(t, selectedDays)}
+                            onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
+                          />
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Selected plan summary bar */}
@@ -705,17 +726,17 @@ export default function Planos() {
                       key={plan.id}
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 flex items-center justify-between"
+                      className="rounded-xl border border-white/10 bg-black/30 px-4 py-3"
                     >
-                      <div className="flex items-center gap-2">
-                        {plan.tier === "ultra" ? <Flame className="w-3.5 h-3.5 text-rose-400" /> : plan.tier === "vip" ? <Crown className="w-3.5 h-3.5 text-amber-400" /> : <Shield className="w-3.5 h-3.5 text-sky-400" />}
-                        <div>
-                          <span className="text-sm font-bold">{plan.label}</span>
-                          <span className="text-[10px] text-muted-foreground ml-2">· {plan.queryQuota} consultas · {plan.days} {plan.days === 1 ? "dia" : "dias"}</span>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {plan.tier === "ultra" ? <Flame className="w-4 h-4 text-rose-400 shrink-0" /> : plan.tier === "vip" ? <Crown className="w-4 h-4 text-amber-400 shrink-0" /> : <Shield className="w-4 h-4 text-sky-400 shrink-0" />}
+                          <span className="text-sm font-bold truncate">{plan.label}</span>
                         </div>
+                        <span className="font-bold text-base shrink-0" style={{ color: "var(--color-primary)" }}>R$ {plan.amountBrl}</span>
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold text-sm" style={{ color: "var(--color-primary)" }}>R$ {plan.amountBrl}</span>
+                      <div className="text-[10px] text-muted-foreground mt-1 ml-6">
+                        {plan.queryQuota} consultas · {plan.days} {plan.days === 1 ? "dia" : "dias"} · R$ {(plan.amountCents / plan.queryQuota / 100).toFixed(2).replace(".", ",")} por consulta
                       </div>
                     </motion.div>
                   )}
