@@ -1113,6 +1113,8 @@ export default function Comunidade() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const isAtBottomRef = useRef(true);
   const [sidebarTab, setSidebarTab] = useState<"rooms" | "friends">("rooms");
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(false);
@@ -1204,6 +1206,7 @@ export default function Comunidade() {
         const data = JSON.parse(ev.data as string) as Record<string, unknown>;
         if (data.type === "message") {
           const msg = data as unknown as ChatMsg;
+          const fromOther = String(data.username ?? "") !== myUsername;
           setMessages(prev => {
             if (prev.find(m => m.id === msg.id)) return prev;
             // Remove any matching optimistic (pending) message from same user with same content
@@ -1212,6 +1215,9 @@ export default function Comunidade() {
             );
             return [...withoutPending, { ...msg, reactions: (msg as any).reactions ?? [] }];
           });
+          if (fromOther && !isAtBottomRef.current) {
+            setUnreadCount(c => c + 1);
+          }
           const from = String(data.username ?? "");
           if (from) {
             setTypingUsers(prev => { const next = new Map(prev); next.delete(from); return next; });
@@ -1258,6 +1264,12 @@ export default function Comunidade() {
     wsRef.current.send(JSON.stringify({ type: "join", roomSlug: activeRoom.slug }));
     setTypingUsers(new Map());
   }, [activeRoom, wsReady]);
+
+  // Keep isAtBottomRef in sync and reset unread count when user reaches bottom
+  useEffect(() => {
+    isAtBottomRef.current = isAtBottom;
+    if (isAtBottom) setUnreadCount(0);
+  }, [isAtBottom]);
 
   // Auto-scroll only when at bottom
   useEffect(() => {
@@ -1683,10 +1695,16 @@ export default function Comunidade() {
           {!isAtBottom && activeRoom && (
             <motion.button
               initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8, y: 8 }}
-              onClick={() => { setIsAtBottom(true); bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }}
-              className="absolute bottom-20 right-4 w-9 h-9 rounded-full flex items-center justify-center shadow-xl border border-white/15 hover:scale-110 hover:border-primary/40 transition-all z-10"
+              onClick={() => { setIsAtBottom(true); setUnreadCount(0); bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }}
+              className="absolute bottom-20 right-4 flex items-center gap-1.5 h-9 px-2.5 rounded-full shadow-xl border border-white/15 hover:scale-105 hover:border-primary/40 transition-all z-10"
               style={{ background: "hsl(220 35% 12%)" }}
             >
+              {unreadCount > 0 && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center"
+                  style={{ background: "var(--color-primary)", color: "#000" }}>
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
               <ArrowDown className="w-4 h-4 text-white/50" />
             </motion.button>
           )}

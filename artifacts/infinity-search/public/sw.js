@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hydra-v4';
+const CACHE_NAME = 'hydra-v5';
 const OFFLINE_URL = '/offline.html';
 
 const PRECACHE_ASSETS = [
@@ -8,6 +8,7 @@ const PRECACHE_ASSETS = [
   '/manifest.json',
   '/hydra-icon.png',
   '/favicon.png',
+  '/offline.html',
 ];
 
 self.addEventListener('install', (event) => {
@@ -42,8 +43,11 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cloned));
           return response;
         })
-        .catch(() => {
-          return caches.match('/') || caches.match(event.request);
+        .catch(async () => {
+          const cached = await caches.match('/') || await caches.match(event.request);
+          if (cached) return cached;
+          const offlinePage = await caches.match(OFFLINE_URL);
+          return offlinePage || new Response('<html><body style="background:#020612;color:#e2e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><p>Sem conexão — verifique sua internet.</p></body></html>', { headers: { 'Content-Type': 'text/html' } });
         })
     );
     return;

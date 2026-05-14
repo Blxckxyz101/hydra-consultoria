@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hydra Consultoria — Sem conexão</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #020612;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .bg {
+      position: fixed; inset: 0; z-index: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(14,165,233,0.08) 0%, transparent 70%),
+                  radial-gradient(ellipse 60% 40% at 80% 80%, rgba(6,182,212,0.05) 0%, transparent 60%);
+    }
+    .card {
+      position: relative; z-index: 1;
+      text-align: center;
+      padding: 2.5rem 2rem;
+      max-width: 360px;
+      width: 90%;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 1.25rem;
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+    .icon {
+      width: 56px; height: 56px;
+      margin: 0 auto 1.25rem;
+      background: rgba(14,165,233,0.12);
+      border: 1px solid rgba(14,165,233,0.25);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .icon svg { width: 26px; height: 26px; stroke: #38bdf8; fill: none; stroke-width: 1.5; }
+    .logo {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      color: rgba(56,189,248,0.7);
+      margin-bottom: 0.75rem;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 0.5rem;
+    }
+    p {
+      font-size: 0.8125rem;
+      color: rgba(148,163,184,0.75);
+      line-height: 1.6;
+      margin-bottom: 1.75rem;
+    }
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.625rem 1.5rem;
+      background: rgba(14,165,233,0.12);
+      border: 1px solid rgba(14,165,233,0.35);
+      border-radius: 0.75rem;
+      color: #38bdf8;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn:hover { background: rgba(14,165,233,0.2); border-color: rgba(14,165,233,0.55); }
+    .dots {
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      margin-top: 1.5rem;
+    }
+    .dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: rgba(56,189,248,0.4);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse {
+      0%, 80%, 100% { opacity: 0.4; transform: scale(1); }
+      40% { opacity: 1; transform: scale(1.25); }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="card">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="1" y1="1" x2="23" y2="23"/>
+        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/>
+        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/>
+        <path d="M10.71 5.05A16 16 0 0 1 22.56 9"/>
+        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/>
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+        <line x1="12" y1="20" x2="12.01" y2="20"/>
+      </svg>
+    </div>
+    <div class="logo">Hydra Consultoria</div>
+    <h1>Sem conexão</h1>
+    <p>Você está offline. Verifique sua conexão com a internet e tente novamente.</p>
+    <a class="btn" onclick="window.location.reload()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      Tentar novamente
+    </a>
+    <div class="dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+  </div>
+</body>
+</html>

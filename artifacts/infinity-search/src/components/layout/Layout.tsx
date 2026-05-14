@@ -148,6 +148,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [suporteNovo, setSuporteNovo] = useState(false);
   const [expiryDismissed, setExpiryDismissed] = useState(false);
   const [lowBalanceDismissed, setLowBalanceDismissed] = useState(() => sessionStorage.getItem("hc_low_bal_dismissed") === "1");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const bellDesktopRef = useRef<HTMLDivElement>(null);
   const bellMobileRef = useRef<HTMLDivElement>(null);
 
@@ -201,6 +202,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
     return () => document.body.classList.remove("scroll-locked");
   }, [mobileOpen]);
+
+  // Hide bottom nav when virtual keyboard is visible (visualViewport shrinks)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handler = () => {
+      setKeyboardVisible(vv.height < window.innerHeight * 0.75);
+    };
+    vv.addEventListener("resize", handler);
+    return () => vv.removeEventListener("resize", handler);
+  }, []);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -625,10 +637,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         )}
       </AnimatePresence>
 
-      {/* Mobile bottom navigation bar */}
+      {/* Mobile bottom navigation bar — hidden when virtual keyboard is up */}
       <nav
-        className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-white/[0.08] backdrop-blur-2xl"
-        style={{ background: "rgba(2,6,18,0.90)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        className="lg:hidden fixed bottom-0 inset-x-0 z-30 border-t border-white/[0.08] backdrop-blur-2xl transition-transform duration-200"
+        style={{ background: "rgba(2,6,18,0.90)", paddingBottom: "env(safe-area-inset-bottom, 0px)", transform: keyboardVisible ? "translateY(100%)" : "translateY(0)" }}
       >
         <div className="flex items-stretch" style={{ height: "60px" }}>
           {([

@@ -255,6 +255,9 @@ export default function Consultas() {
   const isCurrentCategoryLocked = activeCategory === "Processos" && !isAdmin && planTier !== "vip" && planTier !== "ultra";
 
   const [blockedState, setBlockedState] = useState<{ upgradeNeeded?: boolean; moduleLimited?: boolean; message?: string; limitInfo?: { used?: number; limit?: number } } | null>(null);
+  const [queryElapsed, setQueryElapsed] = useState(0);
+  const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastQueryRef = useRef<{ tipo: Tipo; dados: string; base: ExternalBase | null } | null>(null);
 
   type ProviderStatus = { online: boolean; ms: number; circuitOpen: boolean } | null;
   const [geassStatus, setGeassStatus]     = useState<ProviderStatus>(null);
@@ -322,6 +325,13 @@ export default function Consultas() {
     setPending(true);
     setShowBaseSelector(false);
     setPendingQuery(null);
+    setQueryElapsed(0);
+    lastQueryRef.current = { tipo, dados, base };
+    if (elapsedIntervalRef.current) clearInterval(elapsedIntervalRef.current);
+    const _startTime = Date.now();
+    elapsedIntervalRef.current = setInterval(() => {
+      setQueryElapsed(Math.floor((Date.now() - _startTime) / 1000));
+    }, 1000);
     try {
       const token = localStorage.getItem("infinity_token");
       let endpoint: string;
@@ -342,7 +352,7 @@ export default function Consultas() {
       }
 
       const fetchCtrl = new AbortController();
-      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 18_000);
+      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 35_000);
       let r: Response;
       try {
         r = await fetch(endpoint, {
@@ -387,11 +397,12 @@ export default function Consultas() {
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       const msg = isAbort
-        ? "Serviços OSINT temporariamente indisponíveis. Tente novamente em instantes."
+        ? "Consulta expirou — o servidor demorou mais de 35 segundos. Use o botão abaixo para tentar novamente."
         : err instanceof Error ? err.message : "Falha na requisição";
       setResult({ success: false, error: msg, data: { fields: [], sections: [], raw: "" } });
-      toast.error(msg);
+      toast.error(isAbort ? "Consulta expirou — tente novamente." : msg);
     } finally {
+      if (elapsedIntervalRef.current) { clearInterval(elapsedIntervalRef.current); elapsedIntervalRef.current = null; }
       setPending(false);
       queryClient.invalidateQueries({ queryKey: historyKey });
       const t2 = localStorage.getItem("infinity_token");
@@ -972,8 +983,18 @@ export default function Consultas() {
           )}
 
           {pending && (
-            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="py-12 flex items-center justify-center">
+            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="py-12 flex flex-col items-center justify-center gap-4">
               <InfinityLoader size={72} label="Consultando fontes" />
+              {queryElapsed >= 8 && (
+                <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[11px] text-muted-foreground/50 font-mono animate-pulse">
+                  Aguardando resposta... {queryElapsed}s
+                </motion.p>
+              )}
+              {queryElapsed >= 20 && (
+                <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[10px] text-amber-400/60 text-center max-w-xs">
+                  A consulta está demorando mais que o normal. Pode ser lentidão do provedor OSINT.
+                </motion.p>
+              )}
             </motion.div>
           )}
           {!pending && blockedState && (
@@ -988,11 +1009,24 @@ export default function Consultas() {
             </motion.div>
           )}
           {!pending && !showBaseSelector && result && tab !== "cpffull" && !blockedState && (
-            <ResultViewer
-              tipo={tab}
-              query={query}
-              result={result as { success: boolean; error?: string | null; data?: unknown }}
-            />
+            <>
+              <ResultViewer
+                tipo={tab}
+                query={query}
+                result={result as { success: boolean; error?: string | null; data?: unknown }}
+              />
+              {!result.success && lastQueryRef.current && (
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex justify-center pt-1 pb-2">
+                  <button
+                    onClick={() => { const lq = lastQueryRef.current!; executeQuery(lq.tipo, lq.dados, lq.base); }}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-primary/30 bg-primary/8 text-primary text-sm font-semibold hover:bg-primary/15 hover:border-primary/50 active:scale-95 transition-all"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Tentar novamente
+                  </button>
+                </motion.div>
+              )}
+            </>
           )}
         </AnimatePresence>
       </div>
