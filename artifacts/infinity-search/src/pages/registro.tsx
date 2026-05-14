@@ -391,10 +391,12 @@ export default function Registro() {
     setCountdown(180);
     const cdInt = setInterval(() => setCountdown(c => Math.max(0, c - 1)), 1000);
 
-    (async () => {
+    const MAX_RETRIES = 8;
+    const watchSSE = async (attempt: number): Promise<void> => {
+      if (ctrl.signal.aborted) return;
       try {
         const r = await fetch(`${BASE}/api/infinity/payments/${paymentId}/watch`, { signal: ctrl.signal });
-        if (!r.ok || !r.body) { clearInterval(cdInt); setPolling(false); return; }
+        if (!r.ok || !r.body) throw new Error("bad response");
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
@@ -413,10 +415,22 @@ export default function Registro() {
             } catch {}
           }
         }
-      } catch {}
+        // SSE stream ended without a terminal event — reconnect
+        throw new Error("stream ended");
+      } catch (err) {
+        if (ctrl.signal.aborted) return;
+        if (attempt < MAX_RETRIES) {
+          // Exponential backoff: 1s, 2s, 4s … capped at 8s
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+          await new Promise(r => setTimeout(r, delay));
+          return watchSSE(attempt + 1);
+        }
+      }
       clearInterval(cdInt);
       setPolling(false);
-    })();
+    };
+
+    void watchSSE(1);
   }, []);
 
   const handleValidateCoupon = async () => {

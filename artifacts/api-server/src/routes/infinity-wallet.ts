@@ -117,9 +117,10 @@ router.get("/wallet/topup/:paymentId/status", requireAuth, async (req, res) => {
     if (!r.ok) { res.json({ status: "pending" }); return; }
     const d = await r.json() as { status_pagamento: string };
     if (d.status_pagamento === "CONCLUIDA" && payment.status !== "paid") {
-      await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() }).where(eq(infinityPaymentsTable.id, paymentId));
       const amountCents = payment.amountCents;
+      // Credit wallet FIRST, then mark as paid — so a DB failure here retries next poll
       await creditWallet(username, amountCents, `Depósito PIX — R$ ${(amountCents / 100).toFixed(2)}`, paymentId);
+      await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() }).where(eq(infinityPaymentsTable.id, paymentId));
       res.json({ status: "paid", amountCents }); return;
     }
   } catch {}
@@ -166,9 +167,10 @@ router.get("/wallet/topup/:paymentId/watch", requireAuth, async (req, res) => {
         if (r.ok) {
           const d = await r.json() as { status_pagamento: string };
           if (d.status_pagamento === "CONCLUIDA") {
+            // Credit wallet FIRST — if it fails, status stays "pending" and SSE retries
+            await creditWallet(username, payment.amountCents, `Depósito PIX — R$ ${(payment.amountCents / 100).toFixed(2)}`, paymentId);
             await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() })
               .where(eq(infinityPaymentsTable.id, paymentId));
-            await creditWallet(username, payment.amountCents, `Depósito PIX — R$ ${(payment.amountCents / 100).toFixed(2)}`, paymentId);
             res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
             finish(); return;
           }
