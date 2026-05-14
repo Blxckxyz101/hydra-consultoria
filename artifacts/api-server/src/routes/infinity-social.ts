@@ -745,14 +745,17 @@ router.post("/chat/upload", requireAuth, async (req, res): Promise<void> => {
   if (!dataUri || typeof dataUri !== "string") {
     res.status(400).json({ error: "dataUri obrigatório" }); return;
   }
-  const match = /^data:(image\/(jpeg|jpg|png|gif|webp));base64,(.+)$/.exec(dataUri);
+  const imgMatch   = /^data:(image\/(jpeg|jpg|png|gif|webp));base64,(.+)$/.exec(dataUri);
+  const audioMatch = /^data:(audio\/(webm|ogg|mp4|mpeg));base64,(.+)$/.exec(dataUri);
+  const match = imgMatch ?? audioMatch;
   if (!match) {
-    res.status(400).json({ error: "Formato inválido. Use PNG, JPEG, GIF ou WEBP." }); return;
+    res.status(400).json({ error: "Formato inválido. Use PNG, JPEG, GIF, WEBP ou áudio (webm/ogg)." }); return;
   }
   const mimeType = match[1]!;
   const base64Data = match[3]!;
-  if (base64Data.length > 3_000_000) {
-    res.status(413).json({ error: "Imagem muito grande (máximo ~2MB)." }); return;
+  const sizeLimit = audioMatch ? 8_000_000 : 3_000_000;
+  if (base64Data.length > sizeLimit) {
+    res.status(413).json({ error: audioMatch ? "Áudio muito grande (máximo ~5MB)." : "Imagem muito grande (máximo ~2MB)." }); return;
   }
   const id = randomBytes(16).toString("hex");
   const expiresAt = new Date(Date.now() + CHAT_IMG_TTL_MS);

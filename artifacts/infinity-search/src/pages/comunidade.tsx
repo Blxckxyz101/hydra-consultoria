@@ -5,7 +5,7 @@ import {
   ChevronRight, Loader2, Gift, Image as ImageIcon,
   UserCircle, UserPlus, MessageSquareDiff, Search, CornerUpLeft,
   Trash2, Smile, ZoomIn, Paperclip, File as FileIcon, ArrowDown,
-  Hash, Settings, Users,
+  Hash, Settings, Users, Mic, Square, Play, Pause, Reply,
 } from "lucide-react";
 import { useInfinityMe } from "@workspace/api-client-react";
 import { Link } from "wouter";
@@ -74,6 +74,7 @@ interface ChatMsg {
   photo: string | null; role: string; accentColor: string | null;
   content: string; createdAt: string; reactions: Reaction[];
   replyToId?: number | null; replyToUsername?: string | null; replyToContent?: string | null;
+  pending?: boolean;
 }
 interface MiniUser { username: string; displayName: string | null; photo: string | null; role: string; bio: string | null; accentColor: string | null }
 interface ReplyTo { id: number; username: string; displayName: string | null; content: string }
@@ -106,8 +107,121 @@ function DaySeparator({ label }: { label: string }) {
   );
 }
 
+function formatAudioTime(s: number): string {
+  if (!isFinite(s) || s < 0) return "0:00";
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+// ── Audio Player ──────────────────────────────────────────────────────────────
+function AudioPlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) { a.pause(); setPlaying(false); }
+    else { void a.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }
+  };
+  return (
+    <div className="flex items-center gap-2.5 mt-1.5 rounded-xl px-3 py-2.5 border border-white/10 max-w-[260px]"
+      style={{ background: "rgba(255,255,255,0.06)" }}>
+      <audio ref={audioRef} src={src} preload="metadata"
+        onLoadedMetadata={e => setDuration(e.currentTarget.duration)}
+        onTimeUpdate={e => setCurrent(e.currentTarget.currentTime)}
+        onEnded={() => { setPlaying(false); setCurrent(0); if (audioRef.current) audioRef.current.currentTime = 0; }} />
+      <button onClick={toggle}
+        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-90"
+        style={{ background: "var(--color-primary)", color: "#000" }}>
+        {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+      </button>
+      <div className="flex-1 min-w-0">
+        <input type="range" min={0} max={duration || 1} step={0.1} value={current}
+          onChange={e => { const t = Number(e.target.value); setCurrent(t); if (audioRef.current) audioRef.current.currentTime = t; }}
+          className="w-full h-1 rounded-full cursor-pointer accent-primary" />
+        <div className="flex justify-between text-[9px] text-white/35 mt-0.5">
+          <span>{formatAudioTime(current)}</span>
+          <span>{formatAudioTime(duration)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile Message Sheet ──────────────────────────────────────────────────────
+function MobileMessageSheet({ msg, myUsername, onReact, onReply, onDelete, onClose }: {
+  msg: ChatMsg; myUsername: string;
+  onReact: (id: number, emoji: string) => void;
+  onReply: (r: ReplyTo) => void;
+  onDelete: (id: number) => void;
+  onClose: () => void;
+}) {
+  const isOwn = msg.username === myUsername;
+  const accent = msg.accentColor ?? "var(--color-primary)";
+  const SHEET_EMOJIS = ["❤️","😂","😮","😢","👍","🔥","🙏","💯"];
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-end"
+      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}>
+      <motion.div initial={{ y: 80 }} animate={{ y: 0 }} exit={{ y: 80 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+        className="w-full rounded-t-3xl border border-white/10 overflow-hidden pb-safe"
+        style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
+        {/* Drag handle */}
+        <div className="flex justify-center pt-2.5 pb-2">
+          <div className="w-8 h-1 rounded-full bg-white/15" />
+        </div>
+        {/* Message preview */}
+        <div className="mx-4 mb-3 px-3 py-2 rounded-xl border border-white/[0.07]"
+          style={{ background: "rgba(255,255,255,0.04)" }}>
+          <span className="text-[10px] font-semibold block mb-0.5" style={{ color: accent }}>
+            {msg.displayName ?? msg.username}
+          </span>
+          <p className="text-xs text-white/55 line-clamp-3 leading-relaxed break-words">{msg.content.replace(/^\[audio\]:.*/, "🎤 Mensagem de voz")}</p>
+        </div>
+        {/* Quick emojis — large targets */}
+        <div className="grid grid-cols-8 gap-1 px-4 mb-3">
+          {SHEET_EMOJIS.map(e => {
+            const mine = msg.reactions.find(r => r.emoji === e)?.users.includes(myUsername);
+            return (
+              <button key={e} onClick={() => { onReact(msg.id, e); onClose(); }}
+                className={`h-12 rounded-xl flex items-center justify-center text-2xl transition-all active:scale-90 ${mine ? "border-2" : "border border-white/10 hover:bg-white/10"}`}
+                style={mine ? { borderColor: "color-mix(in srgb, var(--color-primary) 60%, transparent)", background: "color-mix(in srgb, var(--color-primary) 12%, transparent)" } : { background: "rgba(255,255,255,0.05)" }}>
+                {e}
+              </button>
+            );
+          })}
+        </div>
+        {/* Actions */}
+        <div className="flex gap-2 px-4 pb-5">
+          <button onClick={() => { onReply({ id: msg.id, username: msg.username, displayName: msg.displayName, content: msg.content }); onClose(); }}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-white/5 border border-white/10 text-sm font-semibold text-white/70 active:bg-white/10">
+            <Reply className="w-4 h-4" /> Responder
+          </button>
+          {isOwn && (
+            <button onClick={() => { onDelete(msg.id); onClose(); }}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-sm font-semibold text-red-400 active:bg-red-500/20">
+              <Trash2 className="w-4 h-4" /> Apagar
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 // ── Content renderer ──────────────────────────────────────────────────────────
 function renderContent(content: string, accent: string, onImgClick?: (src: string) => void) {
+  // Audio message
+  if (content.startsWith("[audio]:")) {
+    const url = content.slice(8);
+    const src = url.startsWith("/") ? `${window.location.origin}${url}` : url;
+    return [<AudioPlayer key="audio" src={src} />];
+  }
   const imgRegex = /(?:https?:\/\/\S+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*)?\b|\/api\/infinity\/chat\/img\/[a-f0-9]+)/i;
   const splitRegex = /((?:https?:\/\/\S+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*)?\b|\/api\/infinity\/chat\/img\/[a-f0-9]+|https?:\/\/\S+))/gi;
   const parts = content.split(splitRegex);
@@ -412,13 +526,14 @@ function FriendsPanel({ friends, loading, onUserClick, onRefresh }: {
 }
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
-function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, onDelete, onImgClick }: {
+function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, onDelete, onImgClick, onMobileAction }: {
   msg: ChatMsg; prev?: ChatMsg; myUsername: string;
   onReact: (msgId: number, emoji: string) => void;
   onUserClick: (user: MiniUser) => void;
   onReply: (r: ReplyTo) => void;
   onDelete: (msgId: number) => void;
   onImgClick: (src: string) => void;
+  onMobileAction: (msg: ChatMsg) => void;
 }) {
   const isConsecutive = prev && prev.username === msg.username &&
     !(!prev || !isSameDay(prev.createdAt, msg.createdAt)) &&
@@ -443,9 +558,13 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
     wasDragging.current = false; didLongPress.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressTimer.current = null; didLongPress.current = true;
-      setShowEmojiPicker(true); setShowActions(true);
       if (navigator.vibrate) navigator.vibrate(22);
-    }, 500);
+      if (window.innerWidth < 640) {
+        onMobileAction(msg);
+      } else {
+        setShowEmojiPicker(true); setShowActions(true);
+      }
+    }, 480);
   };
   const onPM = (e: React.PointerEvent) => {
     const dx = e.clientX - pointerStart.current.x;
@@ -470,7 +589,7 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
   };
 
   return (
-    <div className={`relative overflow-x-hidden ${isConsecutive ? "mt-0" : "mt-4"}`}>
+    <div className={`relative overflow-x-hidden transition-opacity ${isConsecutive ? "mt-0" : "mt-4"} ${msg.pending ? "opacity-55" : ""}`}>
       {/* Reply indicator slides in from left */}
       <div className="absolute left-2.5 top-1/2 z-10 pointer-events-none flex items-center justify-center w-8 h-8 rounded-full"
         style={{ opacity: swipeX > 15 ? Math.min(1, (swipeX - 15) / 38) : 0, transform: `translateY(-50%) translateX(${Math.max(0, swipeX - 15)}px)`, background: "var(--color-primary)", color: "#000", transition: swipeX === 0 ? "opacity 0.18s, transform 0.18s" : "none" }}>
@@ -995,6 +1114,12 @@ export default function Comunidade() {
   const [sidebarTab, setSidebarTab] = useState<"rooms" | "friends">("rooms");
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(false);
+  const [mobileSheet, setMobileSheet] = useState<ChatMsg | null>(null);
+  const [audioRec, setAudioRec] = useState<"idle" | "recording" | "saving">("idle");
+  const [audioSecs, setAudioSecs] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1079,7 +1204,11 @@ export default function Comunidade() {
           const msg = data as unknown as ChatMsg;
           setMessages(prev => {
             if (prev.find(m => m.id === msg.id)) return prev;
-            return [...prev, { ...msg, reactions: (msg as any).reactions ?? [] }];
+            // Remove any matching optimistic (pending) message from same user with same content
+            const withoutPending = prev.filter(m =>
+              !(m.pending && m.username === String(data.username ?? "") && m.content === String(data.content ?? ""))
+            );
+            return [...withoutPending, { ...msg, reactions: (msg as any).reactions ?? [] }];
           });
           const from = String(data.username ?? "");
           if (from) {
@@ -1149,6 +1278,21 @@ export default function Comunidade() {
     if (!trimmed || !activeRoom || sending) return;
     setInput(""); setReplyTo(null);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+
+    // Optimistic: instantly show message while WS/HTTP round-trip happens
+    const tempId = -(Date.now());
+    const optimistic: ChatMsg = {
+      id: tempId, roomSlug: activeRoom.slug, username: myUsername,
+      displayName: null, photo: null,
+      role: me?.role ?? "user", accentColor: null,
+      content: trimmed, createdAt: new Date().toISOString(), reactions: [],
+      replyToId: rToId ?? null, pending: true,
+    };
+    setMessages(prev => [...prev, optimistic]);
+    setIsAtBottom(true);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 30);
+    inputRef.current?.focus();
+
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: "message", roomSlug: activeRoom.slug, content: trimmed, replyToId: rToId ?? null }));
     } else {
@@ -1159,13 +1303,60 @@ export default function Comunidade() {
           headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ content: trimmed, replyToId: rToId ?? null }),
         });
+        // Remove optimistic and reload
+        setMessages(prev => prev.filter(m => m.id !== tempId));
         await loadMessages(activeRoom.slug);
       } catch {} finally { setSending(false); }
     }
-    setIsAtBottom(true);
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 80);
-    inputRef.current?.focus();
-  }, [activeRoom, sending, loadMessages]);
+  }, [activeRoom, sending, loadMessages, myUsername, me]);
+
+  const startRecording = useCallback(async () => {
+    if (audioRec !== "idle") return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg" });
+      audioChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+        setAudioSecs(0);
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType });
+        if (blob.size < 1000) { setAudioRec("idle"); return; }
+        setAudioRec("saving");
+        try {
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const dataUri = reader.result as string;
+            const r = await fetch("/api/infinity/chat/upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ dataUri }),
+            });
+            if (r.ok) {
+              const { url } = await r.json() as { url: string };
+              const fullUrl = `${window.location.origin}${url}`;
+              await sendMessage(`[audio]:${fullUrl}`, undefined);
+            }
+          };
+          reader.readAsDataURL(blob);
+        } catch {} finally { setAudioRec("idle"); }
+      };
+      mr.start(200);
+      mediaRecorderRef.current = mr;
+      setAudioRec("recording");
+      setAudioSecs(0);
+      audioTimerRef.current = setInterval(() => setAudioSecs(s => s + 1), 1000);
+      if (navigator.vibrate) navigator.vibrate(12);
+    } catch { setAudioRec("idle"); }
+  }, [audioRec, sendMessage]);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (audioTimerRef.current) clearInterval(audioTimerRef.current);
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!activeRoom) return;
@@ -1256,7 +1447,7 @@ export default function Comunidade() {
     setDeleteConfirmId(null);
   };
 
-  const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading;
+  const canSend = (!!input.trim() || !!pendingFile) && !!activeRoom && !sending && !imgUploading && audioRec === "idle";
 
   return (
     <div className="flex h-full overflow-hidden relative">
@@ -1264,6 +1455,15 @@ export default function Comunidade() {
         {lightboxSrc && <LightboxModal src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}
         {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={r => { setRooms(prev => [...prev, r]); setActiveRoom(r); }} />}
         {selectedUser && <UserPopup user={selectedUser} onClose={() => setSelectedUser(null)} myUsername={myUsername} />}
+        {mobileSheet && (
+          <MobileMessageSheet
+            msg={mobileSheet} myUsername={myUsername}
+            onReact={handleReact}
+            onReply={r => { setReplyTo(r); setMobileSheet(null); inputRef.current?.focus(); }}
+            onDelete={id => { setDeleteConfirmId(id); setMobileSheet(null); }}
+            onClose={() => setMobileSheet(null)}
+          />
+        )}
         {showSearch && <SearchUsersModal onClose={() => setShowSearch(false)} onUserClick={u => { setSelectedUser(u); setShowSearch(false); }} />}
         {deleteConfirmId !== null && (
           <DeleteConfirm
@@ -1464,6 +1664,7 @@ export default function Comunidade() {
                   onReply={r => { setReplyTo(r); inputRef.current?.focus(); }}
                   onDelete={id => setDeleteConfirmId(id)}
                   onImgClick={setLightboxSrc}
+                  onMobileAction={setMobileSheet}
                 />
               </div>
             );
@@ -1551,27 +1752,35 @@ export default function Comunidade() {
             </button>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
 
-            {/* Text input */}
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={e => handleInputChange(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username);
-                  else void handleSend();
+            {/* Recording indicator OR Text input */}
+            {audioRec === "recording" ? (
+              <div className="flex-1 flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0 animate-pulse" />
+                <span className="text-sm font-mono text-red-400 font-semibold tabular-nums">{formatAudioTime(audioSecs)}</span>
+                <span className="text-xs text-white/40">Gravando... Toque ■ para parar</span>
+              </div>
+            ) : (
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => handleInputChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (mentionSuggestions.length > 0) insertMention(mentionSuggestions[0]!.username);
+                    else void handleSend();
+                  }
+                  if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); setPendingFile(null); }
+                }}
+                placeholder={
+                  pendingFile ? "Adicione uma legenda (opcional)..."
+                    : activeRoom ? `Conversar em #${activeRoom.name}`
+                    : "Selecione uma sala"
                 }
-                if (e.key === "Escape") { setReplyTo(null); setMentionQuery(null); setMentionSuggestions([]); setPendingFile(null); }
-              }}
-              placeholder={
-                pendingFile ? "Adicione uma legenda (opcional)..."
-                  : activeRoom ? `Conversar em #${activeRoom.name}`
-                  : "Selecione uma sala"
-              }
-              disabled={!activeRoom || sending}
-              className="flex-1 min-w-0 bg-transparent border-0 text-[15px] text-white focus:outline-none transition-colors placeholder:text-white/40 disabled:opacity-40"
-            />
+                disabled={!activeRoom || sending || audioRec !== "idle"}
+                className="flex-1 min-w-0 bg-transparent border-0 text-[15px] text-white focus:outline-none transition-colors placeholder:text-white/40 disabled:opacity-40"
+              />
+            )}
 
             <button onClick={() => setShowGif(v => !v)}
               className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-colors ${showGif ? "text-primary" : "text-white/55 hover:text-white"}`}
@@ -1585,8 +1794,20 @@ export default function Comunidade() {
                 style={{ color: "var(--color-primary)" }}>
                 {sending || imgUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </button>
+            ) : audioRec === "recording" ? (
+              <button onClick={stopRecording}
+                className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-90 animate-pulse"
+                style={{ background: "#ef4444", color: "#fff" }}>
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+            ) : audioRec === "saving" ? (
+              <Loader2 className="w-5 h-5 animate-spin text-primary shrink-0" />
             ) : (
-              <Smile className="w-5 h-5 text-white/55 shrink-0" />
+              <button onClick={startRecording} disabled={!activeRoom}
+                className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-colors text-white/40 hover:text-primary disabled:opacity-30"
+                title="Gravar áudio">
+                <Mic className="w-5 h-5" />
+              </button>
             )}
           </div>
         </div>
