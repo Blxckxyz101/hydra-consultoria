@@ -11,7 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus } from "lucide-react";
+import { ShieldAlert, UserPlus, Trash2, LogOut, User as UserIcon, Crown, Calendar, Shield, Clock, X, Check, Bell, Send, KeyRound, Eye, EyeOff, Hash, RefreshCw, Lock, Pencil, RotateCcw, ImagePlus, Loader2, Radio, ShoppingBag, Zap, CreditCard, ChevronRight, Smartphone, ScanLine, QrCode, Tag, ToggleLeft, ToggleRight, Coins, Plus, Minus, FlaskConical, Copy, Timer } from "lucide-react";
 import QRCode from "qrcode";
 
 
@@ -737,6 +737,12 @@ export default function Configuracoes() {
   const [newPin, setNewPin] = useState("");
   const [formError, setFormError] = useState("");
 
+  // Test-login state
+  const [testLoginMinutes, setTestLoginMinutes] = useState(30);
+  const [testLoginLoading, setTestLoginLoading] = useState(false);
+  const [testLoginResult, setTestLoginResult] = useState<{ username: string; password: string; expiresAt: string; expiresMinutes: number; queryDailyLimit: number } | null>(null);
+  const [testLoginCopied, setTestLoginCopied] = useState(false);
+
   // ── PINs state ─────────────────────────────────────────────────────────────
   interface PinRow { pin: string; createdAt: string; createdBy: string; usedAt: string | null; usedBy: string | null; }
   const [pins, setPins] = useState<PinRow[]>([]);
@@ -1074,6 +1080,23 @@ export default function Configuracoes() {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     await loadCoupons();
+  };
+
+  const handleTestLogin = async () => {
+    setTestLoginLoading(true);
+    setTestLoginResult(null);
+    try {
+      const token = localStorage.getItem("infinity_token") ?? "";
+      const r = await fetch("/api/infinity/users/test-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ expiresMinutes: testLoginMinutes }),
+      });
+      const d = await r.json() as { username?: string; password?: string; expiresAt?: string; expiresMinutes?: number; queryDailyLimit?: number; error?: string };
+      if (!r.ok) { setFormError(d.error ?? "Erro ao gerar login de teste"); return; }
+      setTestLoginResult(d as { username: string; password: string; expiresAt: string; expiresMinutes: number; queryDailyLimit: number });
+    } catch { setFormError("Erro de conexão"); }
+    finally { setTestLoginLoading(false); }
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -1775,6 +1798,121 @@ export default function Configuracoes() {
                 </div>
               )}
             </div>
+          </motion.div>
+
+          {/* ── Test Login Generator ────────────────────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.08 }}
+            className="rounded-2xl border border-amber-400/20 bg-amber-400/4 backdrop-blur-2xl p-6"
+          >
+            <div className="flex items-center gap-2 mb-5">
+              <FlaskConical className="w-4 h-4 text-amber-300" />
+              <h2 className="text-sm font-semibold uppercase tracking-widest text-amber-300/80">Login de Teste</h2>
+              <span className="ml-auto text-[9px] uppercase tracking-[0.25em] text-amber-400/50 border border-amber-400/20 px-2 py-0.5 rounded-full">5 consultas · temporário</span>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground/60 leading-relaxed mb-4">
+              Gera credenciais temporárias de demonstração com limite de <strong className="text-amber-300/80">5 consultas</strong> e expiração automática. Ideal para mostrar a plataforma sem comprometer contas reais.
+            </p>
+
+            <div className="flex items-center gap-3 mb-4 flex-wrap">
+              <Timer className="w-3.5 h-3.5 text-amber-400/60 shrink-0" />
+              <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground/50 shrink-0">Expirar em:</span>
+              {([15, 30, 60, 120, 240]).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setTestLoginMinutes(m)}
+                  className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    testLoginMinutes === m
+                      ? "bg-amber-400/20 border-amber-400/50 text-amber-300 shadow-[0_0_12px_-2px_rgba(251,191,36,0.3)]"
+                      : "bg-white/5 border-white/10 text-muted-foreground hover:border-amber-400/30 hover:text-amber-300/80"
+                  }`}
+                >
+                  {m < 60 ? `${m}min` : `${m / 60}h`}
+                </button>
+              ))}
+              <div className="flex items-center gap-1.5 ml-1">
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={testLoginMinutes}
+                  onChange={e => setTestLoginMinutes(Math.max(1, Math.min(1440, Number(e.target.value) || 30)))}
+                  className="w-16 bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-center focus:outline-none focus:border-amber-400/40 transition-all"
+                />
+                <span className="text-[9px] text-muted-foreground/40">min</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => void handleTestLogin()}
+              disabled={testLoginLoading}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-[0.25em] text-black transition-all disabled:opacity-50 bg-gradient-to-r from-amber-400 to-orange-300 hover:shadow-[0_0_24px_rgba(251,191,36,0.4)]"
+            >
+              {testLoginLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+              {testLoginLoading ? "Gerando…" : "Gerar Login de Teste"}
+            </button>
+
+            <AnimatePresence>
+              {testLoginResult && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className="mt-4 overflow-hidden"
+                >
+                  <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] uppercase tracking-[0.3em] text-emerald-400/70 font-bold flex items-center gap-1.5">
+                        <Check className="w-3 h-3" /> Credenciais geradas
+                      </span>
+                      <span className="text-[9px] text-muted-foreground/40 flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5" />
+                        Expira {new Date(testLoginResult.expiresAt).toLocaleString("pt-BR")}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {[
+                        { label: "Usuário", value: testLoginResult.username },
+                        { label: "Senha", value: testLoginResult.password },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex items-center gap-2 bg-black/40 border border-white/8 rounded-lg px-3 py-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground/40 mb-0.5">{label}</div>
+                            <div className="font-mono text-sm text-foreground font-bold tracking-wider">{value}</div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              void navigator.clipboard.writeText(value);
+                              setTestLoginCopied(true);
+                              setTimeout(() => setTestLoginCopied(false), 1500);
+                            }}
+                            className="p-1.5 rounded text-muted-foreground/40 hover:text-emerald-400 transition-colors shrink-0"
+                          >
+                            {testLoginCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => {
+                        const text = `Hydra Consultoria - Login de Teste\nUsuário: ${testLoginResult.username}\nSenha: ${testLoginResult.password}\nExpira em: ${new Date(testLoginResult.expiresAt).toLocaleString("pt-BR")}\nLimite: ${testLoginResult.queryDailyLimit} consultas`;
+                        void navigator.clipboard.writeText(text);
+                        setTestLoginCopied(true);
+                        setTimeout(() => setTestLoginCopied(false), 1500);
+                      }}
+                      className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-emerald-400/20 bg-emerald-400/5 text-emerald-400/70 text-[10px] font-bold uppercase tracking-wider hover:bg-emerald-400/10 transition-all"
+                    >
+                      <Copy className="w-3 h-3" /> Copiar tudo
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
 
           {/* Create user */}

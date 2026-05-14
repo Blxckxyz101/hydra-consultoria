@@ -14,12 +14,13 @@ import {
 } from "lucide-react";
 import { ResultViewer } from "@/components/consultas/ResultViewer";
 import { QueryBlockedBanner } from "@/components/consultas/QueryBlockedBanner";
-import { CpfFullPanel } from "@/components/consultas/CpfFullPanel";
+import { CpfUnificadoPanel } from "@/components/consultas/CpfUnificadoPanel";
 import { InfinityLoader } from "@/components/ui/InfinityLoader";
+import { ArrowLeft } from "lucide-react";
 
 type Tipo =
   // Pessoa
-  | "cpf" | "cpfbasico" | "cpffull" | "nome" | "rg" | "mae" | "pai" | "nasc" | "nis" | "cns"
+  | "cpf" | "cpfbasico" | "cpffull" | "cpfunificado" | "nome" | "rg" | "mae" | "pai" | "nasc" | "nis" | "cns"
   | "titulo" | "email" | "pix" | "telefone" | "endereco" | "cep" | "parentes"
   | "dividas" | "bens" | "score" | "score2" | "obito" | "rais" | "mandado"
   | "beneficios" | "certidoes" | "vacinas" | "faculdades" | "irpf" | "assessoria"
@@ -233,7 +234,7 @@ const CREDILINK_BASES = new Set<Tipo>(["cpf"]);
 
 export default function Consultas() {
   const [tab, setTab] = useState<Tipo>("cpf");
-  const [cpfVariant, setCpfVariant] = useState<"cpf" | "cpffull" | "cpfbasico">("cpf");
+  const [cpfVariant, setCpfVariant] = useState<"cpf" | "cpfunificado" | "cpfbasico">("cpf");
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ success: boolean; error?: string | null; data?: unknown } | null>(null);
   const [pending, setPending] = useState(false);
@@ -241,8 +242,9 @@ export default function Consultas() {
   const [showBaseSelector, setShowBaseSelector] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<{ tipo: Tipo; dados: string } | null>(null);
   const baseSelectorRef = useRef<HTMLDivElement>(null);
-  const [cpfFullQuery, setCpfFullQuery] = useState<string | null>(null);
+  const [cpfUnificadoQuery, setCpfUnificadoQuery] = useState<string | null>(null);
   const [moduleSearch, setModuleSearch] = useState("");
+  const [focusedModule, setFocusedModule] = useState<Tipo | null>(null);
   const queryClient = useQueryClient();
 
   const [skylersTotal, setSkylersTotal] = useState<number | null>(null);
@@ -409,8 +411,8 @@ export default function Consultas() {
     e.preventDefault();
     if (!query.trim() || pending) return;
     const effectiveTab: Tipo = tab === "cpf" ? cpfVariant : tab;
-    if (effectiveTab === "cpffull") {
-      setCpfFullQuery(query.trim());
+    if (effectiveTab === "cpfunificado") {
+      setCpfUnificadoQuery(query.trim());
       return;
     }
     if (SKYLERS_ONLY_TIPOS.has(effectiveTab)) {
@@ -435,10 +437,11 @@ export default function Consultas() {
     // Remap hidden CPF variants back to the unified CPF tile
     if (tabDef.id === "cpffull" || tabDef.id === "cpfbasico") {
       setTab("cpf");
-      setCpfVariant(tabDef.id);
       if (tabDef.id === "cpffull") {
-        setCpfFullQuery(dados);
+        setCpfVariant("cpfunificado");
+        setCpfUnificadoQuery(dados);
       } else {
+        setCpfVariant("cpfbasico");
         executeQuery("cpfbasico", dados, "skylers");
       }
       return;
@@ -601,8 +604,10 @@ export default function Consultas() {
         );
       })()}
 
-      {/* Search bar + Category pills */}
-      <div className="space-y-3">
+      {/* Search bar + Category pills — hidden when a module is focused */}
+      <AnimatePresence mode="wait">
+      {!focusedModule && (
+      <motion.div key="search-cats" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.18 }} className="space-y-3">
         {/* Module search input */}
         <div className="relative">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
@@ -674,53 +679,118 @@ export default function Consultas() {
             </span>
           </div>
         )}
-      </div>
-
-      {/* Tab grid — hidden when current category is locked */}
-      {/* key only changes when entering/exiting search mode — no remount on category switch */}
-      <motion.div
-        key={isSearching ? "search" : "tabs"}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.15 }}
-        className={`grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 ${isCurrentCategoryLocked ? "hidden" : ""}`}
-      >
-        {tabsInCategory.length === 0 && (
-          <div className="col-span-full py-10 flex flex-col items-center gap-3 text-muted-foreground/40">
-            <Search className="w-8 h-8 opacity-30" />
-            <p className="text-xs">Nenhum módulo encontrado para &ldquo;{moduleSearch}&rdquo;</p>
-          </div>
-        )}
-        {tabsInCategory.map((t) => {
-          const Icon = t.icon;
-          const isActive = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => { setTab(t.id); setQuery(""); setResult(null); setCpfFullQuery(null); setModuleSearch(""); setActiveCategory(t.category); }}
-              className={`relative group flex flex-col items-center gap-1.5 p-3 sm:p-4 rounded-xl border transition-all ${
-                isActive
-                  ? "bg-primary/15 border-primary/50 shadow-[0_0_20px_-4px_rgba(56,189,248,0.6)]"
-                  : "bg-black/20 border-white/5 hover:border-white/15 hover:bg-white/5"
-              }`}
-            >
-              <Icon className={`w-5 h-5 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"} transition-colors`} />
-              <span className={`text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-center leading-tight ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`}>
-                {t.label}
-              </span>
-              {isSearching && (
-                <span className={`text-[7px] uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
-                  CATEGORY_GRADIENT[t.category]
-                    ? `bg-gradient-to-r ${CATEGORY_GRADIENT[t.category]} text-black border-transparent opacity-80`
-                    : "bg-white/5 border-white/10 text-muted-foreground"
-                }`}>
-                  {t.category}
-                </span>
-              )}
-            </button>
-          );
-        })}
       </motion.div>
+      )}
+      </AnimatePresence>
+
+      {/* ── Module grid / focused module ──────────────────────────────────────── */}
+      <AnimatePresence mode="wait">
+        {focusedModule ? (
+          /* Focused module hero — replaces grid */
+          <motion.div
+            key="focused"
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -8 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+          >
+            {(() => {
+              const ft = TABS.find(t => t.id === focusedModule);
+              const FIcon = ft?.icon ?? IdCard;
+              return (
+                <div className="rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/8 via-primary/4 to-transparent backdrop-blur-2xl p-5 sm:p-7 shadow-[0_0_48px_-8px_rgba(56,189,248,0.25)]">
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => { setFocusedModule(null); setResult(null); setCpfUnificadoQuery(null); setShowBaseSelector(false); setPendingQuery(null); }}
+                      className="group flex items-center gap-2 px-3.5 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-primary/15 hover:border-primary/40 text-muted-foreground hover:text-primary transition-all shrink-0"
+                    >
+                      <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+                      <span className="text-[9px] uppercase tracking-[0.35em] font-bold hidden sm:inline">Voltar</span>
+                    </button>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="w-11 h-11 rounded-2xl bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0 shadow-[0_0_20px_-4px_rgba(56,189,248,0.4)]">
+                        <FIcon className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-lg sm:text-xl font-bold uppercase tracking-[0.2em] text-foreground">{ft?.label}</div>
+                        <div className="text-[10px] text-primary/60 tracking-[0.3em] uppercase mt-0.5 truncate">{ft?.hint}</div>
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2.5 py-1 rounded-full border text-[8px] uppercase tracking-[0.25em] font-bold"
+                      style={{ background: `linear-gradient(to right, ${CATEGORY_GRADIENT[ft?.category ?? "Pessoa"]?.replace("from-", "").split(" ")[0] ?? ""} 0%, transparent 100%)`, borderColor: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)" }}>
+                      {ft?.category}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+          </motion.div>
+        ) : (
+          /* Normal module grid */
+          <motion.div
+            key={isSearching ? "search" : "tabs"}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.15 }}
+            className={`grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2.5 ${isCurrentCategoryLocked ? "hidden" : ""}`}
+          >
+            {tabsInCategory.length === 0 && (
+              <div className="col-span-full py-10 flex flex-col items-center gap-3 text-muted-foreground/40">
+                <Search className="w-8 h-8 opacity-30" />
+                <p className="text-xs">Nenhum módulo encontrado para &ldquo;{moduleSearch}&rdquo;</p>
+              </div>
+            )}
+            {tabsInCategory.map((t) => {
+              const Icon = t.icon;
+              const isActive = tab === t.id;
+              return (
+                <motion.button
+                  key={t.id}
+                  whileHover={{ y: -2, scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                  onClick={() => {
+                    setTab(t.id);
+                    setFocusedModule(t.id);
+                    setQuery("");
+                    setResult(null);
+                    setCpfUnificadoQuery(null);
+                    setModuleSearch("");
+                    setActiveCategory(t.category);
+                    setShowBaseSelector(false);
+                    setPendingQuery(null);
+                    setBlockedState(null);
+                  }}
+                  className={`relative group flex flex-col items-center gap-2 p-4 sm:p-5 rounded-2xl border transition-colors ${
+                    isActive
+                      ? "bg-primary/15 border-primary/50 shadow-[0_0_24px_-4px_rgba(56,189,248,0.5)]"
+                      : "bg-black/20 border-white/6 hover:border-white/18 hover:bg-white/6"
+                  }`}
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                    isActive ? "bg-primary/20" : "bg-white/5 group-hover:bg-primary/10"
+                  }`}>
+                    <Icon className={`w-5 h-5 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary/80"} transition-colors`} />
+                  </div>
+                  <span className={`text-[9px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-center leading-tight ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"} transition-colors`}>
+                    {t.label}
+                  </span>
+                  {isSearching && (
+                    <span className={`text-[7px] uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                      CATEGORY_GRADIENT[t.category]
+                        ? `bg-gradient-to-r ${CATEGORY_GRADIENT[t.category]} text-black border-transparent opacity-80`
+                        : "bg-white/5 border-white/10 text-muted-foreground"
+                    }`}>
+                      {t.category}
+                    </span>
+                  )}
+                </motion.button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Query form + result — container stays mounted, only inner label animates on tab switch */}
       <div className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-2xl p-5 sm:p-6">
@@ -741,14 +811,14 @@ export default function Consultas() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[9px] uppercase tracking-[0.4em] text-muted-foreground/40">Tipo:</span>
               {([
-                { id: "cpf"      as const, label: "Padrão",   hint: "Hydra" },
-                { id: "cpffull"  as const, label: "Completo",  hint: "17 módulos" },
-                { id: "cpfbasico"as const, label: "Básico",    hint: "Skylers" },
+                { id: "cpf"          as const, label: "Padrão",    hint: "Hydra"             },
+                { id: "cpfunificado" as const, label: "Unificado",  hint: "CPF + Foto + Básico" },
+                { id: "cpfbasico"    as const, label: "Básico",     hint: "Skylers"           },
               ]).map(v => (
                 <button
                   key={v.id}
                   type="button"
-                  onClick={() => setCpfVariant(v.id)}
+                  onClick={() => { setCpfVariant(v.id); setCpfUnificadoQuery(null); setResult(null); }}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] uppercase tracking-widest font-bold transition-all ${
                     cpfVariant === v.id
                       ? "bg-primary/20 border-primary/50 text-primary shadow-[0_0_12px_-2px_color-mix(in_srgb,var(--color-primary)_50%,transparent)]"
@@ -960,9 +1030,9 @@ export default function Consultas() {
         </AnimatePresence>
       </div>
 
-      {/* CPF Full panel — rendered below the form block */}
-      {((tab === "cpf" && cpfVariant === "cpffull") || tab === "cpffull") && cpfFullQuery && (
-        <CpfFullPanel cpf={cpfFullQuery} />
+      {/* CPF Unificado panel — rendered below the form block */}
+      {tab === "cpf" && cpfVariant === "cpfunificado" && cpfUnificadoQuery && (
+        <CpfUnificadoPanel cpf={cpfUnificadoQuery} />
       )}
 
       {/* History */}

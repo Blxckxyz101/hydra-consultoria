@@ -1959,6 +1959,38 @@ router.post("/users", requireAdmin, async (req, res) => {
   }
 });
 
+// ─── test-login (admin) — gera credenciais temporárias sem PIN ──────────────
+router.post("/users/test-login", requireAdmin, async (req, res) => {
+  const { expiresMinutes } = req.body ?? {};
+  const mins = Math.max(1, Math.min(1440, Number(expiresMinutes) || 30));
+
+  const alpha  = "abcdefghijklmnopqrstuvwxyz";
+  const alnum  = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const rand   = (pool: string, len: number) =>
+    Array.from({ length: len }, () => pool[Math.floor(Math.random() * pool.length)]).join("");
+
+  const username = `teste_${rand(alnum, 6)}`;
+  const password = rand(alpha, 4) + rand("0123456789", 3) + rand(alpha, 3).toUpperCase();
+  const passwordHash = await bcrypt.hash(password, 10);
+  const accountExpiresAt = new Date(Date.now() + mins * 60 * 1000);
+
+  try {
+    await db
+      .insert(infinityUsersTable)
+      .values({ username, passwordHash, role: "user", accountExpiresAt, queryDailyLimit: 5 });
+
+    res.status(201).json({
+      username,
+      password,
+      expiresAt: accountExpiresAt.toISOString(),
+      expiresMinutes: mins,
+      queryDailyLimit: 5,
+    });
+  } catch {
+    res.status(400).json({ error: "Erro ao criar login de teste" });
+  }
+});
+
 // ─── pins (admin) ───────────────────────────────────────────────────────────
 router.get("/pins", requireAdmin, async (_req, res) => {
   const pins = await db
