@@ -22,6 +22,7 @@ import Skylers from "@/pages/skylers";
 import Suporte from "@/pages/suporte";
 import Historico from "@/pages/historico";
 import Registro from "@/pages/registro";
+import Planos from "@/pages/planos";
 import Afiliados from "@/pages/afiliados";
 import Carteira from "@/pages/carteira";
 import Comunidade from "@/pages/comunidade";
@@ -78,7 +79,7 @@ function Router() {
                 <Route path="/api-promo" component={SkylersPromo} />
                 <Route path="/suporte" component={Suporte} />
                 <Route path="/historico" component={Historico} />
-                <Route path="/planos">{() => { window.location.replace("/registro"); return null; }}</Route>
+                <Route path="/planos" component={Planos} />
                 <Route path="/afiliados" component={Afiliados} />
                 <Route path="/carteira" component={Carteira} />
                 <Route path="/comunidade" component={Comunidade} />

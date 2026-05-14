@@ -4,6 +4,7 @@ import {
   CheckCircle2, Clock, Shield, Star, Zap, ArrowLeft, Copy, Check, Loader2,
   QrCode, User, Lock, Gift, KeyRound, UserPlus, Crown, Flame, Tag, X,
   BatteryLow, Battery, BatteryMedium, BatteryFull,
+  BarChart3, Minus, Camera, Coins, BookOpen, Palette, Bot, FolderOpen,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
 import logoUrl from "@/assets/hydra-icon.png";
@@ -12,23 +13,175 @@ import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 interface Plan {
   id: string; label: string; days: number;
   amountBrl: string; amountCents: number; highlight?: boolean;
+  tier?: "padrao" | "vip" | "ultra";
+  queryQuota?: number; dailyModuleLimit?: number; photoDailyLimit?: number; freeCredits?: number;
 }
+
+type TierKey = "padrao" | "vip" | "ultra";
+interface TierFeature { icon: React.ElementType; label: string; padrao: string | null; vip: string | null; ultra: string | null; }
+const TIER_FEATURES: TierFeature[] = [
+  { icon: Zap,        label: "Consultas/dia",      padrao: "30 / módulo", vip: "60 / módulo",  ultra: "200 / módulo" },
+  { icon: Camera,     label: "Fotos/dia",           padrao: "10 fotos",    vip: "25 fotos",     ultra: "200 fotos"    },
+  { icon: Coins,      label: "Créditos bônus",      padrao: null,          vip: "incluso",      ultra: "500 créditos" },
+  { icon: BookOpen,   label: "Processos jurídicos", padrao: null,          vip: "incluso",      ultra: "incluso"      },
+  { icon: Palette,    label: "Temas de perfil",     padrao: "1 tema",      vip: "5 temas",      ultra: "todos"        },
+  { icon: Bot,        label: "Assistente IA",       padrao: "incluso",     vip: "incluso",      ultra: "incluso"      },
+  { icon: FolderOpen, label: "Dossiê e histórico",  padrao: "incluso",     vip: "incluso",      ultra: "incluso"      },
+];
 
 interface RechargePack {
   id: string; label: string; credits: number; consultas: number;
   amountBrl: string; amountCents: number; highlight?: boolean;
 }
 
-const PLAN_ICONS: Record<string, React.ElementType> = {
-  "1d": Clock, "7d": Zap, "14d": Star, "30d": Shield,
-  "1d_vip": Crown, "7d_vip": Crown, "14d_vip": Crown, "30d_vip": Crown,
-  "ultra_14d": Flame,
-};
-
 const RECHARGE_ICONS: Record<string, React.ElementType> = {
   rc_micro: BatteryLow, rc_basico: Battery,
   rc_padrao: BatteryMedium, rc_avancado: BatteryFull, rc_pro: BatteryFull,
 };
+
+function TierCard({ plan, tier, selected, disabled, onSelect }: { plan: Plan | null; tier: TierKey; selected: boolean; disabled: boolean; onSelect: () => void }) {
+  const isUltra = tier === "ultra"; const isVip = tier === "vip";
+  const accentBorder = selected
+    ? "border-primary/70 bg-primary/8 shadow-[0_0_28px_-6px_var(--color-primary)]"
+    : disabled ? "border-white/6 bg-black/20 opacity-40 cursor-not-allowed"
+    : isUltra ? "border-rose-500/35 bg-rose-500/5 hover:border-rose-500/55"
+    : isVip   ? "border-amber-400/35 bg-amber-500/5 hover:border-amber-400/55"
+    :           "border-sky-500/25 bg-sky-500/3 hover:border-sky-500/45";
+  const accentText  = isUltra ? "text-rose-300"  : isVip ? "text-amber-300" : "text-sky-300";
+  const accentCheck = isUltra ? "text-rose-400"  : isVip ? "text-amber-400" : "text-sky-400";
+  const Icon = isUltra ? Flame : isVip ? Crown : Shield;
+  const tierLabel = isUltra ? "Ultra" : isVip ? "VIP" : "Padrão";
+  const tierSub   = isUltra ? "Acesso máximo" : isVip ? "Acesso premium" : "Acesso completo";
+  const featureValues = TIER_FEATURES.map(f => tier === "ultra" ? f.ultra : tier === "vip" ? f.vip : f.padrao);
+  return (
+    <motion.button whileHover={disabled ? {} : { scale: 1.015 }} whileTap={disabled ? {} : { scale: 0.985 }}
+      onClick={() => { if (!disabled) onSelect(); }}
+      className={`relative flex flex-col rounded-2xl border p-3 sm:p-4 transition-all duration-200 text-left w-full ${accentBorder}`}>
+      {isVip && plan?.highlight && !selected && (
+        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[8px] uppercase tracking-[0.25em] font-black text-black bg-amber-400 px-2.5 py-0.5 rounded-full whitespace-nowrap">Mais popular</span>
+      )}
+      {selected && (
+        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[8px] uppercase tracking-[0.25em] font-black text-black px-2.5 py-0.5 rounded-full whitespace-nowrap" style={{ background: "var(--color-primary)" }}>Selecionado</span>
+      )}
+      <div className="flex items-center justify-between mb-2">
+        <Icon className={`w-4 h-4 ${accentText}`} />
+        {isUltra && <span className="text-[7px] font-black uppercase tracking-wider bg-rose-500/20 border border-rose-500/40 text-rose-300 px-1.5 py-0.5 rounded-full">ULTRA</span>}
+        {isVip   && <span className="text-[7px] font-black uppercase tracking-wider bg-amber-400/15 border border-amber-400/35 text-amber-300 px-1.5 py-0.5 rounded-full">VIP</span>}
+      </div>
+      <div className={`font-black text-sm tracking-wide ${accentText}`}>{tierLabel}</div>
+      <div className="text-[9px] text-muted-foreground uppercase tracking-[0.2em] mb-3">{tierSub}</div>
+      {plan ? (
+        <div className="mb-3">
+          <div className={`text-xl sm:text-2xl font-black leading-none ${accentText}`}>R$&nbsp;{plan.amountBrl}</div>
+          {plan.queryQuota && <div className="text-[9px] text-muted-foreground mt-0.5">{plan.queryQuota} consultas</div>}
+        </div>
+      ) : (
+        <div className="mb-3 text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+      )}
+      <div className="space-y-1.5 pt-3 border-t border-white/5 flex-1">
+        {featureValues.map((val, i) => {
+          const Ico = TIER_FEATURES[i].icon;
+          return (
+            <div key={i} className="flex items-center gap-1.5">
+              {val ? <CheckCircle2 className={`w-2.5 h-2.5 shrink-0 ${accentCheck}`} /> : <Minus className="w-2.5 h-2.5 shrink-0 text-muted-foreground/25" />}
+              <Ico className="w-2.5 h-2.5 shrink-0 text-muted-foreground/40" />
+              <span className={`text-[9px] leading-tight ${val ? "text-foreground/80" : "text-muted-foreground/35 line-through"}`}>{val ?? TIER_FEATURES[i].label}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className={`mt-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-center transition-all ${
+        selected ? "bg-primary text-black"
+        : disabled ? "bg-white/5 text-muted-foreground/40"
+        : isUltra ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
+        : isVip   ? "bg-amber-400/15 text-amber-300 border border-amber-400/30"
+        :           "bg-sky-500/15 text-sky-300 border border-sky-500/30"
+      }`}>
+        {selected ? "✓ Selecionado" : disabled ? "Indisponível" : "Selecionar"}
+      </div>
+    </motion.button>
+  );
+}
+
+function PlanComparisonModal({ plans, onClose }: { plans: Plan[]; onClose: () => void }) {
+  const tiers: TierKey[] = ["padrao", "vip", "ultra"];
+  const tierMeta = {
+    padrao: { label: "Padrão", color: "text-sky-300",   bg: "bg-sky-500/10",   Icon: Shield },
+    vip:    { label: "VIP",    color: "text-amber-300", bg: "bg-amber-500/10", Icon: Crown  },
+    ultra:  { label: "Ultra",  color: "text-rose-300",  bg: "bg-rose-500/10",  Icon: Flame  },
+  };
+  const durations = [...new Set(plans.map(p => p.days))].sort((a, b) => a - b);
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+      <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
+        transition={{ type: "spring", damping: 28, stiffness: 320 }}
+        onClick={e => e.stopPropagation()}
+        className="relative w-full sm:max-w-2xl max-h-[90dvh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#0c0f14] border border-white/10 shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-4 border-b border-white/8 bg-[#0c0f14]/95 backdrop-blur">
+          <div>
+            <div className="font-bold text-sm">Comparar planos</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-widest mt-0.5">Todos os recursos lado a lado</div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-6">
+          <div className="grid grid-cols-4 gap-2">
+            <div />
+            {tiers.map(t => { const m = tierMeta[t]; return (
+              <div key={t} className={`rounded-xl ${m.bg} border border-white/8 p-2.5 text-center`}>
+                <m.Icon className={`w-4 h-4 ${m.color} mx-auto mb-1`} />
+                <div className={`text-[10px] font-black uppercase tracking-wider ${m.color}`}>{m.label}</div>
+              </div>
+            ); })}
+          </div>
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground/60 mb-2">Recursos</div>
+            {TIER_FEATURES.map((f, i) => (
+              <div key={i} className={`grid grid-cols-4 gap-2 py-2.5 px-1 rounded-lg ${i % 2 === 0 ? "bg-white/2" : ""}`}>
+                <div className="flex items-center gap-1.5">
+                  <f.icon className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-tight">{f.label}</span>
+                </div>
+                {tiers.map(t => {
+                  const val = t === "ultra" ? f.ultra : t === "vip" ? f.vip : f.padrao;
+                  const m = tierMeta[t];
+                  return (
+                    <div key={t} className="flex items-center justify-center">
+                      {val ? <span className={`text-[10px] font-semibold ${m.color} text-center leading-tight`}>{val}</span>
+                           : <Minus className="w-3 h-3 text-muted-foreground/25" />}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          {durations.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[9px] uppercase tracking-[0.3em] text-muted-foreground/60 mb-2">Preços por período</div>
+              {durations.map(days => (
+                <div key={days} className="grid grid-cols-4 gap-2 items-center">
+                  <div className="text-[10px] text-muted-foreground font-medium">{days === 1 ? "1 dia" : `${days} dias`}</div>
+                  {tiers.map(t => {
+                    const p = plans.find(pl => pl.days === days && (pl.tier === t || (t === "padrao" && !pl.tier)));
+                    const m = tierMeta[t];
+                    return (
+                      <div key={t} className="text-center">
+                        {p ? <div className={`text-[11px] font-bold ${m.color}`}>R$ {p.amountBrl}</div>
+                           : <span className="text-[9px] text-muted-foreground/30">—</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 const apiFetch = (path: string, opts?: RequestInit) =>
@@ -48,42 +201,6 @@ interface PaymentData {
   username: string;
 }
 
-function PlanCard({ plan, selected, onSelect }: { plan: Plan; selected: boolean; onSelect: () => void }) {
-  const Icon = PLAN_ICONS[plan.id] ?? Zap;
-  return (
-    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={onSelect}
-      className={`relative w-full text-left rounded-2xl border p-5 transition-all duration-200 ${
-        selected ? "bg-primary/10 border-primary/60 shadow-[0_0_30px_-8px_var(--color-primary)]"
-        : plan.highlight ? "bg-amber-400/5 border-amber-400/30 hover:border-amber-400/50"
-        : "bg-black/30 border-white/10 hover:border-white/25"
-      }`}>
-      {plan.highlight && !selected && (
-        <span className="absolute -top-2.5 left-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black bg-amber-400 px-2 py-0.5 rounded-full">Mais popular</span>
-      )}
-      {selected && (
-        <span className="absolute -top-2.5 right-4 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-2 py-0.5 rounded-full" style={{ background: "var(--color-primary)" }}>Selecionado</span>
-      )}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <Icon className={`w-5 h-5 mb-2 ${selected ? "text-primary" : plan.highlight ? "text-amber-400" : "text-muted-foreground"}`} />
-          <div className="font-bold text-base">{plan.label}</div>
-          <div className="text-[11px] text-muted-foreground mt-0.5 uppercase tracking-[0.2em]">acesso completo</div>
-        </div>
-        <div className="text-right">
-          <div className={`text-2xl font-bold ${selected ? "text-primary" : plan.highlight ? "text-amber-300" : "text-foreground"}`}>R$ {plan.amountBrl}</div>
-          <div className="text-[10px] text-muted-foreground">pagamento único</div>
-        </div>
-      </div>
-      <div className="mt-3 pt-3 border-t border-white/5 space-y-1">
-        {["24 tipos de consulta OSINT", "Assistente IA incluso", "Dossiê e histórico completo"].map(f => (
-          <div key={f} className="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <CheckCircle2 className="w-3 h-3 text-emerald-400" /> {f}
-          </div>
-        ))}
-      </div>
-    </motion.button>
-  );
-}
 
 function RechargeCard({ pack, selected, onSelect }: { pack: RechargePack; selected: boolean; onSelect: () => void }) {
   const Icon = RECHARGE_ICONS[pack.id] ?? BatteryMedium;
@@ -177,9 +294,11 @@ export default function Registro() {
   const [rechargePacks, setRechargePacks] = useState<RechargePack[]>([]);
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>("plan");
 
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("14d");
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("14d_vip");
   const [selectedPackId, setSelectedPackId] = useState<string>("rc_padrao");
   const [step, setStep] = useState<Step>("plans");
+  const [selectedDays, setSelectedDays] = useState<number>(14);
+  const [showComparison, setShowComparison] = useState(false);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -208,7 +327,9 @@ export default function Registro() {
   useEffect(() => {
     apiFetch("/plans").then(r => r.json()).then((d: Plan[]) => {
       setPlans(d);
-      if (!d.find(p => p.id === "14d") && d.length > 0) setSelectedPlanId(d[0].id);
+      const def = d.find(p => p.highlight) ?? d.find(p => p.tier === "vip") ?? d.find(p => p.days === 14);
+      if (def) { setSelectedPlanId(def.id); setSelectedDays(def.days); }
+      else if (d.length > 0) setSelectedPlanId(d[0].id);
     }).catch(() => {});
     apiFetch("/recharges").then(r => r.json()).then((d: RechargePack[]) => {
       if (Array.isArray(d)) {
@@ -226,6 +347,24 @@ export default function Registro() {
 
   const selectedPlan = plans.find(p => p.id === selectedPlanId);
   const selectedPack = rechargePacks.find(p => p.id === selectedPackId);
+
+  const availDays = [...new Set(plans.map(p => p.days))].sort((a, b) => a - b);
+  const planForTier = (tier: TierKey, days: number) =>
+    plans.find(p => p.days === days && (p.tier === tier || (tier === "padrao" && !p.tier))) ?? null;
+  const selectedTier: TierKey = (selectedPlan?.tier as TierKey) ?? "padrao";
+
+  const handleSelectDays = (days: number) => {
+    setSelectedDays(days);
+    const curTier: TierKey = (selectedPlan?.tier as TierKey) ?? "vip";
+    const match = plans.find(p => p.days === days && (p.tier === curTier || (curTier === "padrao" && !p.tier)))
+      ?? plans.find(p => p.days === days);
+    if (match) setSelectedPlanId(match.id);
+  };
+
+  const handleSelectTier = (tier: TierKey) => {
+    const match = plans.find(p => p.days === selectedDays && (p.tier === tier || (tier === "padrao" && !p.tier)));
+    if (match) setSelectedPlanId(match.id);
+  };
 
   const startPolling = useCallback((paymentId: string) => {
     abortRef.current?.abort();
@@ -396,15 +535,59 @@ export default function Registro() {
 
                 <AnimatePresence mode="wait">
                   {purchaseMode === "plan" ? (
-                    <motion.div key="plan-grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <motion.div key="plan-grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-4 mb-4">
                       {plans.length === 0 ? (
                         <div className="flex items-center justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                          {plans.map(p => (
-                            <PlanCard key={p.id} plan={p} selected={selectedPlanId === p.id} onSelect={() => setSelectedPlanId(p.id)} />
-                          ))}
-                        </div>
+                        <>
+                          {/* Duration tabs */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] uppercase tracking-[0.35em] text-muted-foreground">Período de acesso</span>
+                              <button type="button" onClick={() => setShowComparison(true)}
+                                className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-white/5">
+                                <BarChart3 className="w-3 h-3" /> Comparar
+                              </button>
+                            </div>
+                            <div className="flex gap-2">
+                              {(availDays.length > 0 ? availDays : [1, 7, 14, 30]).map(d => (
+                                <button key={d} type="button" onClick={() => handleSelectDays(d)}
+                                  className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+                                    selectedDays === d ? "text-black shadow-md" : "bg-white/5 border border-white/10 text-muted-foreground hover:text-foreground hover:border-white/25"
+                                  }`}
+                                  style={selectedDays === d ? { background: "var(--color-primary)" } : {}}>
+                                  {d === 1 ? "1d" : `${d}d`}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* 3-column tier cards */}
+                          <div className="grid grid-cols-3 gap-2">
+                            {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
+                              const tp = planForTier(t, selectedDays);
+                              return (
+                                <TierCard key={t} tier={t} plan={tp}
+                                  selected={selectedTier === t && !!tp}
+                                  disabled={!tp}
+                                  onSelect={() => handleSelectTier(t)} />
+                              );
+                            })}
+                          </div>
+
+                          {/* Selected plan summary */}
+                          {selectedPlan && (
+                            <motion.div key={selectedPlan.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                              className="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                {selectedPlan.tier === "ultra" ? <Flame className="w-3.5 h-3.5 text-rose-400" /> : selectedPlan.tier === "vip" ? <Crown className="w-3.5 h-3.5 text-amber-400" /> : <Shield className="w-3.5 h-3.5 text-sky-400" />}
+                                <span className="text-xs font-bold">{selectedPlan.label}</span>
+                                {selectedPlan.queryQuota && <span className="text-[10px] text-muted-foreground">· {selectedPlan.queryQuota} consultas</span>}
+                              </div>
+                              <span className="font-bold text-sm" style={{ color: "var(--color-primary)" }}>R$ {selectedPlan.amountBrl}</span>
+                            </motion.div>
+                          )}
+                        </>
                       )}
                     </motion.div>
                   ) : (
@@ -678,6 +861,13 @@ export default function Registro() {
           </AnimatePresence>
         </div>
       </motion.div>
+
+      {/* Plan comparison modal */}
+      <AnimatePresence>
+        {showComparison && (
+          <PlanComparisonModal plans={plans} onClose={() => setShowComparison(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
