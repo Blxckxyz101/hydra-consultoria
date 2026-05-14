@@ -393,9 +393,9 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
             {id.sexo && <F label="Sexo" value={id.sexo} />}
           </div>
         ) : (
-          <div className="flex gap-4">
-            {/* Photo column */}
-            <div className="shrink-0 flex flex-col items-center gap-2">
+          <div className="flex flex-col sm:flex-row gap-4">
+            {/* Photo row (mobile) / column (desktop) */}
+            <div className="flex flex-row sm:flex-col items-center gap-3 sm:gap-2 sm:shrink-0">
               <div className="relative overflow-hidden rounded-xl flex items-center justify-center"
                 style={{ width: 76, height: 100, border: "2px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.04)", boxShadow: "0 4px 20px rgba(0,0,0,0.55)" }}>
                 {photo
@@ -411,34 +411,36 @@ function IdentityCard({ id, photo }: { id: Identity; photo: string | null }) {
                   </div>
                 )}
               </div>
-              <p className="text-[6px] uppercase tracking-[0.15em] text-white/20 text-center">Titular</p>
-              {id.tipoSanguineo && (
-                <div className="w-11 h-11 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
-                  <p className="text-[6px] text-red-400/60 uppercase tracking-widest">Tipo</p>
-                  <p className="text-sm font-black text-red-300">{id.tipoSanguineo}</p>
-                </div>
-              )}
+              <div className="flex flex-col items-center gap-1.5">
+                <p className="text-[6px] uppercase tracking-[0.15em] text-white/20 text-center">Titular</p>
+                {id.tipoSanguineo && (
+                  <div className="w-11 h-11 rounded-xl border border-red-500/30 bg-red-950/20 flex flex-col items-center justify-center">
+                    <p className="text-[6px] text-red-400/60 uppercase tracking-widest">Tipo</p>
+                    <p className="text-sm font-black text-red-300">{id.tipoSanguineo}</p>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Fields grid */}
             <div className="flex-1 space-y-3 min-w-0">
-              <div className="text-center mb-4">
+              <div className="text-center mb-3">
                 <p className="text-[8px] uppercase tracking-[0.32em] text-white/30 mb-1">Registro Geral</p>
-                <p className="text-[22px] sm:text-[28px] font-black tracking-[0.1em] text-white leading-none">{id.rg || "—"}</p>
+                <p className="text-[20px] sm:text-[28px] font-black tracking-[0.1em] text-white leading-none">{id.rg || "—"}</p>
               </div>
               <F label="Nome Completo" value={id.nome} accent="text-white text-[13px]" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><F label="Mãe" value={id.mae} /><F label="Pai" value={id.pai} /></div>
-              <div className="grid grid-cols-3 gap-2"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Estado Civil" value={id.estadoCivil} /></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><F label="Mãe" value={id.mae} />{id.pai && <F label="Pai" value={id.pai} />}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2"><F label="Nascimento" value={id.dataNascimento} /><F label="Sexo" value={id.sexo} /><F label="Est. Civil" value={id.estadoCivil} /></div>
               <div className="grid grid-cols-2 gap-3"><F label="CPF" value={fmtCPF(id.cpf)} mono copyable /><F label="Naturalidade" value={id.naturalidade} /></div>
-              <div className="grid grid-cols-2 gap-3"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data de Emissão" value={id.dataEmissao} /></div>
-              {id.pis && <div className="grid grid-cols-2 gap-3"><F label="PIS / NIS" value={id.pis || id.nis} mono /></div>}
+              <div className="grid grid-cols-2 gap-3"><F label="Órgão Emissor" value={id.orgaoEmissor} /><F label="Data Emissão" value={id.dataEmissao} /></div>
+              {id.pis && <F label="PIS / NIS" value={id.pis || id.nis} mono />}
               {id.email && <F label="E-mail" value={id.email} />}
               {id.enderecoPrincipal && (
                 <div className="flex items-start gap-2 rounded-xl p-3 mt-1" style={{ background: "rgba(124,58,237,0.07)", border: "1px solid rgba(124,58,237,0.15)" }}>
                   <Home className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: "var(--color-primary)" }} />
                   <div className="min-w-0">
                     <p className="text-[8px] uppercase tracking-[0.22em] text-white/30 mb-0.5">Endereço Principal</p>
-                    <p className="text-[12px] font-semibold text-white/85 break-words">{id.enderecoPrincipal}</p>
+                    <p className="text-[11px] sm:text-[12px] font-semibold text-white/85 break-words">{id.enderecoPrincipal}</p>
                   </div>
                 </div>
               )}
@@ -464,7 +466,7 @@ function HeroPhotoBanner({ photo, identity, cpf }: { photo: string; identity: Id
         style={{ background: "color-mix(in srgb, var(--color-primary) 14%, transparent)" }}
         animate={{ opacity: [0.5, 0.9, 0.5] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }} />
       <div className="relative flex items-stretch">
-        <div className="relative shrink-0 w-40 sm:w-52">
+        <div className="relative shrink-0 w-32 sm:w-52">
           <img src={photo} alt={identity.nome} className="w-full h-full object-cover" style={{ minHeight: 180 }} onError={() => setImgOk(false)} />
           <div className="absolute inset-0" style={{ background: "linear-gradient(to right, transparent 55%, rgba(9,9,15,0.96))" }} />
           <div className="absolute bottom-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-full"
@@ -740,6 +742,81 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
     !/ENDEREC|LOGRADOURO|RESID|CEP|MORADA/i.test(s.name)
   );
 
+  // ── Download registro (TXT) ────────────────────────────────────────────────
+  const downloadRegistro = useCallback(() => {
+    const lines: string[] = [];
+    const sep = "═".repeat(50);
+    lines.push(sep);
+    lines.push("  HYDRA CONSULTORIA — REGISTRO CPF");
+    lines.push(`  Gerado em: ${new Date().toLocaleString("pt-BR")}`);
+    lines.push(sep);
+    lines.push("");
+
+    // Identity
+    const id = identity;
+    if (id.nome)             lines.push(`NOME            : ${id.nome}`);
+    if (id.cpf)              lines.push(`CPF             : ${fmtCPF(id.cpf)}`);
+    if (id.rg)               lines.push(`RG              : ${id.rg}`);
+    if (id.dataNascimento)   lines.push(`NASCIMENTO      : ${id.dataNascimento}`);
+    if (id.sexo)             lines.push(`SEXO            : ${id.sexo}`);
+    if (id.estadoCivil)      lines.push(`ESTADO CIVIL    : ${id.estadoCivil}`);
+    if (id.naturalidade)     lines.push(`NATURALIDADE    : ${id.naturalidade}`);
+    if (id.mae)              lines.push(`MÃE             : ${id.mae}`);
+    if (id.pai)              lines.push(`PAI             : ${id.pai}`);
+    if (id.orgaoEmissor)     lines.push(`ÓRGÃO EMISSOR   : ${id.orgaoEmissor}`);
+    if (id.dataEmissao)      lines.push(`DATA EMISSÃO    : ${id.dataEmissao}`);
+    if (id.situacaoCadastral)lines.push(`SITUAÇÃO RECEITA: ${id.situacaoCadastral}`);
+    if (id.pis)              lines.push(`PIS / NIS       : ${id.pis || id.nis}`);
+    if (id.tipoSanguineo)    lines.push(`TIPO SANGUÍNEO  : ${id.tipoSanguineo}`);
+    if (id.email)            lines.push(`E-MAIL          : ${id.email}`);
+    lines.push("");
+
+    // Addresses
+    if (addresses.length > 0) {
+      lines.push("─── ENDEREÇOS " + "─".repeat(36));
+      addresses.forEach((a, i) => {
+        const full = [a.logradouro, a.numero, a.complemento, a.bairro, a.cidade, a.uf].filter(Boolean).join(", ");
+        lines.push(`[${i+1}] ${full}${a.cep ? ` — CEP ${a.cep}` : ""}`);
+      });
+      lines.push("");
+    }
+
+    // All fields (raw)
+    const rawFieldLines: string[] = [];
+    for (const [k, v] of allFields) {
+      if (!v?.trim()) continue;
+      const normK = normKey(k);
+      const skipKeys = new Set(["FOTOURL","FOTO","NOME","CPF","RG","DATANASCIMENTO","SEXO","ESTADOCIVIL","NATURALIDADE","NOMEMAE","MAE","NOMEPAI","PAI","ORGAOEMISSOR","DATAEMISSAO","SITUACAOCADASTRAL","PIS","NIS","EMAIL"]);
+      if (skipKeys.has(normK)) continue;
+      rawFieldLines.push(`${k.padEnd(28)}: ${v}`);
+    }
+    if (rawFieldLines.length > 0) {
+      lines.push("─── CAMPOS ADICIONAIS " + "─".repeat(28));
+      lines.push(...rawFieldLines);
+      lines.push("");
+    }
+
+    // Sections
+    for (const sec of allSections) {
+      if (sec.items.length === 0) continue;
+      lines.push(`─── ${sec.name.toUpperCase()} ${"─".repeat(Math.max(0, 46 - sec.name.length))}`);
+      sec.items.forEach(item => lines.push(`  ${item}`));
+      lines.push("");
+    }
+
+    lines.push(sep);
+    lines.push("  Plataforma: Hydra Consultoria");
+    lines.push(sep);
+
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `registro-cpf-${cpf.replace(/\D/g,"")}.txt`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, [identity, addresses, allFields, allSections, cpf]);
+
   return (
     <ViewModeCtx.Provider value={viewMode}>
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
@@ -751,7 +828,15 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
             <StatusBadge status={basiStatus} label="Receita Federal"/>
             <StatusBadge status={fotoStatus} label={fotoStatus==="loading" ? `Foto · ${fotoLabel}` : fotoStatus==="done" ? `Foto · ${fotoLabel}` : "Foto"}/>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {done && hasIdentity && (
+              <button onClick={downloadRegistro}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all active:scale-95"
+                style={{ border: "1px solid color-mix(in srgb, var(--color-primary) 30%, transparent)", background: "color-mix(in srgb, var(--color-primary) 10%, transparent)", color: "var(--color-primary)" }}
+                title="Baixar registro completo (.txt)">
+                <Download className="w-3 h-3" /> Baixar Registro
+              </button>
+            )}
             {done && (
               <button onClick={() => setViewMode(v => v === "expanded" ? "compact" : "expanded")}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[10px] font-semibold transition-all"
@@ -818,7 +903,7 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
             <CollapsibleSection icon={MapPin} title="Endereços" count={addresses.length} delay={0.12}>
               {/* Map */}
               <div className="rounded-2xl overflow-hidden mb-5" style={{ border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 4px 32px rgba(0,0,0,0.45)" }}>
-                <div className="relative" style={{ height: 380 }}>
+                <div className="relative h-[260px] sm:h-[380px]">
                   <MapContainer center={[-14.235, -51.925]} zoom={4} className="h-full w-full"
                     style={{ background: "#080a14", zIndex: 10 }} zoomControl={false}>
                     <TileLayer attribution='&copy; <a href="https://carto.com/">CARTO</a>'
@@ -874,9 +959,9 @@ export function CpfUnificadoPanel({ cpf }: { cpf: string }) {
                     </div>
                   </div>
 
-                  {/* Legend overlay bottom-right */}
+                  {/* Legend overlay bottom-right — hidden on mobile to avoid overlap */}
                   {geocoded.length > 0 && (
-                    <div className="absolute bottom-3 right-3 z-[1000] pointer-events-none max-w-[200px]">
+                    <div className="absolute bottom-3 right-3 z-[1000] pointer-events-none max-w-[180px] hidden sm:block">
                       <div className="rounded-xl px-3 py-2.5 flex flex-col gap-1.5"
                         style={{ background: "rgba(8,10,20,0.9)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.07)" }}>
                         {geocoded.slice(0,6).map((addr, i) => {
