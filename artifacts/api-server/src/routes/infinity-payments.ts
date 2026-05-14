@@ -601,11 +601,12 @@ router.get("/payments/:id/status", async (req, res) => {
       const st = String(verifyData.status_pagamento ?? "").toUpperCase();
 
       if (st === "CONCLUIDA" || st === "PAID" || st === "COMPLETED") {
+        // Create account FIRST, then mark payment as paid.
+        // If account creation fails, payment stays "pending" and will be retried.
+        await handlePaymentConfirmed(payment.id, payment.username, payment.planId);
         await db.update(infinityPaymentsTable)
           .set({ status: "paid", paidAt: new Date() })
           .where(eq(infinityPaymentsTable.id, paymentId));
-
-        await handlePaymentConfirmed(payment.id, payment.username, payment.planId);
         res.json({ status: "paid", paidAt: new Date().toISOString() });
         return;
       }
@@ -667,8 +668,11 @@ router.get("/payments/:id/watch", async (req, res) => {
         const verifyData = await verifyPromstPayment(payment.nedpayId);
         const st = String(verifyData.status_pagamento ?? "").toUpperCase();
         if (st === "CONCLUIDA" || st === "PAID" || st === "COMPLETED") {
-          await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() }).where(eq(infinityPaymentsTable.id, paymentId));
+          // Create account FIRST, then mark payment as paid.
+          // If account creation fails the error propagates to the outer catch{},
+          // keeping status "pending" so the next tick retries.
           await handlePaymentConfirmed(payment.id, payment.username, payment.planId);
+          await db.update(infinityPaymentsTable).set({ status: "paid", paidAt: new Date() }).where(eq(infinityPaymentsTable.id, paymentId));
           res.write(`data: ${JSON.stringify({ status: "paid" })}\n\n`);
           finish(); return;
         }
@@ -736,10 +740,20 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
           creditBalance: pack.credits,
         });
         if (pending.referredBy) void applyReferralBonus(pending.username, pending.referredBy);
-      } catch { /* race — user already exists */ }
-      await db.update(infinityPendingAccountsTable)
-        .set({ status: "approved", updatedAt: new Date() })
-        .where(eq(infinityPendingAccountsTable.id, pending.id));
+        await db.update(infinityPendingAccountsTable)
+          .set({ status: "approved", updatedAt: new Date() })
+          .where(eq(infinityPendingAccountsTable.id, pending.id));
+      } catch (err) {
+        // Only mark approved if user actually exists (true race), otherwise re-throw
+        const [exists] = await db.select({ username: infinityUsersTable.username })
+          .from(infinityUsersTable)
+          .where(eq(infinityUsersTable.username, pending.username))
+          .limit(1);
+        if (!exists) throw err;
+        await db.update(infinityPendingAccountsTable)
+          .set({ status: "approved", updatedAt: new Date() })
+          .where(eq(infinityPendingAccountsTable.id, pending.id));
+      }
     } else {
       // Existing user — add credits
       await db.update(infinityUsersTable)
@@ -840,8 +854,14 @@ async function handlePaymentConfirmed(paymentId: string, username: string | null
       expiresAt: accountExpiresAt,
       isRenewal: false,
     });
-  } catch {
-    // User may have been created in a race — just mark approved
+  } catch (err) {
+    // Only mark approved if the user actually exists (true race condition).
+    // If the user doesn't exist, re-throw so payment stays "pending" and retries.
+    const [exists] = await db.select({ username: infinityUsersTable.username })
+      .from(infinityUsersTable)
+      .where(eq(infinityUsersTable.username, pending.username))
+      .limit(1);
+    if (!exists) throw err;
     await db.update(infinityPendingAccountsTable)
       .set({ status: "approved", updatedAt: new Date() })
       .where(eq(infinityPendingAccountsTable.id, pending.id));
