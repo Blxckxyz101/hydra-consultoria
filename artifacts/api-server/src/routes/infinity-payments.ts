@@ -715,6 +715,14 @@ async function applyReferralBonus(referredUsername: string, referredBy: string) 
 async function handlePaymentConfirmed(paymentId: string, username: string | null, planId: string) {
   if (!username) return;
 
+  // Idempotency guard — if the payment was already marked paid in the DB,
+  // skip all processing to prevent double-credits on server restart scenarios.
+  const [existingPayment] = await db.select({ status: infinityPaymentsTable.status })
+    .from(infinityPaymentsTable)
+    .where(eq(infinityPaymentsTable.id, paymentId))
+    .limit(1);
+  if (existingPayment?.status === "paid") return;
+
   // ── Recharge pack ─────────────────────────────────────────────────────────
   if (planId.startsWith("rc_")) {
     const pack = getRechargePack(planId);
