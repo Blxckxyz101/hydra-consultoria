@@ -2591,6 +2591,31 @@ router.post("/consultas/:tipo", requireAuth, consultaLimiter, async (req, res) =
 });
 
 // ─── AI chat (streaming via SSE, with multi-step tool-calling) ───────────────
+
+/**
+ * Heuristic: returns true only when the latest user message likely contains
+ * a real data identifier (CPF, CNPJ, placa, phone, email, CEP) or an explicit
+ * named-person lookup. When false we pass tool_choice:"none" so the LLM cannot
+ * accidentally call a tool for greetings / capability questions.
+ */
+function messageNeedsToolCall(msgs: unknown[]): boolean {
+  const arr = msgs as Array<{ role?: string; content?: string }>;
+  const last = [...arr].reverse().find(m => m.role === "user");
+  if (!last || typeof last.content !== "string") return false;
+  const t = last.content;
+
+  const hasCPF    = /\b\d{3}\.?\d{3}\.?\d{3}[-\s]?\d{2}\b|\b\d{11}\b/.test(t);
+  const hasCNPJ   = /\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}[-\s]?\d{2}\b|\b\d{14}\b/.test(t);
+  const hasPlaca  = /\b[A-Za-z]{3}[-\s]?\d[A-Za-z\d]\d{2}\b/.test(t);
+  const hasPhone  = /\b(?:\+?55\s?)?\(?\d{2}\)?\s?9?\d{4}[-\s]?\d{4}\b/.test(t);
+  const hasCEP    = /\b\d{5}[-\s]?\d{3}\b/.test(t);
+  const hasEmail  = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/i.test(t);
+  // Explicit "busque/consulte/pesquise" followed by a proper noun (capitalized word pair)
+  const hasNameSearch = /(?:busqu|consult|pesquis|verific|investig|procur|mostr|trag|pegu|obtenh|descubr|encontr|check)\w*[^.!?]*[A-ZÁÉÍÓÚÃÕÀÂÊÎÔÛÇÜ][a-záéíóúãõàâêîôûçü]+\s+[A-ZÁÉÍÓÚÃÕÀÂÊÎÔÛÇÜ][a-záéíóúãõàâêîôûçü]+/u.test(t);
+
+  return hasCPF || hasCNPJ || hasPlaca || hasPhone || hasCEP || hasEmail || hasNameSearch;
+}
+
 const CONSULTA_TOOL = {
   type: "function" as const,
   function: {
@@ -2727,48 +2752,47 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   res.flushHeaders?.();
 
   const systemPrompt =
-    "Você é a Hydra IA — agente OSINT profissional da plataforma Hydra Consultoria. Responda SEMPRE em português brasileiro.\n\n" +
+    "Você é a Hydra IA — assistente OSINT da plataforma Hydra Consultoria. Responda SEMPRE em português brasileiro.\n\n" +
 
-    "══════════════════════════════════════\n" +
-    "REGRA ABSOLUTA — PROIBIÇÕES ESTRITAS\n" +
-    "══════════════════════════════════════\n" +
-    "❌ NUNCA escreva análises, interpretações ou opiniões sobre os dados.\n" +
-    "❌ NUNCA escreva frases como 'foi possível identificar', 'os registros indicam', 'parece ser', 'pode sugerir', 'recomendo verificar'.\n" +
-    "❌ NUNCA invente, suponha ou deduza dados pessoais.\n" +
-    "❌ NUNCA omita campos retornados pela ferramenta — mostre TODOS.\n" +
-    "❌ NUNCA mencione URLs de foto na resposta de texto.\n\n" +
+    "## REGRA PRINCIPAL — QUANDO USAR A FERRAMENTA consultar_infinity\n" +
+    "Use a ferramenta SOMENTE quando o usuário fornecer um identificador específico para pesquisar:\n" +
+    "- CPF (11 dígitos), CNPJ (14 dígitos), placa (ex: ABC1234), telefone, email, CEP, RG\n" +
+    "- Nome de pessoa com pedido explícito de busca (ex: 'busque João Silva')\n" +
+    "- Pedido claro de consulta com dado específico fornecido\n\n" +
 
-    "══════════════════\n" +
-    "FORMATO OBRIGATÓRIO\n" +
-    "══════════════════\n" +
-    "Você DEVE reproduzir os campos exatamente como retornados pela ferramenta, organizados em seções:\n" +
+    "## NÃO USE A FERRAMENTA quando:\n" +
+    "- O usuário perguntar o que você faz ou quais são suas capacidades → responda listando suas funcionalidades\n" +
+    "- Saudações, agradecimentos ou conversa genérica → responda normalmente\n" +
+    "- Pergunta sem identificador real (CPF/CNPJ/placa/telefone/nome específico) → pergunte qual dado o usuário quer consultar\n" +
+    "- NUNCA invente dados ou consulte 'teste', '000', identificadores fictícios\n\n" +
+
+    "## EXEMPLOS CORRETOS:\n" +
+    "Usuário: 'O que você faz?' → NÃO use ferramenta. Liste suas capacidades.\n" +
+    "Usuário: 'Consulte o CPF 123.456.789-00' → USE a ferramenta (cpf, '12345678900').\n" +
+    "Usuário: 'Placa ABC1234' → USE a ferramenta (placa, 'ABC1234').\n" +
+    "Usuário: 'Pesquise João Silva' → USE a ferramenta (nome, 'João Silva').\n\n" +
+
+    "## CAPACIDADES (liste isso quando perguntarem o que você faz):\n" +
+    "**Pessoa:** CPF • Nome • RG • Mãe • Pai • Parentes • Óbito\n" +
+    "**Contato:** Telefone • Email • Chave PIX • CEP\n" +
+    "**Veículo:** Placa • Chassi • CNH • RENAVAM • Frota\n" +
+    "**Empresa:** CNPJ • Funcionários\n" +
+    "**Governo:** NIS • CNS • Título de eleitor • IRPF • Benefícios • Mandado de prisão\n" +
+    "**Financeiro:** Score de crédito • Dívidas • Bens • Processos judiciais • SPC\n" +
+    "**Biometria:** Foto biométrica por CPF (bases: CNH, SP, DF, MG, BA, PE, RN, PR, RS, CE, MA)\n\n" +
+
+    "## FORMATO DE RESPOSTA (quando há dados de consulta):\n" +
+    "Organize em seções markdown. Exiba TODOS os campos retornados pela ferramenta:\n" +
     "### 👤 Dados Pessoais\n" +
     "**Nome:** FULANO DE TAL\n" +
     "**CPF:** 123.456.789-00\n" +
-    "**Nascimento:** 01/01/1990\n" +
-    "**Mãe:** MARIA DA SILVA\n\n" +
     "### 📍 Endereço\n" +
     "**Logradouro:** RUA DAS FLORES, 123\n" +
-    "**Bairro:** CENTRO\n" +
-    "**Cidade:** SÃO PAULO/SP\n\n" +
-    "Para listas (telefones, emails, parentes, veículos): use - para cada item.\n" +
-    "Use --- para separar seções quando necessário.\n" +
-    "Se não há resultado: escreva apenas '❌ Sem resultado para [tipo] — dado não encontrado na base.'\n\n" +
+    "**Cidade:** SÃO PAULO/SP\n" +
+    "Para listas: use - por item. Sem resultado: '❌ Sem resultado para [tipo] — dado não encontrado.'\n" +
+    "NUNCA mencione URLs de foto no texto. NUNCA invente dados. NUNCA omita campos.\n\n" +
 
-    "══════════════\n" +
-    "USO DA FERRAMENTA\n" +
-    "══════════════\n" +
-    "Use consultar_infinity SEMPRE que o usuário pedir busca, consulta, pesquisa ou investigação de:\n" +
-    "- PESSOA: cpf, nome, rg, mae, pai, parentes, obito\n" +
-    "- CONTATO: telefone, email, pix, cep\n" +
-    "- VEÍCULO: placa, chassi, frota, cnh, cnhfull, renavam\n" +
-    "- EMPRESA: cnpj, fucionarios\n" +
-    "- GOVERNO: nis, cns, titulo, irpf, beneficios, mandado\n" +
-    "- FINANCEIRO: score, dividas, bens, processos, spc\n" +
-    "- FOTO/BIOMETRIA: tipo='foto', dados=CPF da pessoa\n\n" +
-
-    "DOSSIÊ COMPLETO: quando pedirem dossiê/perfil completo → consulte cpf → depois score → depois foto (3 chamadas sequenciais).\n" +
-    "NÃO use a ferramenta para saudações ou perguntas sobre capacidades.";
+    "DOSSIÊ COMPLETO: CPF → score → foto (3 chamadas sequenciais).";
 
   // Trim history to prevent 413: keep last 8 messages, truncate large content
   const rawMessages = (messages as Array<{ role?: string; content?: string }>).filter(
@@ -2944,9 +2968,13 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
   }
 
   // ── Multi-step tool calling loop (up to 4 sequential tool calls)
+  // If the message has no real data identifiers, skip tool calling entirely
+  const allowTools = messageNeedsToolCall(finalMessages);
+
   const MAX_TOOL_STEPS = 4;
   try {
     for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+      if (!allowTools && step === 0) break; // no identifiers → go straight to stream
       // Non-streaming call to detect tool calls
       let phase1Resp: Response | null = null;
       for (let mi = 0; mi < GROQ_MODELS.length; mi++) {
@@ -2961,8 +2989,9 @@ router.post("/ai/chat", requireAuth, aiLimiter, async (req, res) => {
             messages: finalMessages,
             tools: [CONSULTA_TOOL],
             tool_choice: "auto",
-            max_tokens: 600,
-            temperature: 0.1,
+            parallel_tool_calls: false,
+            max_tokens: 512,
+            temperature: 0.05,
           }),
           signal: ctrl.signal,
         });

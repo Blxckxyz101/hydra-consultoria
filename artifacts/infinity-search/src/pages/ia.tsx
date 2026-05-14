@@ -185,15 +185,53 @@ function ThinkingDots() {
   );
 }
 
+const CAPABILITY_RESPONSE = `### 🤖 O que a Hydra IA consegue fazer
+
+Sou um agente OSINT integrado às bases de dados da Hydra Consultoria. Basta me enviar um dado e eu consulto automaticamente:
+
+### 👤 Pessoa
+- **CPF** — dados completos (nome, endereço, vínculos)
+- **Nome** — busca por nome completo
+- **RG**, **Mãe**, **Pai**, **Parentes**, **Óbito**
+
+### 📞 Contato
+- **Telefone** — titular do número
+- **Email**, **Chave PIX**, **CEP**
+
+### 🚗 Veículo
+- **Placa** — dados do veículo e proprietário
+- **Chassi**, **CNH**, **RENAVAM**, **Frota**
+
+### 🏢 Empresa
+- **CNPJ** — dados da empresa e sócios
+- **Funcionários** — vínculos empregatícios
+
+### 🏛️ Governo
+- **NIS**, **CNS** (cartão SUS), **Título de eleitor**
+- **IRPF**, **Benefícios** (Bolsa Família/BPC)
+- **Mandado de prisão**
+
+### 💳 Financeiro
+- **Score de crédito**, **Dívidas** (BACEN/FGTS)
+- **Bens**, **Processos judiciais**, **SPC**
+
+### 📷 Biometria
+- **Foto** por CPF — bases: CNH, SP, DF, MG, BA, PE, RN, PR, RS, CE, MA
+
+---
+**Dossiê completo:** me peça um dossiê de um CPF e eu farei CPF → score → foto automaticamente.
+
+Basta digitar o dado que você quer consultar!`;
+
 const SUGGESTIONS = [
-  { icon: IdCard,     label: "Consultar CPF",      text: "Consulte o CPF 11144477735",                           color: "text-sky-300",    bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/18" },
-  { icon: Phone,      label: "Consultar telefone",  text: "Consulte o telefone 11999887766",                      color: "text-emerald-300",bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/18" },
-  { icon: Building2,  label: "Consultar CNPJ",      text: "Consulte o CNPJ 00000000000191",                       color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/18" },
-  { icon: Car,        label: "Consultar placa",     text: "Consulte a placa ABC1234",                             color: "text-amber-300",  bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/18" },
-  { icon: Camera,     label: "Foto biométrica",     text: "Consulte a foto biométrica do CPF 11144477735",        color: "text-rose-300",   bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/18" },
-  { icon: CreditCard, label: "Score de crédito",    text: "Qual o score de crédito do CPF 11144477735?",          color: "text-orange-300", bg: "bg-orange-400/10 border-orange-400/20 hover:bg-orange-400/18" },
-  { icon: FileSearch, label: "Dossiê completo",     text: "Faça um dossiê completo sobre o CPF 11144477735",      color: "text-indigo-300", bg: "bg-indigo-400/10 border-indigo-400/20 hover:bg-indigo-400/18" },
-  { icon: Sparkles,   label: "O que você faz?",     text: "O que você consegue consultar e pesquisar?",           color: "text-primary",    bg: "bg-primary/10 border-primary/20 hover:bg-primary/15" },
+  { icon: IdCard,     label: "Consultar CPF",      text: "Consulte o CPF 11144477735",                           color: "text-sky-300",    bg: "bg-sky-400/10 border-sky-400/20 hover:bg-sky-400/18",    canned: null },
+  { icon: Phone,      label: "Consultar telefone",  text: "Consulte o telefone 11999887766",                      color: "text-emerald-300",bg: "bg-emerald-400/10 border-emerald-400/20 hover:bg-emerald-400/18", canned: null },
+  { icon: Building2,  label: "Consultar CNPJ",      text: "Consulte o CNPJ 00000000000191",                       color: "text-violet-300", bg: "bg-violet-400/10 border-violet-400/20 hover:bg-violet-400/18", canned: null },
+  { icon: Car,        label: "Consultar placa",     text: "Consulte a placa ABC1234",                             color: "text-amber-300",  bg: "bg-amber-400/10 border-amber-400/20 hover:bg-amber-400/18", canned: null },
+  { icon: Camera,     label: "Foto biométrica",     text: "Consulte a foto biométrica do CPF 11144477735",        color: "text-rose-300",   bg: "bg-rose-400/10 border-rose-400/20 hover:bg-rose-400/18",  canned: null },
+  { icon: CreditCard, label: "Score de crédito",    text: "Qual o score de crédito do CPF 11144477735?",          color: "text-orange-300", bg: "bg-orange-400/10 border-orange-400/20 hover:bg-orange-400/18", canned: null },
+  { icon: FileSearch, label: "Dossiê completo",     text: "Faça um dossiê completo sobre o CPF 11144477735",      color: "text-indigo-300", bg: "bg-indigo-400/10 border-indigo-400/20 hover:bg-indigo-400/18", canned: null },
+  { icon: Sparkles,   label: "O que você faz?",     text: "O que você consegue consultar e pesquisar?",           color: "text-primary",    bg: "bg-primary/10 border-primary/20 hover:bg-primary/15",    canned: CAPABILITY_RESPONSE },
 ];
 
 function WaveformBars({ color = "sky" }: { color?: string }) {
@@ -321,6 +359,20 @@ export default function IA() {
   };
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isThinking]);
+
+  const sendCanned = (userText: string, cannedReply: string) => {
+    if (isStreaming) return;
+    const ts = Date.now();
+    const userEntry: Message = { role: "user", content: userText, ts };
+    const aTs = ts + 1;
+    const assistantEntry: Message = { role: "assistant", content: cannedReply, ts: aTs };
+    updateSession(currentId, (s) => ({
+      ...s,
+      title: s.messages.length === 0 ? titleFromMsg(userText) : s.title,
+      messages: [...s.messages, userEntry, assistantEntry],
+      updatedAt: aTs,
+    }));
+  };
 
   const sendMessage = async (text: string) => {
     const userMsg = text.trim();
@@ -826,7 +878,7 @@ export default function IA() {
                         transition={{ delay: 0.14 + i * 0.04, type: "spring", stiffness: 260, damping: 22 }}
                         whileHover={{ y: -2, transition: { duration: 0.12 } }}
                         whileTap={{ scale: 0.97 }}
-                        onClick={() => sendMessage(s.text)}
+                        onClick={() => s.canned ? sendCanned(s.text, s.canned) : sendMessage(s.text)}
                         disabled={isStreaming}
                         className={`flex flex-col items-start gap-2 p-3 rounded-2xl border text-left transition-all disabled:opacity-50 ${s.bg}`}
                       >
@@ -935,7 +987,7 @@ export default function IA() {
               return (
                 <button
                   key={i}
-                  onClick={() => sendMessage(s.text)}
+                  onClick={() => s.canned ? sendCanned(s.text, s.canned) : sendMessage(s.text)}
                   disabled={isStreaming}
                   className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[9px] font-semibold uppercase tracking-widest transition-all disabled:opacity-40 ${s.bg} ${s.color}`}
                 >
