@@ -178,14 +178,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!bellOpen) return;
-    function onDown(e: MouseEvent) {
-      const inDesktop = bellDesktopRef.current?.contains(e.target as Node);
-      const inMobile = bellMobileRef.current?.contains(e.target as Node);
+    function onDown(e: MouseEvent | TouchEvent) {
+      const target = (e as TouchEvent).touches ? (e as TouchEvent).touches[0]?.target : (e as MouseEvent).target;
+      const inDesktop = bellDesktopRef.current?.contains(target as Node);
+      const inMobile = bellMobileRef.current?.contains(target as Node);
       if (!inDesktop && !inMobile) setBellOpen(false);
     }
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("mousedown", onDown as EventListener);
+    document.addEventListener("touchstart", onDown as EventListener, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDown as EventListener);
+      document.removeEventListener("touchstart", onDown as EventListener);
+    };
   }, [bellOpen]);
+
+  // Lock body scroll when mobile drawer is open (prevents background scroll on iOS)
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.classList.add("scroll-locked");
+    } else {
+      document.body.classList.remove("scroll-locked");
+    }
+    return () => document.body.classList.remove("scroll-locked");
+  }, [mobileOpen]);
 
   useEffect(() => {
     setMobileOpen(false);

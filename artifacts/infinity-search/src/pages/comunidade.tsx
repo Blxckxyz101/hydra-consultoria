@@ -144,15 +144,25 @@ function EmojiPickerPopup({ onSelect, onClose }: { onSelect: (e: string) => void
   const [cat, setCat] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
-    setTimeout(() => document.addEventListener("mousedown", handler), 0);
-    return () => document.removeEventListener("mousedown", handler);
+    const handler = (e: Event) => {
+      const target = (e as TouchEvent).touches ? (e as TouchEvent).touches[0]?.target : (e as MouseEvent).target;
+      if (ref.current && !ref.current.contains(target as Node)) onClose();
+    };
+    const t = setTimeout(() => {
+      document.addEventListener("mousedown", handler);
+      document.addEventListener("touchstart", handler, { passive: true });
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
   }, [onClose]);
   return (
     <motion.div ref={ref}
       initial={{ opacity: 0, scale: 0.9, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: 8 }} transition={{ type: "spring", stiffness: 400, damping: 28 }}
-      className="absolute bottom-full right-0 mb-2 w-72 rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+      className="absolute bottom-full right-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
       style={{ background: "hsl(220 35% 7%)" }}>
       <div className="flex border-b border-white/[0.06] overflow-x-auto scrollbar-none">
         {EMOJI_CATS.map((c, i) => (
@@ -162,7 +172,7 @@ function EmojiPickerPopup({ onSelect, onClose }: { onSelect: (e: string) => void
         ))}
       </div>
       <div className="px-3 pt-2 pb-1 text-[9px] font-bold text-white/25 tracking-widest uppercase">{EMOJI_CATS[cat]?.label}</div>
-      <div className="grid grid-cols-8 gap-0.5 px-2 pb-3 max-h-40 overflow-y-auto">
+      <div className="grid grid-cols-8 gap-0.5 px-2 pb-3 max-h-48 overflow-y-auto overscroll-contain">
         {EMOJI_CATS[cat]?.emojis.map((e, i) => (
           <button key={i} onClick={() => onSelect(e)}
             className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-lg transition-colors">{e}</button>
@@ -201,76 +211,202 @@ function FriendsPanel({ friends, loading, onUserClick, onRefresh }: {
 }) {
   const STATUS_DOT: Record<string, string> = { online: "#22c55e", busy: "#ef4444", away: "#f59e0b", offline: "#4b5563" };
   const STATUS_LABEL: Record<string, string> = { online: "Online", busy: "Ocupado", away: "Ausente", offline: "Offline" };
+  const [addQuery, setAddQuery] = useState("");
+  const [addResult, setAddResult] = useState<{ username: string; displayName: string | null; photo: string | null } | null>(null);
+  const [addStatus, setAddStatus] = useState<"idle" | "searching" | "notfound" | "sending" | "sent" | "error">("idle");
+  const [cancelingId, setCancelingId] = useState<number | null>(null);
+  const [actionId, setActionId] = useState<number | null>(null);
+
   const incoming = friends.filter(f => f.friendStatus === "pending" && f.direction === "received");
   const accepted = friends.filter(f => f.friendStatus === "accepted");
   const sent = friends.filter(f => f.friendStatus === "pending" && f.direction === "sent");
-  const accept = async (id: number) => { try { await fetch(`/api/infinity/friends/${id}/accept`, { method: "POST", headers: authHeaders() }); onRefresh(); } catch {} };
-  const decline = async (id: number) => { try { await fetch(`/api/infinity/friends/${id}/decline`, { method: "POST", headers: authHeaders() }); onRefresh(); } catch {} };
+
+  const accept = async (id: number) => {
+    setActionId(id);
+    try {
+      await fetch(`/api/infinity/friends/${id}/accept`, { method: "POST", headers: authHeaders() });
+      if (navigator.vibrate) navigator.vibrate([8, 8, 16]);
+      onRefresh();
+    } catch {} finally { setActionId(null); }
+  };
+  const decline = async (id: number) => {
+    setActionId(id);
+    try { await fetch(`/api/infinity/friends/${id}/decline`, { method: "POST", headers: authHeaders() }); onRefresh(); } catch {} finally { setActionId(null); }
+  };
+  const cancelRequest = async (id: number) => {
+    setCancelingId(id);
+    try { await fetch(`/api/infinity/friends/${id}`, { method: "DELETE", headers: authHeaders() }); onRefresh(); } catch {} finally { setCancelingId(null); }
+  };
+
+  const searchUser = async () => {
+    const q = addQuery.trim().replace(/^@/, "");
+    if (!q) return;
+    setAddStatus("searching"); setAddResult(null);
+    try {
+      const r = await fetch(`/api/infinity/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+      if (!r.ok) { setAddStatus("notfound"); return; }
+      const data = await r.json() as { username: string; displayName: string | null; photo: string | null }[];
+      const exact = data.find(u => u.username.toLowerCase() === q.toLowerCase()) ?? data[0];
+      if (!exact) { setAddStatus("notfound"); return; }
+      setAddResult(exact); setAddStatus("idle");
+    } catch { setAddStatus("notfound"); }
+  };
+  const sendRequest = async () => {
+    if (!addResult) return;
+    setAddStatus("sending");
+    try {
+      const r = await fetch("/api/infinity/friends/request", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ username: addResult.username }) });
+      setAddStatus(r.ok || r.status === 409 ? "sent" : "error");
+      if (r.ok) onRefresh();
+    } catch { setAddStatus("error"); }
+  };
+
   if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-white/30" /></div>;
+
   return (
-    <div className="flex-1 overflow-y-auto py-2 space-y-3 scrollbar-thin scrollbar-thumb-white/10">
-      {incoming.length > 0 && (
-        <div>
-          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25 px-3 block mb-1.5">Pedidos · {incoming.length}</span>
-          {incoming.map(f => (
-            <div key={f.id} className="px-2 py-2 hover:bg-white/5 rounded-xl mx-1 transition-colors">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar username={f.username} photo={f.photo} size={8} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold truncate text-white/85">{f.displayName ?? f.username}</p>
-                  <p className="text-[10px] text-white/30">@{f.username}</p>
+    <div className="flex-1 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-white/10 flex flex-col gap-0">
+
+      {/* Add friend search */}
+      <div className="px-2 pt-2 pb-1 border-b border-white/[0.05]">
+        <div className="flex gap-1.5">
+          <input
+            value={addQuery}
+            onChange={e => { setAddQuery(e.target.value); setAddResult(null); setAddStatus("idle"); }}
+            onKeyDown={e => { if (e.key === "Enter") searchUser(); }}
+            placeholder="Adicionar @usuário..."
+            className="flex-1 min-w-0 bg-white/[0.06] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-primary/50"
+          />
+          <button onClick={searchUser} disabled={!addQuery.trim() || addStatus === "searching"}
+            className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40"
+            style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 35%, transparent)" }}>
+            {addStatus === "searching" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+        {/* Search result */}
+        <AnimatePresence>
+          {addResult && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+              className="mt-2 flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-white/8">
+              <Avatar username={addResult.username} photo={addResult.photo} size={8} />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold truncate">{addResult.displayName ?? addResult.username}</p>
+                <p className="text-[10px] text-white/35">@{addResult.username}</p>
+              </div>
+              <button onClick={sendRequest} disabled={addStatus === "sending" || addStatus === "sent"}
+                className="shrink-0 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all disabled:opacity-60"
+                style={addStatus === "sent" ? { background: "rgba(34,197,94,0.15)", color: "#22c55e" } : { background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)" }}>
+                {addStatus === "sending" ? <Loader2 className="w-3 h-3 animate-spin" /> : addStatus === "sent" ? "✓ Enviado" : "Adicionar"}
+              </button>
+            </motion.div>
+          )}
+          {addStatus === "notfound" && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-1.5 text-[10px] text-white/30 px-1">
+              Usuário não encontrado.
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <div className="py-2 space-y-3">
+        {/* Incoming requests */}
+        {incoming.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between px-3 mb-1.5">
+              <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25">Pedidos · {incoming.length}</span>
+              <button onClick={onRefresh} className="text-white/20 hover:text-white/50 transition-colors">
+                <Loader2 className="w-3 h-3" />
+              </button>
+            </div>
+            {incoming.map(f => (
+              <div key={f.id} className="px-2 py-2 hover:bg-white/5 rounded-xl mx-1 transition-colors">
+                <div className="flex items-center gap-2 mb-2">
+                  <button onClick={() => onUserClick({ username: f.username, displayName: f.displayName, photo: f.photo, role: f.role, bio: null, accentColor: null })} className="shrink-0">
+                    <Avatar username={f.username} photo={f.photo} size={8} />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold truncate text-white/85">{f.displayName ?? f.username}</p>
+                    <p className="text-[10px] text-white/30">@{f.username}</p>
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button onClick={() => accept(f.id)} disabled={actionId === f.id}
+                    className="flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wide transition-all flex items-center justify-center gap-1 disabled:opacity-60"
+                    style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)" }}>
+                    {actionId === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "✓ Aceitar"}
+                  </button>
+                  <button onClick={() => decline(f.id)} disabled={actionId === f.id}
+                    className="flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wide border border-white/10 hover:bg-white/8 text-white/40 transition-all disabled:opacity-60">
+                    Recusar
+                  </button>
                 </div>
               </div>
-              <div className="flex gap-1.5">
-                <button onClick={() => accept(f.id)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all"
-                  style={{ background: "color-mix(in srgb, var(--color-primary) 20%, transparent)", color: "var(--color-primary)", border: "1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)" }}>
-                  Aceitar
+            ))}
+          </div>
+        )}
+
+        {/* Accepted friends */}
+        {accepted.length > 0 && (
+          <div>
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25 px-3 block mb-1.5">
+              Amigos · {accepted.filter(f => f.status === "online").length} online
+            </span>
+            {accepted.map(f => (
+              <div key={f.id} className="flex items-center gap-2 px-2 mx-1 py-2 rounded-xl hover:bg-white/5 transition-colors">
+                <button onClick={() => onUserClick({ username: f.username, displayName: f.displayName, photo: f.photo, role: f.role, bio: null, accentColor: null })}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left">
+                  <div className="relative shrink-0">
+                    <Avatar username={f.username} photo={f.photo} size={8} />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-[1.5px]"
+                      style={{ background: STATUS_DOT[f.status] ?? "#4b5563", borderColor: "rgba(15,18,28,0.85)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold truncate text-white/80">{f.displayName ?? f.username}</p>
+                    <p className="text-[10px] text-white/30">{STATUS_LABEL[f.status] ?? "Offline"}</p>
+                  </div>
                 </button>
-                <button onClick={() => decline(f.id)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide border border-white/10 hover:bg-white/8 text-white/40 transition-all">
-                  Recusar
+                {/* DM button */}
+                <a href={`/dm/${f.username}`}
+                  className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all hover:scale-110"
+                  style={{ background: "color-mix(in srgb, var(--color-primary) 12%, transparent)", color: "var(--color-primary)" }}
+                  title={`DM para @${f.username}`}>
+                  <AtSign className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Sent (pending) */}
+        {sent.length > 0 && (
+          <div>
+            <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 px-3 block mb-1">Aguardando resposta</span>
+            {sent.map(f => (
+              <div key={f.id} className="flex items-center gap-2 px-2 mx-1 py-2 rounded-xl hover:bg-white/5 transition-colors">
+                <button onClick={() => onUserClick({ username: f.username, displayName: f.displayName, photo: f.photo, role: f.role, bio: null, accentColor: null })} className="flex items-center gap-2 flex-1 min-w-0">
+                  <Avatar username={f.username} photo={f.photo} size={8} />
+                  <div className="min-w-0">
+                    <p className="text-xs truncate text-white/55">{f.displayName ?? f.username}</p>
+                    <p className="text-[10px] text-white/25">Pedido enviado</p>
+                  </div>
+                </button>
+                <button onClick={() => cancelRequest(f.id)} disabled={cancelingId === f.id}
+                  className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white/25 hover:text-red-400 hover:bg-red-400/10 transition-all disabled:opacity-40"
+                  title="Cancelar pedido">
+                  {cancelingId === f.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
                 </button>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {accepted.length > 0 && (
-        <div>
-          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/25 px-3 block mb-1.5">Amigos · {accepted.length}</span>
-          {accepted.map(f => (
-            <button key={f.id} onClick={() => onUserClick({ username: f.username, displayName: f.displayName, photo: f.photo, role: f.role, bio: null, accentColor: null })}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors text-left">
-              <div className="relative shrink-0">
-                <Avatar username={f.username} photo={f.photo} size={8} />
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-[1.5px]"
-                  style={{ background: STATUS_DOT[f.status] ?? "#4b5563", borderColor: "rgba(15,18,28,0.85)" }} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold truncate text-white/80">{f.displayName ?? f.username}</p>
-                <p className="text-[10px] text-white/30">{STATUS_LABEL[f.status] ?? "Offline"}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {sent.length > 0 && (
-        <div>
-          <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-white/20 px-3 block mb-1">Aguardando</span>
-          {sent.map(f => (
-            <div key={f.id} className="flex items-center gap-2 px-3 py-2 opacity-40">
-              <Avatar username={f.username} photo={f.photo} size={8} />
-              <div className="min-w-0"><p className="text-xs truncate text-white/60">{f.displayName ?? f.username}</p><p className="text-[10px] text-white/30">Pedido enviado</p></div>
-            </div>
-          ))}
-        </div>
-      )}
-      {friends.length === 0 && (
-        <div className="px-3 py-12 text-center">
-          <Users className="w-8 h-8 text-white/10 mx-auto mb-3" />
-          <p className="text-xs text-white/25">Nenhum amigo ainda</p>
-          <p className="text-[10px] text-white/15 mt-1">Adicione pessoas clicando no avatar no chat</p>
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+
+        {friends.length === 0 && addStatus !== "searching" && (
+          <div className="px-3 py-10 text-center">
+            <Users className="w-8 h-8 text-white/10 mx-auto mb-3" />
+            <p className="text-xs text-white/25">Nenhum amigo ainda</p>
+            <p className="text-[10px] text-white/15 mt-1">Use a busca acima para adicionar pessoas</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -347,6 +483,7 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
         onMouseLeave={() => { setShowActions(false); setShowEmojiPicker(false); }}
         onPointerDown={onPD} onPointerMove={onPM} onPointerUp={onPU}
         onPointerCancel={() => { cancelLP(); setSwipeX(0); wasDragging.current = false; }}
+        onContextMenu={e => e.preventDefault()}
       >
       {/* Avatar column */}
       <div className="w-10 shrink-0 mt-0.5">
@@ -468,34 +605,72 @@ function MessageBubble({ msg, prev, myUsername, onReact, onUserClick, onReply, o
 
 // ── User Popup ────────────────────────────────────────────────────────────────
 function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () => void; myUsername: string }) {
-  const [friendStatus, setFriendStatus] = useState<"none" | "sending" | "sent" | "error">("none");
+  const [friendStatus, setFriendStatus] = useState<"loading" | "none" | "sending" | "sent" | "friends" | "pending_sent" | "pending_received" | "error">("loading");
+  const [friendId, setFriendId] = useState<number | null>(null);
   const accent = user.accentColor ?? "var(--color-primary)";
   const isSelf = user.username === myUsername;
 
+  // Check existing friendship status
+  useEffect(() => {
+    if (isSelf) { setFriendStatus("none"); return; }
+    fetch("/api/infinity/friends", { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : [])
+      .then((list: FriendEntry[]) => {
+        const entry = list.find(f => f.username === user.username);
+        if (!entry) { setFriendStatus("none"); return; }
+        setFriendId(entry.id);
+        if (entry.friendStatus === "accepted") setFriendStatus("friends");
+        else if (entry.friendStatus === "pending" && entry.direction === "sent") setFriendStatus("pending_sent");
+        else if (entry.friendStatus === "pending" && entry.direction === "received") setFriendStatus("pending_received");
+        else setFriendStatus("none");
+      })
+      .catch(() => setFriendStatus("none"));
+  }, [user.username, isSelf]);
+
   const sendFriendRequest = async () => {
-    if (friendStatus !== "none" || isSelf) return;
+    if (friendStatus !== "none") return;
     setFriendStatus("sending");
     try {
-      const token = localStorage.getItem("infinity_token");
       const r = await fetch("/api/infinity/friends/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ username: user.username }),
       });
       setFriendStatus(r.ok || r.status === 409 ? "sent" : "error");
     } catch { setFriendStatus("error"); }
   };
 
+  const acceptRequest = async () => {
+    if (!friendId) return;
+    setFriendStatus("sending");
+    try {
+      await fetch(`/api/infinity/friends/${friendId}/accept`, { method: "POST", headers: authHeaders() });
+      if (navigator.vibrate) navigator.vibrate([8, 8, 16]);
+      setFriendStatus("friends");
+    } catch { setFriendStatus("pending_received"); }
+  };
+
+  const friendBtnLabel = {
+    loading: "...", none: "Add Amigo", sending: "...", sent: "Enviado!",
+    friends: "Amigos ✓", pending_sent: "Pendente", pending_received: "Aceitar!", error: "Erro"
+  }[friendStatus];
+  const friendBtnColor = friendStatus === "friends" ? "text-green-400" : friendStatus === "pending_received" ? "text-amber-400" : "text-white/40";
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }} onClick={onClose}>
-      <motion.div initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 12 }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(8px)" }} onClick={onClose}>
+      <motion.div
+        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
         transition={{ type: "spring", stiffness: 380, damping: 28 }}
-        className="w-full max-w-xs rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
+        className="w-full sm:max-w-xs rounded-t-3xl sm:rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
         style={{ background: "hsl(220 35% 8%)" }} onClick={e => e.stopPropagation()}>
+        {/* Drag indicator (mobile) */}
+        <div className="flex justify-center pt-2.5 pb-0 sm:hidden">
+          <div className="w-8 h-1 rounded-full bg-white/15" />
+        </div>
         <div className="h-20 relative" style={{ background: `linear-gradient(135deg, color-mix(in srgb, ${accent} 35%, transparent), hsl(220 35% 8%))` }}>
-          <button onClick={onClose} className="absolute top-2 right-2 w-7 h-7 rounded-lg flex items-center justify-center hover:bg-black/30 text-white/60 transition-colors">
+          <button onClick={onClose} className="absolute top-2 right-2 w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/30 text-white/60 transition-colors">
             <X className="w-4 h-4" />
           </button>
           <div className="absolute -bottom-9 left-4">
@@ -508,7 +683,7 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
             </div>
           </div>
         </div>
-        <div className="pt-11 px-4 pb-4">
+        <div className="pt-11 px-4 pb-5">
           <div className="flex items-center gap-1.5 mb-0.5">
             <span className="font-bold text-base" style={{ color: accent }}>{user.displayName ?? user.username}</span>
             <RoleBadge role={user.role} />
@@ -517,26 +692,27 @@ function UserPopup({ user, onClose, myUsername }: { user: MiniUser; onClose: () 
           {user.bio && <p className="text-xs text-white/60 mb-3 line-clamp-2 leading-relaxed border-l-2 pl-2" style={{ borderColor: accent + "50" }}>{user.bio}</p>}
           <div className={`grid gap-2 mt-2 ${isSelf ? "grid-cols-1" : "grid-cols-3"}`}>
             <Link href={`/u/${user.username}`} onClick={onClose}>
-              <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors w-full">
+              <button className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors w-full">
                 <UserCircle className="w-4 h-4 text-white/40" />
                 <span className="text-[9px] text-white/50 font-medium">Ver Perfil</span>
               </button>
             </Link>
             {!isSelf && (
-              <button onClick={sendFriendRequest} disabled={friendStatus !== "none"}
-                className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60">
-                {friendStatus === "sending" ? <Loader2 className="w-4 h-4 animate-spin text-white/40" />
+              <button
+                onClick={friendStatus === "pending_received" ? acceptRequest : sendFriendRequest}
+                disabled={friendStatus === "loading" || friendStatus === "sending" || friendStatus === "sent" || friendStatus === "friends" || friendStatus === "pending_sent"}
+                className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors disabled:opacity-60 ${friendStatus === "pending_received" ? "border border-amber-400/30" : ""}`}>
+                {(friendStatus === "loading" || friendStatus === "sending") ? <Loader2 className="w-4 h-4 animate-spin text-white/40" />
+                  : friendStatus === "friends" ? <span className="text-green-400 text-sm font-bold">✓</span>
                   : friendStatus === "sent" ? <span className="text-green-400 text-sm font-bold">✓</span>
-                  : friendStatus === "error" ? <span className="text-red-400 text-sm">!</span>
-                  : <UserPlus className="w-4 h-4 text-white/40" />}
-                <span className="text-[9px] text-white/50 font-medium">
-                  {friendStatus === "sent" ? "Enviado!" : friendStatus === "error" ? "Erro" : "Add Amigo"}
-                </span>
+                  : friendStatus === "pending_received" ? <span className="text-amber-400 text-sm">♡</span>
+                  : <UserPlus className={`w-4 h-4 ${friendBtnColor}`} />}
+                <span className={`text-[9px] font-medium ${friendBtnColor}`}>{friendBtnLabel}</span>
               </button>
             )}
             {!isSelf && (
               <Link href={`/dm/${user.username}`} onClick={onClose}>
-                <button className="flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-colors w-full"
+                <button className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl transition-colors w-full"
                   style={{ background: "color-mix(in srgb, var(--color-primary) 15%, transparent)" }}>
                   <AtSign className="w-4 h-4" style={{ color: "var(--color-primary)" }} />
                   <span className="text-[9px] font-medium" style={{ color: "var(--color-primary)" }}>Enviar DM</span>
@@ -866,6 +1042,18 @@ export default function Comunidade() {
     setReplyTo(null);
     loadMessages(activeRoom.slug);
   }, [activeRoom, loadMessages]);
+
+  // Reconnect WebSocket when app returns to foreground (mobile background/foreground)
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && (!wsRef.current || wsRef.current.readyState > 1)) {
+        wsDelayRef.current = 500;
+        setWsKey(k => k + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   // WebSocket with auto-reconnect
   useEffect(() => {
@@ -1240,7 +1428,7 @@ export default function Comunidade() {
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-white/10">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overscroll-contain py-2 scrollbar-thin scrollbar-thumb-white/10">
           {!activeRoom && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-4">
               <div className="w-14 h-14 rounded-2xl border border-white/[0.08] flex items-center justify-center" style={{ background: "hsl(220 35% 7%)" }}>

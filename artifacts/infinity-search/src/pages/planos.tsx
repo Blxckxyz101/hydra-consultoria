@@ -86,15 +86,17 @@ const TIER_FEATURES: TierFeature[] = [
 ];
 
 function TierCard({
-  plan, tier, selected, disabled, onSelect,
-}: { plan: Plan | null; tier: TierKey; selected: boolean; disabled: boolean; onSelect: () => void }) {
+  plan, tier, selected, disabled, onSelect, onSwitchDays,
+}: { plan: Plan | null; tier: TierKey; selected: boolean; disabled: boolean; onSelect: () => void; onSwitchDays?: () => void }) {
   const isUltra = tier === "ultra";
   const isVip   = tier === "vip";
 
   const accentBorder = selected
     ? "border-primary/70 bg-primary/8 shadow-[0_0_28px_-6px_var(--color-primary)]"
     : disabled
-    ? "border-white/6 bg-black/20 opacity-40 cursor-not-allowed"
+    ? isUltra ? "border-rose-500/20 bg-rose-500/5 cursor-pointer hover:border-rose-500/40 transition-all"
+    : isVip   ? "border-amber-400/20 bg-amber-500/5 cursor-pointer hover:border-amber-400/40 transition-all"
+    :           "border-white/6 bg-black/20 opacity-40 cursor-not-allowed"
     : isUltra ? "border-rose-500/35 bg-rose-500/5 hover:border-rose-500/55"
     : isVip   ? "border-amber-400/35 bg-amber-500/5 hover:border-amber-400/55"
     :           "border-sky-500/25 bg-sky-500/3 hover:border-sky-500/45";
@@ -110,11 +112,16 @@ function TierCard({
     tier === "ultra" ? f.ultra : tier === "vip" ? f.vip : f.padrao
   );
 
+  const handleClick = () => {
+    if (!disabled) { onSelect(); return; }
+    if ((isUltra || isVip) && onSwitchDays) onSwitchDays();
+  };
+
   return (
     <motion.button
-      whileHover={disabled ? {} : { scale: 1.015 }}
-      whileTap={disabled ? {} : { scale: 0.985 }}
-      onClick={() => { if (!disabled) onSelect(); }}
+      whileHover={{ scale: disabled && !onSwitchDays ? 1 : 1.015 }}
+      whileTap={{ scale: disabled && !onSwitchDays ? 1 : 0.985 }}
+      onClick={handleClick}
       className={`relative flex flex-col rounded-2xl border p-3 sm:p-4 transition-all duration-200 text-left w-full ${accentBorder}`}
     >
       {isVip && plan?.highlight && !selected && (
@@ -148,7 +155,15 @@ function TierCard({
           </div>
         </div>
       ) : (
-        <div className="mb-3 text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+        <div className="mb-3">
+          {(isUltra || isVip) && onSwitchDays ? (
+            <div className={`text-[9px] font-semibold ${isUltra ? "text-rose-300/70" : "text-amber-300/70"}`}>
+              ↩ Clique para ver em outro período
+            </div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+          )}
+        </div>
       )}
 
       {/* Features */}
@@ -667,6 +682,9 @@ export default function Planos() {
                   <div className="grid grid-cols-3 gap-2 mt-1">
                     {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
                       const tierPlan = planForTier(t, selectedDays);
+                      const altDays = !tierPlan
+                        ? availDays.find(d => !!planForTier(t, d))
+                        : undefined;
                       return (
                         <TierCard
                           key={t}
@@ -675,6 +693,7 @@ export default function Planos() {
                           selected={selectedTier === t && !!tierPlan}
                           disabled={!tierPlan}
                           onSelect={() => handleSelectTier(t, selectedDays)}
+                          onSwitchDays={altDays !== undefined ? () => handleSelectDays(altDays) : undefined}
                         />
                       );
                     })}

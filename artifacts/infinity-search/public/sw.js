@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hydra-v1';
+const CACHE_NAME = 'hydra-v4';
 const OFFLINE_URL = '/offline.html';
 
 const PRECACHE_ASSETS = [

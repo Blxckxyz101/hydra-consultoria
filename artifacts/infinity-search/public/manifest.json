@@ -1,12 +1,16 @@
 {
+  "id": "/",
   "name": "Hydra Consultoria",
   "short_name": "Hydra",
   "description": "Plataforma brasileira de inteligência OSINT. Consultas de CPF, veículos, empresas, processos e muito mais.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#06091a",
   "theme_color": "#06091a",
   "orientation": "portrait-primary",
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/hydra-icon.png",
@@ -27,7 +31,22 @@
       "purpose": "maskable"
     }
   ],
-  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Consultas",
+      "short_name": "Busca",
+      "description": "Fazer uma consulta OSINT",
+      "url": "/consultas",
+      "icons": [{ "src": "/hydra-icon.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Comunidade",
+      "short_name": "Chat",
+      "description": "Abrir o chat da comunidade",
+      "url": "/comunidade",
+      "icons": [{ "src": "/hydra-icon.png", "sizes": "192x192" }]
+    }
+  ],
   "categories": ["productivity", "utilities"],
   "lang": "pt-BR"
 }

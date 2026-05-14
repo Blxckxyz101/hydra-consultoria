@@ -39,11 +39,16 @@ const RECHARGE_ICONS: Record<string, React.ElementType> = {
   rc_padrao: BatteryMedium, rc_avancado: BatteryFull, rc_pro: BatteryFull,
 };
 
-function TierCard({ plan, tier, selected, disabled, onSelect }: { plan: Plan | null; tier: TierKey; selected: boolean; disabled: boolean; onSelect: () => void }) {
+function TierCard({ plan, tier, selected, disabled, onSelect, onSwitchDays }: { plan: Plan | null; tier: TierKey; selected: boolean; disabled: boolean; onSelect: () => void; onSwitchDays?: () => void }) {
   const isUltra = tier === "ultra"; const isVip = tier === "vip";
+  const switchable = disabled && (isUltra || isVip) && !!onSwitchDays;
   const accentBorder = selected
     ? "border-primary/70 bg-primary/8 shadow-[0_0_28px_-6px_var(--color-primary)]"
-    : disabled ? "border-white/6 bg-black/20 opacity-40 cursor-not-allowed"
+    : disabled
+      ? switchable
+        ? isUltra ? "border-rose-500/20 bg-rose-500/5 cursor-pointer hover:border-rose-500/40"
+                  : "border-amber-400/20 bg-amber-500/5 cursor-pointer hover:border-amber-400/40"
+        : "border-white/6 bg-black/20 opacity-40 cursor-not-allowed"
     : isUltra ? "border-rose-500/35 bg-rose-500/5 hover:border-rose-500/55"
     : isVip   ? "border-amber-400/35 bg-amber-500/5 hover:border-amber-400/55"
     :           "border-sky-500/25 bg-sky-500/3 hover:border-sky-500/45";
@@ -53,9 +58,12 @@ function TierCard({ plan, tier, selected, disabled, onSelect }: { plan: Plan | n
   const tierLabel = isUltra ? "Ultra" : isVip ? "VIP" : "Padrão";
   const tierSub   = isUltra ? "Acesso máximo" : isVip ? "Acesso premium" : "Acesso completo";
   const featureValues = TIER_FEATURES.map(f => tier === "ultra" ? f.ultra : tier === "vip" ? f.vip : f.padrao);
+  const handleClick = () => { if (!disabled) { onSelect(); } else if (switchable) { onSwitchDays!(); } };
   return (
-    <motion.button whileHover={disabled ? {} : { scale: 1.015 }} whileTap={disabled ? {} : { scale: 0.985 }}
-      onClick={() => { if (!disabled) onSelect(); }}
+    <motion.button
+      whileHover={{ scale: disabled && !switchable ? 1 : 1.015 }}
+      whileTap={{ scale: disabled && !switchable ? 1 : 0.985 }}
+      onClick={handleClick}
       className={`relative flex flex-col rounded-2xl border p-3 sm:p-4 transition-all duration-200 text-left w-full ${accentBorder}`}>
       {isVip && plan?.highlight && !selected && (
         <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[8px] uppercase tracking-[0.25em] font-black text-black bg-amber-400 px-2.5 py-0.5 rounded-full whitespace-nowrap">Mais popular</span>
@@ -76,7 +84,13 @@ function TierCard({ plan, tier, selected, disabled, onSelect }: { plan: Plan | n
           {plan.queryQuota && <div className="text-[9px] text-muted-foreground mt-0.5">{plan.queryQuota} consultas</div>}
         </div>
       ) : (
-        <div className="mb-3 text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+        <div className="mb-3">
+          {switchable ? (
+            <div className={`text-[9px] font-semibold ${isUltra ? "text-rose-300/70" : "text-amber-300/70"}`}>↩ Ver em outro período</div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground/60 italic">Indisponível<br/>neste período</div>
+          )}
+        </div>
       )}
       <div className="space-y-1.5 pt-3 border-t border-white/5 flex-1">
         {featureValues.map((val, i) => {
@@ -92,12 +106,15 @@ function TierCard({ plan, tier, selected, disabled, onSelect }: { plan: Plan | n
       </div>
       <div className={`mt-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-center transition-all ${
         selected ? "bg-primary text-black"
-        : disabled ? "bg-white/5 text-muted-foreground/40"
+        : disabled && !switchable ? "bg-white/5 text-muted-foreground/40"
+        : switchable
+          ? isUltra ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
+                    : "bg-amber-400/15 text-amber-300 border border-amber-400/30"
         : isUltra ? "bg-rose-500/15 text-rose-300 border border-rose-500/30"
         : isVip   ? "bg-amber-400/15 text-amber-300 border border-amber-400/30"
         :           "bg-sky-500/15 text-sky-300 border border-sky-500/30"
       }`}>
-        {selected ? "✓ Selecionado" : disabled ? "Indisponível" : "Selecionar"}
+        {selected ? "✓ Selecionado" : switchable ? "↩ Mudar período" : disabled ? "Indisponível" : "Selecionar"}
       </div>
     </motion.button>
   );
@@ -566,11 +583,15 @@ export default function Registro() {
                           <div className="grid grid-cols-3 gap-2">
                             {(["padrao", "vip", "ultra"] as TierKey[]).map(t => {
                               const tp = planForTier(t, selectedDays);
+                              const altDays = !tp
+                                ? availDays.find(d => !!planForTier(t, d))
+                                : undefined;
                               return (
                                 <TierCard key={t} tier={t} plan={tp}
                                   selected={selectedTier === t && !!tp}
                                   disabled={!tp}
-                                  onSelect={() => handleSelectTier(t)} />
+                                  onSelect={() => handleSelectTier(t)}
+                                  onSwitchDays={altDays !== undefined ? () => setSelectedDays(altDays) : undefined} />
                               );
                             })}
                           </div>

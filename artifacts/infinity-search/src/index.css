@@ -199,3 +199,43 @@
     min-width: 44px;
   }
 }
+
+/* ── Global mobile touch optimizations ──────────────────────────────────── */
+
+/* Remove tap highlight on all interactive elements */
+*, *::before, *::after {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent accidental zoom on double-tap for buttons/links */
+button, a, [role="button"], label {
+  touch-action: manipulation;
+}
+
+/* Prevent iOS from zooming when focusing inputs (requires font-size >= 16px) */
+@media (max-width: 1023px) {
+  input:not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Smooth native scroll on iOS for any scrollable container */
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent overscroll/bounce inside modals/drawers from propagating to body */
+.overscroll-contain {
+  overscroll-behavior: contain;
+}
+
+/* Body scroll-lock — applied via JS when drawer/modal is open */
+body.scroll-locked {
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+}
