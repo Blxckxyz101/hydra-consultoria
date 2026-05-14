@@ -5,8 +5,8 @@ import { AnimatedBackground } from "@/components/ui/AnimatedBackground";
 import logoUrl from "@/assets/hydra-icon.jpg";
 import {
   Search, Shield, Car, Building2, Scale, Camera,
-  ArrowRight, CheckCircle2, Zap, Lock, Users,
-  MessageCircle, Crown, Flame, Star, ChevronRight, Quote, ChevronDown,
+  ArrowRight, Zap, Lock, Users,
+  ChevronRight, Quote, ChevronDown, Sparkles, Star, MessageCircle,
 } from "lucide-react";
 
 const STATS = [
@@ -59,44 +59,6 @@ const CATEGORIES = [
   },
 ];
 
-const PLANS = [
-  {
-    id: "padrao",
-    label: "14 Dias Padrão",
-    price: "70,00",
-    consultas: 420,
-    tier: null as null,
-    ideal: "Ideal para quem está começando",
-    features: ["30 consultas/dia por módulo", "10 fotos/dia", "Dossiê e histórico completo", "Assistente IA incluso"],
-    highlight: false,
-    badge: null as null,
-    icon: Star,
-  },
-  {
-    id: "vip",
-    label: "14 Dias VIP",
-    price: "150,00",
-    consultas: 840,
-    tier: "vip" as const,
-    ideal: "Para profissionais e investigadores ativos",
-    features: ["60 consultas/dia por módulo", "25 fotos/dia", "Processos jurídicos incluso", "5 temas exclusivos + créditos bônus"],
-    highlight: true,
-    badge: "Mais Popular",
-    icon: Crown,
-  },
-  {
-    id: "ultra",
-    label: "14 Dias ULTRA",
-    price: "500,00",
-    consultas: 2800,
-    tier: "ultra" as const,
-    ideal: "Para equipes e operações de alto volume",
-    features: ["200 consultas/dia por módulo", "200 fotos/dia", "Todos os temas desbloqueados", "500 créditos de bônus"],
-    highlight: false,
-    badge: null as null,
-    icon: Flame,
-  },
-];
 
 const TESTIMONIALS = [
   {
@@ -300,7 +262,7 @@ export default function Landing() {
               </button>
             </Link>
           </div>
-          <a href="#planos" className="flex items-center gap-1.5 text-xs text-muted-foreground/60 hover:text-sky-400 transition-colors mt-2">
+          <a href="#planos" className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground/60 hover:text-sky-400 transition-colors mt-2">
             Ver todos os planos <ChevronRight className="w-3 h-3" />
           </a>
         </motion.div>
@@ -446,92 +408,88 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Pricing ── */}
-      <section id="planos" className="px-6 py-20 max-w-5xl mx-auto">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl font-black mb-3" style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.08em" }}>
-            PLANOS
-          </h2>
-          <p className="text-muted-foreground text-sm">Escolha o plano ideal para sua operação. Sem mensalidade, pague só quando precisar.</p>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-4 max-w-4xl mx-auto">
-          {PLANS.map((plan, i) => {
-            const Icon = plan.icon;
-            const isVip = plan.tier === "vip";
-            const isUltra = plan.tier === "ultra";
-            const accentColor = isUltra ? "#fb7185" : isVip ? "#fbbf24" : "#38bdf8";
-            const pricePerQuery = (parseFloat(plan.price.replace(",", ".")) / plan.consultas).toFixed(2).replace(".", ",");
+      {/* ── Plans Funnel ── */}
+      <section id="planos" className="px-6 py-20">
+        <div className="max-w-3xl mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="relative overflow-hidden rounded-3xl border border-sky-500/20 p-10 sm:p-14 text-center"
+            style={{ background: "linear-gradient(135deg, rgba(56,189,248,0.06) 0%, rgba(6,9,26,0.95) 50%, rgba(129,140,248,0.06) 100%)", borderColor: "rgba(56,189,248,0.18)" }}
+          >
+            {/* Glow */}
+            <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 70% 50% at 50% 0%, rgba(56,189,248,0.14) 0%, transparent 70%)" }} />
+            <div className="absolute -bottom-12 -right-12 w-48 h-48 rounded-full opacity-10 blur-3xl" style={{ background: "#818cf8" }} />
 
-            return (
-              <motion.div
-                key={plan.id}
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.1 }}
-                className="relative rounded-2xl border p-6 flex flex-col"
-                style={{
-                  background: plan.highlight
-                    ? "color-mix(in srgb, #38bdf8 6%, rgba(255,255,255,0.02))"
-                    : isUltra
-                    ? "color-mix(in srgb, #fb7185 5%, rgba(255,255,255,0.02))"
-                    : isVip
-                    ? "color-mix(in srgb, #fbbf24 5%, rgba(255,255,255,0.02))"
-                    : "rgba(255,255,255,0.02)",
-                  borderColor: `${accentColor}35`,
-                }}
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-sky-400/30 bg-sky-400/10 text-sky-300 text-xs font-semibold tracking-wider uppercase mb-6">
+                <Sparkles className="w-3 h-3" />
+                Sem mensalidade · Ativação instantânea
+              </div>
+
+              <h2
+                className="text-4xl sm:text-5xl font-black mb-4 leading-none"
+                style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: "0.06em" }}
               >
-                {plan.highlight && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-[0.3em] font-bold text-black px-3 py-1 rounded-full whitespace-nowrap"
-                    style={{ background: accentColor }}>
-                    Mais Popular
-                  </span>
-                )}
-                <div className="flex items-center gap-2 mb-4">
-                  <Icon className="w-5 h-5" style={{ color: accentColor }} />
-                  {isUltra && <span className="text-[8px] font-black uppercase tracking-widest bg-rose-500/20 border border-rose-500/40 text-rose-300 px-2 py-0.5 rounded-full">ULTRA</span>}
-                  {isVip && <span className="text-[8px] font-black uppercase tracking-widest bg-amber-400/15 border border-amber-400/35 text-amber-300 px-2 py-0.5 rounded-full">VIP</span>}
-                </div>
-                <div className="font-bold text-base mb-0.5">{plan.label}</div>
-                <div className="text-[10px] text-muted-foreground mb-2 italic">{plan.ideal}</div>
-                <div className="mb-1">
-                  <span className="text-3xl font-black" style={{ color: accentColor }}>R$ {plan.price}</span>
-                </div>
-                <div className="text-[10px] text-muted-foreground mb-1">
-                  <span className="font-semibold text-foreground">{plan.consultas}</span> consultas incluídas
-                </div>
-                <div className="text-[11px] font-semibold mb-4" style={{ color: `${accentColor}99` }}>
-                  ≈ R$ {pricePerQuery} / consulta
-                </div>
-                <div className="space-y-1.5 flex-1 mb-5">
-                  {plan.features.map(f => (
-                    <div key={f} className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <CheckCircle2 className="w-3 h-3 shrink-0" style={{ color: accentColor }} />
-                      {f}
-                    </div>
-                  ))}
-                </div>
-                <Link href="/registro">
-                  <button
-                    className="w-full py-3 rounded-xl font-bold text-sm transition-all hover:opacity-90"
-                    style={plan.highlight ? {
-                      background: "linear-gradient(135deg, #38bdf8, #818cf8)",
-                      color: "#000",
-                    } : {
-                      background: `${accentColor}18`,
-                      border: `1px solid ${accentColor}35`,
-                      color: accentColor,
+                PLANOS PARA<br />
+                <span style={{ color: "#38bdf8", filter: "drop-shadow(0 0 30px #38bdf855)" }}>TODA OPERAÇÃO</span>
+              </h2>
+
+              <p className="text-muted-foreground text-sm max-w-md mx-auto mb-10 leading-relaxed">
+                Planos de 1, 7, 14 e 30 dias. Pague via PIX e tenha acesso imediato — sem fidelização, sem surpresa.
+              </p>
+
+              {/* Tier teaser */}
+              <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto mb-10">
+                {[
+                  { label: "Padrão", from: "R$ 15", color: "#38bdf8" },
+                  { label: "VIP", from: "R$ 50", color: "#fbbf24", popular: true },
+                  { label: "Ultra", from: "R$ 250", color: "#fb7185" },
+                ].map(t => (
+                  <div
+                    key={t.label}
+                    className="relative rounded-2xl border p-3 text-center"
+                    style={{
+                      borderColor: `${t.color}35`,
+                      background: t.popular ? `color-mix(in srgb, ${t.color} 10%, transparent)` : "rgba(255,255,255,0.03)",
                     }}
                   >
-                    Escolher plano
-                  </button>
+                    {t.popular && (
+                      <div className="absolute -top-2.5 inset-x-0 flex justify-center">
+                        <span className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full text-black" style={{ background: t.color }}>
+                          Popular
+                        </span>
+                      </div>
+                    )}
+                    <div className="text-xs font-bold mt-1" style={{ color: t.color }}>{t.label}</div>
+                    <div className="text-[9px] text-muted-foreground/60 mt-0.5">a partir de</div>
+                    <div className="text-sm font-black mt-0.5" style={{ color: t.color }}>{t.from}</div>
+                  </div>
+                ))}
+              </div>
+
+              <Link href="/planos">
+                <motion.button
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.97 }}
+                  className="inline-flex items-center gap-2.5 px-10 py-4 rounded-2xl font-bold text-base text-black shadow-2xl"
+                  style={{ background: "linear-gradient(135deg, #38bdf8, #818cf8)", boxShadow: "0 8px 40px #38bdf845" }}
+                >
+                  Ver Todos os Planos
+                  <ArrowRight className="w-4 h-4" />
+                </motion.button>
+              </Link>
+
+              <p className="text-xs text-muted-foreground mt-5">
+                Já tem conta?{" "}
+                <Link href="/login" className="text-sky-400 hover:underline">
+                  Entrar e comprar →
                 </Link>
-              </motion.div>
-            );
-          })}
+              </p>
+            </div>
+          </motion.div>
         </div>
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          Planos de 1, 7, 14 e 30 dias disponíveis para todos os tipos. <Link href="/registro" className="text-sky-400 hover:underline">Criar conta e acessar todos →</Link>
-        </p>
       </section>
 
       {/* ── Features highlights ── */}
